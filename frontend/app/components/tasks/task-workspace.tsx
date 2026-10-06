@@ -1,0 +1,693 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Link, useSearchParams } from "react-router";
+import {
+  LuCalendarDays,
+  LuCircleDot,
+  LuClipboardCheck,
+  LuClipboardList,
+  LuDownload,
+  LuKanban,
+  LuLayoutList,
+  LuLoaderCircle,
+  LuPin,
+  LuPlus,
+  LuRepeat,
+  LuTrash2,
+  LuUserCheck,
+} from "react-icons/lu";
+
+import { ConfirmDialog } from "@/components/globals/confirm-dialog";
+import { BulkBar, BulkMenu } from "@/components/globals/data-table/bulk-bar";
+import { DateRangeFilter, FilterChip, FiltersBar } from "@/components/globals/data-table/filters-bar";
+import { FiltersSheet, SheetSelect, SheetSwitch } from "@/components/globals/data-table/filters-sheet";
+import { DataTablePager } from "@/components/globals/data-table/pagination";
+import { DataTableToolbar, ViewToggle, type ViewOption } from "@/components/globals/data-table/toolbar";
+import { FilterSelect } from "@/components/globals/filter-select";
+import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
+import { BulkAssignDialog } from "@/components/tasks/bulk-assign-dialog";
+import { MySubtasksStrip } from "@/components/tasks/my-subtasks";
+import { DeleteTaskDialog } from "@/components/tasks/task-action-dialogs";
+import { TaskBoard, TaskBoardSkeleton } from "@/components/tasks/task-board";
+import { TaskDetailSheet } from "@/components/tasks/task-detail-sheet";
+import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
+import { TasksCalendar } from "@/components/tasks/tasks-calendar";
+import { TasksTable, type TaskRowDialog } from "@/components/tasks/tasks-table";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useCurrentUser } from "@/hooks/use-auth";
+import { useDepartments } from "@/hooks/use-departments";
+import { useMilestones, useProjectOptions } from "@/hooks/use-projects";
+import { useRowSelection, useTableState } from "@/hooks/use-table-state";
+import { useAssignableUsers, useTaskCategories, useTaskLabels } from "@/hooks/use-task-meta";
+import {
+  taskQueryParams,
+  useBulkTasks,
+  useExportTasks,
+  useTask,
+  useTaskApprovalsCount,
+  useTaskBoard,
+  useTaskList,
+  useTaskRealtime,
+  type TaskFilters,
+  type TaskSortField,
+} from "@/hooks/use-tasks";
+import { PRIORITIES, PRIORITY_META, STATUS_META, TASK_STATUSES } from "@/lib/tasks";
+import type { Role, Task, TaskPriority, TaskScope, TaskStatus, TaskStatusFilter } from "@/types";
+
+type TaskView = "list" | "board" | "calendar" | "pinned" | "approvals";
+
+const SORT_FIELDS: TaskSortField[] = [
+  "code",
+  "title",
+  "startDate",
+  "dueDate",
+  "estimate",
+  "loggedMinutes",
+  "status",
+  "priority",
+];
+
+const BASE_DEFAULTS = {
+  view: "list",
+  mine: "off",
+  search: "",
+  status: "",
+  project: "",
+  from: "",
+  to: "",
+  priority: "",
+  label: "",
+  category: "",
+  assignee: "",
+  milestone: "",
+  department: "",
+  overdue: "",
+  recurringParent: "",
+};
+type FilterKey = keyof typeof BASE_DEFAULTS;
+
+const INLINE_KEYS: FilterKey[] = ["search", "status", "project", "from", "to"];
+const SHEET_KEYS: FilterKey[] = [
+  "priority",
+  "label",
+  "category",
+  "assignee",
+  "milestone",
+  "department",
+  "overdue",
+];
+
+const SUBTITLES: Record<Role, string> = {
+  admin: "Plan, assign and review work across the organisation.",
+  head: "Assign work to your department and review what comes back.",
+  employee: "Everything assigned to you — track time and move work forward.",
+};
+
+/** Scoping for the embedded project "Tasks" tab. */
+export interface WorkspaceProject {
+  _id: string;
+  name: string;
+  code: string;
+  /** From the project permissions (admin, head, project manager). */
+  canCreateTasks: boolean;
+}
+
+/**
+ * The /tasks experience for every role: toolbar, URL-backed filters, the
+ * table / board / calendar / pinned / waiting-approval views, bulk actions,
+ * the `?task=<id>` detail sheet and the create dialog.
+ *
+ * With `project` it renders embedded in the project page: filters live in
+ * component state (the page owns the URL), the project is fixed and the
+ * Waiting approval view is left to /tasks.
+ */
+export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) {
+  const { data: user } = useCurrentUser();
+  // RequireAuth guarantees a user; keep hooks unconditional anyway.
+  const role: Role = user?.role ?? "employee";
+  const isManager = role === "admin" || role === "head";
+  const me = useMemo(() => ({ _id: user?._id ?? "", role }), [user?._id, role]);
+
+  useTaskRealtime();
+
+  const table = useTableState({
+    storageKey: project ? "project-tasks" : "tasks",
+    defaults: { ...BASE_DEFAULTS, mine: isManager || project ? "off" : "on" },
+    mode: project ? "memory" : "url",
+  });
+  const { filters } = table;
+
+  // --- Detail sheet (`?task=<id>`) -------------------------------------------
+  const [searchParams, setSearchParams] = useSearchParams();
+  const openTaskId = searchParams.get("task");
+  const openSubtaskId = searchParams.get("subtask");
+  // On the project page `tab` belongs to the project tabs.
+  const openTab = project ? null : searchParams.get("tab");
+
+  const openTask = useCallback(
+    (id: string, subtaskId?: string) => {
+      setSearchParams(
+        (params) => {
+          const next = new URLSearchParams(params);
+          next.set("task", id);
+          if (!project) next.delete("tab");
+          if (subtaskId) next.set("subtask", subtaskId);
+          else next.delete("subtask");
+          return next;
+        },
+        { preventScrollReset: true }
+      );
+    },
+    [setSearchParams, project]
+  );
+
+  const closeTask = useCallback(() => {
+    setSearchParams(
+      (params) => {
+        const next = new URLSearchParams(params);
+        next.delete("task");
+        next.delete("subtask");
+        if (!project) next.delete("tab");
+        return next;
+      },
+      { preventScrollReset: true }
+    );
+  }, [setSearchParams, project]);
+
+  // --- Views -------------------------------------------------------------------
+  const approvalsCount = useTaskApprovalsCount(Boolean(user) && !project);
+  const isReviewer = Boolean(approvalsCount.data?.isReviewer) && !project;
+  const views = useMemo<ViewOption<TaskView>[]>(() => {
+    const list: ViewOption<TaskView>[] = [
+      { value: "list", label: "List", icon: LuLayoutList },
+      { value: "board", label: "Board", icon: LuKanban },
+      { value: "calendar", label: "Calendar", icon: LuCalendarDays },
+      { value: "pinned", label: "Pinned", icon: LuPin },
+    ];
+    if (isReviewer) {
+      list.push({
+        value: "approvals",
+        label: "Waiting approval",
+        icon: LuClipboardCheck,
+        badge: approvalsCount.data?.count,
+      });
+    }
+    return list;
+  }, [isReviewer, approvalsCount.data?.count]);
+  const requestedView = filters.view as TaskView;
+  const view: TaskView =
+    requestedView === "approvals"
+      ? isReviewer || approvalsCount.isPending
+        ? "approvals"
+        : "list"
+      : views.some((option) => option.value === requestedView)
+        ? requestedView
+        : "list";
+  const tableView = view === "list" || view === "pinned" || view === "approvals";
+
+  // --- Query params -----------------------------------------------------------
+  const mine = filters.mine === "on";
+  const scope: TaskScope = view === "approvals" ? "approvals" : mine ? "assigned" : "all";
+  const status = (filters.status || "all") as TaskStatusFilter;
+  const sort = (SORT_FIELDS as string[]).includes(table.sort) ? (table.sort as TaskSortField) : "";
+  const taskFilters: TaskFilters = {
+    scope,
+    search: filters.search,
+    priority: filters.priority as TaskPriority | "",
+    label: filters.label,
+    category: filters.category,
+    assignee: filters.assignee,
+    due: "",
+    project: project?._id ?? (filters.project || undefined),
+    milestone: filters.milestone || undefined,
+    department: filters.department || undefined,
+    from: filters.from || undefined,
+    to: filters.to || undefined,
+    overdue: filters.overdue === "on",
+    pinned: view === "pinned",
+    recurringParent: filters.recurringParent || undefined,
+  };
+
+  const list = useTaskList(
+    { ...taskFilters, status, sort, dir: table.dir, limit: table.pageSize, offset: table.offset },
+    tableView && Boolean(user)
+  );
+  const board = useTaskBoard(taskFilters, view === "board" && Boolean(user));
+  const { clampPage } = table;
+  useEffect(() => {
+    if (list.data && tableView) clampPage(list.data.total);
+  }, [list.data, tableView, clampPage]);
+
+  // --- Selection & bulk -------------------------------------------------------
+  const selection = useRowSelection();
+  const { clear: clearSelection } = selection;
+  const selectionKey = JSON.stringify({ ...filters, sort: table.sort, dir: table.dir });
+  useEffect(() => {
+    clearSelection();
+  }, [selectionKey, clearSelection]);
+
+  const bulk = useBulkTasks();
+  const exporter = useExportTasks();
+  const [assignOpen, setAssignOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  function runBulk(input: { action: "status" | "assign" | "delete"; status?: TaskStatus; assignees?: string[] }) {
+    bulk.mutate(
+      { ids: selection.ids, ...input },
+      {
+        onSuccess: (result) => {
+          setAssignOpen(false);
+          setDeleteOpen(false);
+          // Keep the skipped rows selected so they can be retried or inspected.
+          selection.setMany(result.updatedIds, false);
+        },
+      }
+    );
+  }
+
+  function exportCsv(ids?: string[]) {
+    exporter.mutate(
+      ids ? { ids: ids.join(",") } : taskQueryParams({ ...taskFilters, status, sort, dir: table.dir })
+    );
+  }
+
+  // --- Dialogs ------------------------------------------------------------------
+  const [createOpen, setCreateOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [rowDialog, setRowDialog] = useState<{ kind: TaskRowDialog; task: Task } | null>(null);
+
+  // --- Filter options ---------------------------------------------------------------
+  const labels = useTaskLabels();
+  const categories = useTaskCategories();
+  const assignable = useAssignableUsers(Boolean(user) && isManager);
+  const projectOptions = useProjectOptions(Boolean(user) && !project);
+  // Employees may create tasks in projects they manage (the form limits the
+  // project picker to those), so they get "New task" when they manage an active one.
+  const managesActiveProject = (projectOptions.data ?? []).some(
+    (option) => option.manager?._id === user?._id && !option.archivedAt && !option.status.isCompleted
+  );
+  const canCreate = project ? project.canCreateTasks : isManager || managesActiveProject;
+  const milestoneProject = project?._id ?? (filters.project && filters.project !== "none" ? filters.project : "");
+  const milestones = useMilestones(milestoneProject || null, Boolean(milestoneProject));
+  const recurringParent = useTask(filters.recurringParent || null);
+
+  const sheetKeys = SHEET_KEYS.filter((key) => key !== "department" || role === "admin");
+  const sheetCount = table.countActive(sheetKeys);
+  const inlineKeys = INLINE_KEYS.filter((key) => key !== "project" || !project);
+  const clearableKeys: FilterKey[] = [...inlineKeys, ...sheetKeys, "recurringParent"];
+  const filtered = table.countActive(clearableKeys) > 0;
+
+  const projectFilterOptions = useMemo(
+    () => [
+      { value: "none", label: "No project" },
+      ...(projectOptions.data ?? []).map((item) => ({ value: item._id, label: `${item.code} · ${item.name}` })),
+    ],
+    [projectOptions.data]
+  );
+
+  const tasks = list.data?.tasks;
+  const total = list.data?.total ?? 0;
+
+  const empty = filtered ? (
+    <EmptyState
+      icon={LuClipboardList}
+      title="No matching tasks"
+      description="Try a different search or clear the filters."
+      className="border-0"
+    >
+      <Button variant="outline" onClick={() => table.clearFilters(clearableKeys)}>
+        Clear filters
+      </Button>
+    </EmptyState>
+  ) : view === "pinned" ? (
+    <EmptyState
+      icon={LuPin}
+      title="Nothing pinned yet"
+      description="Pin tasks from their ⋮ menu to keep them one click away."
+      className="border-0"
+    />
+  ) : view === "approvals" ? (
+    <EmptyState
+      icon={LuClipboardCheck}
+      title="Nothing waiting for you"
+      description="Tasks submitted for review that you can approve show up here."
+      className="border-0"
+    />
+  ) : (
+    <EmptyState
+      icon={LuClipboardList}
+      title={
+        mine ? "Nothing assigned to you" : project ? `No tasks in ${project.code} yet` : "No tasks yet"
+      }
+      description={
+        canCreate
+          ? project
+            ? `Add the first task — it gets a short code like ${project.code}-1.`
+            : "Create a task, assign it to your team and track it from here."
+          : "When someone assigns you work, it shows up here."
+      }
+      className="border-0"
+    >
+      {canCreate && (
+        <Button onClick={() => setCreateOpen(true)}>
+          <LuPlus aria-hidden />
+          Add task
+        </Button>
+      )}
+    </EmptyState>
+  );
+
+  return (
+    <div className={project ? "w-full" : "mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"}>
+      {!project && <PageHeader title="Tasks" description={SUBTITLES[role]} />}
+
+      <div className={project ? "space-y-4" : "mt-6 space-y-4"}>
+        {!project && user && <MySubtasksStrip onOpen={openTask} />}
+
+        <DataTableToolbar
+          actions={
+            <>
+              {canCreate && (
+                <Button onClick={() => setCreateOpen(true)}>
+                  <LuPlus aria-hidden />
+                  Add task
+                </Button>
+              )}
+              {view !== "approvals" && (
+                <div className="flex h-8 items-center gap-2 rounded-lg border bg-background px-2.5">
+                  <Switch
+                    id="tasks-mine"
+                    size="sm"
+                    checked={mine}
+                    onCheckedChange={(checked) => table.setFilters({ mine: checked ? "on" : "off" })}
+                  />
+                  <Label htmlFor="tasks-mine" className="cursor-pointer text-sm font-medium">
+                    My tasks
+                  </Label>
+                </div>
+              )}
+              {!project && (
+                <Link to="/tasks/recurring" className={buttonVariants({ variant: "outline" })}>
+                  <LuRepeat aria-hidden />
+                  Recurring tasks
+                </Link>
+              )}
+              <Button
+                variant="outline"
+                onClick={() => exportCsv()}
+                disabled={exporter.isPending || !tableView}
+              >
+                {exporter.isPending ? (
+                  <LuLoaderCircle aria-hidden className="animate-spin" />
+                ) : (
+                  <LuDownload aria-hidden />
+                )}
+                Export
+              </Button>
+            </>
+          }
+          end={
+            <ViewToggle
+              label="Tasks view"
+              value={view}
+              onChange={(next) => table.setFilters({ view: next })}
+              options={views}
+            />
+          }
+        />
+
+        <FiltersBar
+          search={filters.search}
+          onSearchChange={(search) => table.setFilters({ search })}
+          searchPlaceholder="Search title, code or description…"
+          sheetCount={sheetCount}
+          onOpenSheet={() => setSheetOpen(true)}
+          canClear={filtered}
+          onClearAll={() => table.clearFilters(clearableKeys)}
+          chips={
+            filters.recurringParent ? (
+              <FilterChip onRemove={() => table.setFilters({ recurringParent: "" })}>
+                <LuRepeat aria-hidden className="size-3.5 text-muted-foreground" />
+                Copies of{" "}
+                {recurringParent.data
+                  ? `“${recurringParent.data.task.title}”`
+                  : "a recurring task"}
+              </FilterChip>
+            ) : undefined
+          }
+        >
+          {view !== "calendar" && (
+            <DateRangeFilter
+              from={filters.from}
+              to={filters.to}
+              onChange={(range) => table.setFilters(range)}
+              description="Tasks due within this range."
+            />
+          )}
+          {view !== "board" && view !== "approvals" && (
+            <FilterSelect
+              label="Status"
+              value={filters.status}
+              onChange={(value) => table.setFilters({ status: value })}
+              options={TASK_STATUSES.map((value) => ({ value, label: STATUS_META[value].label }))}
+            />
+          )}
+          {!project && (
+            <FilterSelect
+              label="Project"
+              value={filters.project}
+              onChange={(value) => table.setFilters({ project: value, milestone: "" })}
+              options={projectFilterOptions}
+              className="max-w-56"
+            />
+          )}
+        </FiltersBar>
+
+        {tableView && (
+          <BulkBar count={selection.count} onClear={selection.clear} pending={bulk.isPending}>
+            <BulkMenu
+              label="Change status"
+              icon={<LuCircleDot aria-hidden />}
+              heading="Set status to"
+              options={TASK_STATUSES.map((value) => ({
+                value,
+                label: STATUS_META[value].label,
+                dot: STATUS_META[value].dot,
+              }))}
+              onSelect={(value) => runBulk({ action: "status", status: value as TaskStatus })}
+              disabled={bulk.isPending}
+            />
+            {isManager && (
+              <Button variant="outline" size="sm" onClick={() => setAssignOpen(true)} disabled={bulk.isPending}>
+                <LuUserCheck aria-hidden />
+                Assign to
+              </Button>
+            )}
+            {isManager && (
+              <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)} disabled={bulk.isPending}>
+                <LuTrash2 aria-hidden />
+                Delete
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportCsv(selection.ids)}
+              disabled={exporter.isPending}
+            >
+              <LuDownload aria-hidden />
+              Export selected
+            </Button>
+          </BulkBar>
+        )}
+
+        {view === "board" ? (
+          board.isPending ? (
+            <TaskBoardSkeleton />
+          ) : board.isError ? (
+            <QueryError
+              title="Couldn't load the board"
+              error={board.error}
+              onRetry={() => void board.refetch()}
+              retrying={board.isRefetching}
+            />
+          ) : board.data && user ? (
+            <TaskBoard board={board.data} user={me} onOpen={openTask} />
+          ) : null
+        ) : view === "calendar" ? (
+          <TasksCalendar filters={taskFilters} status={status} onOpen={openTask} />
+        ) : (
+          <TasksTable
+            tasks={tasks}
+            total={total}
+            loading={list.isPending}
+            error={list.isError ? list.error : null}
+            onRetry={() => void list.refetch()}
+            retrying={list.isRefetching}
+            dimmed={list.isPlaceholderData}
+            selection={selection}
+            sort={table.sort}
+            dir={table.dir}
+            onSort={table.toggleSort}
+            me={me}
+            onOpen={openTask}
+            onDialog={(kind, task) => setRowDialog({ kind, task })}
+            approvals={view === "approvals"}
+            showProject={!project}
+            empty={empty}
+            footer={
+              list.data && total > 0 ? (
+                <DataTablePager
+                  page={table.page}
+                  pageSize={table.pageSize}
+                  total={total}
+                  shown={tasks?.length ?? 0}
+                  onPageChange={table.setPage}
+                  onPageSizeChange={table.setPageSize}
+                />
+              ) : null
+            }
+          />
+        )}
+      </div>
+
+      <FiltersSheet
+        open={sheetOpen}
+        onOpenChange={setSheetOpen}
+        activeCount={sheetCount}
+        onClear={() => table.clearFilters(sheetKeys)}
+      >
+        <SheetSelect
+          label="Priority"
+          value={filters.priority}
+          onChange={(priority) => table.setFilters({ priority })}
+          options={PRIORITIES.map((value) => ({ value, label: PRIORITY_META[value].label }))}
+        />
+        <SheetSelect
+          label="Label"
+          value={filters.label}
+          onChange={(label) => table.setFilters({ label })}
+          options={(labels.data ?? []).map((label) => ({ value: label._id, label: label.name }))}
+        />
+        <SheetSelect
+          label="Category"
+          value={filters.category}
+          onChange={(category) => table.setFilters({ category })}
+          options={(categories.data ?? []).map((category) => ({ value: category._id, label: category.name }))}
+        />
+        {isManager && (
+          <SheetSelect
+            label="Assignee"
+            value={filters.assignee}
+            onChange={(assignee) => table.setFilters({ assignee })}
+            options={(assignable.data ?? []).map((person) => ({ value: person._id, label: person.name }))}
+          />
+        )}
+        {milestoneProject ? (
+          <SheetSelect
+            label="Milestone"
+            value={filters.milestone}
+            onChange={(milestone) => table.setFilters({ milestone })}
+            options={[
+              { value: "none", label: "No milestone" },
+              ...(milestones.data ?? []).map((milestone) => ({ value: milestone._id, label: milestone.title })),
+            ]}
+          />
+        ) : (
+          <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">
+            Pick a project to filter by milestone.
+          </p>
+        )}
+        {role === "admin" && (
+          <DepartmentSheetSelect
+            value={filters.department}
+            onChange={(department) => table.setFilters({ department })}
+          />
+        )}
+        <SheetSwitch
+          label="Overdue only"
+          description="Due before today and not completed."
+          checked={filters.overdue === "on"}
+          onCheckedChange={(checked) => table.setFilters({ overdue: checked ? "on" : "" })}
+        />
+      </FiltersSheet>
+
+      {user && (
+        <TaskDetailSheet
+          taskId={openTaskId}
+          me={me}
+          onClose={closeTask}
+          subtaskId={openSubtaskId}
+          tab={openTab}
+        />
+      )}
+
+      {canCreate && (
+        <TaskFormDialog
+          open={createOpen}
+          onOpenChange={setCreateOpen}
+          onCreated={openTask}
+          defaultProjectId={project?._id}
+        />
+      )}
+
+      {rowDialog && (
+        <>
+          <TaskFormDialog
+            open={rowDialog.kind === "edit"}
+            onOpenChange={(open) => !open && setRowDialog(null)}
+            task={rowDialog.task}
+          />
+          <DeleteTaskDialog
+            task={rowDialog.task}
+            open={rowDialog.kind === "delete"}
+            onOpenChange={(open) => !open && setRowDialog(null)}
+            onDeleted={() => {
+              selection.toggle(rowDialog.task._id, false);
+              setRowDialog(null);
+            }}
+          />
+        </>
+      )}
+
+      {isManager && (
+        <BulkAssignDialog
+          open={assignOpen}
+          onOpenChange={setAssignOpen}
+          count={selection.count}
+          pending={bulk.isPending}
+          onConfirm={(assignees) => runBulk({ action: "assign", assignees })}
+        />
+      )}
+
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        pending={bulk.isPending}
+        destructive
+        title={`Delete ${selection.count} task${selection.count === 1 ? "" : "s"}?`}
+        description="Comments, files and history go with them. Tasks you can't delete are skipped. This can't be undone."
+        confirmLabel="Delete"
+        icon={<LuTrash2 aria-hidden />}
+        onConfirm={() => runBulk({ action: "delete" })}
+      />
+    </div>
+  );
+}
+
+/** Admin-only — mounted only for admins so the endpoint never 403s. */
+function DepartmentSheetSelect({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+  const departments = useDepartments();
+  return (
+    <SheetSelect
+      label="Department"
+      value={value}
+      onChange={onChange}
+      options={(departments.data?.departments ?? []).map((department) => ({
+        value: department._id,
+        label: department.name,
+      }))}
+    />
+  );
+}

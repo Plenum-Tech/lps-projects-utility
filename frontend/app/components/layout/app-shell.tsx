@@ -1,7 +1,10 @@
+import { Fragment } from "react";
+import { LuLoaderCircle } from "react-icons/lu";
 import { Outlet } from "react-router";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { NotificationBell } from "@/components/notifications/notification-bell";
+import { TimerWidget } from "@/components/timer/timer-widget";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -9,6 +12,9 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { useNotificationSSE } from "@/hooks/use-notifications";
+import { usePublicSettings } from "@/hooks/use-settings";
+import { useTimeRealtime } from "@/hooks/use-timelogs";
+import { displaySettingsKey, setDisplaySettings } from "@/lib/format";
 
 /**
  * Chrome around every protected page: collapsible sidebar (icon rail on
@@ -18,20 +24,37 @@ import { useNotificationSSE } from "@/hooks/use-notifications";
 export function AppShell() {
   // Initialize SSE connection for real-time notifications.
   useNotificationSSE();
+  // Keeps the global timer and time-log lists in sync across tabs.
+  useTimeRealtime();
+  // Date/time formats and week start (Settings → App). Pages wait for them so
+  // the first paint already uses the right formats; a change remounts the page.
+  const publicSettings = usePublicSettings();
+  if (publicSettings.data) setDisplaySettings(publicSettings.data);
+  const displayKey = displaySettingsKey();
 
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset>
+      {/* min-w-0: wide tables scroll inside their card instead of stretching the page. */}
+      <SidebarInset className="min-w-0">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
           <SidebarTrigger />
           <Separator orientation="vertical" className="h-4" />
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <TimerWidget />
             <NotificationBell />
           </div>
         </header>
         <div className="flex-1">
-          <Outlet />
+          {publicSettings.isPending ? (
+            <div className="flex justify-center py-24" role="status" aria-label="Loading">
+              <LuLoaderCircle aria-hidden className="size-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : (
+            <Fragment key={displayKey}>
+              <Outlet />
+            </Fragment>
+          )}
         </div>
       </SidebarInset>
     </SidebarProvider>

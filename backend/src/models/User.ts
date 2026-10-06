@@ -1,5 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcryptjs";
+import { nextEmployeeId } from "../lib/employeeIds.js";
 
 /** Per-employee annual leave balance for the tracked leave types. */
 export interface LeaveBalance {
@@ -10,6 +11,40 @@ export interface LeaveBalance {
   personal: number;
 }
 
+/** Per-user email opt-outs. In-app notifications are always created. */
+export interface EmailPreferences {
+  /** New task or subtask assigned. */
+  taskAssigned: boolean;
+  /** Status changes, edits, approvals. */
+  taskUpdates: boolean;
+  /** Comments and @mentions. */
+  taskComments: boolean;
+  /** Due, overdue and recurring reminders. */
+  taskReminders: boolean;
+  /** Project membership, status, deadline, notes and files. */
+  projectUpdates: boolean;
+  /** Time log / timesheet approvals and tracker reminders. */
+  timeLogs: boolean;
+  /** Admins: someone accepted an invitation and joined. */
+  teamUpdates: boolean;
+  /** Document expiry and probation / notice / internship end reminders. */
+  hrReminders: boolean;
+  /** Admins / heads: a team member applied for leave. */
+  leaveRequests: boolean;
+}
+
+export const EMAIL_PREFERENCE_KEYS = [
+  "taskAssigned",
+  "taskUpdates",
+  "taskComments",
+  "taskReminders",
+  "projectUpdates",
+  "timeLogs",
+  "teamUpdates",
+  "hrReminders",
+  "leaveRequests",
+] as const satisfies readonly (keyof EmailPreferences)[];
+
 export interface IUser extends mongoose.Document {
   name: string;
   email: string;
@@ -18,6 +53,27 @@ export interface IUser extends mongoose.Document {
   /** Single department per employee (null until assigned). */
   department?: mongoose.Types.ObjectId | null;
   leaveBalance?: LeaveBalance;
+  emailPreferences: EmailPreferences;
+  /** Default hourly rate (admin-editable); project membership rates take precedence. */
+  hourlyRate: number;
+  pinnedProjects: mongoose.Types.ObjectId[];
+  pinnedTasks: mongoose.Types.ObjectId[];
+  /** "YYYY-MM-DD" idempotency key for the time-tracker reminder job. */
+  lastTrackerReminderOn?: string | null;
+  // --- HR profile (admin-editable; date-only values stored as UTC midnight) ---
+  designation?: string;
+  /** Unique when set; auto "EMP-0001" sequence on create when left blank. */
+  employeeId?: string;
+  dateOfBirth?: Date | null;
+  joiningDate?: Date | null;
+  probationEndDate?: Date | null;
+  internshipEndDate?: Date | null;
+  noticePeriodStart?: Date | null;
+  noticePeriodEnd?: Date | null;
+  /** Idempotency keys of the daily HR reminder job (last 20 kept). */
+  lastHrReminderKeys: string[];
+  createdAt: Date;
+  updatedAt: Date;
   comparePassword(candidate: string): Promise<boolean>;
 }
 
@@ -44,9 +100,50 @@ const userSchema = new Schema<IUser>(
       },
       default: undefined,
     },
+    emailPreferences: {
+      taskAssigned: { type: Boolean, default: true },
+      taskUpdates: { type: Boolean, default: true },
+      taskComments: { type: Boolean, default: true },
+      taskReminders: { type: Boolean, default: true },
+      projectUpdates: { type: Boolean, default: true },
+      timeLogs: { type: Boolean, default: true },
+      teamUpdates: { type: Boolean, default: true },
+      hrReminders: { type: Boolean, default: true },
+      leaveRequests: { type: Boolean, default: true },
+    },
+    hourlyRate: { type: Number, default: 0, min: 0, max: 100000 },
+    pinnedProjects: { type: [{ type: Schema.Types.ObjectId, ref: "Project" }], default: [] },
+    pinnedTasks: { type: [{ type: Schema.Types.ObjectId, ref: "Task" }], default: [] },
+    lastTrackerReminderOn: { type: String, default: null },
+    designation: { type: String, trim: true, maxlength: 100, default: "" },
+    // No default: users without an ID simply lack the field (partial unique index below).
+    employeeId: { type: String, trim: true, maxlength: 30 },
+    dateOfBirth: { type: Date, default: null },
+    joiningDate: { type: Date, default: null },
+    probationEndDate: { type: Date, default: null },
+    internshipEndDate: { type: Date, default: null },
+    noticePeriodStart: { type: Date, default: null },
+    noticePeriodEnd: { type: Date, default: null },
+    lastHrReminderKeys: { type: [String], default: [] },
   },
   { timestamps: true }
 );
+
+// Employee ID — unique once assigned (partial, so users without one don't collide).
+userSchema.index(
+  { employeeId: 1 },
+  { unique: true, partialFilterExpression: { employeeId: { $type: "string" } }, name: "employeeId_unique" }
+);
+// HR reminder job: upcoming end dates.
+userSchema.index({ probationEndDate: 1 });
+userSchema.index({ noticePeriodEnd: 1 });
+userSchema.index({ internshipEndDate: 1 });
+
+// Every new user gets the next "EMP-xxxx" unless an ID was given.
+userSchema.pre("save", async function () {
+  if (!this.isNew || this.employeeId) return;
+  this.employeeId = await nextEmployeeId();
+});
 
 // Hash the password with bcrypt (cost 10) whenever it changes — plain text is never stored
 userSchema.pre("save", async function () {
@@ -65,6 +162,8 @@ userSchema.set("toJSON", {
     const json = ret as unknown as Record<string, unknown>;
     delete json.password;
     delete json.__v;
+    delete json.lastTrackerReminderOn;
+    delete json.lastHrReminderKeys;
     return json;
   },
 });

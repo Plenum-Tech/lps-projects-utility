@@ -13,7 +13,11 @@ export type SSEEventType =
   | "announcement-new"
   | "review-updated"
   | "insight-ready"
-  | "review-ready";
+  | "review-ready"
+  | "project-updated"
+  | "timer-updated"
+  | "timelog-updated"
+  | "timesheet-updated";
 
 /** The shape of every SSE event pushed to clients. */
 export interface SSEEvent {

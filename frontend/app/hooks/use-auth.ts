@@ -39,6 +39,9 @@ export function useLogin() {
       return data.user;
     },
     onSuccess: (user) => {
+      // Drop everything cached for a previous session in this tab (dashboard,
+      // documents, lists…) so a different user never sees stale data.
+      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== meKeys.all[0] });
       queryClient.setQueryData(meKeys.all, user);
     },
     onError: (error: unknown) => {

@@ -5,6 +5,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
 import type {
   CreateUserInput,
+  MyProfile,
   UpdateProfileInput,
   UpdateUserInput,
   UserResponse,
@@ -13,12 +14,21 @@ import type {
 
 export const usersKeys = {
   all: ["users"] as const,
-  list: (search: string, limit: number | null, offset: number) =>
-    ["users", "list", { search, limit, offset }] as const,
+  me: () => ["users", "me"] as const,
+  list: (
+    search: string,
+    limit: number | null,
+    offset: number,
+    filters: { role?: string; department?: string } = {}
+  ) => ["users", "list", { search, limit, offset, ...filters }] as const,
 };
 
 export interface UsersQueryParams {
   search?: string;
+  /** Filter by role (admin / head / employee). */
+  role?: string;
+  /** Department id, or "none" for unassigned users. */
+  department?: string;
   limit?: number;
   offset?: number;
 }
@@ -29,14 +39,16 @@ export interface UsersQueryParams {
  * Manage Members dialog and department assignment.
  */
 export function useUsers(params: UsersQueryParams = {}) {
-  const { search = "", limit, offset = 0 } = params;
+  const { search = "", limit, offset = 0, role, department } = params;
 
   return useQuery({
-    queryKey: usersKeys.list(search, limit ?? null, offset),
+    queryKey: usersKeys.list(search, limit ?? null, offset, { role, department }),
     queryFn: async () => {
       const { data } = await api.get<UsersListResponse>("/users", {
         params: {
           ...(search ? { search } : {}),
+          ...(role ? { role } : {}),
+          ...(department ? { department } : {}),
           ...(limit !== undefined ? { limit, offset } : {}),
         },
       });
@@ -44,6 +56,17 @@ export function useUsers(params: UsersQueryParams = {}) {
     },
     // Keep the previous page visible while flipping pages.
     placeholderData: (previous) => previous,
+  });
+}
+
+/** Any user: own full profile incl. HR fields, department populated (`GET /users/me`). */
+export function useMyProfile() {
+  return useQuery({
+    queryKey: usersKeys.me(),
+    queryFn: async () => {
+      const { data } = await api.get<{ user: MyProfile }>("/users/me");
+      return data.user;
+    },
   });
 }
 

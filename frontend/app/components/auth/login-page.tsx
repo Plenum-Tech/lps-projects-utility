@@ -46,7 +46,8 @@ export function LoginPage() {
 /* Brand panel                                                         */
 /* ------------------------------------------------------------------ */
 
-function BrandPanel() {
+/** Branded left panel (lg+). Shared by the sign-in and invite pages. */
+export function BrandPanel() {
   return (
     <aside className="relative hidden flex-col justify-between overflow-hidden bg-primary p-10 text-primary-foreground lg:flex xl:p-14">
       <div aria-hidden className="pointer-events-none absolute inset-0">

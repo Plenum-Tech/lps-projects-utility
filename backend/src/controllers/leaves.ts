@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { notify } from "../lib/notifications.js";
+import { notify, notifyUsers } from "../lib/notifications.js";
 import { getPolicies, policyFor } from "../lib/leavePolicies.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
 import { pushToUsers, createEvent } from "../lib/sse.js";
@@ -120,6 +120,91 @@ async function applyBalanceDelta(
   return balance;
 }
 
+// ---------------------------------------------------------------------------
+// Review scope — admins review everyone; a department head reviews only the
+// employees of their own department (never their own, another head's or an
+// admin's request — those go to an admin).
+// ---------------------------------------------------------------------------
+
+type LeaveOwner = Pick<IUser, "_id" | "role" | "department">;
+
+/** True when `actor` may view and approve/reject `owner`'s leave requests. */
+function canReviewLeavesOf(actor: IUser, owner: LeaveOwner): boolean {
+  if (actor.role === "admin") return true;
+  if (actor.role !== "head" || !actor.department) return false;
+  if (owner._id.equals(actor._id)) return false;
+  return owner.role === "employee" && !!owner.department && owner.department.equals(actor.department);
+}
+
+/** Mongo user filter for the people a non-admin reviewer may see; null = everyone (admin). */
+function reviewableUsersFilter(actor: IUser): Record<string, unknown> | null {
+  if (actor.role === "admin") return null;
+  if (actor.role !== "head" || !actor.department) return { _id: { $in: [] } };
+  return { department: actor.department, role: "employee", _id: { $ne: actor._id } };
+}
+
+/** Everyone who may decide `owner`'s requests: admins + (for employees) their department's heads. */
+async function leaveReviewerIds(owner: LeaveOwner): Promise<mongoose.Types.ObjectId[]> {
+  const or: Record<string, unknown>[] = [{ role: "admin" }];
+  if (owner.role === "employee" && owner.department) {
+    or.push({ role: "head", department: owner.department });
+  }
+  const reviewers = await User.find({ $or: or, _id: { $ne: owner._id } }).select("_id").lean();
+  return reviewers.map((reviewer) => reviewer._id);
+}
+
+/** Fire-and-forget: pushes a `leave-updated` SSE event to `extraUserIds` plus every reviewer of `owner`. */
+function broadcastLeaveUpdate(
+  owner: LeaveOwner | null,
+  extraUserIds: string[],
+  payload: Record<string, unknown>
+): void {
+  void (owner ? leaveReviewerIds(owner) : Promise.resolve([] as mongoose.Types.ObjectId[]))
+    .then((reviewerIds) => {
+      const ids = [...new Set([...extraUserIds, ...reviewerIds.map((id) => id.toString())])];
+      if (ids.length > 0) pushToUsers(ids, createEvent("leave-updated", payload));
+    })
+    .catch((err) => {
+      console.error("[leaves] Failed to broadcast leave update:", err);
+    });
+}
+
+/** Fire-and-forget: in-app notification + email (emailPreferences.leaveRequests) to the applicant's reviewers. */
+function notifyLeaveReviewers(applicant: IUser, leave: ILeave): void {
+  const startLabel = leave.startDate.toISOString().slice(0, 10);
+  const endLabel = leave.endDate.toISOString().slice(0, 10);
+  const typeLabel = leave.leaveType.charAt(0).toUpperCase() + leave.leaveType.slice(1);
+  void leaveReviewerIds(applicant)
+    .then((reviewerIds) => {
+      if (reviewerIds.length === 0) return;
+      notifyUsers({
+        recipients: reviewerIds,
+        actor: applicant,
+        type: "leave_requested",
+        title: "New leave request",
+        message: `${applicant.name} requested ${leave.days} day(s) of ${leave.leaveType} leave (${startLabel} → ${endLabel}).`,
+        link: "/leaves?tab=team",
+        email: {
+          subject: `Leave request from ${applicant.name}`,
+          heading: "New Leave Request",
+          intro: `${applicant.name} applied for leave and is waiting for a decision.`,
+          rows: [
+            ["Employee", applicant.name],
+            ["Leave type", typeLabel],
+            ["Dates", `${startLabel} → ${endLabel}`],
+            ["Days", String(leave.days)],
+          ],
+          quote: leave.reason,
+          quoteAuthor: applicant.name,
+          buttonLabel: "Review request",
+        },
+      });
+    })
+    .catch((err) => {
+      console.error("[leaves] Failed to notify leave reviewers:", err);
+    });
+}
+
 /** Any authenticated user (admins included): applies for leave. */
 export async function createLeave(req: Request, res: Response): Promise<void> {
   const user = req.user!;
@@ -210,26 +295,17 @@ export async function createLeave(req: Request, res: Response): Promise<void> {
     ip: req.ip,
   });
 
-  // Real-time SSE push to admins and department heads
-  const { User } = await import("../models/User.js");
-  const adminsAndHeads = await User.find({
-    role: { $in: ["admin", "head"] },
-    _id: { $ne: user._id },
-  }).select("_id");
-  const notifyUserIds = adminsAndHeads.map((u) => u._id.toString());
-  if (notifyUserIds.length > 0) {
-    pushToUsers(
-      notifyUserIds,
-      createEvent("leave-updated", {
-        leaveId: leave._id,
-        action: "created",
-        leaveType: type,
-        days,
-        status: "pending",
-        requestedBy: user.name,
-      })
-    );
-  }
+  // Real-time refresh + notification for everyone who may decide it: admins
+  // and (for employees) the head of the applicant's department.
+  broadcastLeaveUpdate(user, [], {
+    leaveId: leave._id,
+    action: "created",
+    leaveType: type,
+    days,
+    status: "pending",
+    requestedBy: user.name,
+  });
+  notifyLeaveReviewers(user, leave);
 
   res.status(201).json({ leave: leave.toJSON() });
 }
@@ -245,7 +321,10 @@ export async function myLeaves(req: Request, res: Response): Promise<void> {
     filter.$or = [{ leaveType: search }, { status: search }, { reason: search }];
   }
 
-  let query = Leave.find(filter).populate("user", "name email").sort({ createdAt: -1 });
+  let query = Leave.find(filter)
+    .populate("user", "name email")
+    .populate("decidedBy", "name")
+    .sort({ createdAt: -1 });
   if (limit !== null) {
     query = query.skip(offset).limit(limit);
   }
@@ -262,8 +341,13 @@ export async function myBalance(req: Request, res: Response): Promise<void> {
   res.json({ balance });
 }
 
-/** Admin-only: all requests, optionally filtered by status/employee and paginated. */
+/**
+ * Admin: all requests. Head: requests of the employees in their own department
+ * (not their own, nor other heads' / admins'). Optional status filter, employee
+ * search and pagination.
+ */
 export async function listLeaves(req: Request, res: Response): Promise<void> {
+  const actor = req.user!;
   const status = req.query.status;
   const { limit, offset } = parsePagination(req);
   const search = searchRegex(req.query.search);
@@ -279,12 +363,13 @@ export async function listLeaves(req: Request, res: Response): Promise<void> {
     filter.status = status;
   }
 
-  if (search) {
-    // Search over the populated employee — population can't be filtered directly,
-    // so resolve matching user ids first, then narrow the leaves by them.
-    const matchingUsers = await User.find({
-      $or: [{ name: search }, { email: search }],
-    }).select("_id");
+  const scope = reviewableUsersFilter(actor);
+  if (search || scope) {
+    // Search / scope over the populated employee — population can't be filtered
+    // directly, so resolve matching user ids first, then narrow the leaves by them.
+    const userFilter: Record<string, unknown> = { ...(scope ?? {}) };
+    if (search) userFilter.$or = [{ name: search }, { email: search }];
+    const matchingUsers = await User.find(userFilter).select("_id");
     const ids = matchingUsers.map((user) => user._id);
     if (ids.length === 0) {
       res.json({ leaves: [], total: 0, limit, offset });
@@ -293,7 +378,10 @@ export async function listLeaves(req: Request, res: Response): Promise<void> {
     filter.user = { $in: ids };
   }
 
-  let query = Leave.find(filter).populate("user", "name email").sort({ createdAt: -1 });
+  let query = Leave.find(filter)
+    .populate("user", "name email")
+    .populate("decidedBy", "name")
+    .sort({ createdAt: -1 });
   if (limit !== null) {
     query = query.skip(offset).limit(limit);
   }
@@ -302,11 +390,27 @@ export async function listLeaves(req: Request, res: Response): Promise<void> {
   res.json({ leaves: leaves.map((leave) => leave.toJSON()), total, limit, offset });
 }
 
-/** Admin-only: approves or rejects a pending request. Approval deducts the balance. */
+/**
+ * Admin, or the head of the requester's department (employees only — a head's
+ * own request needs an admin): approves or rejects a pending request. Approval
+ * deducts the balance exactly once (the pending → decided transition is atomic).
+ */
 export async function decideLeave(req: Request, res: Response): Promise<void> {
   const leave = await getLeaveOr404(req, res);
   if (!leave) return;
-  const admin = req.user!;
+  const actor = req.user!;
+
+  const owner = await User.findById(leave.user);
+  const allowed = owner ? canReviewLeavesOf(actor, owner) : actor.role === "admin";
+  if (!allowed) {
+    res.status(403).json({
+      error:
+        owner && owner._id.equals(actor._id)
+          ? "Your own leave requests must be decided by an admin"
+          : "You can only decide leave requests of employees in your department",
+    });
+    return;
+  }
 
   const { decision, note } = (req.body ?? {}) as DecideLeaveBody;
   if (decision !== "approved" && decision !== "rejected") {
@@ -322,13 +426,13 @@ export async function decideLeave(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  if (decision === "approved") {
-    const owner = await User.findById(leave.user);
+  const isApproved = decision === "approved";
+  const policies = await getPolicies();
+  if (isApproved) {
     if (!owner) {
       res.status(404).json({ error: "The leave owner no longer exists" });
       return;
     }
-    const policies = await getPolicies();
     if (isBalanceTracked(leave.leaveType)) {
       const balance = await getBalance(owner, policies);
       if (leave.days > balance[leave.leaveType]) {
@@ -337,59 +441,78 @@ export async function decideLeave(req: Request, res: Response): Promise<void> {
         });
         return;
       }
-      await applyBalanceDelta(owner, policies, leave.leaveType, -leave.days);
     }
-    leave.status = "approved";
-  } else {
-    leave.status = "rejected";
   }
 
-  leave.decidedBy = admin._id;
-  leave.decidedAt = new Date();
-  if (note !== undefined) leave.decisionNote = (note as string).trim() || undefined;
-  await leave.save();
+  // Claim the request atomically so two reviewers deciding at once can't both
+  // succeed (and deduct the balance twice).
+  const trimmedNote = typeof note === "string" ? note.trim() || undefined : undefined;
+  const update: Record<string, unknown> = {
+    $set: {
+      status: decision,
+      decidedBy: actor._id,
+      decidedAt: new Date(),
+      ...(trimmedNote ? { decisionNote: trimmedNote } : {}),
+    },
+  };
+  if (note !== undefined && !trimmedNote) update.$unset = { decisionNote: 1 };
+  const decided = await Leave.findOneAndUpdate({ _id: leave._id, status: "pending" }, update, {
+    new: true,
+  });
+  if (!decided) {
+    res.status(400).json({ error: "Only pending requests can be decided" });
+    return;
+  }
+
+  if (isApproved && owner && isBalanceTracked(decided.leaveType)) {
+    await applyBalanceDelta(owner, policies, decided.leaveType, -decided.days);
+  }
 
   logActivity({
-    action: decision === "approved" ? "leave_approved" : "leave_rejected",
-    actor: admin,
+    action: isApproved ? "leave_approved" : "leave_rejected",
+    actor,
     targetType: "leave",
-    targetId: leave._id,
-    targetName: `${leave.leaveType} leave`,
-    details: { leaveType: leave.leaveType, days: leave.days, note: leave.decisionNote },
+    targetId: decided._id,
+    targetName: `${decided.leaveType} leave`,
+    details: {
+      leaveType: decided.leaveType,
+      days: decided.days,
+      note: decided.decisionNote,
+      employee: owner?.name,
+      decidedByRole: actor.role,
+    },
     ip: req.ip,
   });
 
-  // Notify the leave owner about the decision.
-  const isApproved = decision === "approved";
+  // Notify the leave owner about the decision, naming who decided it.
   notify({
-    recipient: leave.user,
-    actor: admin,
+    recipient: decided.user,
+    actor,
     type: isApproved ? "leave_approved" : "leave_rejected",
     title: isApproved ? "Leave approved" : "Leave rejected",
-    message: `Your ${leave.leaveType} leave request for ${leave.days} day(s) has been ${decision}.`,
+    message: `Your ${decided.leaveType} leave request for ${decided.days} day(s) has been ${decision} by ${actor.name}.`,
     link: "/leaves",
     data: {
-      leaveType: leave.leaveType,
-      startDate: leave.startDate.toISOString().slice(0, 10),
-      endDate: leave.endDate.toISOString().slice(0, 10),
-      days: leave.days,
-      note: leave.decisionNote,
+      leaveType: decided.leaveType,
+      startDate: decided.startDate.toISOString().slice(0, 10),
+      endDate: decided.endDate.toISOString().slice(0, 10),
+      days: decided.days,
+      note: decided.decisionNote,
+      decidedBy: actor.name,
     },
   });
 
-  // Real-time SSE push to employee and admin
-  pushToUsers(
-    [leave.user.toString(), admin._id.toString()],
-    createEvent("leave-updated", {
-      leaveId: leave._id,
-      action: decision,
-      leaveType: leave.leaveType,
-      days: leave.days,
-      status: decision === "approved" ? "approved" : "rejected",
-    })
-  );
+  // Real-time refresh for the employee, the decider and every other reviewer.
+  broadcastLeaveUpdate(owner, [decided.user.toString(), actor._id.toString()], {
+    leaveId: decided._id,
+    action: decision,
+    leaveType: decided.leaveType,
+    days: decided.days,
+    status: decision,
+  });
 
-  res.json({ leave: leave.toJSON() });
+  await decided.populate("decidedBy", "name");
+  res.json({ leave: decided.toJSON() });
 }
 
 /** Owner-only: cancels their own pending or approved request (approved refunds the days). */
@@ -426,17 +549,14 @@ export async function cancelLeave(req: Request, res: Response): Promise<void> {
     ip: req.ip,
   });
 
-  // Real-time SSE push to user
-  pushToUsers(
-    [user._id.toString()],
-    createEvent("leave-updated", {
-      leaveId: leave._id,
-      action: "cancelled",
-      leaveType: leave.leaveType,
-      days: leave.days,
-      status: "cancelled",
-    })
-  );
+  // Real-time refresh for the owner and everyone who reviews their requests.
+  broadcastLeaveUpdate(user, [user._id.toString()], {
+    leaveId: leave._id,
+    action: "cancelled",
+    leaveType: leave.leaveType,
+    days: leave.days,
+    status: "cancelled",
+  });
 
   res.json({ leave: leave.toJSON() });
 }

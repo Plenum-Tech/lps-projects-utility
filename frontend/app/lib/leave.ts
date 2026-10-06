@@ -1,8 +1,8 @@
 import type { VariantProps } from "class-variance-authority";
-import { format } from "date-fns";
 
 import { badgeVariants } from "@/components/ui/badge";
-import type { LeaveStatus, LeaveType } from "@/types";
+import { formatDate, formatDateOnly } from "@/lib/format";
+import type { Leave, LeaveStatus, LeaveType } from "@/types";
 
 export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
   annual: "Annual leave",
@@ -31,7 +31,15 @@ export function countLeaveDays(start: string, end: string): number | null {
   return Math.floor((endDate.getTime() - startDate.getTime()) / 86_400_000) + 1;
 }
 
-/** Formats a date-only or ISO date string for display (e.g. "Aug 17, 2026"). */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}(T00:00:00(\.000)?Z)?$/;
+
+/** Formats a date-only value or a timestamp in the configured date format. */
 export function formatLeaveDate(value: string): string {
-  return format(new Date(value), "MMM d, yyyy");
+  return DATE_ONLY.test(value) ? formatDateOnly(value) : formatDate(value);
+}
+
+/** Name of the admin / department head who decided a request, when the API populated it. */
+export function leaveDecidedByName(leave: Pick<Leave, "decidedBy">): string | null {
+  const decidedBy = leave.decidedBy;
+  return decidedBy && typeof decidedBy === "object" ? decidedBy.name : null;
 }

@@ -22,10 +22,13 @@ router.get("/mine", myLeaves);
 router.get("/balance", myBalance);
 router.patch("/:id/cancel", cancelLeave);
 
-// Admin-only: oversight, decisions, and balance management.
+// Admin-only: balance management.
 router.get("/balances", requireRole("admin"), listBalances);
 router.patch("/balances/:userId", requireRole("admin"), adjustBalance);
-router.get("/", requireRole("admin"), listLeaves);
-router.patch("/:id/decide", requireRole("admin"), decideLeave);
+
+// Admins (everyone) and department heads (employees of their own department
+// only — scoped again in the controller): review and decide requests.
+router.get("/", requireRole("admin", "head"), listLeaves);
+router.patch("/:id/decide", requireRole("admin", "head"), decideLeave);
 
 export default router;

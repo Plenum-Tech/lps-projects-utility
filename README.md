@@ -75,7 +75,11 @@ cd frontend && bun run typecheck
 | `JWT_SECRET` | Secret for signing JWT tokens | `your-super-secret-key` |
 | `JWT_EXPIRES_IN` | Token expiry | `7d` |
 | `CORS_ORIGIN` | Allowed frontend origin | `http://localhost:5173` |
-| `RESEND_API_KEY` | Resend API key for email | `re_xxx` |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | SMTP server (Microsoft 365: STARTTLS on 587) | `smtp.office365.com` / `587` / `false` |
+| `SMTP_USER` / `SMTP_PASS` | Mailbox login (app password if MFA is on) | `you@yourdomain.com` |
+| `FROM_NAME` / `FROM_EMAIL` | Sender (FROM_EMAIL must equal SMTP_USER unless Send As is granted) | `EMS` / `you@yourdomain.com` |
+| `EMAIL_REDIRECT_TO` | Dev only: deliver all mail to this address | `dev@yourdomain.com` |
+| `APP_URL` | Frontend URL used in email links | `http://localhost:5173` |
 | `NODE_ENV` | `development` or `production` | `production` |
 
 ### Frontend
@@ -169,8 +173,9 @@ ems/
 
 ### Performance Reviews
 
-- Admin-initiated performance reviews for employees
-- Rating system with written feedback
+- Admin/head-written performance reviews for employees (manual by default)
+- 1–5 category ratings, written feedback and goals; drafts stay private until sent, then lock
+- Optional AI drafting via Gemini when the backend sets `AI_REVIEW_DRAFTS=true` (needs `GEMINI_API_KEY` + Inngest)
 
 ### Feedback
 
@@ -252,7 +257,7 @@ Ensure the following Vercel environment variables are set for production:
 - `MONGODB_URI`
 - `JWT_SECRET`
 - `CORS_ORIGIN` (your frontend domain)
-- `RESEND_API_KEY`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `FROM_NAME`, `FROM_EMAIL`, `APP_URL`
 - `NODE_ENV=production`
 
 ## License

@@ -16,6 +16,11 @@ interface RateLimitConfig {
   keyGenerator?: (req: Request) => string;
   /** Custom error message returned when the limit is exceeded. */
   message?: string;
+  /**
+   * Only count failed requests: a response with status < 400 gives its slot
+   * back (e.g. login — brute force is still limited, successful sign-ins aren't).
+   */
+  skipSuccessfulRequests?: boolean;
 }
 
 interface RateLimitEntry {
@@ -75,6 +80,7 @@ export function rateLimit(config: RateLimitConfig): (req: Request, res: Response
     max,
     keyGenerator = defaultKeyGenerator,
     message = "Too many requests. Please try again later.",
+    skipSuccessfulRequests = false,
   } = config;
 
   // Each rate limiter gets its own store so tiers don't share counters.
@@ -95,6 +101,14 @@ export function rateLimit(config: RateLimitConfig): (req: Request, res: Response
     }
 
     entry.count++;
+
+    if (skipSuccessfulRequests) {
+      const counted = entry;
+      res.on("finish", () => {
+        // Refund within the same window only (an expired entry was replaced).
+        if (res.statusCode < 400 && store.get(key) === counted && counted.count > 0) counted.count--;
+      });
+    }
 
     const remaining = Math.max(0, max - entry.count);
 
@@ -126,10 +140,11 @@ function defaultKeyGenerator(req: Request): string {
 // Pre-configured rate limiters for common tiers
 // ---------------------------------------------------------------------------
 
-/** Strict — auth endpoints (e.g. login). 10 requests per 15 minutes. */
+/** Strict — auth endpoints (e.g. login). 10 failed attempts per 15 minutes (successful logins aren't counted). */
 export const strictRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
+  skipSuccessfulRequests: true,
   message: "Too many login attempts. Please try again later.",
 });
 
@@ -140,8 +155,22 @@ export const moderateRateLimit = rateLimit({
   message: "Too many requests to this resource. Please wait before trying again.",
 });
 
-/** Standard — general API endpoints. 100 requests per 15 minutes. */
+/**
+ * Standard — general API endpoints. 1000 requests per 15 minutes.
+ * Board, project and report pages fire several queries per view (plus SSE-driven
+ * refetches), so 100 was exhausted within minutes of normal use.
+ */
 export const standardRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 1000,
+});
+
+/**
+ * Public invitation accept endpoints (GET preview + POST accept): 10 requests per
+ * 15 minutes per IP, in its own store so it never shares a bucket with login.
+ */
+export const inviteAcceptRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many attempts. Please wait a few minutes and try again.",
 });

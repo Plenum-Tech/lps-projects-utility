@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { format } from "date-fns";
 import {
   AlertCircle,
   Building2,
@@ -11,6 +10,7 @@ import {
   Trash2,
 } from "lucide-react";
 
+import { formatDate } from "@/lib/format";
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { DataTableSearch } from "@/components/globals/data-table-search";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -285,7 +285,7 @@ function AnnouncementCard({
             {announcement.department.name}
           </Badge>
           <span className="shrink-0 text-xs text-muted-foreground">
-            {format(new Date(announcement.createdAt), "MMM d, yyyy")}
+            {formatDate(announcement.createdAt)}
           </span>
         </div>
         <h2 className="font-heading text-base font-semibold leading-snug text-foreground">
@@ -529,7 +529,7 @@ function AnnouncementFormDialog({
             </div>
           )}
 
-          {error && (
+          {Boolean(error) && (
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
               <AlertTitle>{isEdit ? "Update failed" : "Creation failed"}</AlertTitle>
@@ -587,7 +587,7 @@ function ReadAnnouncementDialog({
             </Badge>
             {announcement && (
               <span className="text-xs text-muted-foreground">
-                {format(new Date(announcement.createdAt), "MMM d, yyyy")}
+                {formatDate(announcement.createdAt)}
               </span>
             )}
           </div>

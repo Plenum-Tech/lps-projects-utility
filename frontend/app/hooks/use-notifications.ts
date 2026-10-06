@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { API_BASE_URL, api } from "@/lib/api";
+import { useSSE } from "@/hooks/use-sse";
+import { api } from "@/lib/api";
 import type {
   Notification,
   NotificationListResponse,
@@ -91,77 +91,20 @@ export function useMarkAllAsRead() {
 // SSE hook — real-time push notifications
 // ---------------------------------------------------------------------------
 
-type SSEStatus = "connecting" | "connected" | "disconnected";
-
 /**
- * Opens an SSE connection to `/api/notifications/stream` and keeps it alive.
- * On receiving a notification, invalidates the notification queries so the
- * UI updates immediately.
+ * Refreshes the notification queries whenever a `notification` event arrives.
  *
- * Reconnects automatically with exponential backoff on errors.
- * Returns the connection status for visual indicators.
+ * Rides on the shared SSE connection from `useSSE` — it used to open its own
+ * EventSource, so every tab held two long-lived connections and a few tabs
+ * exhausted the browser's 6-connections-per-host limit (other requests then
+ * queued until they timed out). Returns the connection status.
  */
 export function useNotificationSSE() {
   const queryClient = useQueryClient();
-  const [status, setStatus] = useState<SSEStatus>("disconnected");
-  const retryTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const retryCountRef = useRef(0);
-  const eventSourceRef = useRef<EventSource | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    function connect() {
-      if (cancelled) return;
-
-      setStatus("connecting");
-
-      const eventSource = new EventSource(`${API_BASE_URL}/notifications/stream`, {
-        withCredentials: true,
-      });
-      eventSourceRef.current = eventSource;
-
-      eventSource.onopen = () => {
-        if (cancelled) return;
-        setStatus("connected");
-        retryCountRef.current = 0; // Reset backoff on successful connection.
-      };
-
-      eventSource.onmessage = () => {
-        if (cancelled) return;
-        // Any message means there's a new notification — invalidate queries.
-        void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
-      };
-
-      eventSource.onerror = () => {
-        if (cancelled) return;
-        eventSource.close();
-        eventSourceRef.current = null;
-        setStatus("disconnected");
-
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s max.
-        const delay = Math.min(1000 * 2 ** retryCountRef.current, 30_000);
-        retryCountRef.current += 1;
-
-        retryTimeoutRef.current = setTimeout(() => {
-          connect();
-        }, delay);
-      };
-    }
-
-    connect();
-
-    return () => {
-      cancelled = true;
-      if (retryTimeoutRef.current) {
-        clearTimeout(retryTimeoutRef.current);
-      }
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
-    };
-  }, [queryClient]);
-
-  return { status };
+  return useSSE({
+    event: "notification",
+    onEvent: () => {
+      void queryClient.invalidateQueries({ queryKey: notificationKeys.all });
+    },
+  });
 }

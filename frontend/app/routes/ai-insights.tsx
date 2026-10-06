@@ -1,3 +1,4 @@
+import { redirect } from "react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   AlertCircle,
@@ -12,6 +13,7 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { formatDate } from "@/lib/format";
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -40,7 +42,15 @@ import { usePagination } from "@/hooks/use-pagination";
 import { getErrorMessage } from "@/lib/api";
 import type { AiInsight } from "@/types";
 
+import { FEATURES } from "@/lib/features";
+
 import type { Route } from "./+types/ai-insights";
+
+/** Hidden while the feature switch is off (see lib/features.ts). */
+export function loader() {
+  if (!FEATURES.aiInsights) throw redirect("/dashboard");
+  return null;
+}
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "AI Insights | Employee Management System" }];
@@ -226,11 +236,7 @@ function InsightCard({
           )}
           <p className="mt-1 text-xs text-muted-foreground">
             {insight.period} ·{" "}
-            {new Date(insight.createdAt).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            {formatDate(insight.createdAt)}
           </p>
           {insight.error && (
             <p className="mt-1 text-xs text-destructive">{insight.error}</p>
@@ -429,11 +435,7 @@ function InsightDetailDialog({
               <DialogTitle>{insight.title}</DialogTitle>
               <DialogDescription>
                 {insight.period} · Generated on{" "}
-                {new Date(insight.createdAt).toLocaleDateString("en-US", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                {formatDate(insight.createdAt)}
               </DialogDescription>
             </DialogHeader>
 

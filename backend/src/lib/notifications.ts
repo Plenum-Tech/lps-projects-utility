@@ -5,7 +5,7 @@ import {
   type INotification,
   type NotificationType,
 } from "../models/Notification.js";
-import type { IUser } from "../models/User.js";
+import type { EmailPreferences, IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import {
   sendEmail,
@@ -15,10 +15,8 @@ import {
   feedbackRespondedTemplate,
   announcementCreatedTemplate,
   reviewAssignedTemplate,
-  reviewReadyTemplate,
-  taskAssignedTemplate,
-  taskCompletedTemplate,
-  taskReviewedTemplate,
+  taskEmailTemplate,
+  genericEmailTemplate,
 } from "./email.js";
 import { pushToClient, createEvent, registerClient } from "./sse.js";
 
@@ -51,31 +49,101 @@ function pushToSSE(userId: string, notification: INotification): void {
 }
 
 // ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** "Jane Doe" → "Jane" (falls back to "there"). */
+export function firstNameOf(name: string | undefined | null): string {
+  const first = (name ?? "").trim().split(/\s+/)[0];
+  return first || "there";
+}
+
+/** Which email preference controls each notification type (types not listed always email). */
+const EMAIL_PREF_BY_TYPE: Partial<Record<NotificationType, keyof EmailPreferences>> = {
+  task_assigned: "taskAssigned",
+  subtask_assigned: "taskAssigned",
+  task_updated: "taskUpdates",
+  task_status_changed: "taskUpdates",
+  task_completed: "taskUpdates",
+  task_approved: "taskUpdates",
+  task_rejected: "taskUpdates",
+  subtask_completed: "taskUpdates",
+  subtask_created: "taskUpdates",
+  task_comment: "taskComments",
+  task_mention: "taskComments",
+  task_note: "taskComments",
+  task_note_mention: "taskComments",
+  task_reminder: "taskReminders",
+  task_overdue: "taskReminders",
+  project_member_added: "projectUpdates",
+  project_status_changed: "projectUpdates",
+  project_deadline: "projectUpdates",
+  project_note: "projectUpdates",
+  project_file: "projectUpdates",
+  timelog_pending: "timeLogs",
+  timelog_approved: "timeLogs",
+  timelog_rejected: "timeLogs",
+  timesheet_submitted: "timeLogs",
+  timesheet_approved: "timeLogs",
+  timesheet_rejected: "timeLogs",
+  time_tracker_reminder: "timeLogs",
+  timer_auto_stopped: "timeLogs",
+  user_joined: "teamUpdates",
+  document_expiring: "hrReminders",
+  hr_date_upcoming: "hrReminders",
+  leave_requested: "leaveRequests",
+};
+
+/** True unless the user explicitly turned off email for this notification type. */
+function wantsEmail(
+  prefs: Partial<EmailPreferences> | undefined,
+  type: NotificationType
+): boolean {
+  const key = EMAIL_PREF_BY_TYPE[type];
+  if (!key) return true;
+  return prefs?.[key] !== false;
+}
+
+/** Frontend route that opens a task's detail sheet. */
+export function taskLink(taskId: mongoose.Types.ObjectId | string): string {
+  return `/tasks?task=${taskId.toString()}`;
+}
+
+/** Date-only values are stored as UTC midnight — format them without a timezone shift. */
+export function formatDueDate(date: Date | null | undefined): string | null {
+  if (!date) return null;
+  return date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Email sending — fire-and-forget, errors are swallowed
 // ---------------------------------------------------------------------------
 
 /**
- * Looks up a user's email address and sends a notification email.
+ * Looks up a user's name/email and sends a notification email rendered for them.
  * Failures are caught and logged — never throws.
  */
 function sendNotificationEmail(
   recipientId: mongoose.Types.ObjectId,
   params: {
     subject: string;
-    html: string;
-    idempotencyKey?: string;
+    render: (firstName: string) => string;
   }
 ): void {
   void User.findById(recipientId)
-    .select("email")
+    .select("name email")
     .lean()
     .then((user) => {
       if (!user || !user.email) return;
-      sendEmail({
+      return sendEmail({
         to: user.email,
         subject: params.subject,
-        html: params.html,
-        idempotencyKey: params.idempotencyKey,
+        html: params.render(firstNameOf(user.name)),
       });
     })
     .catch((err) => {
@@ -83,75 +151,9 @@ function sendNotificationEmail(
     });
 }
 
-/**
- * Looks up multiple users' email addresses and sends batch notification emails.
- * Failures are caught and logged — never throws.
- */
-function sendBatchNotificationEmails(
-  recipientIds: mongoose.Types.ObjectId[],
-  items: Array<{
-    recipientId: mongoose.Types.ObjectId;
-    subject: string;
-    html: string;
-  }>
-): void {
-  void User.find({ _id: { $in: recipientIds } })
-    .select("email")
-    .lean()
-    .then((users) => {
-      const emailMap = new Map<string, string>();
-      for (const user of users) {
-        emailMap.set(user._id.toString(), user.email);
-      }
-
-      const batchItems = items
-        .map((item) => {
-          const email = emailMap.get(item.recipientId.toString());
-          if (!email) return null;
-          return { to: email, subject: item.subject, html: item.html };
-        })
-        .filter((item): item is { to: string; subject: string; html: string } => item !== null);
-
-      if (batchItems.length > 0) {
-        sendBatchEmails(batchItems);
-      }
-    })
-    .catch((err) => {
-      console.error("[email] Failed to look up recipients for batch email:", err);
-    });
-}
-
 // ---------------------------------------------------------------------------
 // Public helpers — fire-and-forget (mirrors the logActivity pattern)
 // ---------------------------------------------------------------------------
-
-/** Extract leave details from the message for template rendering. */
-function parseLeaveDetails(
-  type: NotificationType,
-  title: string,
-  message: string
-): { leaveType: string; dates: string; days: string } | null {
-  if (type !== "leave_approved" && type !== "leave_rejected") return null;
-
-  // Message format: "Your {type} leave request for {days} day(s) has been {decision}."
-  const match = message.match(
-    /^Your (\w+) leave request for (\d+) day\(s\)/
-  );
-  if (!match) return null;
-
-  return {
-    leaveType: match[1] ?? "leave",
-    dates: "",
-    days: match[2] ?? "0",
-  };
-}
-
-/** Format a date range for email templates. */
-function formatDateRange(start?: Date, end?: Date): string {
-  if (!start || !end) return "";
-  const fmt = (d: Date) => d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  return `${fmt(start)} → ${fmt(end)}`;
-}
 
 /**
  * Creates a notification document and pushes it to any connected SSE clients.
@@ -205,7 +207,194 @@ export function notifyBatch(
 }
 
 // ---------------------------------------------------------------------------
-// Email dispatch logic per notification type
+// Task notifications — one helper for every task_* / subtask_* type
+// ---------------------------------------------------------------------------
+
+/** The task fields a task notification needs (a full ITask works too). */
+export interface TaskNotificationTarget {
+  _id: mongoose.Types.ObjectId;
+  title: string;
+  dueDate?: Date | null;
+  priority?: string;
+}
+
+export interface TaskNotifyParams {
+  /** Candidate recipients — deduplicated; the actor is always removed. */
+  recipients: Array<mongoose.Types.ObjectId | string>;
+  /** Null for system events (scheduled reminders, recurring copies). */
+  actor?: IUser | null;
+  type: NotificationType;
+  task: TaskNotificationTarget;
+  /** In-app notification title + message. */
+  title: string;
+  message: string;
+  email: {
+    subject: string;
+    heading: string;
+    intro: string;
+    quote?: string | null;
+    quoteAuthor?: string | null;
+    buttonLabel?: string;
+    /** Custom HTML per recipient (e.g. subtaskTemplate); replaces the task layout. */
+    render?: (firstName: string) => string;
+  };
+  /** In-app link override (default `/tasks?task=<id>`). */
+  link?: string;
+}
+
+/**
+ * Creates in-app notifications (always) and sends emails (respecting each
+ * recipient's `emailPreferences`). Deleted users are skipped. Resolves when the
+ * emails have been handed to the transport — callers in requests should use
+ * `notifyTask` (fire-and-forget); scheduled jobs await this to finish cleanly.
+ */
+export async function notifyTaskAsync(params: TaskNotifyParams): Promise<number> {
+  const actorId = params.actor ? params.actor._id.toString() : null;
+  const ids = [...new Set(params.recipients.map((id) => id.toString()))].filter(
+    (id) => id !== actorId
+  );
+  if (ids.length === 0) return 0;
+
+  const users = await User.find({ _id: { $in: ids } })
+    .select("name email emailPreferences")
+    .lean();
+  if (users.length === 0) return 0;
+
+  const link = params.link ?? taskLink(params.task._id);
+  const created = await Notification.insertMany(
+    users.map((user) => ({
+      recipient: user._id,
+      actor: params.actor ? params.actor._id : null,
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      link,
+      task: params.task._id,
+    }))
+  );
+  for (const doc of created) {
+    pushToSSE(doc.recipient.toString(), doc as unknown as INotification);
+  }
+
+  const dueDate = formatDueDate(params.task.dueDate);
+  const emails = users
+    .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))
+    .map((user) => ({
+      to: user.email,
+      subject: params.email.subject,
+      html: params.email.render ? params.email.render(firstNameOf(user.name)) : taskEmailTemplate({
+        firstName: firstNameOf(user.name),
+        heading: params.email.heading,
+        intro: params.email.intro,
+        taskId: params.task._id.toString(),
+        taskTitle: params.task.title,
+        dueDate,
+        priority: params.task.priority ?? null,
+        quote: params.email.quote ?? null,
+        quoteAuthor: params.email.quoteAuthor ?? null,
+        buttonLabel: params.email.buttonLabel,
+      }),
+    }));
+  await sendBatchEmails(emails);
+
+  return users.length;
+}
+
+/** Fire-and-forget wrapper around `notifyTaskAsync`. */
+export function notifyTask(params: TaskNotifyParams): void {
+  void notifyTaskAsync(params).catch((err) => {
+    console.error("[notifications] Task notification failed:", err);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Project / time-tracking notifications (one generic helper)
+// ---------------------------------------------------------------------------
+
+export interface UsersNotifyParams {
+  /** Candidate recipients, deduplicated; the actor is removed unless `includeActor`. */
+  recipients: Array<mongoose.Types.ObjectId | string>;
+  actor?: IUser | null;
+  includeActor?: boolean;
+  type: NotificationType;
+  title: string;
+  message: string;
+  /** Frontend route, e.g. "/projects/<id>". */
+  link: string;
+  /** Related project (cleanup on project delete). */
+  project?: mongoose.Types.ObjectId | null;
+  email: {
+    subject: string;
+    heading: string;
+    intro: string;
+    cardTitle?: string | null;
+    rows?: Array<[string, string]>;
+    quote?: string | null;
+    quoteAuthor?: string | null;
+    buttonLabel?: string;
+    /** Custom HTML per recipient (replaces the generic layout). */
+    render?: (firstName: string, recipientId: string) => string;
+  };
+}
+
+/**
+ * Creates in-app notifications (always) and emails (gated by the recipient's
+ * `emailPreferences` via EMAIL_PREF_BY_TYPE). Resolves once emails are handed
+ * to the transport: jobs await it, requests use the fire-and-forget wrapper.
+ */
+export async function notifyUsersAsync(params: UsersNotifyParams): Promise<number> {
+  const actorId = params.actor && !params.includeActor ? params.actor._id.toString() : null;
+  const ids = [...new Set(params.recipients.map((id) => id.toString()))].filter((id) => id !== actorId);
+  if (ids.length === 0) return 0;
+
+  const users = await User.find({ _id: { $in: ids } }).select("name email emailPreferences").lean();
+  if (users.length === 0) return 0;
+
+  const created = await Notification.insertMany(
+    users.map((user) => ({
+      recipient: user._id,
+      actor: params.actor ? params.actor._id : null,
+      type: params.type,
+      title: params.title,
+      message: params.message,
+      link: params.link,
+      project: params.project ?? null,
+    }))
+  );
+  for (const doc of created) {
+    pushToSSE(doc.recipient.toString(), doc as unknown as INotification);
+  }
+
+  const emails = users
+    .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))
+    .map((user) => ({
+      to: user.email,
+      subject: params.email.subject,
+      html: params.email.render ? params.email.render(firstNameOf(user.name), user._id.toString()) : genericEmailTemplate({
+        firstName: firstNameOf(user.name),
+        heading: params.email.heading,
+        intro: params.email.intro,
+        cardTitle: params.email.cardTitle ?? null,
+        rows: params.email.rows,
+        quote: params.email.quote ?? null,
+        quoteAuthor: params.email.quoteAuthor ?? null,
+        path: params.link,
+        buttonLabel: params.email.buttonLabel,
+      }),
+    }));
+  await sendBatchEmails(emails);
+  return users.length;
+}
+
+/** Fire-and-forget wrapper around `notifyUsersAsync`. */
+export function notifyUsers(params: UsersNotifyParams): void {
+  void notifyUsersAsync(params).catch((err) => {
+    console.error("[notifications] Notification failed:", err);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Email dispatch logic per (non-task) notification type
 // ---------------------------------------------------------------------------
 
 /** Send an email for a single notification based on its type. */
@@ -221,34 +410,29 @@ function sendEmailForNotification(params: NotifyParams): void {
       const endDate = (data?.endDate as string) || "";
       const days = (data?.days as number) || 0;
       const note = (data?.note as string) || undefined;
+      const decidedBy = (data?.decidedBy as string) || params.actor?.name || undefined;
 
       // Fallback: parse from message if data is not provided
       const match = message.match(/^Your (\w+) leave request for (\d+) day\(s\)/);
       const finalLeaveType = leaveType !== "leave" ? leaveType : (match?.[1] || "leave");
       const finalDays = days || (match ? parseInt(match[2] ?? "0", 10) : 0);
 
-      const html = isApproved
-        ? leaveApprovedTemplate({
-            employeeName: "there",
-            leaveType: finalLeaveType,
-            startDate,
-            endDate,
-            days: finalDays,
-            note,
-          })
-        : leaveRejectedTemplate({
-            employeeName: "there",
-            leaveType: finalLeaveType,
-            startDate,
-            endDate,
-            days: finalDays,
-            note,
-          });
-
       sendNotificationEmail(recipient, {
         subject: isApproved ? "Leave Approved ✅" : "Leave Rejected ❌",
-        html,
-        idempotencyKey: `leave-${type}/${recipient}/${Date.now()}`,
+        render: (firstName) => {
+          const templateParams = {
+            employeeName: firstName,
+            leaveType: finalLeaveType,
+            startDate,
+            endDate,
+            days: finalDays,
+            note,
+            decidedBy,
+          };
+          return isApproved
+            ? leaveApprovedTemplate(templateParams)
+            : leaveRejectedTemplate(templateParams);
+        },
       });
       break;
     }
@@ -256,17 +440,15 @@ function sendEmailForNotification(params: NotifyParams): void {
     case "feedback_responded": {
       const category = (data?.category as string) || "feedback";
       const responseBody = (data?.responseBody as string) || message;
-      const html = feedbackRespondedTemplate({
-        employeeName: "there",
-        category,
-        responseBody,
-        respondedBy: params.actor?.name || "An admin",
-      });
-
       sendNotificationEmail(recipient, {
         subject: "Admin Responded to Your Feedback",
-        html,
-        idempotencyKey: `feedback-responded/${recipient}/${Date.now()}`,
+        render: (firstName) =>
+          feedbackRespondedTemplate({
+            employeeName: firstName,
+            category,
+            responseBody,
+            respondedBy: params.actor?.name || "An admin",
+          }),
       });
       break;
     }
@@ -279,16 +461,10 @@ function sendEmailForNotification(params: NotifyParams): void {
     case "review_assigned": {
       const period = (data?.period as string) || "";
       const reviewerName = (data?.reviewerName as string) || params.actor?.name || "An admin";
-      const html = reviewAssignedTemplate({
-        employeeName: "there",
-        period,
-        reviewerName,
-      });
-
       sendNotificationEmail(recipient, {
         subject: "Performance Review Assigned 📋",
-        html,
-        idempotencyKey: `review-assigned/${recipient}/${Date.now()}`,
+        render: (firstName) =>
+          reviewAssignedTemplate({ employeeName: firstName, period, reviewerName }),
       });
       break;
     }
@@ -299,65 +475,9 @@ function sendEmailForNotification(params: NotifyParams): void {
       break;
     }
 
-    case "task_assigned": {
-      const taskTitle = (data?.taskTitle as string) || params.title;
-      const dueDate = (data?.dueDate as string) || "";
-      const assignerName = params.actor?.name || "A team lead";
-      const priority = (data?.priority as string) || "medium";
-      const html = taskAssignedTemplate({
-        employeeName: "there",
-        taskTitle,
-        dueDate,
-        assignerName,
-        priority,
-      });
-
-      sendNotificationEmail(recipient, {
-        subject: `📋 New Task Assigned: ${taskTitle}`,
-        html,
-        idempotencyKey: `task-assigned/${recipient}/${Date.now()}`,
-      });
+    default:
+      // Task notifications go through notifyTask(), which handles their emails.
       break;
-    }
-
-    case "task_completed": {
-      const taskTitle = (data?.taskTitle as string) || params.title;
-      const submissionNotes = (data?.submissionNotes as string) || "";
-      const assigneeName = (data?.assigneeName as string) || "An employee";
-      const html = taskCompletedTemplate({
-        reviewerName: "there",
-        taskTitle,
-        submissionNotes,
-        assigneeName,
-      });
-
-      sendNotificationEmail(recipient, {
-        subject: `✅ Task Submitted for Review: ${taskTitle}`,
-        html,
-        idempotencyKey: `task-completed/${recipient}/${Date.now()}`,
-      });
-      break;
-    }
-
-    case "task_approved":
-    case "task_rejected": {
-      const isApproved = type === "task_approved";
-      const taskTitle = (data?.taskTitle as string) || params.title;
-      const reviewNotes = (data?.reviewNotes as string) || "";
-      const html = taskReviewedTemplate({
-        employeeName: "there",
-        taskTitle,
-        approved: isApproved,
-        reviewNotes,
-      });
-
-      sendNotificationEmail(recipient, {
-        subject: isApproved ? `✅ Task Approved: ${taskTitle}` : `❌ Task Rejected: ${taskTitle}`,
-        html,
-        idempotencyKey: `task-reviewed/${type}/${recipient}/${Date.now()}`,
-      });
-      break;
-    }
   }
 }
 
@@ -373,17 +493,27 @@ function sendBatchEmailsForNotifications(
   const announcementBody = (data.announcementBody as string) || params.message;
   const departmentName = (data.departmentName as string) || "your department";
 
-  const items = recipients.map((recipientId) => ({
-    recipientId,
-    subject: `📢 ${announcementTitle}`,
-    html: announcementCreatedTemplate({
-      recipientName: "there",
-      announcementTitle,
-      announcementBody,
-      departmentName,
-      authorName: params.actor?.name || "A team member",
-    }),
-  }));
-
-  sendBatchNotificationEmails(recipients, items);
+  void User.find({ _id: { $in: recipients } })
+    .select("name email")
+    .lean()
+    .then((users) =>
+      sendBatchEmails(
+        users
+          .filter((user) => user.email)
+          .map((user) => ({
+            to: user.email,
+            subject: `📢 ${announcementTitle}`,
+            html: announcementCreatedTemplate({
+              recipientName: firstNameOf(user.name),
+              announcementTitle,
+              announcementBody,
+              departmentName,
+              authorName: params.actor?.name || "A team member",
+            }),
+          }))
+      )
+    )
+    .catch((err) => {
+      console.error("[email] Failed to look up recipients for batch email:", err);
+    });
 }

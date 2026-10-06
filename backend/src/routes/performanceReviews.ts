@@ -6,6 +6,7 @@ import {
   getReview,
   listReviews,
   myReviews,
+  reviewConfig,
   updateGoal,
   updateReview,
 } from "../controllers/performanceReviews.js";
@@ -23,6 +24,8 @@ router.get("/mine", myReviews);
 router.post("/:id/acknowledge", acknowledgeReview);
 
 // Admin and head: create, list, update reviews and manage goals.
+// Whether optional AI drafting is switched on (AI_REVIEW_DRAFTS).
+router.get("/config", requireRole("admin", "head"), reviewConfig);
 router.post("/", requireRole("admin", "head"), createReview);
 router.get("/", requireRole("admin", "head"), listReviews);
 router.get("/:id", getReview);

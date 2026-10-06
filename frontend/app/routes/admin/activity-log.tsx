@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { type VariantProps } from "class-variance-authority";
-import { format } from "date-fns";
 import { AlertCircle, LoaderCircle, RefreshCw, ScrollText } from "lucide-react";
 
+import { formatDateTime } from "@/lib/format";
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { DataTableSearch } from "@/components/globals/data-table-search";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -28,7 +28,8 @@ import {
 import { useActivityLogs } from "@/hooks/use-activity-logs";
 import { usePagination } from "@/hooks/use-pagination";
 import { getErrorMessage } from "@/lib/api";
-import type { ActivityAction, ActivityLog } from "@/types";
+import { DOCUMENT_TYPE_LABELS } from "@/lib/documents";
+import type { ActivityAction, ActivityLog, DocumentType } from "@/types";
 
 import type { Route } from "./+types/activity-log";
 
@@ -88,7 +89,28 @@ const ACTION_META: Record<
   task_status_updated: { label: "Updated task status", badge: "secondary" },
   task_submitted: { label: "Submitted task", badge: "secondary" },
   task_reviewed: { label: "Reviewed task", badge: "default" },
+  task_updated: { label: "Updated task", badge: "secondary" },
+  task_deleted: { label: "Deleted task", badge: "destructive" },
+  task_settings_updated: { label: "Updated task settings", badge: "secondary" },
   ai_insight_deleted: { label: "Deleted AI insight", badge: "destructive" },
+  project_created: { label: "Created project", badge: "default" },
+  project_updated: { label: "Updated project", badge: "secondary" },
+  project_archived: { label: "Archived project", badge: "secondary" },
+  project_deleted: { label: "Deleted project", badge: "destructive" },
+  timelog_reviewed: { label: "Reviewed time log", badge: "secondary" },
+  timesheet_reviewed: { label: "Reviewed timesheet", badge: "secondary" },
+  project_settings_updated: { label: "Updated project settings", badge: "secondary" },
+  user_invited: { label: "Invited user", badge: "default" },
+  invitation_resent: { label: "Resent invitation", badge: "secondary" },
+  invitation_revoked: { label: "Revoked invitation", badge: "destructive" },
+  invitation_accepted: { label: "Accepted invitation", badge: "default" },
+  document_created: { label: "Added document", badge: "default" },
+  document_updated: { label: "Updated document", badge: "secondary" },
+  document_deleted: { label: "Deleted document", badge: "destructive" },
+  meeting_created: { label: "Added meeting", badge: "default" },
+  meeting_deleted: { label: "Deleted meeting", badge: "destructive" },
+  meeting_tasks_created: { label: "Created tasks from meeting", badge: "secondary" },
+  settings_updated: { label: "Updated company settings", badge: "secondary" },
 };
 
 function detailsSummary(log: ActivityLog): string | null {
@@ -98,6 +120,24 @@ function detailsSummary(log: ActivityLog): string | null {
   switch (log.action) {
     case "user_created":
       return details.role ? `Role: ${String(details.role)}` : null;
+    case "user_invited":
+    case "invitation_resent":
+    case "invitation_revoked":
+    case "invitation_accepted": {
+      const email = details.email ? String(details.email) : null;
+      const role = details.role ? `Role: ${String(details.role)}` : null;
+      return [email, role]
+        .filter((part): part is string => part !== null)
+        .join(" · ");
+    }
+    case "settings_updated": {
+      const changed = details.changed;
+      const logo = details.logo ? `Logo ${String(details.logo)}` : null;
+      if (logo) return logo;
+      return Array.isArray(changed) && changed.length > 0
+        ? `Changed: ${changed.join(", ")}`
+        : null;
+    }
     case "user_updated":
     case "profile_updated": {
       const changed = details.changed;
@@ -179,6 +219,23 @@ function detailsSummary(log: ActivityLog): string | null {
       return [category, previous]
         .filter((part): part is string => part !== null)
         .join(" · ");
+    }
+    case "document_created":
+    case "document_deleted": {
+      const type = details.type ? String(details.type) : null;
+      const label = type
+        ? DOCUMENT_TYPE_LABELS[type as DocumentType] ?? type
+        : null;
+      const file = details.hasFile === true ? "with file" : null;
+      return [label, file]
+        .filter((part): part is string => part !== null)
+        .join(" · ");
+    }
+    case "document_updated": {
+      const changed = details.changed;
+      return Array.isArray(changed) && changed.length > 0
+        ? `Changed: ${changed.join(", ")}`
+        : null;
     }
     case "login_failed":
       return "Invalid credentials";
@@ -278,10 +335,7 @@ export default function ActivityLogPage() {
                             return (
                               <TableRow key={log._id}>
                                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                                  {format(
-                                    new Date(log.createdAt),
-                                    "MMM d, yyyy · h:mm a",
-                                  )}
+                                  {formatDateTime(log.createdAt)}
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-2">

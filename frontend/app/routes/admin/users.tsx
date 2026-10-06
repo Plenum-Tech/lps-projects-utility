@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { format } from "date-fns";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   AlertCircle,
   Building2,
@@ -11,9 +10,13 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
+import { LuMailPlus, LuMails, LuUsers } from "react-icons/lu";
+import { useSearchParams } from "react-router";
 
+import { formatDate } from "@/lib/format";
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { DataTableSearch } from "@/components/globals/data-table-search";
+import { FilterSelect } from "@/components/globals/filter-select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +62,16 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { InvitationsTable } from "@/components/users/invitations-table";
+import {
+  EmploymentFields,
+  employmentFormFrom,
+  employmentPayload,
+  validateEmployment,
+  type EmploymentForm,
+} from "@/components/users/employment-fields";
+import { InviteDialog } from "@/components/users/invite-dialog";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useDepartments } from "@/hooks/use-departments";
 import { usePagination } from "@/hooks/use-pagination";
@@ -91,16 +104,115 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+type UsersPageTab = "users" | "invitations";
+
+const ROLE_FILTER_OPTIONS = [
+  { value: "employee", label: "Employee" },
+  { value: "head", label: "Head of Dept" },
+  { value: "admin", label: "Admin" },
+];
+
 /**
- * Admin employee management: create, read, update, and delete user records.
+ * Admin employee management: create, read, update, and delete user records,
+ * plus email invitations (Invitations tab, `?tab=invitations`).
  * Role and department assignment live here; employees manage only their own
  * name/password on the profile page.
  */
 export default function AdminUsers() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: UsersPageTab = searchParams.get("tab") === "invitations" ? "invitations" : "users";
+  const [formUser, setFormUser] = useState<User | "new" | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
+
+  const changeTab = useCallback(
+    (next: UsersPageTab) => {
+      setSearchParams(
+        (params) => {
+          const updated = new URLSearchParams(params);
+          if (next === "users") updated.delete("tab");
+          else updated.set("tab", next);
+          return updated;
+        },
+        { preventScrollReset: true }
+      );
+    },
+    [setSearchParams]
+  );
+
+  return (
+    <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">
+            Manage Users
+          </h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Invite people by email or create accounts directly, and manage roles and access.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => setFormUser("new")}>
+            <Plus />
+            New user
+          </Button>
+          <Button onClick={() => setInviteOpen(true)}>
+            <LuMailPlus aria-hidden />
+            Invite people
+          </Button>
+        </div>
+      </header>
+
+      <Tabs
+        value={tab}
+        onValueChange={(value) => changeTab(value === "invitations" ? "invitations" : "users")}
+        className="mt-6 gap-5"
+      >
+        <TabsList variant="line" className="w-full justify-start border-b pb-0.5">
+          <TabsTrigger value="users" className="flex-none px-2.5">
+            <LuUsers aria-hidden />
+            Users
+          </TabsTrigger>
+          <TabsTrigger value="invitations" className="flex-none px-2.5">
+            <LuMails aria-hidden />
+            Invitations
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="users">
+          {tab === "users" && <UsersTab onEdit={setFormUser} />}
+        </TabsContent>
+        <TabsContent value="invitations">
+          {tab === "invitations" && <InvitationsTable onInvite={() => setInviteOpen(true)} />}
+        </TabsContent>
+      </Tabs>
+
+      <UserFormDialog
+        open={formUser !== null}
+        user={formUser === "new" ? null : formUser}
+        onOpenChange={(open) => {
+          if (!open) setFormUser(null);
+        }}
+      />
+      <InviteDialog
+        open={inviteOpen}
+        onOpenChange={setInviteOpen}
+        onViewInvitations={() => changeTab("invitations")}
+      />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Users tab                                                           */
+/* ------------------------------------------------------------------ */
+
+function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("");
+  const [departmentFilter, setDepartmentFilter] = useState("");
+  const filtered = search !== "" || roleFilter !== "" || departmentFilter !== "";
   const { page, setPage, offset, total, setTotal } = usePagination({
     limit: PAGE_SIZE,
-    resetKey: search,
+    resetKey: `${search}|${roleFilter}|${departmentFilter}`,
   });
   const {
     data,
@@ -109,7 +221,13 @@ export default function AdminUsers() {
     error,
     refetch,
     isRefetching,
-  } = useUsers({ search: search || undefined, limit: PAGE_SIZE, offset });
+  } = useUsers({
+    search: search || undefined,
+    role: roleFilter || undefined,
+    department: departmentFilter || undefined,
+    limit: PAGE_SIZE,
+    offset,
+  });
   const users = data?.users;
   const { data: departmentsData } = useDepartments();
 
@@ -117,30 +235,29 @@ export default function AdminUsers() {
     setTotal(data?.total ?? 0);
   }, [data?.total, setTotal]);
   const { data: currentUser } = useCurrentUser();
-  const [formUser, setFormUser] = useState<User | "new" | null>(null);
   const [deleting, setDeleting] = useState<User | null>(null);
 
   const departmentName = (id?: string | null) =>
     departmentsData?.departments.find((department) => department._id === id)?.name;
+  const departmentFilterOptions = useMemo(
+    () => [
+      { value: "none", label: "Unassigned" },
+      ...(departmentsData?.departments ?? []).map((department) => ({
+        value: department._id,
+        label: department.name,
+      })),
+    ],
+    [departmentsData]
+  );
+  const clearFilters = () => {
+    setSearch("");
+    setRoleFilter("");
+    setDepartmentFilter("");
+  };
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-heading text-3xl font-semibold tracking-tight text-foreground">
-            Manage Users
-          </h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Create employee accounts, assign roles and departments, and manage access.
-          </p>
-        </div>
-        <Button onClick={() => setFormUser("new")}>
-          <Plus />
-          New user
-        </Button>
-      </header>
-
-      <div className="mt-8 space-y-4">
+    <div>
+      <div className="space-y-4">
         {isPending ? (
           <UserListSkeleton />
         ) : isError ? (
@@ -162,12 +279,29 @@ export default function AdminUsers() {
           </Alert>
         ) : (
           <>
-            {(total > 0 || search !== "") && (
-              <DataTableSearch
-                value={search}
-                onValueChange={setSearch}
-                placeholder="Search by name or email…"
-              />
+            {(total > 0 || filtered) && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                <DataTableSearch
+                  value={search}
+                  onValueChange={setSearch}
+                  placeholder="Search by name or email…"
+                  className="sm:max-w-xs sm:flex-1"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <FilterSelect
+                    label="Role"
+                    value={roleFilter}
+                    onChange={setRoleFilter}
+                    options={ROLE_FILTER_OPTIONS}
+                  />
+                  <FilterSelect
+                    label="Department"
+                    value={departmentFilter}
+                    onChange={setDepartmentFilter}
+                    options={departmentFilterOptions}
+                  />
+                </div>
+              </div>
             )}
             {total > 0 ? (
               <>
@@ -206,6 +340,15 @@ export default function AdminUsers() {
                                       <p className="truncate text-xs text-muted-foreground">
                                         {user.email}
                                       </p>
+                                      {(user.employeeId || user.designation) && (
+                                        <p className="truncate text-xs text-muted-foreground">
+                                          {user.employeeId && (
+                                            <span className="font-mono">{user.employeeId}</span>
+                                          )}
+                                          {user.employeeId && user.designation ? " · " : ""}
+                                          {user.designation}
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
                                 </TableCell>
@@ -230,14 +373,14 @@ export default function AdminUsers() {
                                   </span>
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                                  {format(new Date(user.createdAt), "MMM d, yyyy")}
+                                  {formatDate(user.createdAt)}
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex justify-end gap-1">
                                     <Button
                                       variant="ghost"
                                       size="icon-sm"
-                                      onClick={() => setFormUser(user)}
+                                      onClick={() => onEdit(user)}
                                       aria-label={`Edit ${user.name}`}
                                     >
                                       <Pencil />
@@ -272,7 +415,7 @@ export default function AdminUsers() {
                   onPageChange={setPage}
                 />
               </>
-            ) : search !== "" ? (
+            ) : filtered ? (
               <Empty className="py-12">
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
@@ -280,11 +423,15 @@ export default function AdminUsers() {
                   </EmptyMedia>
                   <EmptyTitle>No matching users</EmptyTitle>
                   <EmptyDescription>
-                    No users match &ldquo;{search}&rdquo;. Try a different name or email.
+                    {search !== "" ? (
+                      <>No users match &ldquo;{search}&rdquo; with these filters.</>
+                    ) : (
+                      "No users match these filters."
+                    )}
                   </EmptyDescription>
                 </EmptyHeader>
-                <Button variant="outline" onClick={() => setSearch("")}>
-                  Clear search
+                <Button variant="outline" onClick={clearFilters}>
+                  Clear filters
                 </Button>
               </Empty>
             ) : (
@@ -298,7 +445,7 @@ export default function AdminUsers() {
                     Create your first employee account to get started.
                   </EmptyDescription>
                 </EmptyHeader>
-                <Button onClick={() => setFormUser("new")}>
+                <Button onClick={() => onEdit("new")}>
                   <Plus />
                   New user
                 </Button>
@@ -308,13 +455,6 @@ export default function AdminUsers() {
         )}
       </div>
 
-      <UserFormDialog
-        open={formUser !== null}
-        user={formUser === "new" ? null : formUser}
-        onOpenChange={(open) => {
-          if (!open) setFormUser(null);
-        }}
-      />
       <DeleteUserDialog
         user={deleting}
         onOpenChange={(open) => {
@@ -372,6 +512,8 @@ function UserFormDialog({
   const [role, setRole] = useState<Role>("employee");
   const [department, setDepartment] = useState<string>(NO_DEPARTMENT);
   const [password, setPassword] = useState("");
+  const [hourlyRate, setHourlyRate] = useState("0");
+  const [employment, setEmployment] = useState<EmploymentForm>(() => employmentFormFrom(null));
   const [submitted, setSubmitted] = useState(false);
 
   const departmentOptions = useMemo(
@@ -394,7 +536,11 @@ function UserFormDialog({
       setRole(user?.role ?? "employee");
       setDepartment(user?.department ?? NO_DEPARTMENT);
       setPassword("");
+      setHourlyRate(String(user?.hourlyRate ?? 0));
+      setEmployment(employmentFormFrom(user));
       setSubmitted(false);
+      create.reset();
+      update.reset();
     }
   }, [open, user]);
 
@@ -404,6 +550,19 @@ function UserFormDialog({
     submitted && (isEdit ? password !== "" && password.length < 8 : password.length < 8);
   // A head of department must have a department — the backend enforces this too.
   const headDepartmentInvalid = submitted && role === "head" && department === NO_DEPARTMENT;
+  const rateValue = hourlyRate.trim() === "" ? 0 : Number(hourlyRate);
+  const rateValid = Number.isFinite(rateValue) && rateValue >= 0 && rateValue <= 100000;
+  const rateInvalid = submitted && !rateValid;
+  const employmentErrors = validateEmployment(employment, isEdit);
+  const errorMessage = error ? getErrorMessage(error) : null;
+  // 409 duplicate employee ID → show it on the field instead of the generic alert.
+  const duplicateEmployeeId = errorMessage !== null && /employee id/i.test(errorMessage);
+  const shownEmploymentErrors = submitted
+    ? {
+        ...employmentErrors,
+        employeeId: employmentErrors.employeeId ?? (duplicateEmployeeId ? errorMessage : undefined),
+      }
+    : {};
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -412,6 +571,8 @@ function UserFormDialog({
     if (!name.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) return;
     if (isEdit ? password !== "" && password.length < 8 : password.length < 8) return;
     if (role === "head" && department === NO_DEPARTMENT) return;
+    if (!rateValid) return;
+    if (Object.keys(employmentErrors).length > 0) return;
 
     const departmentValue: string | null =
       department === NO_DEPARTMENT ? null : department;
@@ -424,6 +585,8 @@ function UserFormDialog({
         department: departmentValue,
       };
       if (password) input.password = password;
+      if (rateValue !== (user.hourlyRate ?? 0)) input.hourlyRate = rateValue;
+      Object.assign(input, employmentPayload(employment, user));
       update.mutate({ id: user._id, input }, { onSuccess: () => onOpenChange(false) });
     } else {
       const input: CreateUserInput = {
@@ -432,6 +595,8 @@ function UserFormDialog({
         password,
         role,
         department: departmentValue,
+        hourlyRate: rateValue,
+        ...employmentPayload(employment, null),
       };
       create.mutate(input, { onSuccess: () => onOpenChange(false) });
     }
@@ -439,7 +604,7 @@ function UserFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? "Edit user" : "New user"}</DialogTitle>
           <DialogDescription>
@@ -550,6 +715,30 @@ function UserFormDialog({
           </div>
 
           <div className="space-y-1.5">
+            <Label htmlFor="user-hourly-rate">Hourly rate</Label>
+            <Input
+              id="user-hourly-rate"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              max={100000}
+              step="0.01"
+              value={hourlyRate}
+              onChange={(event) => setHourlyRate(event.target.value)}
+              aria-invalid={rateInvalid}
+              aria-describedby="user-hourly-rate-hint"
+            />
+            <p
+              id="user-hourly-rate-hint"
+              className={rateInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+            >
+              {rateInvalid
+                ? "Enter a rate between 0 and 100,000."
+                : "Default rate for time-log earnings. A project member rate above 0 overrides it."}
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="user-password">Password</Label>
             <Input
               id="user-password"
@@ -570,7 +759,20 @@ function UserFormDialog({
             )}
           </div>
 
-          {error && (
+          <EmploymentFields
+            form={employment}
+            onChange={(patch) => {
+              setEmployment((current) => ({ ...current, ...patch }));
+              if (patch.employeeId !== undefined && duplicateEmployeeId) {
+                create.reset();
+                update.reset();
+              }
+            }}
+            errors={shownEmploymentErrors}
+            isEdit={isEdit}
+          />
+
+          {Boolean(error) && !duplicateEmployeeId && (
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
               <AlertTitle>{isEdit ? "Update failed" : "Creation failed"}</AlertTitle>

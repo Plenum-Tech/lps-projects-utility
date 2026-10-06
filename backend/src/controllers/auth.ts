@@ -31,6 +31,15 @@ export async function login(req: Request, res: Response): Promise<void> {
 
   logActivity({ action: "login", actor: user, ip: req.ip });
 
+  issueSessionCookie(res, user);
+  res.json({ user: user.toJSON() });
+}
+
+/**
+ * Signs a JWT for `user` and sets it as the httpOnly session cookie. Shared by
+ * login and invitation acceptance so both sessions are identical.
+ */
+export function issueSessionCookie(res: Response, user: Parameters<typeof signAccessToken>[0]): void {
   const token = signAccessToken(user);
   const expiresIn = process.env.JWT_EXPIRES_IN ?? DEFAULT_EXPIRES_IN;
 
@@ -45,8 +54,6 @@ export async function login(req: Request, res: Response): Promise<void> {
     maxAge: expiresInToMs(expiresIn),
     path: "/",
   });
-
-  res.json({ user: user.toJSON() });
 }
 
 /**

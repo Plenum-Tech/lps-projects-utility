@@ -396,7 +396,7 @@ function DepartmentFormDialog({
             />
           </div>
 
-          {error && (
+          {Boolean(error) && (
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
               <AlertTitle>{isEdit ? "Update failed" : "Creation failed"}</AlertTitle>

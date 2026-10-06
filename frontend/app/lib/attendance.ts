@@ -1,3 +1,4 @@
+import { formatDateOnly, formatTimeOfDay, formatYMD } from "@/lib/format";
 import type { AttendanceStatus } from "@/types";
 
 /** Fixed attendance statuses — mirrors the backend enum. */
@@ -35,25 +36,18 @@ export const ATTENDANCE_STATUS_META: Record<
 
 /** Formats a date string (YYYY-MM-DD or ISO) for display. */
 export function formatAttendanceDate(date: string | Date): string {
-  const d = typeof date === "string" ? new Date(date + "T00:00:00.000Z") : date;
-  return d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
+  const d = typeof date === "string" ? new Date(date.slice(0, 10) + "T00:00:00.000Z") : date;
+  const weekday = d.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const formatted =
+    typeof date === "string"
+      ? formatDateOnly(date)
+      : formatYMD(d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate());
+  return `${weekday}, ${formatted}`;
 }
 
 /** Formats a time string or ISO datetime for display (e.g. "9:00 AM"). */
 export function formatTime(value: string | null | undefined): string {
-  if (!value) return "—";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  });
+  return formatTimeOfDay(value);
 }
 
 /** Returns today's date as YYYY-MM-DD in UTC. */

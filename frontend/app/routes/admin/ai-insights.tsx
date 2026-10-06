@@ -1,3 +1,4 @@
+import { redirect } from "react-router";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   AlertCircle,
@@ -13,6 +14,8 @@ import {
   XCircle,
 } from "lucide-react";
 
+import { formatDate } from "@/lib/format";
+import type { RoleHandle } from "@/components/auth/require-role";
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +40,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeleteInsight, useGenerateInsight, useInsights } from "@/hooks/use-ai-insights";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { usePagination } from "@/hooks/use-pagination";
 import { getErrorMessage } from "@/lib/api";
 import type { AiInsight } from "@/types";
 
+import { FEATURES } from "@/lib/features";
+
 import type { Route } from "./+types/ai-insights";
+
+/** Hidden while the feature switch is off (see lib/features.ts). */
+export function loader() {
+  if (!FEATURES.aiInsights) throw redirect("/dashboard");
+  return null;
+}
+
+/** Heads may use this page too (the API allows admin + head); see routes/admin/layout.tsx. */
+export const handle: RoleHandle = {
+  roles: ["admin", "head"],
+  deniedTitle: "Admins and department heads only",
+  deniedDescription: "AI insights are available to administrators and department heads.",
+};
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "AI Insights | Employee Management System" }];
@@ -78,6 +97,8 @@ export default function AdminAiInsights() {
   const [generateOpen, setGenerateOpen] = useState(false);
   const [viewing, setViewing] = useState<AiInsight | null>(null);
   const [deleting, setDeleting] = useState<AiInsight | null>(null);
+  // Deleting insights is admin-only on the API.
+  const isAdmin = useCurrentUser().data?.role === "admin";
 
   useEffect(() => {
     setTotal(data?.total ?? 0);
@@ -133,7 +154,7 @@ export default function AdminAiInsights() {
                   key={insight._id}
                   insight={insight}
                   onView={() => setViewing(insight)}
-                  onDelete={() => setDeleting(insight)}
+                  onDelete={isAdmin ? () => setDeleting(insight) : undefined}
                 />
               ))}
             </div>
@@ -207,7 +228,8 @@ function InsightCard({
 }: {
   insight: AiInsight;
   onView: () => void;
-  onDelete: () => void;
+  /** Omitted for non-admins. */
+  onDelete?: () => void;
 }) {
   const meta = STATUS_META[insight.status];
   const Icon = meta.icon;
@@ -237,11 +259,7 @@ function InsightCard({
           )}
           <p className="mt-1 text-xs text-muted-foreground">
             {insight.period} ·{" "}
-            {new Date(insight.createdAt).toLocaleDateString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-            })}
+            {formatDate(insight.createdAt)}
             {insight.department && (
               <> · {insight.department.name}</>
             )}
@@ -260,13 +278,11 @@ function InsightCard({
             <Eye />
             View
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onDelete}
-          >
-            <Trash2 className="text-destructive" />
-          </Button>
+          {onDelete && (
+            <Button variant="ghost" size="sm" onClick={onDelete} aria-label="Delete insight">
+              <Trash2 className="text-destructive" />
+            </Button>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -519,11 +535,7 @@ function InsightDetailDialog({
               <DialogTitle>{insight.title}</DialogTitle>
               <DialogDescription>
                 {insight.period} · Generated on{" "}
-                {new Date(insight.createdAt).toLocaleDateString("en-US", {
-                  month: "long",
-                  day: "numeric",
-                  year: "numeric",
-                })}
+                {formatDate(insight.createdAt)}
                 {insight.department && <> · {insight.department.name}</>}
               </DialogDescription>
             </DialogHeader>

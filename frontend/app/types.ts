@@ -13,6 +13,21 @@ export interface User {
   role: Role;
   /** Department id when assigned (single department per employee). */
   department?: string | null;
+  /** Email notification switches (present on /auth/me and user responses). */
+  emailPreferences?: EmailPreferences;
+  /** Default hourly rate for time-log earnings (admin-editable). */
+  hourlyRate?: number;
+  /** Project ids pinned by this user. */
+  pinnedProjects?: string[];
+  /* HR fields (self / admin responses only). Date-only values are UTC-midnight ISO strings. */
+  designation?: string;
+  employeeId?: string | null;
+  dateOfBirth?: string | null;
+  joiningDate?: string | null;
+  probationEndDate?: string | null;
+  internshipEndDate?: string | null;
+  noticePeriodStart?: string | null;
+  noticePeriodEnd?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -89,6 +104,16 @@ export interface CreateUserInput {
   password: string;
   role?: Role;
   department?: string | null;
+  hourlyRate?: number;
+  /* HR fields — "YYYY-MM-DD"; "" / null clears (employeeId: blank → auto on create). */
+  designation?: string | null;
+  employeeId?: string | null;
+  dateOfBirth?: string | null;
+  joiningDate?: string | null;
+  probationEndDate?: string | null;
+  internshipEndDate?: string | null;
+  noticePeriodStart?: string | null;
+  noticePeriodEnd?: string | null;
 }
 
 /** PATCH /api/users/:id body (admin-only endpoint). */
@@ -100,6 +125,16 @@ export interface UpdateUserInput {
   department?: string | null;
   /** Optional password reset — omitted/empty keeps the current password. */
   password?: string;
+  hourlyRate?: number;
+  /* HR fields — "YYYY-MM-DD"; "" / null clears (employeeId: blank → auto on create). */
+  designation?: string | null;
+  employeeId?: string | null;
+  dateOfBirth?: string | null;
+  joiningDate?: string | null;
+  probationEndDate?: string | null;
+  internshipEndDate?: string | null;
+  noticePeriodStart?: string | null;
+  noticePeriodEnd?: string | null;
 }
 
 /** PATCH /api/users/me body — employees may only change name + password. */
@@ -107,6 +142,11 @@ export interface UpdateProfileInput {
   name?: string;
   currentPassword?: string;
   password?: string;
+}
+
+/** GET /api/users/me — own profile with the department populated. */
+export interface MyProfile extends Omit<User, "department"> {
+  department: { _id: string; name: string } | null;
 }
 
 /** Successful auth/user responses are wrapped as `{ user }`. */
@@ -152,7 +192,28 @@ export type ActivityAction =
   | "task_status_updated"
   | "task_submitted"
   | "task_reviewed"
-  | "ai_insight_deleted";
+  | "task_updated"
+  | "task_deleted"
+  | "task_settings_updated"
+  | "ai_insight_deleted"
+  | "project_created"
+  | "project_updated"
+  | "project_archived"
+  | "project_deleted"
+  | "timelog_reviewed"
+  | "timesheet_reviewed"
+  | "project_settings_updated"
+  | "user_invited"
+  | "invitation_resent"
+  | "invitation_revoked"
+  | "invitation_accepted"
+  | "document_created"
+  | "document_updated"
+  | "document_deleted"
+  | "meeting_created"
+  | "meeting_deleted"
+  | "meeting_tasks_created"
+  | "settings_updated";
 
 /** Mirrors the backend ActivityLog model as returned by the API (Mongoose toJSON). */
 export interface ActivityLog {
@@ -216,7 +277,8 @@ export interface Leave {
   days: number;
   reason: string;
   status: LeaveStatus;
-  decidedBy?: string | null;
+  /** Admin / department head who decided it (populated with name in list responses). */
+  decidedBy?: Pick<User, "_id" | "name"> | string | null;
   decisionNote?: string;
   decidedAt?: string | null;
   createdAt: string;
@@ -380,6 +442,7 @@ export interface FeedbackListResponse {
 export type NotificationType =
   | "leave_approved"
   | "leave_rejected"
+  | "leave_requested"
   | "feedback_responded"
   | "announcement_created"
   | "review_assigned"
@@ -387,7 +450,34 @@ export type NotificationType =
   | "task_assigned"
   | "task_completed"
   | "task_approved"
-  | "task_rejected";
+  | "task_rejected"
+  | "task_updated"
+  | "task_status_changed"
+  | "task_comment"
+  | "task_mention"
+  | "subtask_created"
+  | "subtask_assigned"
+  | "subtask_completed"
+  | "task_note"
+  | "task_note_mention"
+  | "task_reminder"
+  | "task_overdue"
+  | "project_member_added"
+  | "project_status_changed"
+  | "project_deadline"
+  | "project_note"
+  | "project_file"
+  | "timelog_pending"
+  | "timelog_approved"
+  | "timelog_rejected"
+  | "timesheet_submitted"
+  | "timesheet_approved"
+  | "timesheet_rejected"
+  | "time_tracker_reminder"
+  | "timer_auto_stopped"
+  | "user_joined"
+  | "document_expiring"
+  | "hr_date_upcoming";
 
 /** Mirrors the backend Notification model as returned by the API. */
 export interface Notification {
@@ -400,8 +490,12 @@ export interface Notification {
   title: string;
   message: string;
   read: boolean;
-  /** Optional frontend route to navigate to on click. */
+  /** Optional frontend route to navigate to on click (`/tasks?task=<id>` for task types). */
   link?: string;
+  /** Task id for task notifications, null otherwise. */
+  task?: string | null;
+  /** Project id for project / time notifications. */
+  project?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -631,7 +725,7 @@ export interface PerformanceReview {
   updatedAt: string;
 }
 
-/** POST /api/performance-reviews body. */
+/** POST /api/performance-reviews body. Reviews are written manually; `aiDraft` is opt-in. */
 export interface CreateReviewInput {
   employeeId: string;
   period: string;
@@ -642,6 +736,22 @@ export interface CreateReviewInput {
     status?: GoalStatus;
     dueDate?: string;
   }>;
+  summary?: string;
+  strengths?: string;
+  improvements?: string;
+  /** Ask Gemini to draft the text. Only allowed when the server has AI drafting on. */
+  aiDraft?: boolean;
+}
+
+/** POST /api/performance-reviews response — `warnings` when AI drafting couldn't start. */
+export interface CreateReviewResponse {
+  review: PerformanceReview;
+  warnings?: string[];
+}
+
+/** GET /api/performance-reviews/config. */
+export interface ReviewConfig {
+  aiDraftsEnabled: boolean;
 }
 
 /** PATCH /api/performance-reviews/:id body. */
@@ -681,6 +791,8 @@ export interface ReviewListResponse {
   total: number;
   limit: number | null;
   offset: number;
+  /** Admin/head list only: whether AI drafting is switched on server-side. */
+  aiDraftsEnabled?: boolean;
 }
 
 /* ------------------------------------------------------------------ */
@@ -696,43 +808,272 @@ export type TaskStatusFilter = TaskStatus | "all";
 /** Fixed task priorities — mirrors the backend `TASK_PRIORITIES` enum. */
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
 
+/** Which slice of tasks GET /api/tasks returns (`all` = everything the role can see). */
+export type TaskScope = "assigned" | "created" | "all" | "approvals";
+
+/** Quick due-date filter. */
+export type TaskDueFilter = "overdue" | "today" | "week";
+
+/** Theme colour tokens a label can use (rendered via CSS variables, never hex). */
+export type LabelColor =
+  | "chart-1"
+  | "chart-2"
+  | "chart-3"
+  | "chart-4"
+  | "chart-5"
+  | "primary"
+  | "secondary"
+  | "accent"
+  | "muted"
+  | "destructive";
+
+/** Minimal populated user reference. */
+export interface UserRef {
+  _id: string;
+  name: string;
+  email: string;
+}
+
+/** Populated assignee (department is an id, not populated). */
+export interface AssigneeRef extends UserRef {
+  role: Role;
+  department: string | null;
+}
+
+export interface Subtask {
+  _id: string;
+  title: string;
+  /** Plain text (may be missing on subtasks created before the full form). */
+  description?: string;
+  done: boolean;
+  /** Null when unassigned (or the assignee was deleted). */
+  assignee: UserRef | null;
+  startDate?: string | null;
+  dueDate: string | null;
+  completedAt: string | null;
+  /** User id (not populated). */
+  createdBy: string;
+  /** User id of the last editor. */
+  updatedBy?: string | null;
+}
+
+export type RecurrenceUnit = "day" | "week" | "month";
+
+export interface Recurrence {
+  every: number;
+  unit: RecurrenceUnit;
+  /** -1 = forever. */
+  cycles: number;
+  generated: number;
+  nextRunAt: string;
+}
+
+/** Label as embedded on a task. */
+export interface TaskLabelRef {
+  _id: string;
+  name: string;
+  color: LabelColor;
+}
+
 /** Mirrors the backend Task model as returned by the API (populated refs). */
 export interface Task {
   _id: string;
   title: string;
   description?: string;
-  assignedTo: Pick<User, "_id" | "name" | "email">;
-  assignedBy: Pick<User, "_id" | "name" | "email">;
-  department?: Pick<Department, "_id" | "name"> | null;
+  assignees: AssigneeRef[];
+  /** Creator. */
+  assignedBy: UserRef;
+  department: Pick<Department, "_id" | "name"> | null;
+  category: { _id: string; name: string } | null;
+  labels: TaskLabelRef[];
   status: TaskStatus;
   priority: TaskPriority;
-  dueDate?: string | null;
+  /** Date-only fields come back as UTC midnight ISO strings — render as UTC. */
+  startDate: string | null;
+  dueDate: string | null;
+  /** Order within a board column, ascending. */
+  position: number;
+  subtasks: Subtask[];
+  recurrence: Recurrence | null;
+  recurringParent: string | null;
+  lastReminderSentOn: string | null;
+  lastManualReminderAt: string | null;
   submissionNotes?: string;
-  submittedAt?: string | null;
+  submittedAt: string | null;
   reviewNotes?: string;
-  reviewedAt?: string | null;
-  reviewedBy?: Pick<User, "_id" | "name"> | null;
-  completedAt?: string | null;
+  reviewedAt: string | null;
+  reviewedBy: Pick<User, "_id" | "name"> | null;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  commentCount: number;
+  fileCount: number;
+  /** Project the task belongs to (populated), null for standalone tasks. */
+  project?: TaskProjectRef | null;
+  milestone?: TaskMilestoneRef | null;
+  /** e.g. "WEB-12" — only for project tasks. */
+  shortCode?: string | null;
+  /** Global sequence ("#<number>" when there's no short code). Null only before migrate:tables. */
+  number?: number | null;
+  /** Estimated effort in minutes (0..100000). */
+  estimateMinutes?: number | null;
+  /** Finished pending + approved time logs (running / rejected excluded). */
+  loggedMinutes?: number;
+  /** Pinned by the caller. */
+  pinned?: boolean;
+  /** Only on GET /api/tasks?recurring=true: generated copies. */
+  copyCount?: number;
+  /**
+   * Meeting the task was created from. Lists carry the meeting id; the task
+   * detail (GET /api/tasks/:id) populates `{ _id, title }` and the line's `start`.
+   */
+  sourceMeeting?: TaskSourceMeeting | null;
 }
 
-/** POST /api/tasks body. */
-export interface TaskInput {
+export interface TaskSourceMeeting {
+  meeting: string | { _id: string; title: string };
+  segmentIdx: number | null;
+  /** Seconds from the meeting start (detail only). */
+  start?: number | null;
+}
+
+/** What the current user may do with a task (computed server-side). */
+export interface TaskPermissions {
+  canEdit: boolean;
+  canDelete: boolean;
+  canReview: boolean;
+  canRemind: boolean;
+  /** Add/edit/delete any subtask (task managers + head of the task's department). */
+  canManageSubtasks: boolean;
+  /** Add subtasks — managers and task assignees (assignees edit/delete only their own). */
+  canAddSubtasks?: boolean;
+  /** Toggle `done` (non-managers: only subtasks assigned to them or unassigned). */
+  canToggleSubtasks: boolean;
+  canSubmit: boolean;
+  /** Valid targets for /status and /move. */
+  allowedStatuses: TaskStatus[];
+  /** May copy the task (project tasks: create rights in the project; standalone: heads/admins). */
+  canDuplicate?: boolean;
+  /** May start a timer / log time on this task. */
+  canLogTime?: boolean;
+  /** Project has requireTaskApproval: false — submitting completes directly. */
+  skipsReview?: boolean;
+  /** Task of an archived project — everything is read-only. */
+  readOnly?: boolean;
+}
+
+/** GET /api/tasks/:id and every task mutation. */
+export interface TaskDetailResponse {
+  task: Task;
+  permissions: TaskPermissions;
+  /** Non-blocking warnings on create/update (e.g. due date after milestone end). */
+  warnings?: string[];
+  /** Subtask mutations: the subtask that was added/updated. */
+  subtaskId?: string;
+}
+
+/** Subtask as sent on create. Dates are "YYYY-MM-DD". */
+export interface SubtaskInput {
   title: string;
   description?: string;
-  assignedTo: string;
-  priority?: TaskPriority;
-  dueDate?: string;
+  assignee?: string | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+  /** Hold notifications until POST .../notify (after the form uploads files). */
+  deferNotifications?: boolean;
 }
 
-/** PATCH /api/tasks/:id body. */
-export interface TaskUpdateInput {
+export interface RecurrenceInput {
+  every: number;
+  unit: RecurrenceUnit;
+  cycles: number;
+}
+
+/** POST /api/tasks body. Dates are "YYYY-MM-DD". */
+export interface TaskInput {
+  title: string;
+  /** 0..100000 minutes; null clears. */
+  estimateMinutes?: number | null;
+  description?: string;
+  assignees: string[];
+  priority?: TaskPriority;
+  startDate?: string | null;
+  dueDate?: string | null;
+  labels?: string[];
+  category?: string | null;
+  subtasks?: SubtaskInput[];
+  recurrence?: RecurrenceInput | null;
+  /** Project id (null on update detaches the task). */
+  project?: string | null;
+  /** Milestone id within the project (null clears). */
+  milestone?: string | null;
+}
+
+/** PATCH /api/tasks/:id body — any subset of TaskInput except subtasks. */
+export type TaskUpdateInput = Partial<Omit<TaskInput, "subtasks">>;
+
+/** PATCH /api/tasks/:id/subtasks/:subId body. */
+export interface SubtaskUpdateInput {
   title?: string;
   description?: string;
-  assignedTo?: string;
-  priority?: TaskPriority;
-  dueDate?: string;
+  assignee?: string | null;
+  startDate?: string | null;
+  dueDate?: string | null;
+  done?: boolean;
+  deferNotifications?: boolean;
+}
+
+/** GET /api/tasks/subtasks/mine row. */
+export interface MySubtask {
+  _id: string;
+  title: string;
+  startDate: string | null;
+  dueDate: string | null;
+  task: {
+    _id: string;
+    title: string;
+    shortCode: string | null;
+    status: TaskStatus;
+    project: { _id: string; name: string; code: string } | null;
+  };
+}
+
+export interface MySubtasksResponse {
+  subtasks: MySubtask[];
+  total: number;
+}
+
+export type TaskNoteVisibility = "task" | "private";
+
+/** Task note (GET /api/tasks/:id/notes) with the caller's rights. */
+export interface TaskNote {
+  _id: string;
+  task: string;
+  author: UserRef;
+  title: string;
+  /** Raw body including `@[Name](userId)` mention tokens. */
+  body: string;
+  visibility: TaskNoteVisibility;
+  mentions: UserRef[];
+  pinned: boolean;
+  editedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+  canPin: boolean;
+  canDelete: boolean;
+}
+
+export interface TaskNoteListResponse {
+  notes: TaskNote[];
+  total: number;
+}
+
+export interface TaskNoteInput {
+  title?: string;
+  body?: string;
+  visibility?: TaskNoteVisibility;
+  pinned?: boolean;
 }
 
 /** POST /api/tasks/:id/submit body. */
@@ -746,16 +1087,276 @@ export interface TaskReviewInput {
   reviewNotes?: string;
 }
 
-/** Successful task responses are wrapped as `{ task }`. */
-export interface TaskResponse {
-  task: Task;
-}
-
 export interface TaskListResponse {
   tasks: Task[];
   total: number;
   limit: number | null;
   offset: number;
+}
+
+/** GET /api/tasks/calendar row (lean). */
+export interface TaskCalendarItem {
+  _id: string;
+  title: string;
+  shortCode: string | null;
+  number: number | null;
+  status: TaskStatus;
+  priority: TaskPriority;
+  startDate: string | null;
+  dueDate: string;
+  completedAt: string | null;
+  project: { _id: string; name: string; code: string } | null;
+  assignees: Array<{ _id: string; name: string }>;
+}
+
+export interface TaskCalendarResponse {
+  tasks: TaskCalendarItem[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
+
+/** POST /api/tasks/bulk and /api/projects/bulk response. */
+export interface BulkResult {
+  updated: number;
+  updatedIds: string[];
+  skipped: Array<{ id: string; reason: string }>;
+}
+
+export type TaskBulkAction = "status" | "assign" | "delete";
+export type ProjectBulkAction = "status" | "archive" | "restore" | "delete";
+
+/** GET /api/tasks/approvals/count. */
+export interface TaskApprovalsCount {
+  count: number;
+  isReviewer: boolean;
+}
+
+/** GET /api/tasks?view=board response. */
+export interface TaskBoardResponse {
+  columns: Record<TaskStatus, Task[]>;
+  /** Full count per column (may exceed the 200 returned). */
+  totals: Record<TaskStatus, number>;
+  limit: number;
+}
+
+/** User option from GET /api/tasks/assignable-users. */
+export interface AssignableUser {
+  _id: string;
+  name: string;
+  email: string;
+  role: Role;
+  department: Pick<Department, "_id" | "name"> | null;
+}
+
+export interface AssignableUsersResponse {
+  users: AssignableUser[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+/** User option from GET /api/tasks/:id/mentionable-users. */
+export interface MentionableUser extends UserRef {
+  role: Role;
+}
+
+export interface MentionableUsersResponse {
+  users: MentionableUser[];
+  total: number;
+  limit: null;
+  offset: number;
+}
+
+export interface TaskComment {
+  _id: string;
+  task: string;
+  author: UserRef;
+  /** Raw body including `@[Name](userId)` mention tokens. */
+  body: string;
+  mentions: UserRef[];
+  editedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskCommentListResponse {
+  comments: TaskComment[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+export interface TaskFile {
+  _id: string;
+  task: string;
+  /** Subtask id for subtask attachments; null/absent for task files. */
+  subtask?: string | null;
+  uploadedBy: UserRef;
+  filename: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskFileListResponse {
+  files: TaskFile[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+export type TaskHistoryAction =
+  | "created"
+  | "updated"
+  | "status_changed"
+  | "assignees_changed"
+  | "subtask_added"
+  | "subtask_updated"
+  | "subtask_completed"
+  | "subtask_reopened"
+  | "subtask_removed"
+  | "comment_added"
+  | "file_added"
+  | "file_removed"
+  | "note_added"
+  | "note_updated"
+  | "note_removed"
+  | "submitted"
+  | "reviewed"
+  | "reminder_sent"
+  | "created_from_meeting";
+
+export interface TaskHistoryEntry {
+  _id: string;
+  task: string;
+  /** null = system (scheduled reminders, recurring copies). */
+  actor: UserRef | null;
+  action: TaskHistoryAction;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface TaskHistoryResponse {
+  history: TaskHistoryEntry[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+export interface TaskLabel {
+  _id: string;
+  name: string;
+  color: LabelColor;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskLabelInput {
+  name?: string;
+  color?: LabelColor;
+  description?: string;
+}
+
+export interface TaskCategory {
+  _id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskSettings {
+  _id: string;
+  /** 0 = off. */
+  reminderBeforeDays: number;
+  reminderOnDeadline: boolean;
+  /** 0 = off. */
+  reminderAfterDays: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type TaskSettingsInput = Partial<
+  Pick<TaskSettings, "reminderBeforeDays" | "reminderOnDeadline" | "reminderAfterDays">
+>;
+
+/** Payload of the `task-updated` SSE event. */
+export interface TaskUpdatedEvent {
+  taskId: string;
+  title: string;
+  status: TaskStatus;
+  action:
+    | "created"
+    | "updated"
+    | "status-changed"
+    | "moved"
+    | "submitted"
+    | "reviewed"
+    | "reminded"
+    | "deleted"
+    | "subtask-added"
+    | "subtask-updated"
+    | "subtask-removed"
+    | "comment-added"
+    | "comment-updated"
+    | "comment-deleted"
+    | "file-added"
+    | "file-removed"
+    | "note-added"
+    | "note-updated"
+    | "note-deleted";
+  previousStatus?: TaskStatus;
+  position?: number;
+  actorId?: string;
+  fields?: string[];
+  decision?: "approved" | "rejected";
+  reviewedBy?: string;
+  submittedBy?: string;
+  subtaskId?: string;
+  commentId?: string;
+  fileId?: string;
+  fileIds?: string[];
+  noteId?: string;
+  projectId?: string | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Email                                                               */
+/* ------------------------------------------------------------------ */
+
+/** Per-user email switches (in-app notifications are always on). */
+export interface EmailPreferences {
+  taskAssigned: boolean;
+  taskUpdates: boolean;
+  taskComments: boolean;
+  taskReminders: boolean;
+  projectUpdates: boolean;
+  timeLogs: boolean;
+  /** Admins: someone accepted an invitation. */
+  teamUpdates: boolean;
+  /** Document expiries, probation / notice / internship end dates. */
+  hrReminders: boolean;
+  /** Admins / heads: a team member applied for leave. */
+  leaveRequests: boolean;
+}
+
+export interface SmtpStatus {
+  ok: boolean;
+  configured: boolean;
+  host: string | null;
+  from: string | null;
+  redirectTo: string | null;
+  error?: string;
+  hint?: string;
+}
+
+export interface SendTestEmailResponse {
+  success: true;
+  to: string;
+  deliveredTo: string;
+  status: SmtpStatus;
 }
 
 /* ------------------------------------------------------------------ */
@@ -808,7 +1409,11 @@ export type SSEEventType =
   | "announcement-new"
   | "review-updated"
   | "insight-ready"
-  | "review-ready";
+  | "review-ready"
+  | "project-updated"
+  | "timer-updated"
+  | "timelog-updated"
+  | "timesheet-updated";
 
 /** The shape of every SSE event pushed to clients. */
 export interface SSEEvent {
@@ -899,3 +1504,1080 @@ export interface DashboardAnalytics {
     details?: Record<string, unknown>;
   }>;
 }
+
+/* ------------------------------------------------------------------ */
+/* Projects                                                            */
+/* ------------------------------------------------------------------ */
+
+/** Theme-token colour used by project statuses (same palette as task labels). */
+export type ColorToken = LabelColor;
+
+/** `Task.project` as populated by the task endpoints. */
+export interface TaskProjectRef {
+  _id: string;
+  name: string;
+  code: string;
+  archivedAt: string | null;
+  requireTaskApproval: boolean;
+}
+
+/** `Task.milestone` as populated by the task endpoints. */
+export interface TaskMilestoneRef {
+  _id: string;
+  title: string;
+  endDate: string | null;
+  status: MilestoneStatus;
+}
+
+export interface ProjectStatus {
+  _id: string;
+  name: string;
+  color: ColorToken;
+  isDefault: boolean;
+  isCompleted: boolean;
+  order: number;
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /** Only on GET /api/project-meta/statuses. */
+  projectCount?: number;
+}
+
+export type ProjectStatusRef = Pick<
+  ProjectStatus,
+  "_id" | "name" | "color" | "isDefault" | "isCompleted" | "order"
+>;
+
+export interface ProjectStatusInput {
+  name?: string;
+  color?: ColorToken;
+  isCompleted?: boolean;
+  active?: boolean;
+}
+
+export interface ProjectCategory {
+  _id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TaskCounts {
+  todo: number;
+  in_progress: number;
+  in_review: number;
+  completed: number;
+  rejected: number;
+  total: number;
+  open: number;
+}
+
+export interface ProjectMember {
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    role: Role;
+    department: string | null;
+  };
+  /** Only when permissions.canViewRates, or the row is the caller's own. */
+  hourlyRate?: number;
+  addedAt: string;
+}
+
+export type ProgressMode = "manual" | "task_completion" | "total_time" | "deadline";
+
+export interface Project {
+  _id: string;
+  name: string;
+  code: string;
+  summary?: string;
+  category: { _id: string; name: string } | null;
+  departments: { _id: string; name: string }[];
+  manager: UserRef | null;
+  members: ProjectMember[];
+  status: ProjectStatusRef;
+  startDate: string;
+  deadline: string | null;
+  progressMode: ProgressMode;
+  progress: number;
+  hoursAllocated: number | null;
+  /** Only when permissions.canViewRates. */
+  budget?: number | null;
+  isPublic: boolean;
+  manualTimeLogs: boolean;
+  requireTaskApproval: boolean;
+  taskCounter: number;
+  createdBy: UserRef;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  pinned: boolean;
+  isOverdue: boolean;
+  taskCounts: TaskCounts;
+  loggedMinutes: number;
+}
+
+export interface ProjectPermissions {
+  canEdit: boolean;
+  canChangeStatus: boolean;
+  canManageMembers: boolean;
+  canManageMilestones: boolean;
+  canArchive: boolean;
+  canRestore: boolean;
+  canDelete: boolean;
+  canDuplicate: boolean;
+  canCreateTasks: boolean;
+  canUploadFiles: boolean;
+  canAddNotes: boolean;
+  canViewRates: boolean;
+  canLogTime: boolean;
+  canApproveTime: boolean;
+  isManager: boolean;
+  isMember: boolean;
+}
+
+export type MilestoneStatus = "incomplete" | "complete";
+
+export interface MilestoneSummary {
+  _id: string;
+  title: string;
+  status: MilestoneStatus;
+  startDate: string | null;
+  endDate: string | null;
+  taskCount: number;
+  completedTaskCount: number;
+  progress: number;
+}
+
+export interface ProjectStats {
+  taskCounts: TaskCounts;
+  overdueTasks: number;
+  loggedMinutes: number;
+  approvedMinutes: number;
+  pendingMinutes: number;
+  allocatedMinutes: number | null;
+  earnings: number | null;
+  memberCount: number;
+  milestones: { total: number; completed: number; items: MilestoneSummary[] };
+}
+
+export interface ProjectDetailResponse {
+  project: Project;
+  permissions: ProjectPermissions;
+  stats: ProjectStats;
+}
+
+export interface ProjectListResponse {
+  projects: Project[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+export interface ProjectInput {
+  name: string;
+  code: string;
+  summary?: string;
+  category?: string | null;
+  departments?: string[];
+  manager?: string | null;
+  members?: (string | { user: string; hourlyRate?: number })[];
+  status?: string;
+  startDate?: string;
+  deadline?: string | null;
+  progressMode?: ProgressMode;
+  progress?: number;
+  hoursAllocated?: number | null;
+  budget?: number | null;
+  isPublic?: boolean;
+  manualTimeLogs?: boolean;
+  requireTaskApproval?: boolean;
+}
+
+export type ProjectUpdateInput = Partial<Omit<ProjectInput, "status" | "members">>;
+
+export interface ProjectDuplicateInput {
+  name?: string;
+  code: string;
+  includeTasks?: boolean;
+  startDate?: string;
+  deadline?: string | null;
+}
+
+export interface ProjectAssignableUser {
+  _id: string;
+  name: string;
+  email: string;
+  role: Role;
+  department: string | null;
+}
+
+export interface Milestone {
+  _id: string;
+  project: string;
+  title: string;
+  summary?: string;
+  startDate: string | null;
+  endDate: string | null;
+  status: MilestoneStatus;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  taskCount: number;
+  completedTaskCount: number;
+  progress: number;
+}
+
+export interface MilestoneInput {
+  title?: string;
+  summary?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+}
+
+export type NoteVisibility = "members" | "private";
+
+export interface ProjectNote {
+  _id: string;
+  project: string;
+  author: UserRef;
+  title: string;
+  body: string;
+  visibility: NoteVisibility;
+  sharedWith: UserRef[];
+  createdAt: string;
+  updatedAt: string;
+  canEdit: boolean;
+}
+
+export interface ProjectNoteInput {
+  title?: string;
+  body?: string;
+  visibility?: NoteVisibility;
+  sharedWith?: string[];
+}
+
+export interface ProjectFile {
+  _id: string;
+  project: string;
+  uploadedBy: UserRef;
+  filename: string;
+  mimeType: string;
+  size: number;
+  createdAt: string;
+  updatedAt: string;
+  canDelete?: boolean;
+}
+
+export type ProjectActivityAction =
+  | "created"
+  | "updated"
+  | "status_changed"
+  | "member_added"
+  | "member_removed"
+  | "member_rate_changed"
+  | "manager_changed"
+  | "milestone_created"
+  | "milestone_updated"
+  | "milestone_completed"
+  | "milestone_reopened"
+  | "milestone_deleted"
+  | "file_added"
+  | "file_removed"
+  | "note_added"
+  | "note_updated"
+  | "note_deleted"
+  | "archived"
+  | "restored"
+  | "duplicated";
+
+export interface ProjectActivity {
+  _id: string;
+  project: string;
+  actor: UserRef | null;
+  action: ProjectActivityAction;
+  details: Record<string, unknown> | null;
+  createdAt: string;
+}
+
+export interface ProjectSettings {
+  _id: string;
+  logTimeFor: "project" | "task";
+  approvalRequired: boolean;
+  autoStopTimerAt: string | null;
+  trackerReminderAt: string | null;
+  deadlineReminderDays: number;
+  deadlineReminderTo: ("manager" | "members" | "admins")[];
+  dailyTimeLogReport: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ProjectSettingsInput = Partial<
+  Omit<ProjectSettings, "_id" | "createdAt" | "updatedAt">
+>;
+
+/** Payload of the `project-updated` SSE event. */
+export interface ProjectUpdatedEvent {
+  projectId: string;
+  action: string;
+  name?: string;
+  actorId?: string;
+  [key: string]: unknown;
+}
+
+/* ------------------------------------------------------------------ */
+/* Time logs                                                           */
+/* ------------------------------------------------------------------ */
+
+export type TimeLogStatus = "pending" | "approved" | "rejected";
+export type TimeLogSource = "timer" | "manual" | "timesheet";
+export type TimeLogScope = "mine" | "team" | "all" | "approvals";
+
+export interface TimeLog {
+  _id: string;
+  user: { _id: string; name: string; email: string; department: string | null };
+  project: { _id: string; name: string; code: string } | null;
+  task: { _id: string; title: string; shortCode: string | null } | null;
+  startTime: string;
+  /** null = timer still running. */
+  endTime: string | null;
+  breaks: { _id: string; startTime: string; endTime: string | null; reason?: string }[];
+  durationMinutes: number;
+  breakMinutes: number;
+  memo: string;
+  source: TimeLogSource;
+  hourlyRate: number;
+  earnings: number;
+  status: TimeLogStatus;
+  reviewedBy: { _id: string; name: string } | null;
+  reviewedAt: string | null;
+  rejectReason?: string;
+  weeklyTimesheet: string | null;
+  addedBy: { _id: string; name: string };
+  editedBy: { _id: string; name: string } | null;
+  autoStopped: boolean;
+  createdAt: string;
+  updatedAt: string;
+  isRunning: boolean;
+  isPaused: boolean;
+  permissions: { canEdit: boolean; canDelete: boolean; canApprove: boolean; canStop: boolean };
+}
+
+export interface TimeLogListResponse {
+  logs: TimeLog[];
+  total: number;
+  limit: number | null;
+  offset: number;
+  totals: { minutes: number; earnings: number; count: number };
+}
+
+export interface TimerStartInput {
+  project?: string;
+  task?: string;
+  memo?: string;
+}
+
+export interface ManualTimeLogInput {
+  project?: string;
+  task?: string;
+  startTime: string;
+  endTime: string;
+  memo?: string;
+  user?: string;
+}
+
+export interface TimeLogUpdateInput {
+  memo?: string;
+  startTime?: string;
+  endTime?: string;
+  project?: string | null;
+  task?: string | null;
+}
+
+/** Payload of the `timer-updated` SSE event. */
+export interface TimerUpdatedEvent {
+  action: "started" | "paused" | "resumed" | "stopped" | "deleted";
+  timer: TimeLog | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Weekly timesheets                                                   */
+/* ------------------------------------------------------------------ */
+
+export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
+
+export interface TimesheetEntry {
+  task: string;
+  /** "YYYY-MM-DD" on input; UTC-midnight ISO on output. */
+  date: string;
+  minutes: number;
+}
+
+export interface Timesheet {
+  _id: string;
+  user: { _id: string; name: string; email: string; department: string | null };
+  weekStart: string;
+  weekStartKey: string;
+  status: TimesheetStatus;
+  entries: TimesheetEntry[];
+  submittedAt: string | null;
+  reviewedBy: { _id: string; name: string } | null;
+  reviewedAt: string | null;
+  rejectReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TimesheetTask {
+  _id: string;
+  title: string;
+  shortCode: string | null;
+  status: string;
+  project: { _id: string; name: string; code: string } | null;
+}
+
+export interface TimesheetView {
+  timesheet: Timesheet;
+  tasks: TimesheetTask[];
+  /** 7 × "YYYY-MM-DD", Mon..Sun. */
+  days: string[];
+  totals: { byDay: Record<string, number>; byTask: Record<string, number>; total: number };
+  permissions: { canEdit: boolean; canSubmit: boolean; canReview: boolean };
+}
+
+export interface PendingTimesheet extends Timesheet {
+  totalMinutes: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Work reports                                                        */
+/* ------------------------------------------------------------------ */
+
+export type TimeReportGroupBy = "user" | "project" | "task" | "day";
+
+export interface TimeReportRow {
+  key: string | null;
+  label: string;
+  sublabel: string | null;
+  minutes: number;
+  hours: number;
+  earnings: number;
+  count: number;
+}
+
+export interface TimeReportSummary {
+  from: string | null;
+  to: string | null;
+  groupBy: TimeReportGroupBy;
+  rows: TimeReportRow[];
+  totals: { minutes: number; hours: number; earnings: number; count: number };
+}
+
+export interface TaskReportSummary {
+  from: string | null;
+  to: string | null;
+  totals: {
+    total: number;
+    completed: number;
+    open: number;
+    overdue: number;
+    completionRate: number;
+    onTime: number;
+    late: number;
+  };
+  byStatus: { status: TaskStatus; count: number }[];
+  byPriority: { priority: TaskPriority; count: number }[];
+  byEmployee: {
+    userId: string;
+    name: string;
+    email: string;
+    total: number;
+    completed: number;
+    overdue: number;
+    onTime: number;
+    late: number;
+  }[];
+  byProject: {
+    projectId: string | null;
+    name: string;
+    code: string | null;
+    total: number;
+    completed: number;
+    overdue: number;
+  }[];
+  overdue: {
+    _id: string;
+    title: string;
+    shortCode: string | null;
+    status: TaskStatus;
+    priority: TaskPriority;
+    dueDate: string;
+    daysOverdue: number;
+    assignees: { _id: string; name: string }[];
+    project: { _id: string; name: string; code: string } | null;
+  }[];
+}
+
+export interface TimesheetReportRow extends Omit<Timesheet, "entries" | "user"> {
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    department: { _id: string; name: string } | null;
+  };
+  totalMinutes: number;
+  entryCount: number;
+  canReview: boolean;
+}
+
+export interface TimesheetReportResponse {
+  timesheets: TimesheetReportRow[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+/** Shared `{ <items>, total, limit, offset }` list envelope. */
+export type Paginated<K extends string, T> = { [P in K]: T[] } & {
+  total: number;
+  limit: number | null;
+  offset: number;
+};
+
+/* ------------------------------------------------------------------ */
+/* Invitations                                                         */
+/* ------------------------------------------------------------------ */
+
+/** Stored status plus the derived "expired" (pending past its expiry). */
+export type InvitationState = "pending" | "accepted" | "expired" | "revoked";
+
+/** Mirrors the backend Invitation model (populated) as returned by the admin API. */
+export interface Invitation {
+  _id: string;
+  email: string;
+  role: Role;
+  department: Pick<Department, "_id" | "name"> | null;
+  projects: Array<{ _id: string; name: string; code: string; archivedAt?: string | null }>;
+  message?: string;
+  status: "pending" | "accepted" | "revoked";
+  state: InvitationState;
+  expiresAt: string;
+  invitedBy: Pick<User, "_id" | "name" | "email"> | null;
+  lastSentAt: string;
+  sendCount: number;
+  acceptedAt?: string | null;
+  acceptedUser?: Pick<User, "_id" | "name" | "email"> | null;
+  revokedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface InvitationListResponse {
+  invitations: Invitation[];
+  total: number;
+  limit: number | null;
+  offset: number;
+  counts: Record<InvitationState, number>;
+}
+
+export interface CreateInvitationsInput {
+  emails: string[];
+  role: Role;
+  department?: string | null;
+  projects?: string[];
+  message?: string;
+}
+
+export type InviteResultStatus = "invited" | "resent" | "already_user" | "invalid";
+
+export interface InviteResult {
+  email: string;
+  status: InviteResultStatus;
+  invitation?: Invitation | null;
+  /** Returned once per send so the admin can share the link if email fails. */
+  acceptUrl?: string;
+}
+
+export interface InvitationSendResponse {
+  invitation: Invitation;
+  acceptUrl: string;
+}
+
+/** Public preview of an invite (GET /invitations/accept/:token). */
+export interface InvitationPreview {
+  email: string;
+  role: Role;
+  department: { name: string } | null;
+  invitedBy: { name: string };
+  expiresAt: string;
+}
+
+export interface AcceptInvitationResponse {
+  user: User;
+  /** e.g. "You joined as an employee because …" */
+  notices: string[];
+}
+
+/* ------------------------------------------------------------------ */
+/* My dashboard (GET /api/dashboard/me*)                               */
+/* ------------------------------------------------------------------ */
+
+/** Colleague reference on the personal dashboard (designation is "" when unset). */
+export interface PersonRef {
+  _id: string;
+  name: string;
+  designation: string;
+}
+
+/** Whose restricted HR data the viewer receives. */
+export type HrScope = "self" | "department" | "all";
+
+export interface WeekTimelogDay {
+  /** "YYYY-MM-DD". */
+  date: string;
+  minutes: number;
+  breakMinutes: number;
+}
+
+export interface WeekTimelogs {
+  /** Only on GET /dashboard/me/timelogs. */
+  today?: string;
+  weekStart: string;
+  weekEnd: string;
+  days: WeekTimelogDay[];
+  totalMinutes: number;
+  totalBreakMinutes: number;
+}
+
+export interface MyDashboardTask {
+  _id: string;
+  code: string;
+  title: string;
+  labels: TaskLabelRef[];
+  status: Exclude<TaskStatus, "completed">;
+  dueDate: string | null;
+  priority: TaskPriority;
+  project: { _id: string; name: string; code: string } | null;
+  overdue: boolean;
+}
+
+export interface MyDashboardHrDate {
+  user: PersonRef;
+  date: string;
+  inDays: number;
+}
+
+export interface MyDashboard {
+  /** "YYYY-MM-DD" in the server's APP_TIMEZONE. */
+  today: string;
+  hrScope: HrScope;
+  profile: {
+    _id: string;
+    name: string;
+    email: string;
+    role: Role;
+    designation: string;
+    employeeId: string | null;
+    department: { _id: string; name: string } | null;
+    avatarInitials: string;
+    joiningDate: string | null;
+  };
+  counts: {
+    openTasks: number;
+    pendingTasks: number;
+    overdueTasks: number;
+    projects: number;
+    projectsInProgress: number;
+    projectsOverdue: number;
+  };
+  myTasks: MyDashboardTask[];
+  onLeaveToday: { user: PersonRef; until: string }[];
+  birthdays: { user: PersonRef; day: number; month: number; inDays: number }[];
+  joiningsAndAnniversaries: {
+    user: PersonRef;
+    kind: "joining" | "anniversary";
+    years: number;
+    date: string;
+  }[];
+  probation: MyDashboardHrDate[];
+  notice: (MyDashboardHrDate & { startDate: string | null })[];
+  internship: MyDashboardHrDate[];
+  documentExpiries: {
+    _id: string;
+    name: string;
+    type: DocumentType;
+    user: { _id: string; name: string };
+    expiryDate: string;
+    inDays: number;
+  }[];
+  totals: {
+    onLeaveToday: number;
+    birthdays: number;
+    joiningsAndAnniversaries: number;
+    probation: number;
+    notice: number;
+    internship: number;
+    documentExpiries: number;
+  };
+  weekTimelogs: WeekTimelogs;
+}
+
+export type MyCalendarItemKind = "task" | "subtask" | "leave" | "project_deadline";
+
+export interface MyCalendarItem {
+  /** "<kind>:<id>", unique. */
+  id: string;
+  kind: MyCalendarItemKind;
+  title: string;
+  /** "YYYY-MM-DD" (inclusive). */
+  start: string;
+  /** "YYYY-MM-DD" (inclusive). */
+  end: string;
+  status: string;
+  priority?: TaskPriority;
+  code?: string;
+  taskId?: string;
+  subtaskId?: string;
+  leaveId?: string;
+  leaveType?: LeaveType;
+  project?: { _id: string; name: string; code: string } | null;
+}
+
+export interface MyCalendarResponse {
+  from: string;
+  to: string;
+  items: MyCalendarItem[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+}
+
+/* ------------------------------------------------------------------ */
+/* Employee documents (/api/documents)                                 */
+/* ------------------------------------------------------------------ */
+
+export type DocumentType =
+  | "passport"
+  | "visa"
+  | "work_permit"
+  | "national_id"
+  | "driving_license"
+  | "contract"
+  | "certificate"
+  | "insurance"
+  | "other";
+
+export interface EmployeeDocument {
+  _id: string;
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    designation: string;
+    employeeId: string | null;
+    department: { _id: string; name: string } | null;
+  } | null;
+  type: DocumentType;
+  name: string;
+  issueDate: string | null;
+  /** null = never expires. */
+  expiryDate: string | null;
+  notes: string;
+  file: { filename: string; mimeType: string; size: number } | null;
+  uploadedBy: { _id: string; name: string; email: string } | null;
+  /** Days until expiry (negative = expired), null without expiry. */
+  inDays: number | null;
+  permissions: { edit: boolean; delete: boolean };
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DocumentListResponse {
+  documents: EmployeeDocument[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+export interface DocumentResponse {
+  document: EmployeeDocument;
+}
+
+/** POST / PATCH /api/documents body (sent as multipart when a file is attached). */
+export interface DocumentInput {
+  type?: DocumentType;
+  name?: string;
+  /** "YYYY-MM-DD" or "" for none. */
+  issueDate?: string;
+  expiryDate?: string;
+  notes?: string;
+  /** Owner id (admins only, create). */
+  user?: string;
+  file?: File | null;
+  /** PATCH: drop the stored file. */
+  removeFile?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Meetings (transcripts → action items → tasks) — see backend/API-CONTRACT-meetings.md
+// ---------------------------------------------------------------------------
+
+/** `Meeting.project` as populated by the meeting endpoints. */
+export interface MeetingProjectRef {
+  _id: string;
+  name: string;
+  code: string;
+  archivedAt: string | null;
+}
+
+export type MeetingSource = "upload" | "paste";
+
+export interface TranscriptSegment {
+  /** 0-based, stable — used by `?seg=<idx>`. */
+  idx: number;
+  /** Seconds from the meeting start. */
+  start: number | null;
+  end: number | null;
+  /** Name as written in the transcript. */
+  speaker: string | null;
+  /** Plain text — always rendered escaped. */
+  text: string;
+}
+
+/** Speaker → EMS user mapping (`user: null` = "Not in EMS"). */
+export interface MeetingSpeaker {
+  name: string;
+  user: UserRef | null;
+}
+
+export type ActionItemOrigin = "hint" | "ai" | "manual";
+export type ActionItemStatus = "suggested" | "task_created" | "dismissed";
+
+export interface ActionItemTaskRef {
+  _id: string;
+  title: string;
+  status: TaskStatus;
+  shortCode: string | null;
+  number: number | null;
+  dueDate: string | null;
+}
+
+export interface MeetingActionItem {
+  _id: string;
+  /** Sorted segment indexes. */
+  segmentIdxs: number[];
+  quote: string;
+  title: string;
+  assignee: UserRef | null;
+  /** Owner as named in the transcript (kept when not an EMS user). */
+  assigneeName: string | null;
+  /** "YYYY-MM-DD". */
+  dueDate: string | null;
+  priority: TaskPriority;
+  origin: ActionItemOrigin;
+  status: ActionItemStatus;
+  task: ActionItemTaskRef | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MeetingFile {
+  filename: string;
+  mimeType: string;
+  size: number;
+}
+
+export interface MeetingDetail {
+  _id: string;
+  title: string;
+  /** "YYYY-MM-DD". */
+  meetingDate: string;
+  project: MeetingProjectRef | null;
+  source: MeetingSource;
+  file: MeetingFile | null;
+  segments: TranscriptSegment[];
+  speakers: MeetingSpeaker[];
+  notes: string;
+  actionItems: MeetingActionItem[];
+  aiExtractedAt: string | null;
+  createdBy: UserRef;
+  createdAt: string;
+  updatedAt: string;
+  /** Segments the smart-hint rules flag. */
+  hintSegmentIdxs: number[];
+}
+
+export interface MeetingPermissions {
+  canEdit: boolean;
+  canDelete: boolean;
+  canCreateTasks: boolean;
+}
+
+/** GET /api/meetings/:id and every mutation that returns the detail. */
+export interface MeetingDetailResponse {
+  meeting: MeetingDetail;
+  permissions: MeetingPermissions;
+  aiEnabled: boolean;
+}
+
+export interface MeetingListItem {
+  _id: string;
+  title: string;
+  meetingDate: string;
+  project: MeetingProjectRef | null;
+  source: MeetingSource;
+  file: MeetingFile | null;
+  speakers: MeetingSpeaker[];
+  createdBy: UserRef;
+  aiExtractedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  counts: { segments: number; suggested: number; tasksCreated: number; dismissed: number };
+}
+
+export interface MeetingListResponse {
+  meetings: MeetingListItem[];
+  total: number;
+  limit: number | null;
+  offset: number;
+}
+
+/** POST /api/meetings/preview. */
+export interface MeetingPreviewResponse {
+  source: MeetingSource;
+  filename: string | null;
+  /** First 50 segments. */
+  segments: TranscriptSegment[];
+  segmentCount: number;
+  speakers: { name: string; matchedUser: UserRef | null }[];
+  warnings: string[];
+  /** Users the caller may map speakers to. */
+  candidates: UserRef[];
+}
+
+/** Transcript input shared by preview and create. */
+export type TranscriptInput = { file: File; text?: never } | { text: string; file?: never };
+
+export interface MeetingCreateInput {
+  transcript: TranscriptInput;
+  title?: string;
+  meetingDate?: string;
+  project?: string;
+  speakers?: { name: string; user: string | null }[];
+  notes?: string;
+}
+
+export interface MeetingUpdateInput {
+  title?: string;
+  meetingDate?: string;
+  project?: string | null;
+  notes?: string | null;
+  speakers?: { name: string; user: string | null }[];
+}
+
+export interface ActionItemInput {
+  segmentIdxs?: number[];
+  title?: string;
+  assignee?: string | null;
+  dueDate?: string | null;
+  priority?: TaskPriority;
+}
+
+export interface ActionItemUpdateInput extends ActionItemInput {
+  status?: "suggested" | "dismissed";
+}
+
+/** One entry of POST /api/meetings/:id/tasks. */
+export interface MeetingTaskDraft {
+  itemId?: string;
+  segmentIdxs?: number[];
+  title?: string;
+  description?: string;
+  assignees?: string[];
+  dueDate?: string | null;
+  priority?: TaskPriority;
+  project?: string | null;
+  milestone?: string | null;
+  labels?: string[];
+}
+
+export interface MeetingTasksResponse {
+  created: { itemId: string; task: Task & { warnings?: string[] } }[];
+  skipped: { itemId: string | null; reason: string }[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Company / app settings (/api/settings)                              */
+/* ------------------------------------------------------------------ */
+
+export type DateFormat = "DD-MM-YYYY" | "MM-DD-YYYY" | "YYYY-MM-DD";
+export type TimeFormat = "12h" | "24h";
+export type WeekStart = "monday" | "sunday";
+
+export interface CurrencySetting {
+  code: string;
+  symbol: string;
+}
+
+/** GET /settings/public — unauthenticated; drives branding and display formats. */
+export interface PublicSettings {
+  name: string;
+  logoUrl: string | null;
+  /** Versioned logo path relative to the API base. */
+  logoPath: string | null;
+  dateFormat: DateFormat;
+  timeFormat: TimeFormat;
+  weekStart: WeekStart;
+  timezone: string;
+  currency: CurrencySetting;
+}
+
+export interface CompanyAddress {
+  line1: string;
+  line2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}
+
+/** GET/PATCH /settings/company (admin). Empty strings mean "not set". */
+export interface CompanySettings {
+  id: string | null;
+  name: string;
+  email: string;
+  phone: string;
+  website: string;
+  logo: null | {
+    mimeType: "image/png" | "image/jpeg" | "image/svg+xml";
+    size: number;
+    url: string;
+    path: string;
+  };
+  address: CompanyAddress;
+  timezone: string;
+  dateFormat: DateFormat;
+  timeFormat: TimeFormat;
+  weekStart: WeekStart;
+  currency: CurrencySetting;
+  appUrl: string;
+  effective: { timezone: string; appUrl: string };
+  envFallback: { timezone: string; appUrl: string };
+  updatedAt: string | null;
+}
+
+export type CompanySettingsInput = Partial<{
+  name: string;
+  email: string;
+  phone: string | null;
+  website: string | null;
+  appUrl: string | null;
+  address: Partial<CompanyAddress> | null;
+  timezone: string;
+  dateFormat: DateFormat;
+  timeFormat: TimeFormat;
+  weekStart: WeekStart;
+  currency: Partial<CurrencySetting>;
+}>;

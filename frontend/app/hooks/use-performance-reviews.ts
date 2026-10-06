@@ -5,6 +5,7 @@ import {
   deleteReview,
   getMyReviews,
   getReview,
+  getReviewConfig,
   getReviews,
   updateGoal,
   updateReview,
@@ -31,6 +32,8 @@ export const reviewKeys = {
   list: (params?: Record<string, unknown>) =>
     [...reviewKeys.all, "list", params] as const,
   detail: (id: string) => [...reviewKeys.all, id] as const,
+  /** Outside `all` so list invalidations don't refetch it. */
+  config: () => ["performance-review-config"] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -75,9 +78,35 @@ export function useReviews(params?: {
   limit?: number;
   offset?: number;
 }) {
+  const queryClient = useQueryClient();
+
+  // Real-time: refresh when a review changes or an AI draft lands.
+  useSSE({
+    event: "review-updated",
+    onEvent: () => {
+      void queryClient.invalidateQueries({ queryKey: reviewKeys.all });
+    },
+  });
+  useSSE({
+    event: "review-ready",
+    onEvent: () => {
+      void queryClient.invalidateQueries({ queryKey: reviewKeys.all });
+    },
+  });
+
   return useQuery({
     queryKey: reviewKeys.list(params),
     queryFn: () => getReviews(params),
+  });
+}
+
+/** Admin/head: server truth for whether "Draft with AI" is offered. */
+export function useReviewConfig(enabled = true) {
+  return useQuery({
+    queryKey: reviewKeys.config(),
+    queryFn: getReviewConfig,
+    enabled,
+    staleTime: 5 * 60_000,
   });
 }
 
@@ -101,9 +130,10 @@ export function useCreateReview() {
 
   return useMutation({
     mutationFn: (input: CreateReviewInput) => createReview(input),
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: reviewKeys.all });
-      toast.success("Review created");
+      toast.success("Review created as a draft");
+      for (const warning of data.warnings ?? []) toast.warning(warning);
     },
     onError: (error: unknown) => {
       toast.error(getErrorMessage(error));

@@ -4,6 +4,7 @@ import mongoose, { Schema } from "mongoose";
 export const NOTIFICATION_TYPES = [
   "leave_approved",
   "leave_rejected",
+  "leave_requested",
   "feedback_responded",
   "announcement_created",
   "review_assigned",
@@ -12,6 +13,33 @@ export const NOTIFICATION_TYPES = [
   "task_completed",
   "task_approved",
   "task_rejected",
+  "task_updated",
+  "task_status_changed",
+  "task_comment",
+  "task_mention",
+  "subtask_created",
+  "subtask_assigned",
+  "subtask_completed",
+  "task_note",
+  "task_note_mention",
+  "task_reminder",
+  "task_overdue",
+  "project_member_added",
+  "project_status_changed",
+  "project_deadline",
+  "project_note",
+  "project_file",
+  "timelog_pending",
+  "timelog_approved",
+  "timelog_rejected",
+  "timesheet_submitted",
+  "timesheet_approved",
+  "timesheet_rejected",
+  "time_tracker_reminder",
+  "timer_auto_stopped",
+  "user_joined",
+  "document_expiring",
+  "hr_date_upcoming",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];
@@ -29,6 +57,10 @@ export interface INotification extends mongoose.Document {
   read: boolean;
   /** Optional frontend route to navigate to when the notification is clicked. */
   link?: string;
+  /** Related task (task notifications only) — lets a task delete clean up its notifications. */
+  task?: mongoose.Types.ObjectId | null;
+  /** Related project — lets a project delete clean up its notifications. */
+  project?: mongoose.Types.ObjectId | null;
 }
 
 const notificationSchema = new Schema<INotification>(
@@ -40,6 +72,8 @@ const notificationSchema = new Schema<INotification>(
     message: { type: String, required: true, trim: true },
     read: { type: Boolean, default: false },
     link: { type: String, trim: true },
+    task: { type: Schema.Types.ObjectId, ref: "Task", default: null },
+    project: { type: Schema.Types.ObjectId, ref: "Project", default: null },
   },
   { timestamps: true }
 );
@@ -48,6 +82,10 @@ const notificationSchema = new Schema<INotification>(
 notificationSchema.index({ recipient: 1, createdAt: -1 });
 // Unread count query.
 notificationSchema.index({ recipient: 1, read: 1 });
+// Task delete cleanup.
+notificationSchema.index({ task: 1 }, { sparse: true });
+// Project delete cleanup.
+notificationSchema.index({ project: 1 }, { sparse: true });
 
 // Never leak the internal version key in JSON responses.
 notificationSchema.set("toJSON", {

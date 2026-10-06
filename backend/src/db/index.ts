@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { refreshCompanySettings } from "../lib/companySettings.js";
 
 /**
  * Connects to MongoDB via Mongoose using the MONGO_URI environment variable.
@@ -14,6 +15,9 @@ export async function connectDB(): Promise<void> {
 
   await mongoose.connect(uri);
   console.log(`✅ MongoDB connected: ${mongoose.connection.name}`);
+  // Load company settings (timezone, app URL, branding) for request-less code:
+  // jobs and scripts. Never throws — env fallbacks apply on failure.
+  await refreshCompanySettings();
 }
 
 /** Disconnects from MongoDB — used for clean shutdowns and tests. */

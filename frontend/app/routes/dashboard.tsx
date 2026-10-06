@@ -1,20 +1,15 @@
 import {
   AlertCircle,
-  BarChart3,
   Building2,
   CalendarCheck,
   CalendarDays,
-  CheckCircle2,
-  Clock,
   FileText,
-  LayoutDashboard,
   ListTodo,
   LoaderCircle,
   RefreshCw,
   TrendingUp,
   Users,
 } from "lucide-react";
-import { useState } from "react";
 import {
   Bar,
   BarChart,
@@ -29,8 +24,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { formatDate } from "@/lib/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -43,7 +38,12 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useDashboardAnalytics, useEmployeeDashboard } from "@/hooks/use-dashboard";
+import {
+  DashboardViewToggle,
+  useDashboardView,
+} from "@/components/dashboard/dashboard-view-toggle";
+import { MyDashboard } from "@/components/dashboard/my-dashboard/my-dashboard";
+import { useDashboardAnalytics } from "@/hooks/use-dashboard";
 import { getErrorMessage } from "@/lib/api";
 import type { Route } from "./+types/dashboard";
 
@@ -107,7 +107,17 @@ const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   task_status_updated: "updated a task",
   task_submitted: "submitted a task",
   task_reviewed: "reviewed a task",
+  task_updated: "updated a task",
+  task_deleted: "deleted a task",
+  task_settings_updated: "updated task settings",
   ai_insight_deleted: "deleted an AI insight",
+  user_invited: "invited a user",
+  invitation_resent: "resent an invitation",
+  invitation_revoked: "revoked an invitation",
+  invitation_accepted: "joined via invitation",
+  document_created: "added a document",
+  document_updated: "updated a document",
+  document_deleted: "deleted a document",
 };
 
 function timeAgo(dateStr: string): string {
@@ -122,7 +132,7 @@ function timeAgo(dateStr: string): string {
   if (diffHr < 24) return `${diffHr}h ago`;
   const diffDay = Math.floor(diffHr / 24);
   if (diffDay < 7) return `${diffDay}d ago`;
-  return new Date(dateStr).toLocaleDateString();
+  return formatDate(dateStr);
 }
 
 // =========================================================================
@@ -131,8 +141,8 @@ function timeAgo(dateStr: string): string {
 
 export default function Dashboard() {
   const { isPending: isAuthPending, data: user } = useCurrentUser();
+  const [view, setView] = useDashboardView();
 
-  // Route to the correct dashboard based on role.
   if (isAuthPending) {
     return (
       <div className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -144,11 +154,26 @@ export default function Dashboard() {
     );
   }
 
-  if (user?.role === "employee") {
-    return <EmployeeDashboard />;
+  // Employees only get the personal dashboard.
+  if (!user || user.role === "employee") {
+    return <MyDashboard />;
   }
 
-  return <AdminDashboard />;
+  const toggle = <DashboardViewToggle value={view} onChange={setView} />;
+
+  if (view === "my") {
+    return <MyDashboard toggle={toggle} />;
+  }
+
+  // Organisation view: the existing analytics page, unchanged.
+  return (
+    <>
+      <div className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6 sm:pt-8 lg:px-8">{toggle}</div>
+      <div className="-mt-4">
+        <AdminDashboard />
+      </div>
+    </>
+  );
 }
 
 // =========================================================================
@@ -691,238 +716,6 @@ function AdminDashboard() {
 
           {/* Recent Activity — admin only, not shown to heads */}
           {!isHead && <RecentActivityTable analytics={analytics} />}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-// =========================================================================
-// Employee Dashboard
-// =========================================================================
-
-function EmployeeDashboard() {
-  const { isPending: isAuthPending, data: user } = useCurrentUser();
-  const {
-    data: dashboard,
-    isPending,
-    isError,
-    error,
-    refetch,
-    isRefetching,
-  } = useEmployeeDashboard();
-
-  return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6 lg:px-8">
-      <header>
-        <p className="text-sm text-muted-foreground">My Overview</p>
-        <h1 className="mt-1 font-heading text-3xl font-semibold tracking-tight text-foreground">
-          {isAuthPending ? (
-            <Skeleton className="h-9 w-48" />
-          ) : user ? (
-            `Welcome back, ${user.name.split(" ")[0]}`
-          ) : (
-            "Welcome"
-          )}
-        </h1>
-      </header>
-
-      {isPending ? (
-        <DashboardSkeleton />
-      ) : isError ? (
-        <Alert variant="destructive" className="mt-6">
-          <AlertCircle className="size-4" />
-          <AlertTitle>Couldn&apos;t load dashboard</AlertTitle>
-          <AlertDescription className="flex flex-wrap items-center gap-2">
-            {getErrorMessage(error)}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => void refetch()}
-              disabled={isRefetching}
-            >
-              {isRefetching ? (
-                <LoaderCircle className="animate-spin" />
-              ) : (
-                <RefreshCw />
-              )}
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      ) : dashboard ? (
-        <div className="mt-6 space-y-6">
-          {/* Quick Stats */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-muted-foreground">Attendance Rate</p>
-                  <CalendarCheck className="size-4 text-muted-foreground" />
-                </div>
-                <p className="mt-1 font-heading text-2xl font-semibold tracking-tight text-foreground">
-                  {dashboard.attendance.rate}%
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {dashboard.attendance.overview.present + dashboard.attendance.overview.late + dashboard.attendance.overview.half_day} of {dashboard.attendance.workingDays} working days
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-muted-foreground">Tasks Completed</p>
-                  <CheckCircle2 className="size-4 text-muted-foreground" />
-                </div>
-                <p className="mt-1 font-heading text-2xl font-semibold tracking-tight text-foreground">
-                  {dashboard.tasks.completedCount}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  {dashboard.tasks.active.length} active tasks
-                </p>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-muted-foreground">Leave Balance</p>
-                  <CalendarDays className="size-4 text-muted-foreground" />
-                </div>
-                <p className="mt-1 font-heading text-2xl font-semibold tracking-tight text-foreground">
-                  {Object.values(dashboard.leaveBalance).reduce((s, b) => s + b.remaining, 0)}
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  days remaining this year
-                </p>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Attendance & Leave Balance */}
-          <div className="grid gap-6 lg:grid-cols-2">
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-heading text-lg font-semibold text-foreground">Attendance</h2>
-                    <p className="mt-0.5 text-xs text-muted-foreground">This month</p>
-                  </div>
-                  <CalendarCheck className="size-4 text-muted-foreground" />
-                </div>
-                <div className="mt-4 space-y-2">
-                  {([
-                    ["Present", dashboard.attendance.overview.present, "text-emerald-600"],
-                    ["Late", dashboard.attendance.overview.late, "text-amber-600"],
-                    ["Absent", dashboard.attendance.overview.absent, "text-destructive"],
-                    ["Half Day", dashboard.attendance.overview.half_day, "text-primary"],
-                    ["On Leave", dashboard.attendance.overview.on_leave, "text-purple-600"],
-                  ] as const).map(([label, count, color]) => (
-                    <div key={label} className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">{label}</span>
-                      <span className={`text-sm font-medium ${color}`}>{count}</span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-heading text-lg font-semibold text-foreground">Leave Balance</h2>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{new Date().getFullYear()}</p>
-                  </div>
-                  <CalendarDays className="size-4 text-muted-foreground" />
-                </div>
-                <div className="mt-4 space-y-3">
-                  {Object.entries(dashboard.leaveBalance).map(([type, balance]) => (
-                    <div key={type}>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="capitalize text-muted-foreground">{type}</span>
-                        <span className="font-medium">
-                          {balance.remaining}/{balance.total}
-                        </span>
-                      </div>
-                      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full rounded-full bg-primary transition-all"
-                          style={{
-                            width: `${balance.total > 0 ? ((balance.total - balance.remaining) / balance.total) * 100 : 0}%`,
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Active Tasks */}
-          {dashboard.tasks.active.length > 0 && (
-            <Card>
-              <CardContent className="p-0">
-                <div className="px-4 pt-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="font-heading text-lg font-semibold text-foreground">Active Tasks</h2>
-                      <p className="mt-0.5 text-xs text-muted-foreground">Your pending tasks</p>
-                    </div>
-                    <ListTodo className="size-4 text-muted-foreground" />
-                  </div>
-                </div>
-                <div className="mt-3 overflow-x-auto">
-                  <Table>
-                    <TableHeader>
-                      <TableRow>
-                        <TableHead>Task</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Priority</TableHead>
-                        <TableHead className="text-right">Due</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {dashboard.tasks.active.map((task) => (
-                        <TableRow key={task._id}>
-                          <TableCell className="text-sm font-medium">
-                            {task.title}
-                          </TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="capitalize">
-                              {task.status.replace("_", " ")}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant="outline"
-                              className={`capitalize ${
-                                task.priority === "urgent"
-                                  ? "border-destructive text-destructive"
-                                  : task.priority === "high"
-                                    ? "border-amber-600 text-amber-600"
-                                    : ""
-                              }`}
-                            >
-                              {task.priority}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right text-xs text-muted-foreground">
-                            {task.dueDate
-                              ? new Date(task.dueDate).toLocaleDateString("en-US", {
-                                  month: "short",
-                                  day: "numeric",
-                                })
-                              : "—"}
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
-              </CardContent>
-            </Card>
-          )}
         </div>
       ) : null}
     </div>

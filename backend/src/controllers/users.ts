@@ -1,10 +1,12 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { deleteUserDocuments } from "./documents.js";
 import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
+import { applyHrFields, isEmployeeIdConflict, parseHrFields } from "../lib/hr.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
-import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import type { EmailPreferences, IUser } from "../models/User.js";
+import { EMAIL_PREFERENCE_KEYS, User } from "../models/User.js";
 
 interface CreateUserBody {
   name?: string;
@@ -12,6 +14,7 @@ interface CreateUserBody {
   password?: string;
   role?: "admin" | "employee" | "head";
   department?: string | null;
+  hourlyRate?: unknown;
 }
 
 interface UpdateUserBody {
@@ -20,6 +23,14 @@ interface UpdateUserBody {
   role?: "admin" | "employee" | "head";
   department?: string | null;
   password?: string;
+  hourlyRate?: unknown;
+}
+
+/** Default hourly rate (0-100000); undefined = not provided, null = invalid. */
+function parseHourlyRate(raw: unknown): number | undefined | null {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0 || raw > 100000) return null;
+  return Math.round(raw * 100) / 100;
 }
 
 interface UpdateMeBody {
@@ -61,6 +72,15 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }
+  const { role, department } = req.query;
+  if (role === "admin" || role === "employee" || role === "head") {
+    filter.role = role;
+  }
+  if (department === "none") {
+    filter.department = null;
+  } else if (typeof department === "string" && department && !isInvalidObjectId(department)) {
+    filter.department = new mongoose.Types.ObjectId(department);
+  }
 
   let query = User.find(filter).sort({ name: 1 });
   if (limit !== null) {
@@ -79,10 +99,20 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
 
 /** Admin-only: creates a new user (admin or employee). There is no public registration endpoint. */
 export async function createUser(req: Request, res: Response): Promise<void> {
-  const { name, email, password, role, department } = (req.body ?? {}) as CreateUserBody;
+  const { name, email, password, role, department, hourlyRate } = (req.body ?? {}) as CreateUserBody;
+  const hr = parseHrFields((req.body ?? {}) as Record<string, unknown>, undefined, { creating: true });
+  if (typeof hr === "string") {
+    res.status(400).json({ error: hr });
+    return;
+  }
 
   if (!name || !email || !password) {
     res.status(400).json({ error: "name, email and password are required" });
+    return;
+  }
+  const rate = parseHourlyRate(hourlyRate);
+  if (rate === null) {
+    res.status(400).json({ error: "hourlyRate must be a number between 0 and 100000" });
     return;
   }
   if (
@@ -111,6 +141,11 @@ export async function createUser(req: Request, res: Response): Promise<void> {
           : department === null
             ? null
             : new mongoose.Types.ObjectId(department),
+      hourlyRate: rate ?? 0,
+      // Blank employeeId → the model assigns the next "EMP-xxxx".
+      ...(hr.designation !== undefined ? { designation: hr.designation } : {}),
+      ...(hr.employeeId !== undefined ? { employeeId: hr.employeeId } : {}),
+      ...hr.dates,
     });
     logActivity({
       action: "user_created",
@@ -124,7 +159,9 @@ export async function createUser(req: Request, res: Response): Promise<void> {
     res.status(201).json({ user: user.toJSON() });
   } catch (error) {
     if (isDuplicateKeyError(error)) {
-      res.status(409).json({ error: "A user with this email already exists" });
+      res.status(409).json({
+        error: isEmployeeIdConflict(error) ? "This employee ID is already in use" : "A user with this email already exists",
+      });
       return;
     }
     throw error; // validation errors etc. flow to the global JSON error handler
@@ -136,14 +173,26 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   const user = await getUserOr404(req, res);
   if (!user) return;
 
-  const { name, email, role, department, password } = (req.body ?? {}) as UpdateUserBody;
+  const { name, email, role, department, password, hourlyRate } = (req.body ?? {}) as UpdateUserBody;
+  const hr = parseHrFields((req.body ?? {}) as Record<string, unknown>, user);
+  if (typeof hr === "string") {
+    res.status(400).json({ error: hr });
+    return;
+  }
 
   const hasAnyField =
+    hr.changed.length > 0 ||
     name !== undefined ||
     email !== undefined ||
     role !== undefined ||
     department !== undefined ||
-    password !== undefined;
+    password !== undefined ||
+    hourlyRate !== undefined;
+  const rate = parseHourlyRate(hourlyRate);
+  if (rate === null) {
+    res.status(400).json({ error: "hourlyRate must be a number between 0 and 100000" });
+    return;
+  }
   if (!hasAnyField) {
     res.status(400).json({ error: "At least one field to update is required" });
     return;
@@ -208,12 +257,21 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     user.password = password;
     changed.push("password");
   }
+  if (rate !== undefined) {
+    user.hourlyRate = rate;
+    changed.push("hourlyRate");
+  }
+  // HR profile fields; a changed end date re-arms its reminders (keys include the date).
+  applyHrFields(user, hr);
+  changed.push(...hr.changed);
 
   try {
     await user.save();
   } catch (error) {
     if (isDuplicateKeyError(error)) {
-      res.status(409).json({ error: "A user with this email already exists" });
+      res.status(409).json({
+        error: isEmployeeIdConflict(error) ? "This employee ID is already in use" : "A user with this email already exists",
+      });
       return;
     }
     throw error;
@@ -250,6 +308,8 @@ export async function deleteUser(req: Request, res: Response): Promise<void> {
   const deletedRole = user.role;
 
   await user.deleteOne();
+  // Cascade: their employee documents and the GridFS files.
+  const documentsDeleted = await deleteUserDocuments(deletedId as mongoose.Types.ObjectId);
 
   logActivity({
     action: "user_deleted",
@@ -257,11 +317,24 @@ export async function deleteUser(req: Request, res: Response): Promise<void> {
     targetType: "user",
     targetId: deletedId,
     targetName: deletedName,
-    details: { email: deletedEmail, role: deletedRole },
+    details: { email: deletedEmail, role: deletedRole, documentsDeleted },
     ip: req.ip,
   });
 
   res.json({ message: "User deleted" });
+}
+
+/**
+ * Any authenticated user: their own profile, including the HR fields
+ * (designation, employee ID, dates — read-only for self) and the department name.
+ */
+export async function getMe(req: Request, res: Response): Promise<void> {
+  const user = await User.findById(req.user!._id).populate({ path: "department", select: "name" });
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+  res.json({ user: user.toJSON() });
 }
 
 /**
@@ -315,4 +388,63 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
   });
 
   res.json({ user: user.toJSON() });
+}
+
+/** Current email preferences with defaults filled in (older users have no subdocument). */
+function readEmailPreferences(user: IUser): EmailPreferences {
+  const prefs = (user.emailPreferences ?? {}) as Partial<EmailPreferences>;
+  return {
+    taskAssigned: prefs.taskAssigned !== false,
+    taskUpdates: prefs.taskUpdates !== false,
+    taskComments: prefs.taskComments !== false,
+    taskReminders: prefs.taskReminders !== false,
+    projectUpdates: prefs.projectUpdates !== false,
+    timeLogs: prefs.timeLogs !== false,
+    teamUpdates: prefs.teamUpdates !== false,
+    hrReminders: prefs.hrReminders !== false,
+    leaveRequests: prefs.leaveRequests !== false,
+  };
+}
+
+/** Any authenticated user: their email notification preferences. */
+export async function getEmailPreferences(req: Request, res: Response): Promise<void> {
+  res.json({ emailPreferences: readEmailPreferences(req.user!) });
+}
+
+/**
+ * Any authenticated user: updates any of
+ * `{ taskAssigned, taskUpdates, taskComments, taskReminders, projectUpdates, timeLogs, teamUpdates, hrReminders, leaveRequests }`.
+ * In-app notifications are always created — these only control email.
+ */
+export async function updateEmailPreferences(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+
+  const provided = EMAIL_PREFERENCE_KEYS.filter((key) => body[key] !== undefined);
+  if (provided.length === 0) {
+    res.status(400).json({ error: `At least one of ${EMAIL_PREFERENCE_KEYS.join(", ")} is required` });
+    return;
+  }
+  for (const key of provided) {
+    if (typeof body[key] !== "boolean") {
+      res.status(400).json({ error: `${key} must be a boolean` });
+      return;
+    }
+  }
+
+  const next = readEmailPreferences(user);
+  for (const key of provided) {
+    next[key] = body[key] as boolean;
+  }
+  user.emailPreferences = next;
+  await user.save();
+
+  logActivity({
+    action: "profile_updated",
+    actor: user,
+    details: { changed: ["emailPreferences"], emailPreferences: next },
+    ip: req.ip,
+  });
+
+  res.json({ emailPreferences: next });
 }

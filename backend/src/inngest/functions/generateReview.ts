@@ -235,69 +235,56 @@ export const generateReviewFunction = inngest.createFunction(
       return callGemini(prompt);
     });
 
-    // Step 4: Update the review document with AI-generated content.
-    await step.run("save-review", async () => {
+    // Step 4: Fill the draft with AI-written text. The review stays a draft so
+    // the reviewer can check and edit it before sending it to the employee.
+    const saved = await step.run("save-review", async () => {
       const { PerformanceReview } =
         await import("../../models/PerformanceReview.js");
 
-      await PerformanceReview.findByIdAndUpdate(reviewId, {
-        overallScore: aiResult.overallScore,
-        strengths: aiResult.strengths,
-        improvements: aiResult.improvements,
-        summary: aiResult.summary,
-        aiGenerated: true,
-        status: "pending_acknowledgment",
-      });
+      const review = await PerformanceReview.findById(reviewId);
+      // Skip if it was deleted or already sent while the AI was working.
+      if (!review || review.status !== "draft") return false;
+
+      // Only fill what the reviewer left blank — never overwrite their words.
+      if (!review.strengths) review.strengths = aiResult.strengths;
+      if (!review.improvements) review.improvements = aiResult.improvements;
+      if (!review.summary) review.summary = aiResult.summary;
+      // Ratings drive the score when present; otherwise use the AI's estimate.
+      if (review.ratings.length === 0) review.overallScore = aiResult.overallScore;
+      review.aiGenerated = true;
+      await review.save();
+      return true;
     });
 
-    // Step 5: Notify the employee.
-    await step.run("notify-employee", async () => {
-      const { PerformanceReview } =
-        await import("../../models/PerformanceReview.js");
-      const { notify } = await import("../../lib/notifications.js");
-      const { pushToUsers, createEvent } = await import("../../lib/sse.js");
+    // Step 5: Tell the reviewer the AI draft is ready to review.
+    if (saved) {
+      await step.run("notify-reviewer", async () => {
+        const { PerformanceReview } =
+          await import("../../models/PerformanceReview.js");
+        const { pushToUsers, createEvent } = await import("../../lib/sse.js");
 
-      const review = await PerformanceReview.findById(reviewId).populate(
-        "employee reviewer",
-        "name",
-      );
-      if (!review) return;
+        const review = await PerformanceReview.findById(reviewId).populate(
+          "employee",
+          "name",
+        );
+        if (!review) return;
+        const employee = review.employee as unknown as { name: string };
 
-      const employee = review.employee as unknown as {
-        _id: import("mongoose").Types.ObjectId;
-        name: string;
-      };
-      const reviewer = review.reviewer as unknown as { _id: import("mongoose").Types.ObjectId; name: string };
-
-      notify({
-        recipient: employee._id,
-        type: "review_assigned",
-        title: "Performance review ready",
-        message: `Your ${review.period} performance review by ${reviewer.name} is ready for your review.`,
-        link: "/performance-reviews",
-        data: {
-          period: review.period,
-          reviewerName: reviewer.name,
-          overallScore: aiResult.overallScore,
-        },
+        pushToUsers(
+          [review.reviewer.toString()],
+          createEvent("review-ready", {
+            reviewId,
+            period: review.period,
+            overallScore: review.overallScore,
+            employeeName: employee.name,
+          })
+        );
       });
-
-      // Real-time SSE push to employee and reviewer
-      pushToUsers(
-        [employee._id.toString(), reviewer._id.toString()],
-        createEvent("review-ready", {
-          reviewId,
-          period: review.period,
-          overallScore: aiResult.overallScore,
-          employeeName: employee.name,
-        })
-      );
-    });
+    }
 
     return {
       reviewId,
-      overallScore: aiResult.overallScore,
-      status: "pending_acknowledgment",
+      drafted: saved,
     };
   },
 );

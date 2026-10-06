@@ -9,6 +9,14 @@ import { LeavePolicy } from "../models/LeavePolicy.js";
 import { PerformanceReview } from "../models/PerformanceReview.js";
 import { Task } from "../models/Task.js";
 import { User } from "../models/User.js";
+import { EmployeeDocument } from "../models/EmployeeDocument.js";
+import { Project } from "../models/Project.js";
+import { completedStatusIds } from "../models/ProjectStatus.js";
+import { TimeLog } from "../models/TimeLog.js";
+import { addDays, appDayStart, appToday, currentWeekStart, mondayOf } from "../lib/appTime.js";
+import { anniversaryIn, canViewHrOf, daysBetween, hrScopeOf, initialsOf, nextAnniversary } from "../lib/hr.js";
+import { headDepartmentTaskFilter, parseDateOnly } from "../lib/taskAccess.js";
+import { appTimeZone } from "../lib/taskJobs.js";
 
 // ---------------------------------------------------------------------------
 
@@ -57,6 +65,11 @@ export async function getDashboardAnalytics(req: Request, res: Response): Promis
     departmentFilter.department = user.department;
   }
 
+  // Heads' task counts: tasks of their department, including tasks where any
+  // assignee (not only the first) belongs to it.
+  const taskFilter: Record<string, unknown> =
+    !isAdmin && user.department ? await headDepartmentTaskFilter(user.department) : {};
+
   // Employee filter (exclude admins).
   const employeeFilter: Record<string, unknown> = { role: { $ne: "admin" } };
   if (!isAdmin && user.department) {
@@ -71,7 +84,7 @@ export async function getDashboardAnalytics(req: Request, res: Response): Promis
       User.countDocuments(employeeFilter),
       isAdmin ? Department.countDocuments() : Department.countDocuments({ _id: user.department }),
       Task.countDocuments({
-        ...departmentFilter,
+        ...taskFilter,
         status: { $nin: ["completed", "rejected"] },
       }),
       Leave.countDocuments({
@@ -79,7 +92,7 @@ export async function getDashboardAnalytics(req: Request, res: Response): Promis
         status: "pending",
       }),
       Task.countDocuments({
-        ...departmentFilter,
+        ...taskFilter,
         status: "completed",
       }),
     ]);
@@ -144,7 +157,7 @@ export async function getDashboardAnalytics(req: Request, res: Response): Promis
 
   if (employeeIds.length > 0) {
     const taskRecords = await Task.find({
-      ...departmentFilter,
+      ...taskFilter,
       createdAt: { $gte: from, $lt: toExclusive },
     }).select("status");
 
@@ -327,11 +340,11 @@ export async function getEmployeeDashboard(req: Request, res: Response): Promise
   // 3. Tasks
   // ---------------------------------------------------------------
   const [activeTasks, completedTasks] = await Promise.all([
-    Task.find({ assignedTo: userId, status: { $nin: ["completed", "rejected"] } })
+    Task.find({ assignees: userId, status: { $nin: ["completed", "rejected"] } })
       .select("title status priority dueDate")
       .sort({ dueDate: 1 })
       .limit(5),
-    Task.countDocuments({ assignedTo: userId, status: "completed" }),
+    Task.countDocuments({ assignees: userId, status: "completed" }),
   ]);
 
   // ---------------------------------------------------------------
@@ -365,5 +378,535 @@ export async function getEmployeeDashboard(req: Request, res: Response): Promise
       completedCount: completedTasks,
     },
     recentActivity,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Personal dashboard ("My dashboard") — GET /api/dashboard/me, /me/calendar,
+// /me/timelogs. Every user, every role. Date-only comparisons use APP_TIMEZONE.
+// ---------------------------------------------------------------------------
+
+/** Every list in GET /api/dashboard/me is capped at this many rows. */
+const MY_LIST_CAP = 10;
+const PENDING_TASK_STATUSES = ["todo", "in_progress", "in_review"];
+const BIRTHDAY_WINDOW_DAYS = 30;
+const HR_END_WINDOW_DAYS = 30;
+const DOCUMENT_EXPIRY_WINDOW_DAYS = 60;
+const MY_CALENDAR_LIMIT = 500;
+const MY_CALENDAR_MAX_DAYS = 100;
+
+type ObjectId = mongoose.Types.ObjectId;
+
+interface PersonRef {
+  _id: ObjectId;
+  name: string;
+  designation: string;
+}
+
+function personRef(u: { _id: unknown; name?: string; designation?: string }): PersonRef {
+  return { _id: u._id as ObjectId, name: u.name ?? "", designation: u.designation ?? "" };
+}
+
+/** "PEAR-12" or "#12" (or "" for un-migrated tasks). */
+function myTaskCode(task: { shortCode?: string | null; number?: number | null }): string {
+  return task.shortCode || (task.number ? `#${task.number}` : "");
+}
+
+async function archivedProjectIdList(): Promise<ObjectId[]> {
+  const rows = await Project.find({ archivedAt: { $ne: null } }).select("_id").lean();
+  return rows.map((r) => r._id as ObjectId);
+}
+
+/** Tasks assigned to `userId`, excluding archived projects (same as the task list). */
+function myTaskBase(userId: ObjectId, archived: ObjectId[]): Record<string, unknown> {
+  return archived.length > 0 ? { assignees: userId, project: { $nin: archived } } : { assignees: userId };
+}
+
+/** Projects the user is a member or the manager of. */
+function myProjectsFilter(userId: ObjectId): Record<string, unknown> {
+  return { archivedAt: null, $or: [{ "members.user": userId }, { manager: userId }] };
+}
+
+/** Date-only "YYYY-MM-DD" of a stored date-only value. */
+function dateKey(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+export interface WeekTimelogs {
+  weekStart: string;
+  weekEnd: string;
+  days: Array<{ date: string; minutes: number; breakMinutes: number }>;
+  totalMinutes: number;
+  totalBreakMinutes: number;
+}
+
+/**
+ * Per-day worked/break minutes Mon–Sun for the user's finished time logs
+ * (pending + approved — the same rows as GET /api/timelogs totals), grouped by
+ * the start time's calendar day in APP_TIMEZONE.
+ */
+async function computeWeekTimelogs(userId: ObjectId, weekStart: Date): Promise<WeekTimelogs> {
+  const rows = await TimeLog.aggregate<{ _id: string; minutes: number; breakMinutes: number }>([
+    {
+      $match: {
+        user: userId,
+        endTime: { $ne: null },
+        status: { $in: ["pending", "approved"] },
+        startTime: { $gte: appDayStart(weekStart), $lt: appDayStart(addDays(weekStart, 7)) },
+      },
+    },
+    {
+      $group: {
+        _id: { $dateToString: { format: "%Y-%m-%d", date: "$startTime", timezone: appTimeZone() } },
+        minutes: { $sum: "$durationMinutes" },
+        breakMinutes: { $sum: "$breakMinutes" },
+      },
+    },
+  ]);
+  const byDay = new Map(rows.map((r) => [r._id, r]));
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const date = dateKey(addDays(weekStart, i));
+    const row = byDay.get(date);
+    return { date, minutes: row?.minutes ?? 0, breakMinutes: row?.breakMinutes ?? 0 };
+  });
+  return {
+    weekStart: dateKey(weekStart),
+    weekEnd: dateKey(addDays(weekStart, 6)),
+    days,
+    totalMinutes: days.reduce((sum, d) => sum + d.minutes, 0),
+    totalBreakMinutes: days.reduce((sum, d) => sum + d.breakMinutes, 0),
+  };
+}
+
+type HrUserRow = {
+  _id: ObjectId;
+  name: string;
+  designation?: string;
+  department?: ObjectId | null;
+  dateOfBirth?: Date | null;
+  joiningDate?: Date | null;
+  probationEndDate?: Date | null;
+  internshipEndDate?: Date | null;
+  noticePeriodStart?: Date | null;
+  noticePeriodEnd?: Date | null;
+};
+
+/**
+ * GET /api/dashboard/me — one aggregated call for the personal dashboard.
+ * Restricted lists (probation / notice / internship / document expiries) are
+ * scoped: self (employee, head without department) / department (head) / all (admin).
+ */
+export async function getMyDashboard(req: Request, res: Response): Promise<void> {
+  const me = req.user!;
+  const meId = me._id as ObjectId;
+  const today = appToday();
+  const scope = hrScopeOf(me);
+
+  const [archived, completedStatuses, department, deptMembers] = await Promise.all([
+    archivedProjectIdList(),
+    completedStatusIds(),
+    me.department ? Department.findById(me.department).select("name").lean() : Promise.resolve(null),
+    scope === "department"
+      ? User.find({ department: me.department }).select("_id").lean()
+      : Promise.resolve([] as Array<{ _id: unknown }>),
+  ]);
+  const taskBase = myTaskBase(meId, archived);
+  const isDate = (field: string) => ({ $eq: [{ $type: field }, "date"] });
+
+  const docFilter: Record<string, unknown> = {
+    expiryDate: { $ne: null, $lte: addDays(today, DOCUMENT_EXPIRY_WINDOW_DAYS) },
+  };
+  if (scope === "self") docFilter.user = meId;
+  else if (scope === "department") docFilter.user = { $in: [meId, ...deptMembers.map((m) => m._id as ObjectId)] };
+
+  const [taskCounts, myTaskRows, projects, leavesToday, people, docRows, docTotal, weekTimelogs] = await Promise.all([
+    Task.aggregate<{ open: number; pending: number; overdue: number }>([
+      { $match: { ...taskBase, status: { $ne: "completed" } } },
+      {
+        $group: {
+          _id: null,
+          open: { $sum: 1 },
+          pending: { $sum: { $cond: [{ $in: ["$status", PENDING_TASK_STATUSES] }, 1, 0] } },
+          overdue: { $sum: { $cond: [{ $and: [isDate("$dueDate"), { $lt: ["$dueDate", today] }] }, 1, 0] } },
+        },
+      },
+    ]),
+    Task.aggregate([
+      { $match: { ...taskBase, status: { $ne: "completed" } } },
+      { $addFields: { _noDue: { $cond: [isDate("$dueDate"), 0, 1] } } },
+      { $sort: { _noDue: 1, dueDate: 1, _id: 1 } },
+      { $limit: MY_LIST_CAP },
+      { $project: { title: 1, shortCode: 1, number: 1, labels: 1, status: 1, dueDate: 1, priority: 1, project: 1 } },
+    ]),
+    Project.find(myProjectsFilter(meId)).select("status deadline").lean(),
+    Leave.find({ status: "approved", startDate: { $lte: today }, endDate: { $gte: today } })
+      .select("user endDate")
+      .populate<{ user: { _id: ObjectId; name: string; designation?: string } | null }>({
+        path: "user",
+        select: "name designation",
+      })
+      .sort({ endDate: 1, _id: 1 })
+      .limit(200)
+      .lean(),
+    User.find({
+      $or: [
+        { dateOfBirth: { $ne: null } },
+        { joiningDate: { $ne: null } },
+        { probationEndDate: { $ne: null } },
+        { internshipEndDate: { $ne: null } },
+        { noticePeriodEnd: { $ne: null } },
+      ],
+    })
+      .select(
+        "name designation department dateOfBirth joiningDate probationEndDate internshipEndDate noticePeriodStart noticePeriodEnd"
+      )
+      .lean<HrUserRow[]>(),
+    EmployeeDocument.find(docFilter)
+      .select("name type user expiryDate")
+      .populate<{ user: { _id: ObjectId; name: string } | null }>({ path: "user", select: "name" })
+      .sort({ expiryDate: 1, _id: 1 })
+      .limit(MY_LIST_CAP)
+      .lean(),
+    EmployeeDocument.countDocuments(docFilter),
+    computeWeekTimelogs(meId, currentWeekStart()),
+  ]);
+
+  // --- Tasks ------------------------------------------------------------------
+  const counts = taskCounts[0] ?? { open: 0, pending: 0, overdue: 0 };
+  const populatedTasks = (await Task.populate(myTaskRows, [
+    { path: "labels", select: "name color" },
+    { path: "project", select: "name code" },
+  ])) as unknown as Array<{
+    _id: ObjectId;
+    title: string;
+    shortCode?: string | null;
+    number?: number | null;
+    labels: Array<{ _id: ObjectId; name: string; color: string }>;
+    status: string;
+    dueDate?: Date | null;
+    priority: string;
+    project?: { _id: ObjectId; name: string; code: string } | null;
+  }>;
+  const myTasks = populatedTasks.map((t) => ({
+    _id: t._id,
+    code: myTaskCode(t),
+    title: t.title,
+    labels: (t.labels ?? []).filter(Boolean).map((l) => ({ _id: l._id, name: l.name, color: l.color })),
+    status: t.status,
+    dueDate: t.dueDate ?? null,
+    priority: t.priority,
+    project: t.project ? { _id: t.project._id, name: t.project.name, code: t.project.code } : null,
+    overdue: Boolean(t.dueDate && t.dueDate.getTime() < today.getTime()),
+  }));
+
+  // --- Projects ---------------------------------------------------------------
+  const completedSet = new Set(completedStatuses.map((id) => id.toString()));
+  const activeProjects = projects.filter((p) => !completedSet.has(String(p.status)));
+  const projectsOverdue = activeProjects.filter((p) => p.deadline && p.deadline.getTime() < today.getTime()).length;
+
+  // --- People cards -----------------------------------------------------------
+  const onLeave = leavesToday
+    .filter((l) => l.user)
+    .map((l) => ({ user: personRef(l.user!), until: l.endDate }));
+
+  const birthdays: Array<{ user: PersonRef; day: number; month: number; inDays: number }> = [];
+  const joinings: Array<{ user: PersonRef; kind: "joining" | "anniversary"; years: number; date: Date }> = [];
+  type EndRow = { user: PersonRef; date: Date; inDays: number; startDate?: Date | null };
+  const probation: EndRow[] = [];
+  const notice: EndRow[] = [];
+  const internship: EndRow[] = [];
+  const windowEnd = addDays(today, HR_END_WINDOW_DAYS);
+  const inWindow = (d: Date | null | undefined): d is Date =>
+    Boolean(d && d.getTime() >= today.getTime() && d.getTime() <= windowEnd.getTime());
+
+  for (const u of people) {
+    const ref = personRef(u);
+    if (u.dateOfBirth) {
+      const next = nextAnniversary(u.dateOfBirth, today);
+      const inDays = daysBetween(today, next);
+      if (inDays <= BIRTHDAY_WINDOW_DAYS) {
+        // Day + month only — the birth year is never exposed here.
+        birthdays.push({ user: ref, day: u.dateOfBirth.getUTCDate(), month: u.dateOfBirth.getUTCMonth() + 1, inDays });
+      }
+    }
+    if (u.joiningDate && u.joiningDate.getTime() <= today.getTime()) {
+      const years = today.getUTCFullYear() - u.joiningDate.getUTCFullYear();
+      if (anniversaryIn(u.joiningDate, today.getUTCFullYear()).getTime() === today.getTime()) {
+        joinings.push({ user: ref, kind: years === 0 ? "joining" : "anniversary", years, date: u.joiningDate });
+      }
+    }
+    if (!canViewHrOf(me, { _id: u._id, department: u.department ?? null })) continue;
+    if (inWindow(u.probationEndDate)) {
+      probation.push({ user: ref, date: u.probationEndDate, inDays: daysBetween(today, u.probationEndDate) });
+    }
+    if (inWindow(u.noticePeriodEnd)) {
+      notice.push({
+        user: ref,
+        startDate: u.noticePeriodStart ?? null,
+        date: u.noticePeriodEnd,
+        inDays: daysBetween(today, u.noticePeriodEnd),
+      });
+    }
+    if (inWindow(u.internshipEndDate)) {
+      internship.push({ user: ref, date: u.internshipEndDate, inDays: daysBetween(today, u.internshipEndDate) });
+    }
+  }
+  const byDaysThenName = (a: { inDays: number; user: PersonRef }, b: { inDays: number; user: PersonRef }) =>
+    a.inDays - b.inDays || a.user.name.localeCompare(b.user.name);
+  birthdays.sort(byDaysThenName);
+  probation.sort(byDaysThenName);
+  notice.sort(byDaysThenName);
+  internship.sort(byDaysThenName);
+  joinings.sort((a, b) => a.years - b.years || a.user.name.localeCompare(b.user.name));
+
+  const documentExpiries = docRows
+    .filter((d) => d.user && d.expiryDate)
+    .map((d) => ({
+      _id: d._id,
+      name: d.name,
+      type: d.type,
+      user: { _id: d.user!._id, name: d.user!.name },
+      expiryDate: d.expiryDate!,
+      inDays: daysBetween(today, d.expiryDate!),
+    }));
+
+  res.json({
+    today: dateKey(today),
+    hrScope: scope,
+    profile: {
+      _id: meId,
+      name: me.name,
+      email: me.email,
+      role: me.role,
+      designation: me.designation ?? "",
+      employeeId: me.employeeId ?? null,
+      department: department ? { _id: department._id, name: department.name } : null,
+      avatarInitials: initialsOf(me.name),
+      joiningDate: me.joiningDate ?? null,
+    },
+    counts: {
+      openTasks: counts.open,
+      pendingTasks: counts.pending,
+      overdueTasks: counts.overdue,
+      projects: projects.length,
+      projectsInProgress: activeProjects.length,
+      projectsOverdue,
+    },
+    myTasks,
+    onLeaveToday: onLeave.slice(0, MY_LIST_CAP),
+    birthdays: birthdays.slice(0, MY_LIST_CAP),
+    joiningsAndAnniversaries: joinings.slice(0, MY_LIST_CAP),
+    probation: probation.slice(0, MY_LIST_CAP),
+    notice: notice.slice(0, MY_LIST_CAP),
+    internship: internship.slice(0, MY_LIST_CAP),
+    documentExpiries,
+    totals: {
+      onLeaveToday: onLeave.length,
+      birthdays: birthdays.length,
+      joiningsAndAnniversaries: joinings.length,
+      probation: probation.length,
+      notice: notice.length,
+      internship: internship.length,
+      documentExpiries: docTotal,
+    },
+    weekTimelogs,
+  });
+}
+
+/** "YYYY-MM-DD" query param → date-only value (undefined when absent, "invalid" otherwise). */
+function dateQuery(raw: unknown): Date | undefined | "invalid" {
+  if (raw === undefined || raw === "") return undefined;
+  return parseDateOnly(raw) ?? "invalid";
+}
+
+/** GET /api/dashboard/me/timelogs?weekStart=YYYY-MM-DD (any day; normalised to its Monday). */
+export async function getMyWeekTimelogs(req: Request, res: Response): Promise<void> {
+  const raw = dateQuery(req.query.weekStart);
+  if (raw === "invalid") {
+    res.status(400).json({ error: "weekStart must be a valid date (YYYY-MM-DD)" });
+    return;
+  }
+  const weekStart = raw ? mondayOf(raw) : currentWeekStart();
+  res.json({ today: dateKey(appToday()), ...(await computeWeekTimelogs(req.user!._id as ObjectId, weekStart)) });
+}
+
+interface CalendarItem {
+  /** Unique per item: "<kind>:<id>". */
+  id: string;
+  kind: "task" | "subtask" | "leave" | "project_deadline";
+  title: string;
+  /** Date-only "YYYY-MM-DD" (inclusive). */
+  start: string;
+  end: string;
+  status: string;
+  priority?: string;
+  code?: string;
+  taskId?: ObjectId;
+  subtaskId?: ObjectId;
+  leaveId?: ObjectId;
+  leaveType?: string;
+  project?: { _id: ObjectId; name: string; code: string } | null;
+}
+
+/**
+ * GET /api/dashboard/me/calendar?from=YYYY-MM-DD&to=YYYY-MM-DD (≤ 100 days):
+ * my tasks (start→due, or due), my subtasks due, my leaves (approved + pending)
+ * and deadlines of projects I'm a member/manager of. Max 500 items.
+ */
+export async function getMyCalendar(req: Request, res: Response): Promise<void> {
+  const from = dateQuery(req.query.from);
+  const to = dateQuery(req.query.to);
+  if (!from || !to || from === "invalid" || to === "invalid") {
+    res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
+    return;
+  }
+  if (from.getTime() > to.getTime()) {
+    res.status(400).json({ error: "from must be on or before to" });
+    return;
+  }
+  if (daysBetween(from, to) > MY_CALENDAR_MAX_DAYS) {
+    res.status(400).json({ error: `The calendar range can be at most ${MY_CALENDAR_MAX_DAYS} days` });
+    return;
+  }
+
+  const meId = req.user!._id as ObjectId;
+  const archived = await archivedProjectIdList();
+  const notArchived = archived.length > 0 ? { project: { $nin: archived } } : {};
+
+  type TaskRow = {
+    _id: ObjectId;
+    title: string;
+    shortCode?: string | null;
+    number?: number | null;
+    status: string;
+    priority: string;
+    startDate?: Date | null;
+    dueDate: Date;
+    project?: { _id: ObjectId; name: string; code: string } | null;
+  };
+  type SubRow = {
+    _id: ObjectId;
+    title: string;
+    shortCode?: string | null;
+    number?: number | null;
+    project?: ObjectId | null;
+    sub: { _id: ObjectId; title: string; done: boolean; dueDate: Date };
+  };
+
+  const [tasks, subtasks, leaves, projects, completedStatuses] = await Promise.all([
+    Task.find({
+      ...myTaskBase(meId, archived),
+      $and: [
+        { dueDate: { $ne: null, $gte: from } },
+        { $or: [{ dueDate: { $lte: to } }, { startDate: { $ne: null, $lte: to } }] },
+      ],
+    })
+      .select("title shortCode number status priority startDate dueDate project")
+      .populate({ path: "project", select: "name code" })
+      .sort({ dueDate: 1, _id: 1 })
+      .limit(MY_CALENDAR_LIMIT + 1)
+      .lean<TaskRow[]>(),
+    Task.aggregate<SubRow>([
+      { $match: { "subtasks.assignee": meId, ...notArchived } },
+      { $unwind: "$subtasks" },
+      { $match: { "subtasks.assignee": meId, "subtasks.dueDate": { $gte: from, $lte: to } } },
+      { $sort: { "subtasks.dueDate": 1, _id: 1 } },
+      { $limit: MY_CALENDAR_LIMIT + 1 },
+      {
+        $project: {
+          title: 1,
+          shortCode: 1,
+          number: 1,
+          project: 1,
+          sub: {
+            _id: "$subtasks._id",
+            title: "$subtasks.title",
+            done: "$subtasks.done",
+            dueDate: "$subtasks.dueDate",
+          },
+        },
+      },
+    ]),
+    Leave.find({ user: meId, status: { $in: ["approved", "pending"] }, startDate: { $lte: to }, endDate: { $gte: from } })
+      .select("leaveType startDate endDate status")
+      .sort({ startDate: 1 })
+      .limit(MY_CALENDAR_LIMIT + 1)
+      .lean(),
+    Project.find({ ...myProjectsFilter(meId), deadline: { $gte: from, $lte: to } })
+      .select("name code deadline status")
+      .sort({ deadline: 1 })
+      .limit(MY_CALENDAR_LIMIT + 1)
+      .lean(),
+    completedStatusIds(),
+  ]);
+
+  const items: CalendarItem[] = [];
+  for (const t of tasks) {
+    const due = t.dueDate;
+    const start = t.startDate && t.startDate.getTime() <= due.getTime() ? t.startDate : due;
+    items.push({
+      id: `task:${t._id}`,
+      kind: "task",
+      title: t.title,
+      start: dateKey(start),
+      end: dateKey(due),
+      status: t.status,
+      priority: t.priority,
+      code: myTaskCode(t),
+      taskId: t._id,
+      project: t.project ? { _id: t.project._id, name: t.project.name, code: t.project.code } : null,
+    });
+  }
+  for (const s of subtasks) {
+    items.push({
+      id: `subtask:${s.sub._id}`,
+      kind: "subtask",
+      title: s.sub.title,
+      start: dateKey(s.sub.dueDate),
+      end: dateKey(s.sub.dueDate),
+      status: s.sub.done ? "done" : "open",
+      code: myTaskCode(s),
+      taskId: s._id,
+      subtaskId: s.sub._id,
+    });
+  }
+  for (const l of leaves) {
+    const type = String(l.leaveType);
+    items.push({
+      id: `leave:${l._id}`,
+      kind: "leave",
+      title: `${type.charAt(0).toUpperCase()}${type.slice(1)} leave`,
+      start: dateKey(l.startDate),
+      end: dateKey(l.endDate),
+      status: l.status,
+      leaveId: l._id as ObjectId,
+      leaveType: type,
+    });
+  }
+  const completedSet = new Set(completedStatuses.map((id) => id.toString()));
+  for (const p of projects) {
+    if (!p.deadline) continue;
+    items.push({
+      id: `project_deadline:${p._id}`,
+      kind: "project_deadline",
+      title: p.name,
+      start: dateKey(p.deadline),
+      end: dateKey(p.deadline),
+      status: completedSet.has(String(p.status)) ? "completed" : "open",
+      code: p.code,
+      project: { _id: p._id as ObjectId, name: p.name, code: p.code },
+    });
+  }
+
+  const KIND_ORDER: Record<CalendarItem["kind"], number> = { project_deadline: 0, leave: 1, task: 2, subtask: 3 };
+  items.sort((a, b) => a.start.localeCompare(b.start) || KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || a.title.localeCompare(b.title));
+  const total = items.length;
+  res.json({
+    from: dateKey(from),
+    to: dateKey(to),
+    items: items.slice(0, MY_CALENDAR_LIMIT),
+    total,
+    limit: MY_CALENDAR_LIMIT,
+    truncated: total > MY_CALENDAR_LIMIT,
   });
 }

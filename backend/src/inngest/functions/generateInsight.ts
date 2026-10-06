@@ -435,7 +435,7 @@ export const generateInsightFunction = inngest.createFunction(
 
       const records = await Task.find({
         $or: [
-          { assignedTo: { $in: employeeIds } },
+          { assignees: { $in: employeeIds } },
           { assignedBy: { $in: employeeIds } },
         ],
       })

@@ -78,7 +78,7 @@ export function useMyLeaveBalance() {
   });
 }
 
-/** Admin: all leave requests, optionally filtered by status and searched/paginated. */
+/** Admin: all leave requests; head: their department's employees (API-scoped). Optional status/search/pagination. */
 export function useLeaves(params: LeaveQueryParams = {}) {
   const { status = "all", search = "", limit, offset = 0 } = params;
 
@@ -170,7 +170,7 @@ export function useCancelLeave() {
   });
 }
 
-/** Admin: approves or rejects a pending request. */
+/** Admin, or the head of the requester's department: approves or rejects a pending request. */
 export function useDecideLeave() {
   const queryClient = useQueryClient();
   const toast = useToast();

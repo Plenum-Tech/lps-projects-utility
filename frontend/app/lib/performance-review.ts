@@ -2,6 +2,8 @@ import { api } from "./api";
 import type {
   AcknowledgeReviewInput,
   CreateReviewInput,
+  CreateReviewResponse,
+  ReviewConfig,
   ReviewListResponse,
   UpdateGoalInput,
   UpdateReviewInput,
@@ -46,11 +48,17 @@ export async function getReview(id: string): Promise<ReviewResponse> {
   return data;
 }
 
-/** Admin/head: create a new review (triggers AI generation via Inngest). */
+/** Admin/head: whether optional AI drafting is enabled on the server. */
+export async function getReviewConfig(): Promise<ReviewConfig> {
+  const { data } = await api.get<ReviewConfig>("/performance-reviews/config");
+  return data;
+}
+
+/** Admin/head: create a review (manual; AI drafts only when `aiDraft` is set and enabled). */
 export async function createReview(
   input: CreateReviewInput
-): Promise<ReviewResponse> {
-  const { data } = await api.post<ReviewResponse>(
+): Promise<CreateReviewResponse> {
+  const { data } = await api.post<CreateReviewResponse>(
     "/performance-reviews",
     input
   );

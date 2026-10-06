@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentType } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
   Bell,
@@ -13,8 +13,35 @@ import {
   MessageSquareText,
   PartyPopper,
   XCircle,
-  type LucideIcon,
+
 } from "lucide-react";
+import {
+  LuAlarmClock,
+  LuArrowRightLeft,
+  LuAtSign,
+  LuCalendarX,
+  LuListChecks,
+  LuListTodo,
+  LuNotebookPen,
+  LuListPlus,
+  LuMessageSquare,
+  LuPencil,
+  LuActivity,
+  LuCalendarClock,
+  LuClock,
+  LuFileCheck,
+  LuFileClock,
+  LuFileX,
+  LuPaperclip,
+  LuStickyNote,
+  LuTimer,
+  LuTimerOff,
+  LuUserPlus,
+  LuUserRoundCheck,
+  LuFileWarning,
+  LuCalendarRange,
+  LuCalendarPlus,
+} from "react-icons/lu";
 import { Link, useNavigate } from "react-router";
 
 import { Button } from "@/components/ui/button";
@@ -36,9 +63,12 @@ import {
 import { getErrorMessage } from "@/lib/api";
 import type { Notification, NotificationType } from "@/types";
 
-const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
+type NotificationIcon = ComponentType<{ className?: string }>;
+
+const NOTIFICATION_ICONS: Record<NotificationType, NotificationIcon> = {
   leave_approved: PartyPopper,
   leave_rejected: XCircle,
+  leave_requested: LuCalendarPlus,
   feedback_responded: MessageSquareText,
   announcement_created: Megaphone,
   review_assigned: ClipboardList,
@@ -47,19 +77,75 @@ const NOTIFICATION_ICONS: Record<NotificationType, LucideIcon> = {
   task_completed: ClipboardCheck,
   task_approved: CircleCheck,
   task_rejected: XCircle,
+  task_updated: LuPencil,
+  task_status_changed: LuArrowRightLeft,
+  task_comment: LuMessageSquare,
+  task_mention: LuAtSign,
+  subtask_created: LuListTodo,
+  subtask_assigned: LuListPlus,
+  subtask_completed: LuListChecks,
+  task_note: LuNotebookPen,
+  task_note_mention: LuAtSign,
+  task_reminder: LuAlarmClock,
+  task_overdue: LuCalendarX,
+  project_member_added: LuUserPlus,
+  project_status_changed: LuActivity,
+  project_deadline: LuCalendarClock,
+  project_note: LuStickyNote,
+  project_file: LuPaperclip,
+  timelog_pending: LuClock,
+  timelog_approved: CircleCheck,
+  timelog_rejected: XCircle,
+  timesheet_submitted: LuFileClock,
+  timesheet_approved: LuFileCheck,
+  timesheet_rejected: LuFileX,
+  time_tracker_reminder: LuTimer,
+  timer_auto_stopped: LuTimerOff,
+  user_joined: LuUserRoundCheck,
+  document_expiring: LuFileWarning,
+  hr_date_upcoming: LuCalendarRange,
 };
 
+/** Theme tokens only — no palette colours. */
 const NOTIFICATION_ICON_COLORS: Record<NotificationType, string> = {
-  leave_approved: "text-emerald-600",
+  leave_approved: "text-primary",
   leave_rejected: "text-destructive",
-  feedback_responded: "text-blue-600",
-  announcement_created: "text-amber-600",
-  review_assigned: "text-purple-600",
-  review_acknowledged: "text-emerald-600",
-  task_assigned: "text-blue-600",
-  task_completed: "text-amber-600",
-  task_approved: "text-emerald-600",
+  leave_requested: "text-chart-2",
+  feedback_responded: "text-chart-2",
+  announcement_created: "text-chart-4",
+  review_assigned: "text-chart-3",
+  review_acknowledged: "text-primary",
+  task_assigned: "text-chart-2",
+  task_completed: "text-chart-4",
+  task_approved: "text-primary",
   task_rejected: "text-destructive",
+  task_updated: "text-muted-foreground",
+  task_status_changed: "text-chart-2",
+  task_comment: "text-chart-3",
+  task_mention: "text-primary",
+  subtask_created: "text-chart-3",
+  subtask_assigned: "text-chart-2",
+  subtask_completed: "text-primary",
+  task_note: "text-chart-3",
+  task_note_mention: "text-primary",
+  task_reminder: "text-chart-4",
+  task_overdue: "text-destructive",
+  project_member_added: "text-chart-2",
+  project_status_changed: "text-chart-3",
+  project_deadline: "text-chart-4",
+  project_note: "text-chart-3",
+  project_file: "text-muted-foreground",
+  timelog_pending: "text-chart-4",
+  timelog_approved: "text-primary",
+  timelog_rejected: "text-destructive",
+  timesheet_submitted: "text-chart-4",
+  timesheet_approved: "text-primary",
+  timesheet_rejected: "text-destructive",
+  time_tracker_reminder: "text-chart-2",
+  timer_auto_stopped: "text-chart-5",
+  user_joined: "text-primary",
+  document_expiring: "text-destructive",
+  hr_date_upcoming: "text-chart-4",
 };
 
 /**
@@ -110,8 +196,16 @@ function NotificationPanel() {
       markAsRead.mutate(notification._id);
     }
     // Navigate to the linked page.
-    if (notification.link) {
-      navigate(notification.link);
+    // Task notifications open the detail sheet via /tasks?task=<id>.
+    const target =
+      notification.link ??
+      (notification.task
+        ? `/tasks?task=${notification.task}`
+        : notification.project
+          ? `/projects/${notification.project}`
+          : null);
+    if (target) {
+      navigate(target);
     }
   }
 
