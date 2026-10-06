@@ -4,6 +4,7 @@ import { useNavigate } from "react-router";
 
 import { LoginForm } from "@/components/auth/login-form";
 import { BrandHeader } from "@/components/layout/brand";
+import { PRODUCT_COMPANY, PRODUCT_NAME } from "@/lib/brand";
 import {
   Card,
   CardContent,
@@ -82,7 +83,7 @@ export function BrandPanel() {
       </div>
 
       <p className="relative text-sm opacity-70">
-        © {new Date().getFullYear()} Employee Management System
+        © {new Date().getFullYear()} {PRODUCT_COMPANY} · {PRODUCT_NAME}
       </p>
     </aside>
   );

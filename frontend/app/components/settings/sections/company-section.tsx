@@ -282,7 +282,7 @@ function LogoCard() {
             <p className="text-xs text-muted-foreground">
               {logo
                 ? `${logo.mimeType.replace("image/", "").replace("svg+xml", "svg").toUpperCase()} · ${formatFileSize(logo.size)}`
-                : "No logo yet — the EMS mark is used."}
+                : "No logo yet — the default LPS logo is used."}
             </p>
           </div>
         </div>
@@ -301,7 +301,7 @@ function LogoCard() {
         open={confirmRemove}
         onOpenChange={setConfirmRemove}
         title="Remove the logo?"
-        description="The sidebar, login page and emails go back to the default EMS mark."
+        description="The sidebar, login page and emails go back to the default LPS logo."
         confirmLabel="Remove logo"
         destructive
         pending={remove.isPending}

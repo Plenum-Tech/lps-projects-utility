@@ -6,7 +6,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Route } from "./+types/performance-reviews";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Performance Reviews | Employee Management System" }];
+  return [{ title: "Performance Reviews | LPS" }];
 }
 
 /**

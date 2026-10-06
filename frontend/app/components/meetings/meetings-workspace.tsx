@@ -91,7 +91,7 @@ export function MeetingsWorkspace({
     <EmptyState
       icon={LuMessagesSquare}
       title={embedded ? "No meetings for this project yet" : "No meetings yet"}
-      description="Upload a Teams transcript (.vtt or .docx) or paste one — EMS suggests action items you can turn into tasks."
+      description="Upload a Teams transcript (.vtt or .docx) or paste one — LPS suggests action items you can turn into tasks."
       className="border-0"
     >
       {canAdd && (

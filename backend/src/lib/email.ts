@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import type { Transporter } from "nodemailer";
+import { DEFAULT_COMPANY_NAME } from "../models/CompanySettings.js";
 import { apiPublicOrigin, companySettings, logoApiPath, settingsAppUrl } from "./companySettings.js";
 
 // ---------------------------------------------------------------------------
@@ -58,7 +59,7 @@ function getTransporter(): Transporter | null {
 
 function getFromAddress(): string {
   // FROM_NAME wins when set; otherwise the company name from settings.
-  const name = process.env.FROM_NAME?.trim() || companySettings().name || "EMS";
+  const name = process.env.FROM_NAME?.trim() || companySettings().name || DEFAULT_COMPANY_NAME;
   const email = process.env.FROM_EMAIL || process.env.SMTP_USER || "";
   return `"${name.replace(/["\\\r\n<>]/g, "")}" <${email}>`;
 }
@@ -231,7 +232,7 @@ export function appUrl(): string {
 
 /** Company name for email copy (plain text — escape before putting it in HTML). */
 export function companyName(): string {
-  return companySettings().name || "EMS";
+  return companySettings().name || DEFAULT_COMPANY_NAME;
 }
 
 // ---------------------------------------------------------------------------
@@ -755,7 +756,7 @@ export function testEmailTemplate(params: { firstName: string; host: string | nu
 }
 
 /**
- * Invitation to join EMS. Sent to someone without an account yet, so it is
+ * Invitation to join the workspace (company name, or "LPS – Projects Utility"). Sent to someone without an account yet, so it is
  * rendered without a first name. `acceptUrl` carries the one-time token.
  */
 export function invitationTemplate(params: {

@@ -3,7 +3,7 @@ import { MeetingDetailPage } from "@/components/meetings/meeting-detail";
 import type { Route } from "./+types/meetings.$id";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Meeting | Employee Management System" }];
+  return [{ title: "Meeting | LPS" }];
 }
 
 /** Two-pane meeting workspace (`?seg=<idx>` jumps to a transcript line). */

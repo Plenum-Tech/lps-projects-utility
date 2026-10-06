@@ -34,7 +34,7 @@ import type { ActivityAction, ActivityLog, DocumentType } from "@/types";
 import type { Route } from "./+types/activity-log";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Activity Log | Employee Management System" }];
+  return [{ title: "Activity Log | LPS" }];
 }
 
 const PAGE_SIZE = 10;

@@ -7,7 +7,7 @@ async function seedAdmin(): Promise<void> {
   await connectDB();
 
   try {
-    const name = process.env.ADMIN_NAME ?? "Admin";
+    const name = process.env.ADMIN_NAME ?? "LPS Admin";
     const email = (process.env.ADMIN_EMAIL ?? "admin@ems.local").trim().toLowerCase();
     const password = process.env.ADMIN_PASSWORD;
 

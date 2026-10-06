@@ -366,7 +366,7 @@ export function generateHints(
       assigneeName = seg.speaker;
       assignee = speakerUser.get(seg.speaker.toLowerCase()) ?? null;
     } else if (best.owner === "other" && candidates.length > 0) {
-      // "Can you …" with a name we only know from EMS (not a speaker).
+      // "Can you …" with a name we only know from LPS (not a speaker).
       const word = /\b(\p{Lu}\p{Ll}+)\s*,/u.exec(best.sentence)?.[1];
       const user = word ? matchName(word, candidates) : null;
       if (user) {

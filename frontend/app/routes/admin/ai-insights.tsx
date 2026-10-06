@@ -63,7 +63,7 @@ export const handle: RoleHandle = {
 };
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "AI Insights | Employee Management System" }];
+  return [{ title: "AI Insights | LPS" }];
 }
 
 const PAGE_SIZE = 10;

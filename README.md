@@ -1,6 +1,6 @@
-# Employee Management System (EMS)
+# LPS – Projects Utility
 
-A full-stack employee management platform built with the MERN stack and React Router framework mode. Features role-based access control, AI-powered insights, and real-time notifications.
+By **Plenum Tech**. A full-stack projects, people and time platform built with the MERN stack and React Router framework mode. Features role-based access control, AI-powered insights, and real-time notifications.
 
 ## Tech Stack
 
@@ -77,7 +77,7 @@ cd frontend && bun run typecheck
 | `CORS_ORIGIN` | Allowed frontend origin | `http://localhost:5173` |
 | `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` | SMTP server (Microsoft 365: STARTTLS on 587) | `smtp.office365.com` / `587` / `false` |
 | `SMTP_USER` / `SMTP_PASS` | Mailbox login (app password if MFA is on) | `you@yourdomain.com` |
-| `FROM_NAME` / `FROM_EMAIL` | Sender (FROM_EMAIL must equal SMTP_USER unless Send As is granted) | `EMS` / `you@yourdomain.com` |
+| `FROM_NAME` / `FROM_EMAIL` | Sender (FROM_EMAIL must equal SMTP_USER unless Send As is granted) | empty (= company name, else `LPS – Projects Utility`) / `you@yourdomain.com` |
 | `EMAIL_REDIRECT_TO` | Dev only: deliver all mail to this address | `dev@yourdomain.com` |
 | `APP_URL` | Frontend URL used in email links | `http://localhost:5173` |
 | `NODE_ENV` | `development` or `production` | `production` |

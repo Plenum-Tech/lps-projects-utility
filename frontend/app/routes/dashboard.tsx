@@ -49,10 +49,10 @@ import type { Route } from "./+types/dashboard";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "Dashboard | Employee Management System" },
+    { title: "Dashboard | LPS" },
     {
       name: "description",
-      content: "Employee Management System dashboard.",
+      content: "LPS – Projects Utility dashboard.",
     },
   ];
 }

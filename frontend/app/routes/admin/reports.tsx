@@ -65,7 +65,7 @@ import { startOfMonthString, todayString } from "@/lib/attendance";
 import type { Route } from "./+types/reports";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Reports | Employee Management System" }];
+  return [{ title: "Reports | LPS" }];
 }
 
 export default function Reports() {

@@ -4,7 +4,7 @@ import type { IUser } from "../../models/User.js";
 import { User } from "../../models/User.js";
 
 // ---------------------------------------------------------------------------
-// Speaker → EMS user matching. Candidates are the users the uploader can
+// Speaker → LPS user matching. Candidates are the users the uploader can
 // assign: project members + manager when there's a project, otherwise the
 // assignable-users rule (admin: everyone, head: their department, employee:
 // themselves). Full name first (case/accents-insensitive), then a unique
@@ -67,7 +67,7 @@ export function matchName(name: string, candidates: CandidateUser[]): CandidateU
   if (!canonical) return null;
   const full = candidates.filter((c) => normalizeName(c.name) === canonical);
   if (full.length === 1) return full[0]!;
-  if (full.length > 1) return null; // two EMS users with the same name: let the user decide
+  if (full.length > 1) return null; // two LPS users with the same name: let the user decide
   // Email local part ("priya.sharma") — Teams guests sometimes appear by address.
   const byEmail = candidates.filter((c) => normalizeName(c.email.split("@")[0]!.replace(/[._]/g, " ")) === canonical);
   if (byEmail.length === 1) return byEmail[0]!;

@@ -299,7 +299,7 @@ function InviteForm({
             id="invite-message"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
-            placeholder="Welcome to the team! Here's your EMS account."
+            placeholder="Welcome to the team! Here's your LPS account."
             rows={3}
             maxLength={MESSAGE_MAX + 50}
             disabled={pending}

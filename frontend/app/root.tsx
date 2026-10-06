@@ -14,8 +14,13 @@ import "./app.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toast";
 import { createQueryClient } from "./lib/query-client";
+import { PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_SHORT_NAME } from "./lib/brand";
 
 export const links: Route.LinksFunction = () => [
+  { rel: "icon", href: "/favicon.ico", sizes: "48x48" },
+  { rel: "icon", href: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+  { rel: "manifest", href: "/site.webmanifest" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -28,12 +33,21 @@ export const links: Route.LinksFunction = () => [
   },
 ];
 
+/** Fallback for routes without their own meta. */
+export const meta: Route.MetaFunction = () => [
+  { title: PRODUCT_NAME },
+  { name: "description", content: PRODUCT_DESCRIPTION },
+];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="application-name" content={PRODUCT_SHORT_NAME} />
+        <meta name="apple-mobile-web-app-title" content={PRODUCT_SHORT_NAME} />
+        <meta name="theme-color" content="#101820" />
         <Meta />
         <Links />
       </head>

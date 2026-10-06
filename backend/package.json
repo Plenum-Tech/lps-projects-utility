@@ -1,5 +1,5 @@
 {
-  "name": "backend",
+  "name": "lps-projects-utility-backend",
   "module": "src/server.ts",
   "dependencies": {
     "bcryptjs": "^3.0.3",

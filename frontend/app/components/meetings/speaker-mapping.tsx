@@ -8,7 +8,7 @@ import type { UserRef } from "@/types";
 
 export interface SpeakerRow {
   name: string;
-  /** Mapped EMS user id, null = "Not in EMS". */
+  /** Mapped LPS user id, null = "Not in LPS". */
   user: string | null;
   /** Auto-matched by the server (shown as a hint). */
   matched?: UserRef | null;
@@ -16,7 +16,7 @@ export interface SpeakerRow {
   current?: UserRef | null;
 }
 
-/** Each detected speaker → an EMS user picker, with "Not in EMS". */
+/** Each detected speaker → an LPS user picker, with "Not in LPS". */
 export function SpeakerMapping({
   rows,
   onChange,
@@ -61,7 +61,7 @@ export function SpeakerMapping({
                   ) : (
                     <>
                       <LuUserX aria-hidden className="size-3" />
-                      Not in EMS
+                      Not in LPS
                     </>
                   )}
                 </p>
@@ -72,10 +72,10 @@ export function SpeakerMapping({
               extra={[row.current, row.matched]}
               value={row.user}
               onChange={(user) => onChange(row.name, user)}
-              noneLabel="Not in EMS"
+              noneLabel="Not in LPS"
               loading={loading}
               disabled={disabled}
-              aria-label={`EMS user for ${row.name}`}
+              aria-label={`LPS user for ${row.name}`}
             />
           </li>
         );

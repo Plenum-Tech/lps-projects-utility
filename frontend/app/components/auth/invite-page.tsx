@@ -21,6 +21,7 @@ import { Link, useNavigate } from "react-router";
 import { formatDate } from "@/lib/format";
 import { BrandPanel } from "@/components/auth/login-page";
 import { BrandHeader } from "@/components/layout/brand";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
@@ -165,7 +166,7 @@ function AcceptCard({ token, invite }: { token: string; invite: InvitationPrevie
           const firstName = data.user.name.split(/\s+/)[0] || data.user.name;
           toast.add({
             type: "success",
-            title: `Welcome to EMS, ${firstName}!`,
+            title: `Welcome to ${PRODUCT_NAME}, ${firstName}!`,
             description: "Your account is ready.",
           });
           for (const notice of data.notices) toast.add({ type: "warning", title: notice });
@@ -183,7 +184,7 @@ function AcceptCard({ token, invite }: { token: string; invite: InvitationPrevie
         <span className="mb-2 flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
           <LuUserPlus aria-hidden className="size-5" />
         </span>
-        <CardTitle className="text-xl">Join EMS</CardTitle>
+        <CardTitle className="text-xl">Join {PRODUCT_NAME}</CardTitle>
         <CardDescription>
           <span className="font-medium text-foreground">{invite.invitedBy.name}</span> invited you as{" "}
           {ROLE_LABELS[invite.role]}

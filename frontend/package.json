@@ -1,5 +1,5 @@
 {
-  "name": "frontend",
+  "name": "lps-projects-utility-frontend",
   "private": true,
   "type": "module",
   "scripts": {

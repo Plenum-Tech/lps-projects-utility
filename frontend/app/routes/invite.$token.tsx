@@ -4,7 +4,7 @@ import type { Route } from "./+types/invite.$token";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "Join EMS | Employee Management System" },
+    { title: "Join | LPS" },
     { name: "robots", content: "noindex" },
   ];
 }

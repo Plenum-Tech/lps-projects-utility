@@ -92,7 +92,7 @@ const NO_DEPARTMENT = "__none__";
 const PAGE_SIZE = 10;
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Manage Users | Employee Management System" }];
+  return [{ title: "Manage Users | LPS" }];
 }
 
 function initials(name: string) {

@@ -59,7 +59,7 @@ const NO_DEPARTMENT = "__none__";
 const PAGE_SIZE = 12;
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Announcements | Employee Management System" }];
+  return [{ title: "Announcements | LPS" }];
 }
 
 function initials(name: string) {

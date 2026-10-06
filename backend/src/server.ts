@@ -92,7 +92,7 @@ app.use(express.urlencoded({ extended: true })); // Parse form request bodies
 
 // Root health check — confirms the API is up and running
 app.get("/", (_req, res) => {
-  res.send("Employee Management System API is running 🚀");
+  res.send("LPS – Projects Utility API is running 🚀");
 });
 
 // --- Rate limiting ---

@@ -1,0 +1,13 @@
+{
+  "name": "LPS – Projects Utility",
+  "short_name": "LPS",
+  "description": "LPS – Projects Utility by Plenum Tech: projects, tasks, time and people in one place.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#101820",
+  "icons": [
+    { "src": "/brand/lps-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/brand/lps-icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

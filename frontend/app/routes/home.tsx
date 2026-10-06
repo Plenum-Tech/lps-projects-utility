@@ -3,10 +3,10 @@ import { LoginPage } from "../components/auth/login-page";
 
 export function meta({}: Route.MetaArgs) {
   return [
-    { title: "Sign in | Employee Management System" },
+    { title: "Sign in | LPS" },
     {
       name: "description",
-      content: "Sign in to the Employee Management System.",
+      content: "Sign in to LPS – Projects Utility by Plenum Tech.",
     },
   ];
 }

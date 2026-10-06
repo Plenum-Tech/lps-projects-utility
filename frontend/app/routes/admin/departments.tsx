@@ -66,7 +66,7 @@ import type { Department, DepartmentInput } from "@/types";
 import type { Route } from "./+types/departments";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Departments | Employee Management System" }];
+  return [{ title: "Departments | LPS" }];
 }
 
 const PAGE_SIZE = 10;

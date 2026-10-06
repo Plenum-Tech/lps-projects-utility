@@ -27,7 +27,8 @@ import {
 import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
-import { BrandMark, useBrand } from "@/components/layout/brand";
+import { BrandLogo, BrandMark, useBrand } from "@/components/layout/brand";
+import { PRODUCT_NAME, PRODUCT_SHORT_NAME, PRODUCT_TAGLINE } from "@/lib/brand";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -240,14 +241,22 @@ export function AppSidebar() {
       <SidebarHeader>
         <Link
           to="/dashboard"
-          className="flex items-center gap-2.5 px-1 py-1 outline-none rounded-lg focus-visible:ring-2 ring-sidebar-ring group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+          title={`${PRODUCT_NAME} — Dashboard`}
+          className="flex flex-col items-start gap-2 rounded-lg px-1 py-1 outline-none ring-sidebar-ring focus-visible:ring-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-0"
         >
-          <BrandMark src={brand.logo} className="size-8 rounded-lg" />
-          <span className="grid min-w-0 leading-tight group-data-[collapsible=icon]:hidden">
-            <span className="truncate font-heading text-sm font-semibold">{brand.name}</span>
-            <span className="text-[0.68rem] text-sidebar-foreground/60">
-              Employee Management System
+          <BrandLogo src={brand.logo} className="h-9 group-data-[collapsible=icon]:hidden" />
+          <BrandMark
+            src={brand.logo}
+            className="hidden size-8 rounded-lg group-data-[collapsible=icon]:flex"
+          />
+          <span className="grid min-w-0 max-w-full leading-tight group-data-[collapsible=icon]:sr-only">
+            <span className="truncate font-heading text-sm font-semibold">
+              <span className="sr-only">{PRODUCT_SHORT_NAME} – </span>
+              {PRODUCT_TAGLINE}
             </span>
+            {brand.company && (
+              <span className="truncate text-xs text-sidebar-foreground/60">{brand.company}</span>
+            )}
           </span>
         </Link>
       </SidebarHeader>

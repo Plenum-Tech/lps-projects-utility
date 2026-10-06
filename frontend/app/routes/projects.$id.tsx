@@ -3,7 +3,7 @@ import { ProjectDetail } from "@/components/projects/project-detail";
 import type { Route } from "./+types/projects.$id";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Project | Employee Management System" }];
+  return [{ title: "Project | LPS" }];
 }
 
 /** Project detail — header actions and tabs (synced to `?tab=`). */

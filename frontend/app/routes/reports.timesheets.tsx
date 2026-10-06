@@ -5,7 +5,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Route } from "./+types/reports.timesheets";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Weekly Timesheet Report | Employee Management System" }];
+  return [{ title: "Weekly Timesheet Report | LPS" }];
 }
 
 /** Head/admin only — heads are limited to their department server-side. */

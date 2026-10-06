@@ -1,4 +1,4 @@
-# Overnight build status: ✅ ready to test
+# LPS – Projects Utility — build status: ✅ ready to test
 
 The code lives in this folder (call it **WT**):
 `C:\EMS\AI-Powered-Real-time-Employee-Management-System\.claude\worktrees\ems-backend-setup-e5fd54`
@@ -39,7 +39,7 @@ SMTP_PORT=587
 SMTP_SECURE=false
 SMTP_USER=admin@hoistra.ai
 SMTP_PASS=<your mailbox password; change it first, since it was shared in chat>
-FROM_NAME=EMS
+FROM_NAME=LPS – Projects Utility
 FROM_EMAIL=admin@hoistra.ai
 EMAIL_REDIRECT_TO=bala.r@plenum-tech.com
 ```

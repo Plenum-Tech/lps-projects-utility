@@ -2346,7 +2346,7 @@ export interface TranscriptSegment {
   text: string;
 }
 
-/** Speaker → EMS user mapping (`user: null` = "Not in EMS"). */
+/** Speaker → LPS user mapping (`user: null` = "Not in LPS"). */
 export interface MeetingSpeaker {
   name: string;
   user: UserRef | null;
@@ -2371,7 +2371,7 @@ export interface MeetingActionItem {
   quote: string;
   title: string;
   assignee: UserRef | null;
-  /** Owner as named in the transcript (kept when not an EMS user). */
+  /** Owner as named in the transcript (kept when not an LPS user). */
   assigneeName: string | null;
   /** "YYYY-MM-DD". */
   dueDate: string | null;

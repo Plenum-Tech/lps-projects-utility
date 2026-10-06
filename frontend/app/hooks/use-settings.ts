@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
 import { API_BASE_URL, api, getErrorMessage } from "@/lib/api";
+import { PRODUCT_NAME } from "@/lib/brand";
 import type { CompanySettings, CompanySettingsInput, PublicSettings } from "@/types";
 
 export const settingsKeys = {
@@ -11,7 +12,7 @@ export const settingsKeys = {
 
 /** Defaults the server uses until someone edits settings (keeps today's behaviour). */
 export const DEFAULT_PUBLIC_SETTINGS: PublicSettings = {
-  name: "EMS",
+  name: PRODUCT_NAME,
   logoUrl: null,
   logoPath: null,
   dateFormat: "DD-MM-YYYY",

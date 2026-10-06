@@ -22,7 +22,7 @@ interface PickerOption {
 
 /**
  * Searchable single-user picker with an explicit "none" option ("Unassigned",
- * "Not in EMS" …). `extra` keeps a current value selectable when it isn't in
+ * "Not in LPS" …). `extra` keeps a current value selectable when it isn't in
  * `users` (e.g. a former project member).
  */
 export function UserPicker({

@@ -62,7 +62,7 @@ export interface IActionItem {
   quote: string;
   title: string;
   assignee?: mongoose.Types.ObjectId | null;
-  /** Transcript name of the owner (kept even when it doesn't map to an EMS user). */
+  /** Transcript name of the owner (kept even when it doesn't map to an LPS user). */
   assigneeName?: string | null;
   dueDate?: Date | null;
   priority: TaskPriority;

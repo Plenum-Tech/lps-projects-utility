@@ -257,7 +257,7 @@ export function AppSection() {
         type="url"
         value={values.appUrl}
         onChange={(value) => form.set("appUrl", value)}
-        placeholder={data.envFallback.appUrl || "https://ems.example.com"}
+        placeholder={data.envFallback.appUrl || "https://lps.example.com"}
         error={fieldError("appUrl", "appUrl")}
         hint={`Used for links in emails. Leave empty to use the server's APP_URL${
           data.envFallback.appUrl ? ` (${data.envFallback.appUrl})` : ""

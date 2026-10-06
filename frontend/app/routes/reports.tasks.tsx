@@ -5,7 +5,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Route } from "./+types/reports.tasks";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Task Report | Employee Management System" }];
+  return [{ title: "Task Report | LPS" }];
 }
 
 /** Head/admin only — heads are limited to their department server-side. */

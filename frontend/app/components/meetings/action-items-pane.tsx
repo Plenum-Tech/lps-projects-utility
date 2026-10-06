@@ -382,7 +382,7 @@ function SuggestionRow({
             onChange={(assignee) => save({ assignee })}
             loading={peopleLoading}
             noneLabel="Unassigned"
-            placeholder={item.assigneeName ? `${item.assigneeName} (not in EMS)` : undefined}
+            placeholder={item.assigneeName ? `${item.assigneeName} (not in LPS)` : undefined}
             aria-label="Assignee"
             className="h-8"
           />
@@ -421,7 +421,7 @@ function SuggestionRow({
           <div className="flex gap-1">
             <dt className="text-muted-foreground">Assignee</dt>
             <dd className="text-foreground">
-              {item.assignee?.name ?? (item.assigneeName ? `${item.assigneeName} (not in EMS)` : "—")}
+              {item.assignee?.name ?? (item.assigneeName ? `${item.assigneeName} (not in LPS)` : "—")}
             </dd>
           </div>
           <div className="flex gap-1">
@@ -437,7 +437,7 @@ function SuggestionRow({
       {editable && !item.assignee && item.assigneeName && (
         <p className="text-xs text-muted-foreground">
           Named in the transcript: <span className="font-medium text-foreground">{item.assigneeName}</span>{" "}
-          — not mapped to an EMS user.
+          — not mapped to an LPS user.
         </p>
       )}
     </li>

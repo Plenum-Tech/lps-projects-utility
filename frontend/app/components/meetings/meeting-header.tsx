@@ -112,7 +112,7 @@ export function MeetingHeader({
                 <li
                   key={speaker.name}
                   className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-background py-0.5 pr-2.5 pl-1 text-xs"
-                  title={speaker.user ? `${speaker.name} → ${speaker.user.name}` : `${speaker.name} (not in EMS)`}
+                  title={speaker.user ? `${speaker.name} → ${speaker.user.name}` : `${speaker.name} (not in LPS)`}
                 >
                   <span aria-hidden className={cn("size-2.5 shrink-0 rounded-full", tones.get(speaker.name)?.dot)} />
                   <span className="truncate font-medium text-foreground">{speaker.user?.name ?? speaker.name}</span>
@@ -181,7 +181,7 @@ export function MeetingHeader({
       {showAi && (
         <p id="ai-note" className="flex items-center gap-1.5 text-xs text-muted-foreground lg:justify-end">
           <LuShieldCheck aria-hidden className="size-3.5" />
-          Smart hints run on the EMS server. “Extract with AI” sends the transcript to Google Gemini.
+          Smart hints run on the LPS server. “Extract with AI” sends the transcript to Google Gemini.
           {meeting.aiExtractedAt && ` Last run ${formatPlainDate(meeting.aiExtractedAt)}.`}
         </p>
       )}
@@ -194,7 +194,7 @@ export function MeetingHeader({
           <>
             Extract with AI sends the transcript text of this meeting to Google Gemini to propose
             action items, owners and due dates. Nothing becomes a task until you create it. Smart
-            hints keep everything on the EMS server. You won&apos;t see this notice again on this
+            hints keep everything on the LPS server. You won&apos;t see this notice again on this
             browser.
           </>
         }

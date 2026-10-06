@@ -5,7 +5,7 @@ import { SettingsLayout } from "@/components/settings/settings-layout";
 import type { Route } from "./+types/settings";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Settings | Employee Management System" }];
+  return [{ title: "Settings | LPS" }];
 }
 
 /** /settings and /settings/:section — see components/settings/*. */

@@ -5,7 +5,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Route } from "./+types/reports.time";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Time Log Report | Employee Management System" }];
+  return [{ title: "Time Log Report | LPS" }];
 }
 
 /** Head/admin only — heads are limited to their department server-side. */

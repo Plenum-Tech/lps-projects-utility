@@ -63,7 +63,7 @@ import type { Route } from "./+types/attendance";
 const PAGE_SIZE = 15;
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Attendance | Employee Management System" }];
+  return [{ title: "Attendance | LPS" }];
 }
 
 /**

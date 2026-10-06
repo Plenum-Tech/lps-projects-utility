@@ -21,6 +21,11 @@ export type LogoMimeType = (typeof LOGO_MIME_TYPES)[number];
 /** GridFS bucket for the company logo ("companyAssets.files" + ".chunks"). */
 export const COMPANY_ASSETS_BUCKET = "companyAssets";
 
+/** Product name — the company name until an admin sets one in Settings → Company. */
+export const DEFAULT_COMPANY_NAME = "LPS – Projects Utility";
+/** Earlier default names; a stored value equal to one of these counts as "not set". */
+export const LEGACY_DEFAULT_COMPANY_NAMES: readonly string[] = ["EMS"];
+
 export const COMPANY_SETTINGS_LIMITS = {
   nameMax: 120,
   emailMax: 254,
@@ -91,7 +96,7 @@ const addressSchema = new Schema<CompanyAddress>(
 const companySettingsSchema = new Schema<ICompanySettings>(
   {
     key: { type: String, enum: ["company"], default: "company", required: true, unique: true },
-    name: { type: String, trim: true, default: "EMS", maxlength: COMPANY_SETTINGS_LIMITS.nameMax },
+    name: { type: String, trim: true, default: DEFAULT_COMPANY_NAME, maxlength: COMPANY_SETTINGS_LIMITS.nameMax },
     email: { type: String, trim: true, lowercase: true, default: "", maxlength: COMPANY_SETTINGS_LIMITS.emailMax },
     phone: { type: String, trim: true, maxlength: COMPANY_SETTINGS_LIMITS.phoneMax },
     website: { type: String, trim: true, maxlength: COMPANY_SETTINGS_LIMITS.urlMax },

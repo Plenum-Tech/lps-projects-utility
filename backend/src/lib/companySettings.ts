@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import {
   CompanySettings,
+  DEFAULT_COMPANY_NAME,
+  LEGACY_DEFAULT_COMPANY_NAMES,
   type CompanyAddress,
   type DateFormat,
   type ICompanySettings,
@@ -80,7 +82,7 @@ export function defaultSnapshot(): CompanySettingsSnapshot {
   return {
     exists: false,
     id: null,
-    name: "EMS",
+    name: DEFAULT_COMPANY_NAME,
     email: "",
     phone: "",
     website: "",
@@ -105,7 +107,7 @@ export function toSnapshot(doc: ICompanySettings): CompanySettingsSnapshot {
   return {
     exists: true,
     id: String(doc._id),
-    name: doc.name || base.name,
+    name: doc.name && !LEGACY_DEFAULT_COMPANY_NAMES.includes(doc.name) ? doc.name : base.name,
     email: doc.email ?? "",
     phone: doc.phone ?? "",
     website: doc.website ?? "",

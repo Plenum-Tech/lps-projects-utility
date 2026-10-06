@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "backend",
+      "name": "lps-projects-utility-backend",
       "dependencies": {
         "bcryptjs": "^3.0.3",
         "chrono-node": "^2.10.2",

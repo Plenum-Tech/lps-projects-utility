@@ -6,7 +6,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import type { Route } from "./+types/leaves";
 
 export function meta({}: Route.MetaArgs) {
-  return [{ title: "Leaves | Employee Management System" }];
+  return [{ title: "Leaves | LPS" }];
 }
 
 /**

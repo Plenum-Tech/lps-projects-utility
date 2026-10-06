@@ -1,4 +1,6 @@
-# Welcome to React Router!
+# LPS – Projects Utility — frontend
+
+React Router (framework mode) client for LPS – Projects Utility by Plenum Tech. Based on the React Router template:
 
 A modern, production-ready template for building full-stack React applications using React Router.
 

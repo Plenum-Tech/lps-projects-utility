@@ -58,7 +58,7 @@ type SourceTab = "upload" | "paste";
 
 /**
  * "New meeting" — step 1: transcript (upload or paste), title, date and
- * project, with a parse preview; step 2: map detected speakers to EMS users.
+ * project, with a parse preview; step 2: map detected speakers to LPS users.
  */
 export function MeetingUploadDialog({
   open,
@@ -202,8 +202,8 @@ export function MeetingUploadDialog({
           <DialogTitle>New meeting</DialogTitle>
           <DialogDescription>
             {step === 1
-              ? "Bring in a Teams transcript — EMS highlights likely action items so you can turn them into tasks."
-              : "Match the people who spoke to EMS users so suggestions get the right owners."}
+              ? "Bring in a Teams transcript — LPS highlights likely action items so you can turn them into tasks."
+              : "Match the people who spoke to LPS users so suggestions get the right owners."}
           </DialogDescription>
           <ol className="flex items-center gap-2 pt-1 text-xs" aria-label="Steps">
             {(["Transcript", "Speakers"] as const).map((label, index) => {
@@ -416,7 +416,7 @@ export function MeetingUploadDialog({
                 <p className="text-sm text-muted-foreground">
                   <span className="font-medium text-foreground tabular-nums">{matchedCount}</span> of{" "}
                   <span className="tabular-nums">{speakers.length}</span> speakers mapped. Pick “Not in
-                  EMS” for guests — their names are kept on suggestions.
+                  LPS” for guests — their names are kept on suggestions.
                 </p>
                 <SpeakerMapping
                   rows={speakers}
