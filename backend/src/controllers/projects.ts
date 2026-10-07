@@ -171,7 +171,8 @@ function memberCardRows(project: Pick<IProject, "deadline" | "startDate">): Arra
 export function notifyMembersAdded(
   project: IProject,
   userIds: mongoose.Types.ObjectId[],
-  actor: IUser | null
+  actor: IUser | null,
+  sendEmail = true
 ): void {
   if (userIds.length === 0) return;
   const actorName = actor?.name ?? "An admin";
@@ -183,6 +184,7 @@ export function notifyMembersAdded(
     message: `${actorName} added you to ${project.code} · ${project.name}.`,
     link: projectLink(project._id as mongoose.Types.ObjectId),
     project: project._id as mongoose.Types.ObjectId,
+    skipEmail: !sendEmail,
     email: {
       subject: `📁 You were added to ${project.name}`,
       heading: "Added to a Project",
@@ -608,7 +610,7 @@ export async function bulkProjects(req: Request, res: Response): Promise<void> {
 }
 
 
-interface ProjectBody {
+export interface ProjectBody {
   name?: unknown;
   code?: unknown;
   summary?: unknown;
@@ -648,47 +650,60 @@ function parseProgress(raw: unknown): number | undefined | Invalid {
   return Math.round(raw);
 }
 
-/** POST /api/projects — admin, or a head for their own department. */
-export async function createProject(req: Request, res: Response): Promise<void> {
-  const actor = req.user!;
+export interface ProjectWriteOptions {
+  /** false = in-app notifications only, no emails (bulk imports). Default true. */
+  sendEmail?: boolean;
+  /** Extra details for the project activity / audit entries (e.g. the import job). */
+  activityExtra?: Record<string, unknown>;
+}
+
+/**
+ * Creates a project (POST /api/projects and imports share this path):
+ * permission, validation, code uniqueness, default status, progress, activity,
+ * `project_member_added` notifications and SSE.
+ */
+export async function createProjectCore(
+  actor: IUser,
+  body: ProjectBody,
+  ip: string | undefined,
+  options: ProjectWriteOptions = {}
+): Promise<Invalid | { project: IProject }> {
   if (!canCreateProject(actor)) {
-    res.status(403).json({ error: "Only admins and department heads can create projects" });
-    return;
+    return bad("Only admins and department heads can create projects", 403);
   }
-  const body = (req.body ?? {}) as ProjectBody;
 
   const name = parseName(body.name);
-  if (isInvalid(name)) return send(res, name);
+  if (isInvalid(name)) return name;
   const code = parseCode(body.code);
-  if (isInvalid(code)) return send(res, code);
+  if (isInvalid(code)) return code;
   const summary = parseSummary(body.summary);
-  if (isInvalid(summary)) return send(res, summary);
+  if (isInvalid(summary)) return summary;
 
   let category: mongoose.Types.ObjectId | null = null;
   if (body.category !== undefined) {
     const parsed = await parseCategory(body.category);
-    if (isInvalid(parsed)) return send(res, parsed);
+    if (isInvalid(parsed)) return parsed;
     category = parsed;
   }
 
   let departments: mongoose.Types.ObjectId[] = actor.role === "head" && actor.department ? [actor.department] : [];
   if (body.departments !== undefined) {
     const parsed = await parseDepartments(actor, body.departments);
-    if (isInvalid(parsed)) return send(res, parsed);
+    if (isInvalid(parsed)) return parsed;
     departments = parsed.length > 0 || actor.role === "admin" ? parsed : departments;
   }
 
   let manager: mongoose.Types.ObjectId | null = null;
   if (body.manager !== undefined) {
     const parsed = await parseUserId(body.manager, "manager");
-    if (isInvalid(parsed)) return send(res, parsed);
+    if (isInvalid(parsed)) return parsed;
     manager = parsed;
   }
 
   let members: MemberInput[] = [];
   if (body.members !== undefined) {
     const parsed = await parseMembers(body.members);
-    if (isInvalid(parsed)) return send(res, parsed);
+    if (isInvalid(parsed)) return parsed;
     members = parsed;
   }
   if (manager && !members.some((m) => m.user.equals(manager!))) members.push({ user: manager, hourlyRate: 0 });
@@ -696,38 +711,38 @@ export async function createProject(req: Request, res: Response): Promise<void> 
   let status: mongoose.Types.ObjectId;
   if (body.status !== undefined) {
     const parsed = await parseStatus(body.status);
-    if (isInvalid(parsed)) return send(res, parsed);
+    if (isInvalid(parsed)) return parsed;
     status = parsed;
   } else {
     status = (await getDefaultProjectStatus())._id as mongoose.Types.ObjectId;
   }
 
   const startDate = optionalDate(body.startDate, "startDate");
-  if (isInvalid(startDate)) return send(res, startDate);
+  if (isInvalid(startDate)) return startDate;
   const deadline = optionalDate(body.deadline, "deadline");
-  if (isInvalid(deadline)) return send(res, deadline);
+  if (isInvalid(deadline)) return deadline;
   const start = startDate ?? appToday();
-  if (deadline && deadline.getTime() < start.getTime()) return send(res, bad("deadline must be on or after startDate"));
+  if (deadline && deadline.getTime() < start.getTime()) return bad("deadline must be on or after startDate");
 
   let progressMode: ProgressMode = "task_completion";
   if (body.progressMode !== undefined) {
     if (typeof body.progressMode !== "string" || !PROGRESS_MODES.includes(body.progressMode as ProgressMode)) {
-      return send(res, bad(`progressMode must be one of: ${PROGRESS_MODES.join(", ")}`));
+      return bad(`progressMode must be one of: ${PROGRESS_MODES.join(", ")}`);
     }
     progressMode = body.progressMode as ProgressMode;
   }
   const progress = parseProgress(body.progress);
-  if (isInvalid(progress)) return send(res, progress);
+  if (isInvalid(progress)) return progress;
   const hoursAllocated = optionalNumber(body.hoursAllocated, "hoursAllocated", 1_000_000);
-  if (isInvalid(hoursAllocated)) return send(res, hoursAllocated);
+  if (isInvalid(hoursAllocated)) return hoursAllocated;
   const budget = optionalNumber(body.budget, "budget", 1_000_000_000_000);
-  if (isInvalid(budget)) return send(res, budget);
+  if (isInvalid(budget)) return budget;
   const isPublic = optionalBoolean(body.isPublic, "isPublic");
-  if (isInvalid(isPublic)) return send(res, isPublic);
+  if (isInvalid(isPublic)) return isPublic;
   const manualTimeLogs = optionalBoolean(body.manualTimeLogs, "manualTimeLogs");
-  if (isInvalid(manualTimeLogs)) return send(res, manualTimeLogs);
+  if (isInvalid(manualTimeLogs)) return manualTimeLogs;
   const requireTaskApproval = optionalBoolean(body.requireTaskApproval, "requireTaskApproval");
-  if (isInvalid(requireTaskApproval)) return send(res, requireTaskApproval);
+  if (isInvalid(requireTaskApproval)) return requireTaskApproval;
 
   let project: IProject;
   try {
@@ -752,29 +767,33 @@ export async function createProject(req: Request, res: Response): Promise<void> 
       createdBy: actor._id,
     });
   } catch (error) {
-    if (isDuplicateKeyError(error)) {
-      res.status(409).json({ error: `Project code "${code}" is already in use` });
-      return;
-    }
+    if (isDuplicateKeyError(error)) return bad(`Project code "${code}" is already in use`, 409);
     throw error;
   }
   const projectId = project._id as mongoose.Types.ObjectId;
 
   await recalcProjectProgress(projectId);
-  recordProjectActivity(projectId, actor, "created", { name, code, members: members.length });
+  recordProjectActivity(projectId, actor, "created", { name, code, members: members.length, ...options.activityExtra });
   logActivity({
     action: "project_created",
     actor,
     targetType: "project",
     targetId: projectId,
     targetName: `${code} · ${name}`,
-    details: { members: members.length, departments: departments.length },
-    ip: req.ip,
+    details: { members: members.length, departments: departments.length, ...options.activityExtra },
+    ip,
   });
-  notifyMembersAdded(project, members.map((m) => m.user), actor);
+  notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
+  return { project };
+}
 
-  await respondDetail(res, projectId, actor, 201);
+/** POST /api/projects — admin, or a head for their own department. */
+export async function createProject(req: Request, res: Response): Promise<void> {
+  const actor = req.user!;
+  const result = await createProjectCore(actor, (req.body ?? {}) as ProjectBody, req.ip);
+  if (isInvalid(result)) return send(res, result);
+  await respondDetail(res, result.project._id as mongoose.Types.ObjectId, actor, 201);
 }
 
 /** GET /api/projects/:id — `{ project, permissions, stats }`. */
@@ -784,24 +803,28 @@ export async function getProject(req: Request, res: Response): Promise<void> {
   await respondDetail(res, project._id as mongoose.Types.ObjectId, req.user!);
 }
 
-/** PATCH /api/projects/:id — manager/creator/admin. Status uses PATCH /:id/status. */
-export async function updateProject(req: Request, res: Response): Promise<void> {
-  const project = await getProjectOr404(req, res);
-  if (!project) return;
-  const actor = req.user!;
+/**
+ * Updates the given fields of a project (PATCH /api/projects/:id and imports in
+ * "Update" mode): permission, validation, activity, notifications, SSE.
+ * Status is not changed here (see `applyProjectStatus`).
+ */
+export async function updateProjectCore(
+  actor: IUser,
+  project: IProject,
+  body: ProjectBody,
+  ip: string | undefined,
+  options: ProjectWriteOptions = {}
+): Promise<Invalid | { changed: string[] }> {
   if (!canManageProject(actor, project)) {
-    res.status(403).json({ error: "Only the project manager, its creator or an admin can edit this project" });
-    return;
+    return bad("Only the project manager, its creator or an admin can edit this project", 403);
   }
-  if (!ensureNotArchived(project, res)) return;
-
-  const body = (req.body ?? {}) as ProjectBody;
+  if (project.archivedAt) return bad("This project is archived and read-only. Restore it first.", 409);
   const changed: string[] = [];
   let newManager: mongoose.Types.ObjectId | null = null;
 
   if (body.name !== undefined) {
     const name = parseName(body.name);
-    if (isInvalid(name)) return send(res, name);
+    if (isInvalid(name)) return name;
     if (name !== project.name) {
       project.name = name;
       changed.push("name");
@@ -809,7 +832,7 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   }
   if (body.code !== undefined) {
     const code = parseCode(body.code);
-    if (isInvalid(code)) return send(res, code);
+    if (isInvalid(code)) return code;
     // Existing task short codes are never rewritten — only new tasks use the new code.
     if (code !== project.code) {
       project.code = code;
@@ -818,25 +841,25 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   }
   if (body.summary !== undefined) {
     const summary = parseSummary(body.summary);
-    if (isInvalid(summary)) return send(res, summary);
+    if (isInvalid(summary)) return summary;
     project.summary = summary || undefined;
     changed.push("summary");
   }
   if (body.category !== undefined) {
     const category = await parseCategory(body.category);
-    if (isInvalid(category)) return send(res, category);
+    if (isInvalid(category)) return category;
     project.category = category;
     changed.push("category");
   }
   if (body.departments !== undefined) {
     const departments = await parseDepartments(actor, body.departments);
-    if (isInvalid(departments)) return send(res, departments);
+    if (isInvalid(departments)) return departments;
     project.departments = departments;
     changed.push("departments");
   }
   if (body.manager !== undefined) {
     const manager = await parseUserId(body.manager, "manager");
-    if (isInvalid(manager)) return send(res, manager);
+    if (isInvalid(manager)) return manager;
     const before = project.manager ? project.manager.toString() : null;
     if ((manager ? manager.toString() : null) !== before) {
       project.manager = manager;
@@ -849,14 +872,14 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   }
 
   const startDate = optionalDate(body.startDate, "startDate");
-  if (isInvalid(startDate)) return send(res, startDate);
+  if (isInvalid(startDate)) return startDate;
   const deadline = optionalDate(body.deadline, "deadline");
-  if (isInvalid(deadline)) return send(res, deadline);
-  if (startDate === null) return send(res, bad("startDate cannot be cleared"));
+  if (isInvalid(deadline)) return deadline;
+  if (startDate === null) return bad("startDate cannot be cleared");
   const nextStart = startDate ?? project.startDate;
   const nextDeadline = deadline === undefined ? (project.deadline ?? null) : deadline;
   if (nextDeadline && nextDeadline.getTime() < nextStart.getTime()) {
-    return send(res, bad("deadline must be on or after startDate"));
+    return bad("deadline must be on or after startDate");
   }
   if (startDate) {
     project.startDate = startDate;
@@ -870,15 +893,15 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
 
   if (body.progressMode !== undefined) {
     if (typeof body.progressMode !== "string" || !PROGRESS_MODES.includes(body.progressMode as ProgressMode)) {
-      return send(res, bad(`progressMode must be one of: ${PROGRESS_MODES.join(", ")}`));
+      return bad(`progressMode must be one of: ${PROGRESS_MODES.join(", ")}`);
     }
     project.progressMode = body.progressMode as ProgressMode;
     changed.push("progressMode");
   }
   const progress = parseProgress(body.progress);
-  if (isInvalid(progress)) return send(res, progress);
+  if (isInvalid(progress)) return progress;
   if (progress !== undefined) {
-    if (project.progressMode !== "manual") return send(res, bad("progress can only be set in manual progress mode"));
+    if (project.progressMode !== "manual") return bad("progress can only be set in manual progress mode");
     project.progress = progress;
     changed.push("progress");
   }
@@ -889,7 +912,7 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   ];
   for (const [field, max] of numericFields) {
     const value = optionalNumber(body[field], field, max);
-    if (isInvalid(value)) return send(res, value);
+    if (isInvalid(value)) return value;
     if (value !== undefined) {
       project[field] = value;
       changed.push(field);
@@ -898,31 +921,25 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   const booleanFields = ["isPublic", "manualTimeLogs", "requireTaskApproval"] as const;
   for (const field of booleanFields) {
     const value = optionalBoolean(body[field], field);
-    if (isInvalid(value)) return send(res, value);
+    if (isInvalid(value)) return value;
     if (value !== undefined) {
       project[field] = value;
       changed.push(field);
     }
   }
 
-  if (changed.length === 0) {
-    res.status(400).json({ error: "At least one field to update is required" });
-    return;
-  }
+  if (changed.length === 0) return bad("At least one field to update is required");
 
   try {
     await project.save();
   } catch (error) {
-    if (isDuplicateKeyError(error)) {
-      res.status(409).json({ error: `Project code "${project.code}" is already in use` });
-      return;
-    }
+    if (isDuplicateKeyError(error)) return bad(`Project code "${project.code}" is already in use`, 409);
     throw error;
   }
   const projectId = project._id as mongoose.Types.ObjectId;
 
   await recalcProjectProgress(projectId);
-  recordProjectActivity(projectId, actor, "updated", { fields: changed });
+  recordProjectActivity(projectId, actor, "updated", { fields: changed, ...options.activityExtra });
   if (changed.includes("manager")) {
     recordProjectActivity(projectId, actor, "manager_changed", { manager: project.manager?.toString() ?? null });
   }
@@ -932,13 +949,27 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
     targetType: "project",
     targetId: projectId,
     targetName: `${project.code} · ${project.name}`,
-    details: { fields: changed },
-    ip: req.ip,
+    details: { fields: changed, ...options.activityExtra },
+    ip,
   });
-  if (newManager) notifyMembersAdded(project, [newManager], actor);
+  if (newManager) notifyMembersAdded(project, [newManager], actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
+  return { changed };
+}
 
-  await respondDetail(res, projectId, actor);
+/** PATCH /api/projects/:id — manager/creator/admin. Status uses PATCH /:id/status. */
+export async function updateProject(req: Request, res: Response): Promise<void> {
+  const project = await getProjectOr404(req, res);
+  if (!project) return;
+  const actor = req.user!;
+  if (!canManageProject(actor, project)) {
+    res.status(403).json({ error: "Only the project manager, its creator or an admin can edit this project" });
+    return;
+  }
+  if (!ensureNotArchived(project, res)) return;
+  const result = await updateProjectCore(actor, project, (req.body ?? {}) as ProjectBody, req.ip);
+  if (isInvalid(result)) return send(res, result);
+  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor);
 }
 
 const ARCHIVED_READ_ONLY = "This project is archived and read-only. Restore it first.";
@@ -956,11 +987,12 @@ function statusGate(actor: IUser, project: IProject): Invalid | null {
  * Changes a project's status (PATCH /:id/status and bulk "status"): permission,
  * activity, notifications, SSE. Completed statuses set progress to 100.
  */
-async function applyProjectStatus(
+export async function applyProjectStatus(
   actor: IUser,
   project: IProject,
   statusId: mongoose.Types.ObjectId,
-  ip: string | undefined
+  ip: string | undefined,
+  options: { sendEmail?: boolean } = {}
 ): Promise<Invalid | null> {
   const gate = statusGate(actor, project);
   if (gate) return gate;
@@ -1001,6 +1033,7 @@ async function applyProjectStatus(
     message: `${actor.name} moved ${project.code} · ${project.name} from ${from?.name ?? "-"} to ${to?.name ?? "-"}.`,
     link: projectLink(projectId),
     project: projectId,
+    skipEmail: options.sendEmail === false,
     email: {
       subject: `🔄 ${project.name}: ${to?.name ?? "status changed"}`,
       heading: "Project Status Changed",

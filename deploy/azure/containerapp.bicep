@@ -26,12 +26,12 @@ param imageRepository string = 'lps-projects-utility'
 @description('Image tag to deploy (e.g. the git short SHA).')
 param imageTag string
 
-@description('vCPU per replica. 1.0 is the tested minimum for 150 users; 2.0 gives headroom (see DEPLOY-AZURE.md).')
+@description('vCPU per replica. 2.0 is the chosen production size (headroom for busy periods); 1.0 is the tested minimum for 150 users (see DEPLOY-AZURE.md).')
 @allowed(['0.5', '0.75', '1.0', '1.25', '1.5', '1.75', '2.0', '2.5', '3.0', '3.5', '4.0'])
-param cpu string = '1.0'
+param cpu string = '2.0'
 
 @description('Memory per replica (must match the vCPU ratio: 1.0 → 2Gi, 2.0 → 4Gi).')
-param memory string = '2Gi'
+param memory string = '4Gi'
 
 @description('Keep 1/1: SSE fan-out and rate limits are in-memory (one replica).')
 @minValue(1)

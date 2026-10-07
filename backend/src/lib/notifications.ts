@@ -240,6 +240,8 @@ export interface TaskNotifyParams {
   };
   /** In-app link override (default `/tasks?task=<id>`). */
   link?: string;
+  /** In-app only: no emails (bulk imports with "Send assignment emails" off). */
+  skipEmail?: boolean;
 }
 
 /**
@@ -276,6 +278,7 @@ export async function notifyTaskAsync(params: TaskNotifyParams): Promise<number>
     pushToSSE(doc.recipient.toString(), doc as unknown as INotification);
   }
 
+  if (params.skipEmail) return users.length;
   const dueDate = formatDueDate(params.task.dueDate);
   const emails = users
     .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))
@@ -323,6 +326,8 @@ export interface UsersNotifyParams {
   link: string;
   /** Related project (cleanup on project delete). */
   project?: mongoose.Types.ObjectId | null;
+  /** In-app only: no emails (bulk imports with "Send assignment emails" off). */
+  skipEmail?: boolean;
   email: {
     subject: string;
     heading: string;
@@ -364,6 +369,7 @@ export async function notifyUsersAsync(params: UsersNotifyParams): Promise<numbe
   for (const doc of created) {
     pushToSSE(doc.recipient.toString(), doc as unknown as INotification);
   }
+  if (params.skipEmail) return users.length;
 
   const emails = users
     .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))

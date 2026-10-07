@@ -28,7 +28,7 @@ param(
   [string] $AppName = 'lps-projects-utility',
   [string] $Tag = '',
   [ValidateSet('acr', 'docker', 'none')] [string] $BuildMode = 'acr',
-  [ValidateSet('1.0', '2.0')] [string] $Cpu = '1.0',
+  [ValidateSet('1.0', '2.0')] [string] $Cpu = '2.0',
   [string] $AppTimezone = 'Asia/Kolkata',
   [string] $FromEmail = '',
   [string] $FromName = ''

@@ -285,7 +285,12 @@ async function resolveMilestone(raw: unknown, project: IProject | null): Promise
  * auto-added when the actor can manage the project; otherwise 400.
  * Returns the users that were added as members.
  */
-async function ensureProjectMembers(actor: IUser, project: IProject, assignees: IUser[]): Promise<IUser[] | Invalid> {
+async function ensureProjectMembers(
+  actor: IUser,
+  project: IProject,
+  assignees: IUser[],
+  sendEmail = true
+): Promise<IUser[] | Invalid> {
   const outsiders = assignees.filter((u) => !isProjectMember(u, project));
   if (outsiders.length === 0) return [];
   if (!canManageProject(actor, project)) {
@@ -306,6 +311,7 @@ async function ensureProjectMembers(actor: IUser, project: IProject, assignees: 
     message: `${actor.name} added you to ${project.code} · ${project.name}.`,
     link: projectLink(projectId),
     project: projectId,
+    skipEmail: !sendEmail,
     email: {
       subject: `📁 You were added to ${project.name}`,
       heading: "Added to a Project",
@@ -931,6 +937,10 @@ export interface CreateTaskOptions {
   historyAction?: TaskHistoryAction;
   /** Links the task back to a meeting transcript line. */
   sourceMeeting?: ITaskSourceMeeting | null;
+  /** Initial status (imports); default "todo". */
+  status?: TaskStatus;
+  /** false = in-app notifications only, no emails (bulk imports). Default true. */
+  sendEmail?: boolean;
 }
 
 /**
@@ -1051,11 +1061,13 @@ export async function createTaskCore(
 
   // Project membership rule (auto-adds non-members when the actor manages the project)
   if (project) {
-    const ensured = await ensureProjectMembers(actor, project, assignees);
+    const ensured = await ensureProjectMembers(actor, project, assignees, options.sendEmail !== false);
     if (isInvalid(ensured)) {
       return ensured;
     }
   }
+  const initialStatus: TaskStatus = options.status ?? "todo";
+  if (!TASK_STATUSES.includes(initialStatus)) return { status: 400, error: STATUS_ERROR };
   const shortCode = project ? await nextShortCode(project._id as mongoose.Types.ObjectId) : null;
   const number = await nextTaskNumber();
   const warnings = milestoneWarnings(dueDate, milestone);
@@ -1079,7 +1091,9 @@ export async function createTaskCore(
     position: Date.now(),
     subtasks,
     recurrence,
-    status: "todo",
+    status: initialStatus,
+    ...(initialStatus === "completed" ? { completedAt: new Date() } : {}),
+    ...(initialStatus === "in_review" ? { submittedAt: new Date() } : {}),
     sourceMeeting: options.sourceMeeting ?? null,
   });
   const taskId = task._id as mongoose.Types.ObjectId;
@@ -1087,6 +1101,7 @@ export async function createTaskCore(
   recordTaskHistory(taskId, actor, options.historyAction ?? "created", {
     assignees: assignees.map((u) => u.name),
     subtasks: subtasks.length,
+    ...(initialStatus !== "todo" ? { status: initialStatus } : {}),
     ...historyExtra,
   });
 
@@ -1108,6 +1123,7 @@ export async function createTaskCore(
     task: emailTask(task),
     title: "New task assigned",
     message: `${actor.name} assigned you a new task: ${task.title}`,
+    skipEmail: options.sendEmail === false,
     email: {
       subject: `📋 New Task Assigned: ${task.title}`,
       heading: "New Task Assigned",
@@ -1762,7 +1778,7 @@ export async function remindTask(req: Request, res: Response): Promise<void> {
  * Creator or admin: deletes a task with its comments, files (GridFS), history,
  * notifications and pins (DELETE /:id and the bulk "delete" action).
  */
-async function applyTaskDelete(user: IUser, task: ITask, ip: string | undefined): Promise<Invalid | null> {
+export async function applyTaskDelete(user: IUser, task: ITask, ip: string | undefined): Promise<Invalid | null> {
   if (!(await canManageTaskAsync(user, task))) {
     return { status: 403, error: "Only the task creator or an admin can delete tasks" };
   }

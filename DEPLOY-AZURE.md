@@ -288,8 +288,9 @@ also fire from Inngest — harmless, the jobs are idempotent) or set
 
 ## 9. Scaling and capacity
 
-**Start with 1 replica, 1 vCPU / 2 GiB; use 2 vCPU / 4 GiB for headroom**
-(`-Cpu 2.0` / `--cpu 2.0 --memory 4Gi`), `minReplicas = maxReplicas = 1`:
+**Chosen size: 1 replica, 2 vCPU / 4 GiB** — the default in `containerapp.bicep`
+and `deploy.ps1` (`--cpu 2.0 --memory 4Gi`), `minReplicas = maxReplicas = 1`.
+1 vCPU / 2 GiB (`-Cpu 1.0`) is the tested minimum if you need to cut cost:
 
 * SSE fan-out and the rate limiter are **in memory** — correct for one replica.
   More replicas need Redis pub/sub for SSE (and a shared rate-limit store);

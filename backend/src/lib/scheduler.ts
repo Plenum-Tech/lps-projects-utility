@@ -3,6 +3,7 @@ import { hostname } from "node:os";
 import mongoose from "mongoose";
 import { appDateKey, zonedParts } from "./appTime.js";
 import { runHrReminders } from "./hrJobs.js";
+import { purgeExpiredImportFiles } from "./imports/jobs.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "./projectJobs.js";
 import { isDbReady, runRecurringTasks, runTaskReminders } from "./taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "./timeJobs.js";
@@ -37,6 +38,8 @@ interface JobDefinition {
 export const SCHEDULED_JOBS: JobDefinition[] = [
   { name: "auto-stop-timers", schedule: { kind: "every", minutes: 15 }, run: runAutoStopTimers },
   { name: "time-tracker-reminder", schedule: { kind: "every", minutes: 15 }, run: runTimeTrackerReminder },
+  // Raw import uploads are kept for at most an hour (also swept on import requests).
+  { name: "import-file-cleanup", schedule: { kind: "every", minutes: 15 }, run: purgeExpiredImportFiles },
   { name: "project-progress-deadline-mode", schedule: { kind: "daily", at: "00:15" }, run: runProjectProgressDeadlineMode },
   { name: "recurring-tasks", schedule: { kind: "daily", at: "00:30" }, run: runRecurringTasks },
   { name: "task-reminders", schedule: { kind: "daily", at: "08:00" }, run: runTaskReminders },

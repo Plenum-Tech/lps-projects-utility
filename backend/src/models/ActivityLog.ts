@@ -60,6 +60,8 @@ export const ACTIVITY_ACTIONS = [
   "meeting_deleted",
   "meeting_tasks_created",
   "settings_updated",
+  "import_completed",
+  "import_undone",
 ] as const;
 
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];

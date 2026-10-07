@@ -15,6 +15,7 @@ import { logEmailTransportStatus } from "./lib/email.js";
 import { isDuplicateKeyError } from "./lib/errors.js";
 import { appMinutesOfDay } from "./lib/appTime.js";
 import { runHrReminders } from "./lib/hrJobs.js";
+import { purgeExpiredImportFiles } from "./lib/imports/jobs.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "./lib/projectJobs.js";
 import { isDbReady, runRecurringTasks, runTaskReminders } from "./lib/taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "./lib/timeJobs.js";
@@ -26,6 +27,7 @@ import authRouter from "./routes/auth.js";
 import departmentsRouter from "./routes/departments.js";
 import documentsRouter from "./routes/documents.js";
 import feedbackRouter from "./routes/feedback.js";
+import importsRouter from "./routes/imports.js";
 import invitationsRouter from "./routes/invitations.js";
 import leavePoliciesRouter from "./routes/leavePolicies.js";
 import leavesRouter from "./routes/leaves.js";
@@ -236,6 +238,7 @@ app.use("/api/timelogs", timeLogsRouter);
 app.use("/api/timesheets", timesheetsRouter);
 app.use("/api/documents", documentsRouter);
 app.use("/api/meetings", meetingsRouter);
+app.use("/api/imports", importsRouter);
 
 // --- Inngest serve endpoint ---
 app.use("/api/inngest", serve({ client: inngest, functions }));
@@ -306,6 +309,7 @@ if (import.meta.main) {
       const minutes = appMinutesOfDay(now);
       void runAutoStopTimers(now).catch((err) => console.error("[jobs] auto-stop failed:", err));
       void runTimeTrackerReminder(now).catch((err) => console.error("[jobs] tracker reminder failed:", err));
+      void purgeExpiredImportFiles(now).catch((err) => console.error("[jobs] import file cleanup failed:", err));
       if (minutes >= 8 * 60) {
         void runProjectDeadlineReminders(now).catch((err) => console.error("[jobs] deadline reminders failed:", err));
         void runHrReminders(now).catch((err) => console.error("[jobs] HR reminders failed:", err));
