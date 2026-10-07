@@ -113,20 +113,12 @@ export function streamNotifications(req: Request, res: Response): void {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  // Send an initial comment to establish the connection.
-  res.write(":ok\n\n");
+  // Initial comment establishes the stream; `retry` sets the browser's reconnect delay.
+  res.write("retry: 5000\n:ok\n\n");
 
-  // Register this client for push updates.
+  // Register this client for push updates (lib/sse.ts sends the shared 25 s heartbeat).
   const unregister = registerSSEClient(user._id.toString(), res);
 
-  // Heartbeat to keep the connection alive (every 30s).
-  const heartbeat = setInterval(() => {
-    res.write(":heartbeat\n\n");
-  }, 30_000);
-
   // Clean up on client disconnect.
-  req.on("close", () => {
-    clearInterval(heartbeat);
-    unregister();
-  });
+  req.on("close", unregister);
 }

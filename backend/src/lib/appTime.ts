@@ -21,19 +21,31 @@ interface ZonedParts {
 
 const WEEKDAYS: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
 
+/** Intl formatters are expensive to build (ICU); one per timezone is reused. */
+const partsFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function partsFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = partsFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      weekday: "short",
+    });
+    partsFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 /** Calendar/clock parts of `date` in the app timezone. */
 export function zonedParts(date: Date): ZonedParts {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: appTimeZone(),
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    weekday: "short",
-  }).formatToParts(date);
+  const parts = partsFormatter(appTimeZone()).formatToParts(date);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "0";
   return {
     year: Number(get("year")),

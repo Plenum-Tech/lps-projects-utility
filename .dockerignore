@@ -1,0 +1,44 @@
+# Keep the build context small and secret-free.
+# Secrets: never send any .env file to the Docker daemon.
+**/.env
+**/.env.*
+
+# VCS / tooling / docs that the image doesn't need
+.git
+.gitignore
+**/.gitignore
+.claude
+.agents
+prompts
+deploy
+*.md
+**/*.md
+skills-lock.json
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Dependencies and build output (rebuilt inside the image)
+**/node_modules
+**/build
+**/dist
+**/.react-router
+**/coverage
+**/.cache
+**/*.tsbuildinfo
+
+# Logs and tests
+**/*.log
+**/logs
+**/*.test.ts
+**/*.spec.ts
+
+# Backend bits not used at runtime
+backend/api
+backend/vercel.json
+backend/nodemon.json
+
+# OS / editor
+**/.DS_Store
+**/.idea
+**/.vscode

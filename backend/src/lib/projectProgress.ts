@@ -1,9 +1,8 @@
 import type mongoose from "mongoose";
 import { Project } from "../models/Project.js";
 import type { IProject } from "../models/Project.js";
-import { ProjectStatus } from "../models/ProjectStatus.js";
 import { Task } from "../models/Task.js";
-import { loggedTotalsByProject, pushProjectUpdate } from "./projectAccess.js";
+import { isProjectStatusCompleted, loggedTotalsByProject, pushProjectUpdate } from "./projectAccess.js";
 import { appToday } from "./taskJobs.js";
 
 // ---------------------------------------------------------------------------
@@ -22,8 +21,7 @@ function clampPercent(value: number): number {
 
 /** Computes the progress a project should have right now. */
 export async function computeProgress(project: IProject, now: Date = new Date()): Promise<number> {
-  const status = await ProjectStatus.findById(project.status).select("isCompleted").lean();
-  if (status?.isCompleted) return 100;
+  if (await isProjectStatusCompleted(project)) return 100;
 
   switch (project.progressMode) {
     case "manual":
@@ -70,10 +68,34 @@ export async function recalcProjectProgress(
   return next;
 }
 
-/** Fire-and-forget recalculation hook (task status changes, time log changes). */
+/** Pending debounced recalculations, per project id. */
+const pendingRecalcs = new Map<string, ReturnType<typeof setTimeout>>();
+const RECALC_DEBOUNCE_MS = 1_000;
+
+/**
+ * Fire-and-forget recalculation hook (task status changes, time log changes).
+ * Debounced per project: a burst of changes (busy board, bulk edits) costs one
+ * recalculation ~1 s after the last change instead of one per change.
+ */
 export function scheduleProgressRecalc(projectId: mongoose.Types.ObjectId | string | null | undefined): void {
   if (!projectId) return;
-  void recalcProjectProgress(projectId).catch((err) => {
-    console.error("[projects] Progress recalculation failed", String(projectId), err);
-  });
+  const key = String(projectId);
+  const existing = pendingRecalcs.get(key);
+  if (existing) clearTimeout(existing);
+  const timer = setTimeout(() => {
+    pendingRecalcs.delete(key);
+    void recalcProjectProgress(key).catch((err) => {
+      console.error("[projects] Progress recalculation failed", key, err);
+    });
+  }, RECALC_DEBOUNCE_MS);
+  timer.unref?.();
+  pendingRecalcs.set(key, timer);
+}
+
+/** Runs every pending debounced recalculation now (scripts and graceful shutdown). */
+export async function flushProgressRecalcs(): Promise<void> {
+  const keys = [...pendingRecalcs.keys()];
+  for (const key of keys) clearTimeout(pendingRecalcs.get(key)!);
+  pendingRecalcs.clear();
+  await Promise.allSettled(keys.map((key) => recalcProjectProgress(key)));
 }

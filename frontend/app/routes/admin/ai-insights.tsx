@@ -49,8 +49,8 @@ import { FEATURES } from "@/lib/features";
 
 import type { Route } from "./+types/ai-insights";
 
-/** Hidden while the feature switch is off (see lib/features.ts). */
-export function loader() {
+/** Hidden while the feature switch is off (see lib/features.ts). Runs in the browser (SPA mode). */
+export function clientLoader() {
   if (!FEATURES.aiInsights) throw redirect("/dashboard");
   return null;
 }

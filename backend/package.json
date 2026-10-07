@@ -4,6 +4,7 @@
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "chrono-node": "^2.10.2",
+    "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -20,6 +21,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
     "@types/bun": "latest",
+    "@types/compression": "^1.8.1",
     "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
@@ -39,6 +41,7 @@
     "dev": "nodemon",
     "start": "bun src/server.ts",
     "seed": "bun src/seed.ts",
+    "seed:load": "bun src/scripts/seedLoad.ts",
     "migrate:tasks": "bun src/scripts/migrateTaskAssignees.ts",
     "jobs:reminders": "bun src/scripts/runJobs.ts reminders",
     "jobs:recurring": "bun src/scripts/runJobs.ts recurring",

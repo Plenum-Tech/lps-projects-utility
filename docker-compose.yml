@@ -1,0 +1,61 @@
+# Local test of the production image (app + MongoDB). NOT for production:
+# in Azure the database is external (MONGO_URI) — see DEPLOY-AZURE.md.
+#
+#   docker compose up -d --build          # http://127.0.0.1:8080
+#   docker compose exec app bun run seed  # first admin (ADMIN_* below)
+#   docker compose down -v                # stop and delete the local data
+#
+# Ports bind to 127.0.0.1 only. Override with APP_PORT / MONGO_PORT, e.g.
+#   APP_PORT=8088 MONGO_PORT=27018 docker compose -p lps-test up -d
+# The secrets below are throwaway local defaults; set real ones via a shell
+# env or an untracked .env file next to this file.
+
+services:
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MONGO_PORT:-27018}:27017"
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: ${APP_IMAGE:-lps-projects-utility:local}
+    build:
+      context: .
+      args:
+        APP_VERSION: ${APP_VERSION:-local}
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    # Mirrors the Azure Container Apps sizing (default 1 vCPU / 2 GiB).
+    cpus: ${APP_CPUS:-1}
+    mem_limit: ${APP_MEMORY:-2g}
+    environment:
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/lps}
+      JWT_SECRET: ${JWT_SECRET:-local-only-jwt-secret-change-me-0123456789}
+      COOKIE_SECRET: ${COOKIE_SECRET:-local-only-cookie-secret-change-me-012345}
+      APP_URL: http://127.0.0.1:${APP_PORT:-8080}
+      API_PUBLIC_URL: http://127.0.0.1:${APP_PORT:-8080}
+      CORS_ORIGIN: http://127.0.0.1:${APP_PORT:-8080}
+      APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Kolkata}
+      JOBS_MODE: in-process
+      TRUST_PROXY: "1"
+      MONGO_MAX_POOL: "50"
+      # No SMTP locally: emails are skipped and logged (to + subject).
+      EMAIL_LOG_SKIPPED: "true"
+      ADMIN_NAME: LPS Admin
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@lps.test}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me-local-admin}
+      LOAD_PASSWORD: ${LOAD_PASSWORD:-LoadTest-2026!}
+
+volumes:
+  mongo-data:

@@ -63,6 +63,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
   );
 }
 
+/**
+ * SPA mode: this is the markup of the pre-rendered index.html, shown until the
+ * client bundle hydrates (a blank, theme-coloured page — no layout flash).
+ */
+export function HydrateFallback() {
+  return <div className="min-h-svh bg-background" aria-busy="true" />;
+}
+
 export default function App() {
   const [queryClient] = useState(() => createQueryClient());
 

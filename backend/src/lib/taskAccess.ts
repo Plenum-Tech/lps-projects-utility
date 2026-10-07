@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { cached } from "./refCache.js";
 import { Meeting } from "../models/Meeting.js";
 import { Project } from "../models/Project.js";
 import { Task } from "../models/Task.js";
@@ -239,12 +240,16 @@ export async function headDepartmentTaskFilter(
 
 /** Projects `user` manages (any status): manager, or the head who created it. */
 async function managedProjectIdsFor(user: AccessUser): Promise<mongoose.Types.ObjectId[]> {
-  const rows = await Project.find({
-    $or: [{ manager: user._id }, ...(user.role === "head" ? [{ createdBy: user._id }] : [])],
-  })
-    .select("_id")
-    .lean();
-  return rows.map((r) => r._id as mongoose.Types.ObjectId);
+  // Cached 15 s per user+role; dropped on any project write (lib/refCache.ts).
+  const ids = await cached(`project:managed:${String(user._id)}:${user.role}`, 15_000, async () => {
+    const rows = await Project.find({
+      $or: [{ manager: user._id }, ...(user.role === "head" ? [{ createdBy: user._id }] : [])],
+    })
+      .select("_id")
+      .lean();
+    return rows.map((r) => r._id as mongoose.Types.ObjectId);
+  });
+  return [...ids];
 }
 
 /**
@@ -375,8 +380,34 @@ export async function loggedMinutesByTask(ids: mongoose.Types.ObjectId[]): Promi
  * `pinned` to each (already populated) task; `number` / `estimateMinutes` /
  * `completedAt` are always present (null when unset).
  */
+/** A task loaded with `.lean()` (plain object, populated refs as plain objects). */
+export type LeanTask = Record<string, unknown> & { _id: mongoose.Types.ObjectId };
+
+/** Top-level schema defaults, applied to lean tasks the way hydration would. */
+const TASK_DEFAULTS: Array<[string, () => unknown]> = Object.entries(Task.schema.paths)
+  .map(([path, type]) => [path, (type as unknown as { defaultValue?: unknown }).defaultValue] as const)
+  .filter(([path, value]) => !path.includes(".") && path !== "_id" && path !== "__v" && value !== undefined)
+  .map(([path, value]) => {
+    return [path, typeof value === "function" ? (value as () => unknown) : () => structuredClone(value)];
+  });
+
+/**
+ * Same JSON as `ITask#toJSON()` for a lean task (list/board pages skip mongoose
+ * hydration, which dominated their CPU time under load): schema defaults for
+ * missing fields + the Task toJSON transform (no __v, no subtask pendingNotify).
+ */
+export function leanTaskJson(task: LeanTask): Record<string, unknown> {
+  const json: Record<string, unknown> = { ...task };
+  for (const [path, value] of TASK_DEFAULTS) if (json[path] === undefined) json[path] = value();
+  delete json.__v;
+  if (Array.isArray(json.subtasks)) {
+    json.subtasks = (json.subtasks as Array<Record<string, unknown>>).map(({ pendingNotify: _omit, ...sub }) => sub);
+  }
+  return json;
+}
+
 export async function serializeTasks(
-  tasks: ITask[],
+  tasks: Array<ITask | LeanTask>,
   viewer?: { pinnedTasks?: mongoose.Types.ObjectId[] } | null
 ): Promise<Record<string, unknown>[]> {
   const ids = tasks.map((t) => t._id as mongoose.Types.ObjectId);
@@ -388,7 +419,10 @@ export async function serializeTasks(
   const pinned = new Set((viewer?.pinnedTasks ?? []).map((id) => id.toString()));
   return tasks.map((t) => {
     const id = t._id.toString();
-    const json = t.toJSON() as Record<string, unknown>;
+    const json =
+      typeof (t as ITask).toJSON === "function"
+        ? ((t as ITask).toJSON() as Record<string, unknown>)
+        : leanTaskJson(t as LeanTask);
     return {
       ...json,
       number: json.number ?? null,
@@ -516,7 +550,9 @@ async function taskAudience(task: AccessTask & { project?: mongoose.Types.Object
   const or: Record<string, unknown>[] = [{ role: "admin" }];
   const departments = await taskDepartmentIds(task);
   if (departments.length > 0) or.push({ role: "head", department: { $in: departments } });
-  const watchers = await User.find({ $or: or }).select("_id").lean();
+  // Admins + department heads: cached 15 s per department set (dropped on user writes).
+  const key = `user:watchers:${departments.map(String).sort().join(",")}`;
+  const watchers = await cached(key, 15_000, () => User.find({ $or: or }).select("_id").lean());
   for (const watcher of watchers) ids.add(watcher._id.toString());
   return [...ids];
 }

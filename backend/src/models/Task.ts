@@ -248,6 +248,8 @@ taskSchema.index(
 );
 // Calendar view (due-date range per status).
 taskSchema.index({ dueDate: 1, status: 1 });
+// Board column re-normalisation (status + position neighbours, see normalizeColumnIfNeeded).
+taskSchema.index({ status: 1, position: 1 });
 // Copies of a recurring task.
 taskSchema.index({ recurringParent: 1 }, { sparse: true });
 // Tasks created from a meeting (unset when the meeting is deleted).

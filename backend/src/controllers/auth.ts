@@ -6,6 +6,19 @@ import { User } from "../models/User.js";
 
 const DEFAULT_EXPIRES_IN = "7d";
 
+/**
+ * Session cookie flags.
+ * - Development: SameSite=Lax, not Secure (Vite on :5173 → API on :5000 is same-site).
+ * - Production, same origin (the container serves the SPA and /api): SameSite=Lax; Secure.
+ * - Production, UI and API on different sites (e.g. the old Vercel split):
+ *   CROSS_SITE_COOKIES=true → SameSite=None; Secure so cross-site XHR sends the cookie.
+ */
+function cookieFlags(): { sameSite: "lax" | "none"; secure: boolean } {
+  const isProd = process.env.NODE_ENV === "production";
+  const crossSite = process.env.CROSS_SITE_COOKIES?.trim().toLowerCase() === "true";
+  return { sameSite: isProd && crossSite ? "none" : "lax", secure: isProd };
+}
+
 /** Authenticates credentials and sets the JWT as an httpOnly cookie to maintain the session. */
 export async function login(req: Request, res: Response): Promise<void> {
   const { email, password } = (req.body ?? {}) as { email?: string; password?: string };
@@ -43,14 +56,9 @@ export function issueSessionCookie(res: Response, user: Parameters<typeof signAc
   const token = signAccessToken(user);
   const expiresIn = process.env.JWT_EXPIRES_IN ?? DEFAULT_EXPIRES_IN;
 
-  // In production (cross-origin Vercel) we need SameSite=None so the browser
-  // sends the cookie on cross-origin AJAX requests (axios fetch calls).
-  // SameSite=None requires Secure, which is already true in production.
-  const isProd = process.env.NODE_ENV === "production";
   res.cookie(TOKEN_COOKIE, token, {
     httpOnly: true,
-    sameSite: isProd ? "none" : "lax",
-    secure: isProd,
+    ...cookieFlags(),
     maxAge: expiresInToMs(expiresIn),
     path: "/",
   });
@@ -76,12 +84,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
   }
   logActivity({ action: "logout", actor, ip: req.ip });
 
-  const isProd = process.env.NODE_ENV === "production";
-  res.clearCookie(TOKEN_COOKIE, {
-    path: "/",
-    sameSite: isProd ? "none" : "lax",
-    secure: isProd,
-  });
+  res.clearCookie(TOKEN_COOKIE, { path: "/", ...cookieFlags() });
   res.json({ message: "Logged out" });
 }
 

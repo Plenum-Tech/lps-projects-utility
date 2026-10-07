@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcryptjs";
 import { nextEmployeeId } from "../lib/employeeIds.js";
+import { invalidateOnWrite } from "../lib/refCache.js";
 
 /** Per-employee annual leave balance for the tracked leave types. */
 export interface LeaveBalance {
@@ -167,5 +168,8 @@ userSchema.set("toJSON", {
     return json;
   },
 });
+
+// requireAuth caches users briefly; any user write drops that cache.
+invalidateOnWrite(userSchema, "user:");
 
 export const User = mongoose.model<IUser>("User", userSchema);

@@ -24,15 +24,19 @@ export function appTimeZone(): string {
   return settingsTimeZone();
 }
 
+/** Intl formatters are expensive to build (ICU); one per timezone is reused. */
+const dateKeyFormatters = new Map<string, Intl.DateTimeFormat>();
+
 /** "YYYY-MM-DD" of `now` in the app timezone. */
 export function appDateKey(now: Date = new Date()): string {
-  // en-CA formats as YYYY-MM-DD
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: appTimeZone(),
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
+  const timeZone = appTimeZone();
+  let formatter = dateKeyFormatters.get(timeZone);
+  if (!formatter) {
+    // en-CA formats as YYYY-MM-DD
+    formatter = new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" });
+    dateKeyFormatters.set(timeZone, formatter);
+  }
+  return formatter.format(now);
 }
 
 /** Today (app timezone) as a stored date-only value (UTC midnight). */

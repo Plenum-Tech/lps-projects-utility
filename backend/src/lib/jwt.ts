@@ -1,3 +1,4 @@
+import { createSecretKey, type KeyObject } from "node:crypto";
 import jwt from "jsonwebtoken";
 
 /** Name of the httpOnly cookie that carries the access token. */
@@ -11,11 +12,18 @@ export interface AccessTokenPayload {
   role: "admin" | "employee" | "head";
 }
 
-function requireSecret(): string {
+let secretKey: KeyObject | undefined;
+
+/**
+ * The HMAC key as a KeyObject, built once: given a string, jsonwebtoken builds
+ * a new KeyObject on every sign/verify (measurable CPU on every API request).
+ */
+function requireSecret(): KeyObject {
   if (!JWT_SECRET) {
     throw new Error("JWT_SECRET is not set. Add it to backend/.env (see backend/.env.example).");
   }
-  return JWT_SECRET;
+  secretKey ??= createSecretKey(Buffer.from(JWT_SECRET, "utf8"));
+  return secretKey;
 }
 
 /** Signs an access token for the given user. */

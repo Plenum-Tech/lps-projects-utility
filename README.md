@@ -247,7 +247,17 @@ ems/
 
 ## Deployment
 
-The project is configured for Vercel deployment:
+**Production: one container on Azure Container Apps.** The root `Dockerfile`
+builds a single image (`lps-projects-utility`) that serves the API and the
+SPA frontend from one Bun process on port 8080; MongoDB is external
+(`MONGO_URI`). See **[DEPLOY-AZURE.md](DEPLOY-AZURE.md)** for the ACR push,
+Container App setup, secrets, migrations, load-test results and runbook.
+`docker compose up -d --build` runs the image locally with a throwaway MongoDB.
+
+### Vercel (legacy split deployment)
+
+The project can still be deployed to Vercel (UI and API on different sites —
+set `CROSS_SITE_COOKIES=true` on the API so the session cookie is `SameSite=None`):
 
 - **Backend**: `backend/api/index.ts` serves as the serverless function entry point
 - **Frontend**: Standard React Router Vercel build

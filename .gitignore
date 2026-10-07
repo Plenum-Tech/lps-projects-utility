@@ -39,3 +39,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # React Router
 .react-router/
 build/
+
+# k6 load-test outputs
+deploy/k6/summary-*.json

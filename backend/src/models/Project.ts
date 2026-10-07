@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { cached, invalidateOnWrite } from "../lib/refCache.js";
 
 export const PROGRESS_MODES = ["manual", "task_completion", "total_time", "deadline"] as const;
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
@@ -98,4 +99,15 @@ projectSchema.set("toJSON", {
   },
 });
 
+invalidateOnWrite(projectSchema, "project:");
+
 export const Project = mongoose.model<IProject>("Project", projectSchema);
+
+/** Ids of archived projects (task lists/boards/dashboards hide their tasks). Cached 15 s; dropped on project writes. */
+export async function archivedProjectIds(): Promise<mongoose.Types.ObjectId[]> {
+  const ids = await cached("project:archived", 15_000, async () => {
+    const rows = await Project.find({ archivedAt: { $ne: null } }).select("_id").lean();
+    return rows.map((r) => r._id as mongoose.Types.ObjectId);
+  });
+  return [...ids];
+}

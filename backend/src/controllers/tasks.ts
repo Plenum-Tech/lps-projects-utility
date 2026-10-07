@@ -21,6 +21,7 @@ import {
   pushTaskUpdate,
   recordTaskHistory,
   serializeTasks,
+  type LeanTask,
   TASK_POPULATE,
   taskDepartmentIds,
   taskProjectFlags,
@@ -43,7 +44,7 @@ import { nextShortCode, nextTaskNumber } from "../lib/taskNumbers.js";
 import { Milestone } from "../models/Milestone.js";
 import type { IMilestone } from "../models/Milestone.js";
 import { Notification } from "../models/Notification.js";
-import { Project } from "../models/Project.js";
+import { archivedProjectIds, Project } from "../models/Project.js";
 import type { IProject } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { TimeLog } from "../models/TimeLog.js";
@@ -327,10 +328,6 @@ function milestoneWarnings(dueDate: Date | null | undefined, milestone: IMilesto
 }
 
 /** Ids of archived projects — their tasks are hidden from boards and lists. */
-async function archivedProjectIds(): Promise<mongoose.Types.ObjectId[]> {
-  const rows = await Project.find({ archivedAt: { $ne: null } }).select("_id").lean();
-  return rows.map((r) => r._id);
-}
 
 /**
  * Every task `user` may open: `taskVisibilityFilter` plus subtask assignments
@@ -646,10 +643,10 @@ async function sortedTaskIds(
   return rows.map((r) => r._id);
 }
 
-/** Loads `ids` (populated) preserving their order. */
-async function loadTasksInOrder(ids: mongoose.Types.ObjectId[]): Promise<ITask[]> {
+/** Loads `ids` (populated, lean — read-only list rows) preserving their order. */
+async function loadTasksInOrder(ids: mongoose.Types.ObjectId[]): Promise<LeanTask[]> {
   if (ids.length === 0) return [];
-  const docs = await Task.find({ _id: { $in: ids } }).populate(TASK_POPULATE);
+  const docs = await Task.find({ _id: { $in: ids } }).populate(TASK_POPULATE).lean<LeanTask[]>();
   const byId = new Map(docs.map((t) => [t._id.toString(), t]));
   return ids.flatMap((id) => byId.get(id.toString()) ?? []);
 }
@@ -1177,17 +1174,21 @@ async function respondTasks(req: Request, res: Response, project?: IProject): Pr
     TASK_STATUSES.map(async (status) => {
       const filter = { $and: [...and, { status }] };
       const [tasks, total] = await Promise.all([
-        Task.find(filter).populate(TASK_POPULATE).sort({ position: 1 }).limit(BOARD_COLUMN_LIMIT),
+        Task.find(filter).populate(TASK_POPULATE).sort({ position: 1 }).limit(BOARD_COLUMN_LIMIT).lean<LeanTask[]>(),
         Task.countDocuments(filter),
       ]);
-      return { status, tasks: await serializeTasks(tasks, req.user), total };
+      return { status, tasks, total };
     })
   );
 
+  // One serialization pass (3 count aggregations) for the whole board, not one per column.
+  const serialized = await serializeTasks(results.flatMap((r) => r.tasks), req.user);
   const columns: Record<string, unknown[]> = {};
   const totals: Record<string, number> = {};
+  let offset = 0;
   for (const { status, tasks, total } of results) {
-    columns[status] = tasks;
+    columns[status] = serialized.slice(offset, offset + tasks.length);
+    offset += tasks.length;
     totals[status] = total;
   }
   res.json({ columns, totals, limit: BOARD_COLUMN_LIMIT });

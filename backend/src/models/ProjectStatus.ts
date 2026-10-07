@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { cached, invalidateOnWrite } from "../lib/refCache.js";
 import { TASK_LABEL_COLORS } from "./TaskLabel.js";
 import type { TaskLabelColor } from "./TaskLabel.js";
 
@@ -38,6 +39,8 @@ projectStatusSchema.set("toJSON", {
     return json;
   },
 });
+
+invalidateOnWrite(projectStatusSchema, "projectStatus:");
 
 export const ProjectStatus = mongoose.model<IProjectStatus>("ProjectStatus", projectStatusSchema);
 
@@ -90,6 +93,9 @@ export async function getDefaultProjectStatus(): Promise<IProjectStatus> {
 
 /** Ids of statuses flagged `isCompleted`. */
 export async function completedStatusIds(): Promise<mongoose.Types.ObjectId[]> {
-  const rows = await ProjectStatus.find({ isCompleted: true }).select("_id").lean();
-  return rows.map((r) => r._id);
+  const ids = await cached("projectStatus:completed", 60_000, async () => {
+    const rows = await ProjectStatus.find({ isCompleted: true }).select("_id").lean();
+    return rows.map((r) => r._id);
+  });
+  return [...ids];
 }

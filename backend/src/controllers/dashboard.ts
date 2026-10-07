@@ -10,7 +10,8 @@ import { PerformanceReview } from "../models/PerformanceReview.js";
 import { Task } from "../models/Task.js";
 import { User } from "../models/User.js";
 import { EmployeeDocument } from "../models/EmployeeDocument.js";
-import { Project } from "../models/Project.js";
+import { archivedProjectIds, Project } from "../models/Project.js";
+import { cached } from "../lib/refCache.js";
 import { completedStatusIds } from "../models/ProjectStatus.js";
 import { TimeLog } from "../models/TimeLog.js";
 import { addDays, appDayStart, appToday, currentWeekStart, mondayOf } from "../lib/appTime.js";
@@ -413,8 +414,7 @@ function myTaskCode(task: { shortCode?: string | null; number?: number | null })
 }
 
 async function archivedProjectIdList(): Promise<ObjectId[]> {
-  const rows = await Project.find({ archivedAt: { $ne: null } }).select("_id").lean();
-  return rows.map((r) => r._id as ObjectId);
+  return archivedProjectIds();
 }
 
 /** Tasks assigned to `userId`, excluding archived projects (same as the task list). */
@@ -548,7 +548,9 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       .sort({ endDate: 1, _id: 1 })
       .limit(200)
       .lean(),
-    User.find({
+    // Everyone's HR dates (birthdays, anniversaries, probation…): identical for every
+    // caller, so cached for a minute (dropped on any user write, see lib/refCache.ts).
+    cached("user:hr-people", 60_000, () => User.find({
       $or: [
         { dateOfBirth: { $ne: null } },
         { joiningDate: { $ne: null } },
@@ -560,7 +562,7 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       .select(
         "name designation department dateOfBirth joiningDate probationEndDate internshipEndDate noticePeriodStart noticePeriodEnd"
       )
-      .lean<HrUserRow[]>(),
+      .lean<HrUserRow[]>()),
     EmployeeDocument.find(docFilter)
       .select("name type user expiryDate")
       .populate<{ user: { _id: ObjectId; name: string } | null }>({ path: "user", select: "name" })

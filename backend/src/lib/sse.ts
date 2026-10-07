@@ -30,8 +30,29 @@ export interface SSEEvent {
 // Connection manager
 // ---------------------------------------------------------------------------
 
-/** Map of userId (string) → set of active SSE responses. */
+/** Map of userId (string) → set of active SSE responses (insertion order = oldest first). */
 const clients = new Map<string, Set<Response>>();
+
+/**
+ * Max concurrent streams per user. The SPA shares one EventSource per browser
+ * (see frontend use-sse.ts), so 5 covers several browsers/devices; past that
+ * the oldest stream is closed (the browser that owned it reconnects on demand).
+ */
+const MAX_STREAMS_PER_USER = Number(process.env.SSE_MAX_PER_USER) || 5;
+/** Comment heartbeat — well under the ~240 s ACA/Envoy idle timeout and typical proxy limits. */
+const HEARTBEAT_MS = 25_000;
+
+let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+
+function ensureHeartbeat(): void {
+  if (heartbeatTimer) return;
+  heartbeatTimer = setInterval(() => {
+    for (const set of clients.values()) {
+      for (const res of set) res.write(":heartbeat\n\n");
+    }
+  }, HEARTBEAT_MS);
+  heartbeatTimer.unref?.();
+}
 
 /**
  * Register an SSE client for a user. Returns a cleanup function that
@@ -41,18 +62,48 @@ export function registerClient(
   userId: string,
   res: Response
 ): () => void {
-  if (!clients.has(userId)) {
-    clients.set(userId, new Set());
+  ensureHeartbeat();
+  let set = clients.get(userId);
+  if (!set) {
+    set = new Set();
+    clients.set(userId, set);
   }
-  clients.get(userId)!.add(res);
+  // Enforce the per-user cap: close the oldest streams first.
+  while (set.size >= MAX_STREAMS_PER_USER) {
+    const oldest = set.values().next().value as Response | undefined;
+    if (!oldest) break;
+    set.delete(oldest);
+    oldest.end();
+  }
+  set.add(res);
 
   return () => {
-    const set = clients.get(userId);
-    if (set) {
-      set.delete(res);
-      if (set.size === 0) clients.delete(userId);
+    const current = clients.get(userId);
+    if (current) {
+      current.delete(res);
+      if (current.size === 0) clients.delete(userId);
     }
   };
+}
+
+/**
+ * Graceful shutdown: tells every client to reconnect after `retryMs` (to the
+ * next revision/replica) and ends the streams so the server can close.
+ */
+export function closeAllClients(retryMs = 3_000): void {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = undefined;
+  for (const set of clients.values()) {
+    for (const res of set) {
+      try {
+        res.write(`retry: ${retryMs}\n\n`);
+        res.end();
+      } catch {
+        // Socket already gone.
+      }
+    }
+  }
+  clients.clear();
 }
 
 /** Push an event to all connected SSE clients for a given user. */

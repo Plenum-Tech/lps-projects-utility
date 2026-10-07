@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { connectDB, disconnectDB } from "../db/index.js";
 import { runHrReminders } from "../lib/hrJobs.js";
+import { flushProgressRecalcs } from "../lib/projectProgress.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "../lib/projectJobs.js";
 import { runRecurringTasks, runTaskReminders } from "../lib/taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "../lib/timeJobs.js";
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
   console.log(`✅ ${job}:`, JSON.stringify(result));
   // Let fire-and-forget side effects (SSE/notifications) settle before disconnecting.
   await new Promise((resolve) => setTimeout(resolve, 500));
+  await flushProgressRecalcs();
 }
 
 main()

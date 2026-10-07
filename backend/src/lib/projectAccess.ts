@@ -1,10 +1,11 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { cached } from "./refCache.js";
 import { Project } from "../models/Project.js";
 import type { IProject } from "../models/Project.js";
 import { ProjectActivity } from "../models/ProjectActivity.js";
 import type { ProjectActivityAction } from "../models/ProjectActivity.js";
-import { ProjectStatus } from "../models/ProjectStatus.js";
+import { completedStatusIds, ProjectStatus } from "../models/ProjectStatus.js";
 import { Task, TASK_STATUSES } from "../models/Task.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
@@ -202,8 +203,8 @@ export function projectLink(id: mongoose.Types.ObjectId | string, tab?: string):
 
 /** True when the project's status is flagged `isCompleted`. */
 export async function isProjectStatusCompleted(project: Pick<IProject, "status">): Promise<boolean> {
-  const status = await ProjectStatus.findById(project.status).select("isCompleted").lean();
-  return Boolean(status?.isCompleted);
+  if (!project.status) return false;
+  return (await completedStatusIds()).some((id) => id.equals(project.status));
 }
 
 // ---------------------------------------------------------------------------
@@ -377,13 +378,19 @@ export async function serializeProjects(
 /** Heads of a department (empty when none). */
 export async function departmentHeads(departmentId: mongoose.Types.ObjectId | null | undefined): Promise<mongoose.Types.ObjectId[]> {
   if (!departmentId) return [];
-  const heads = await User.find({ role: "head", department: departmentId }).select("_id").lean();
-  return heads.map((h) => h._id);
+  const ids = await cached(`user:dept-heads:${String(departmentId)}`, 15_000, async () => {
+    const heads = await User.find({ role: "head", department: departmentId }).select("_id").lean();
+    return heads.map((h) => h._id);
+  });
+  return [...ids];
 }
 
 export async function adminIds(): Promise<mongoose.Types.ObjectId[]> {
-  const admins = await User.find({ role: "admin" }).select("_id").lean();
-  return admins.map((a) => a._id);
+  const ids = await cached("user:admins", 15_000, async () => {
+    const admins = await User.find({ role: "admin" }).select("_id").lean();
+    return admins.map((a) => a._id);
+  });
+  return [...ids];
 }
 
 /** Head of the employee's department (not themselves). */
@@ -420,8 +427,12 @@ export async function managedProjectIds(user: AccessUser): Promise<mongoose.Type
 /** Users in the head's department (ids). */
 export async function departmentUserIds(departmentId: mongoose.Types.ObjectId | null | undefined): Promise<mongoose.Types.ObjectId[]> {
   if (!departmentId) return [];
-  const rows = await User.find({ department: departmentId }).select("_id").lean();
-  return rows.map((r) => r._id);
+  // Cached 15 s per department; dropped on any user write (lib/refCache.ts).
+  const ids = await cached(`user:dept-members:${String(departmentId)}`, 15_000, async () => {
+    const rows = await User.find({ department: departmentId }).select("_id").lean();
+    return rows.map((r) => r._id);
+  });
+  return [...ids];
 }
 
 /**

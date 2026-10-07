@@ -1,5 +1,7 @@
 import "dotenv/config";
 import express from "express";
+import type { Server } from "node:http";
+import compression from "compression";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
@@ -7,7 +9,7 @@ import mongoose from "mongoose";
 import morgan from "morgan";
 import { inviteAcceptRateLimit, strictRateLimit, moderateRateLimit, standardRateLimit } from "./middlewares/rateLimit.js";
 import { serve } from "inngest/express";
-import { connectDB, disconnectDB } from "./db/index.js";
+import { connectDB, disconnectDB, pingDB } from "./db/index.js";
 import { inngest, functions } from "./inngest/index.js";
 import { logEmailTransportStatus } from "./lib/email.js";
 import { isDuplicateKeyError } from "./lib/errors.js";
@@ -43,9 +45,19 @@ import timesheetsRouter from "./routes/timesheets.js";
 import usersRouter from "./routes/users.js";
 import settingsRouter from "./routes/settings.js";
 import { companySettingsFreshness } from "./lib/companySettings.js";
+import { isProduction, jobsMode, validateEnvironment } from "./lib/env.js";
+import { startScheduler, stopScheduler } from "./lib/scheduler.js";
+import { flushProgressRecalcs } from "./lib/projectProgress.js";
+import { loadSpa } from "./lib/spa.js";
+import { closeAllClients } from "./lib/sse.js";
 
 const app = express();
 const PORT = process.env.PORT ?? 5000;
+app.disable("x-powered-by");
+/** True once SIGTERM/SIGINT is received: health turns 503 so the ingress drains this replica. */
+let shuttingDown = false;
+/** Built SPA (production container); null in local dev, where Vite serves the UI. */
+const spa = loadSpa();
 
 // Behind a proxy (Vercel edge network) trust its X-Forwarded-For so req.ip is the
 // real client IP — otherwise all users share one rate-limit bucket. When the API is
@@ -68,8 +80,81 @@ morgan.token("url", (req) => {
   const url = (req as express.Request).originalUrl || req.url || "";
   return url.replace(INVITE_TOKEN_PATH, "$1[redacted]");
 });
-app.use(morgan(process.env.NODE_ENV === "production" ? "combined" : "dev")); // Request logging
-app.use(helmet()); // Secure HTTP headers
+// Production: one JSON line per request on stdout (ACA -> Log Analytics); probes are not logged.
+const jsonLogFormat: morgan.FormatFn = (tokens, req, res) => {
+  const t = (name: string, arg?: string) => tokens[name]?.(req, res, arg);
+  return JSON.stringify({
+    time: t("date", "iso"),
+    ip: t("remote-addr"),
+    method: t("method"),
+    url: t("url"),
+    status: Number(t("status")) || null,
+    bytes: Number(t("res", "content-length")) || 0,
+    ms: Number(t("response-time")) || 0,
+    ua: t("user-agent"),
+  });
+};
+app.use(
+  isProduction()
+    ? morgan(jsonLogFormat, { skip: (req) => (req as express.Request).originalUrl === "/api/health" })
+    : morgan("dev"),
+); // Request logging
+
+// Secure HTTP headers. Serving the SPA needs a CSP that allows its own bundle,
+// the inline bootstrap scripts React Router writes into index.html (by hash),
+// inline styles (charts), Google Fonts, data:/blob: images, and API calls to self.
+app.use(
+  spa
+    ? helmet({
+        contentSecurityPolicy: {
+          directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'", ...spa.inlineScriptHashes],
+            styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+            fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
+            imgSrc: ["'self'", "data:", "blob:"],
+            connectSrc: ["'self'"],
+            workerSrc: ["'self'", "blob:"],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            // ACA ingress is HTTPS-only already; omitting this keeps local http://127.0.0.1 tests working.
+            upgradeInsecureRequests: null,
+          },
+        },
+      })
+    : helmet(),
+);
+
+// gzip/deflate/brotli for JSON and static files - never for the SSE stream,
+// where buffering would hold events back until the buffer fills.
+app.use(
+  compression({
+    filter(req, res) {
+      if (req.path === "/api/notifications/stream") return false;
+      const type = String(res.getHeader("Content-Type") ?? "");
+      if (type.includes("text/event-stream")) return false;
+      return compression.filter(req, res);
+    },
+  }),
+);
+
+// Liveness/readiness for the container platform: 200 when the DB answers a
+// ping within 1 s, 503 otherwise (or while shutting down). Not rate limited.
+app.get("/api/health", async (_req, res) => {
+  const dbUp = !shuttingDown && (await pingDB(1_000));
+  res.setHeader("Cache-Control", "no-store");
+  res.status(dbUp ? 200 : 503).json({
+    status: shuttingDown ? "shutting_down" : dbUp ? "ok" : "degraded",
+    db: dbUp ? "up" : "down",
+    uptime: Math.round(process.uptime()),
+    version: process.env.APP_VERSION?.trim() || "dev",
+  });
+});
+
+// Built frontend (production container): static assets + SPA fallback.
+if (spa) app.use(spa.router);
 app.use(
   cors({
     origin(origin, callback) {
@@ -90,10 +175,12 @@ const meetingJsonBody = express.json({ limit: "3mb" });
 app.use((req, res, next) => (req.path.startsWith("/api/meetings") ? meetingJsonBody : jsonBody)(req, res, next));
 app.use(express.urlencoded({ extended: true })); // Parse form request bodies
 
-// Root health check — confirms the API is up and running
-app.get("/", (_req, res) => {
-  res.send("LPS – Projects Utility API is running 🚀");
-});
+// Root health check — confirms the API is up and running (when no SPA is served at /)
+if (!spa) {
+  app.get("/", (_req, res) => {
+    res.send("LPS – Projects Utility API is running 🚀");
+  });
+}
 
 // --- Rate limiting ---
 // Strict: auth endpoints (login brute-force protection)
@@ -186,62 +273,105 @@ app.use(
 
 // Start the server only when this file is run directly (not when imported in tests)
 if (import.meta.main) {
+  // Fail fast on missing/weak secrets in production (warn only in dev).
+  validateEnvironment();
+  let server: Server | undefined;
+
+  /** JOBS_MODE=in-process → lease-locked scheduler; unset in dev → legacy loop below. */
+  const startJobs = () => {
+    const mode = jobsMode();
+    if (mode === "in-process") {
+      startScheduler();
+      return;
+    }
+    if (mode !== null || isProduction()) {
+      console.log(`[jobs] in-process scheduler disabled (JOBS_MODE=${mode ?? "unset"}; use Inngest crons)`);
+      return;
+    }
+
+    // Local dev without the Inngest dev server: run the task jobs hourly in-process.
+    // Their idempotency keys make overlapping with the Inngest crons harmless.
+    const runJobs = () => {
+      if (!isDbReady()) return;
+      void runTaskReminders(new Date()).catch((err) => console.error("[jobs] reminders failed:", err));
+      void runRecurringTasks(new Date()).catch((err) => console.error("[jobs] recurring failed:", err));
+    };
+    setInterval(runJobs, 60 * 60 * 1000).unref();
+
+    // Project + time jobs every 15 minutes; the daily ones only after their
+    // configured time (08:00 / 19:30 app timezone). All are idempotent.
+    const runTimeJobs = () => {
+      if (!isDbReady()) return;
+      const now = new Date();
+      const minutes = appMinutesOfDay(now);
+      void runAutoStopTimers(now).catch((err) => console.error("[jobs] auto-stop failed:", err));
+      void runTimeTrackerReminder(now).catch((err) => console.error("[jobs] tracker reminder failed:", err));
+      if (minutes >= 8 * 60) {
+        void runProjectDeadlineReminders(now).catch((err) => console.error("[jobs] deadline reminders failed:", err));
+        void runHrReminders(now).catch((err) => console.error("[jobs] HR reminders failed:", err));
+      }
+      if (minutes >= 19 * 60 + 30) {
+        void runDailyTimeLogReport(now).catch((err) => console.error("[jobs] daily report failed:", err));
+      }
+      if (minutes >= 15 && minutes < 30) {
+        void runProjectProgressDeadlineMode(now).catch((err) => console.error("[jobs] deadline progress failed:", err));
+      }
+    };
+    setInterval(runTimeJobs, 15 * 60 * 1000).unref();
+  };
+
   const startServer = async () => {
     try {
       // Establish the MongoDB connection before accepting requests
       await connectDB();
-      app.listen(PORT, () => {
-        console.log(`✅ Express server running on http://localhost:${PORT}`);
+      server = app.listen(PORT, () => {
+        console.log(`✅ Express server running on http://localhost:${PORT}${spa ? ` (serving SPA from ${spa.dir})` : ""}`);
       });
 
       // Log SMTP status once (never blocks or fails startup)
       void logEmailTransportStatus().catch(() => undefined);
 
-      // Local dev without the Inngest dev server: run the task jobs hourly in-process.
-      // Their idempotency keys make overlapping with the Inngest crons harmless.
-      if (process.env.NODE_ENV !== "production") {
-        const runJobs = () => {
-          if (!isDbReady()) return;
-          void runTaskReminders(new Date()).catch((err) => console.error("[jobs] reminders failed:", err));
-          void runRecurringTasks(new Date()).catch((err) => console.error("[jobs] recurring failed:", err));
-        };
-        setInterval(runJobs, 60 * 60 * 1000).unref();
-
-        // Project + time jobs every 15 minutes; the daily ones only after their
-        // configured time (08:00 / 19:30 app timezone). All are idempotent.
-        const runTimeJobs = () => {
-          if (!isDbReady()) return;
-          const now = new Date();
-          const minutes = appMinutesOfDay(now);
-          void runAutoStopTimers(now).catch((err) => console.error("[jobs] auto-stop failed:", err));
-          void runTimeTrackerReminder(now).catch((err) => console.error("[jobs] tracker reminder failed:", err));
-          if (minutes >= 8 * 60) {
-            void runProjectDeadlineReminders(now).catch((err) => console.error("[jobs] deadline reminders failed:", err));
-            void runHrReminders(now).catch((err) => console.error("[jobs] HR reminders failed:", err));
-          }
-          if (minutes >= 19 * 60 + 30) {
-            void runDailyTimeLogReport(now).catch((err) => console.error("[jobs] daily report failed:", err));
-          }
-          if (minutes >= 15 && minutes < 30) {
-            void runProjectProgressDeadlineMode(now).catch((err) => console.error("[jobs] deadline progress failed:", err));
-          }
-        };
-        setInterval(runTimeJobs, 15 * 60 * 1000).unref();
-      }
+      startJobs();
     } catch (error) {
       console.error("❌ Failed to start server:", error);
       process.exit(1);
     }
   };
 
-  // Close the MongoDB connection gracefully on shutdown (SIGINT: Ctrl+C, SIGTERM: docker stop / orchestrators)
-  const shutdown = () => {
-    void disconnectDB()
-      .catch(() => undefined)
-      .finally(() => process.exit(0));
+  // Graceful shutdown (SIGTERM: docker stop / ACA revision swap or scale-in; SIGINT: Ctrl+C):
+  // fail health, stop accepting connections, tell SSE clients to reconnect elsewhere,
+  // let the scheduler finish, close Mongo — and exit within 20 s no matter what.
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`[shutdown] ${signal} received — draining`);
+    setTimeout(() => {
+      console.error("[shutdown] timed out after 20s — forcing exit");
+      process.exit(1);
+    }, 20_000).unref();
+
+    const closeServer = new Promise<void>((resolve) => {
+      if (!server) return resolve();
+      server.close(() => resolve());
+      closeAllClients(3_000);
+      server.closeIdleConnections?.();
+      // In-flight requests get 10 s to finish, then remaining sockets are dropped.
+      setTimeout(() => {
+        server?.closeAllConnections?.();
+        resolve();
+      }, 10_000).unref();
+    });
+
+    void Promise.allSettled([closeServer, stopScheduler(10_000)])
+      .then(() => flushProgressRecalcs().catch(() => undefined))
+      .then(() => disconnectDB().catch(() => undefined))
+      .finally(() => {
+        console.log("[shutdown] done");
+        process.exit(0);
+      });
   };
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => shutdown("SIGINT"));
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 
   startServer();
 }
