@@ -5,6 +5,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useSSE } from "@/hooks/use-sse";
@@ -203,9 +204,37 @@ export function invalidateTaskCollections(queryClient: QueryClient) {
  * per page that shows tasks. A board move by the current user is skipped —
  * the optimistic update + its own refetch already cover it.
  */
+/** Bulk work (imports, bulk actions) emits one event per task — refetch at most this often. */
+const REALTIME_REFRESH_MS = 2_000;
+
 export function useTaskRealtime() {
   const queryClient = useQueryClient();
   const { data: me } = useCurrentUser();
+  const lastRefresh = useRef(0);
+  const trailing = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (trailing.current) clearTimeout(trailing.current);
+    },
+    []
+  );
+
+  // Leading refresh right away, then one trailing refresh per window.
+  function refresh() {
+    const wait = lastRefresh.current + REALTIME_REFRESH_MS - Date.now();
+    if (wait <= 0) {
+      lastRefresh.current = Date.now();
+      void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      return;
+    }
+    if (trailing.current) return;
+    trailing.current = setTimeout(() => {
+      trailing.current = null;
+      lastRefresh.current = Date.now();
+      void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+    }, wait);
+  }
 
   useSSE({
     event: "task-updated",
@@ -215,7 +244,7 @@ export function useTaskRealtime() {
       if (payload?.action === "deleted" && payload.taskId) {
         queryClient.removeQueries({ queryKey: taskKeys.detail(payload.taskId) });
       }
-      void queryClient.invalidateQueries({ queryKey: taskKeys.all });
+      refresh();
     },
   });
 }

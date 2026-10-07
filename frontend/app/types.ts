@@ -213,7 +213,9 @@ export type ActivityAction =
   | "meeting_created"
   | "meeting_deleted"
   | "meeting_tasks_created"
-  | "settings_updated";
+  | "settings_updated"
+  | "import_completed"
+  | "import_undone";
 
 /** Mirrors the backend ActivityLog model as returned by the API (Mongoose toJSON). */
 export interface ActivityLog {
@@ -2581,3 +2583,121 @@ export type CompanySettingsInput = Partial<{
   weekStart: WeekStart;
   currency: Partial<CurrencySetting>;
 }>;
+
+/* ------------------------------------------------------------------ */
+/* Imports (Excel / CSV) — see backend/API-CONTRACT-imports.md          */
+/* ------------------------------------------------------------------ */
+
+export type ImportType = "projects" | "tasks";
+export type ImportJobStatus = "previewed" | "running" | "completed" | "failed" | "undone";
+/** validate: ready | warning | error; run: created | updated | skipped | error. */
+export type ImportRowStatus = "ready" | "warning" | "error" | "created" | "updated" | "skipped";
+
+export interface ImportField {
+  key: string;
+  label: string;
+  /** "create" = needed only for new records (project start date). */
+  required: boolean | "create";
+  accepts: string;
+  example: string | number;
+}
+
+export interface ImportOptions {
+  /** Projects: what to do when the code already exists (default "skip"). */
+  onExisting?: "skip" | "update";
+  /** Tasks: project _id for rows without a project value. */
+  defaultProject?: string | null;
+  /** Default false → in-app notifications only. */
+  sendEmails?: boolean;
+  /** Unknown people become warnings instead of row errors. */
+  skipUnknownPeople?: boolean;
+}
+
+/** Column index (as a string) → field key. */
+export type ImportMapping = Record<string, string>;
+
+export interface ImportRow {
+  row: number;
+  status: ImportRowStatus;
+  action: "create" | "update" | "skip" | null;
+  messages: string[];
+  recordId: string | null;
+  recordRef: string | null;
+}
+
+export interface ImportTotals {
+  rows: number;
+  ready: number;
+  warnings: number;
+  errors: number;
+  created: number;
+  updated: number;
+  skipped: number;
+}
+
+export interface ImportJob {
+  id: string;
+  type: ImportType;
+  status: ImportJobStatus;
+  fileName: string;
+  fileSize: number;
+  fileAvailable: boolean;
+  fileExpiresAt: string | null;
+  sheets: string[];
+  sheet: string | null;
+  headerRow: boolean;
+  columns: { index: number; header: string }[];
+  rowCount: number;
+  mapping: ImportMapping;
+  options: ImportOptions;
+  resultsOf: "validate" | "run" | null;
+  totals: ImportTotals;
+  progress: { processed: number; total: number };
+  createdCount: number;
+  startedAt: string | null;
+  finishedAt: string | null;
+  undoUntil: string | null;
+  canUndo: boolean;
+  undoneAt: string | null;
+  undoResult: {
+    deleted: number;
+    skipped: { id: string; ref: string | null; reason: string }[];
+  } | null;
+  error: string | null;
+  hasErrorReport: boolean;
+  createdBy: { id: string; name: string | null };
+  createdAt: string;
+  updatedAt: string;
+  rows?: ImportRow[];
+}
+
+export interface ImportColumn {
+  index: number;
+  header: string;
+  /** First 3 values. */
+  samples: string[];
+}
+
+/** POST /api/imports/:type/preview response. */
+export interface ImportPreviewResponse {
+  jobId: string;
+  job: ImportJob;
+  fileName: string;
+  format: "xlsx" | "csv";
+  sheets: string[];
+  sheet: string | null;
+  headerRow: boolean;
+  rowCount: number;
+  columns: ImportColumn[];
+  sampleRows: { row: number; cells: string[] }[];
+  suggestedMapping: ImportMapping;
+  fields: ImportField[];
+  limits: { maxBytes: number; maxRows: number; inlineRows: number };
+}
+
+export interface ImportListResponse {
+  imports: ImportJob[];
+  total: number;
+  limit: number;
+  offset: number;
+}

@@ -23,6 +23,7 @@ import { FiltersSheet, SheetSelect, SheetSwitch } from "@/components/globals/dat
 import { DataTablePager } from "@/components/globals/data-table/pagination";
 import { DataTableToolbar, ViewToggle, type ViewOption } from "@/components/globals/data-table/toolbar";
 import { FilterSelect } from "@/components/globals/filter-select";
+import { ImportButton } from "@/components/imports/import-button";
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { BulkAssignDialog } from "@/components/tasks/bulk-assign-dialog";
 import { MySubtasksStrip } from "@/components/tasks/my-subtasks";
@@ -405,6 +406,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
                 )}
                 Export
               </Button>
+              {canCreate && <ImportButton type="tasks" defaultProjectId={project?._id} />}
             </>
           }
           end={

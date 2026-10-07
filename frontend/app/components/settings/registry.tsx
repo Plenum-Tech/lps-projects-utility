@@ -5,6 +5,7 @@ import {
   LuBuilding2,
   LuCalendarDays,
   LuClipboardList,
+  LuFileUp,
   LuFolderKanban,
   LuMapPin,
   LuMessagesSquare,
@@ -14,6 +15,7 @@ import {
   LuUserRound,
 } from "react-icons/lu";
 
+import { ImportsHistorySection } from "@/components/imports/imports-history";
 import { AddressSection } from "@/components/settings/sections/address-section";
 import { AppSection } from "@/components/settings/sections/app-section";
 import {
@@ -133,6 +135,15 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     roles: ADMIN,
     icon: LuMessagesSquare,
     component: MeetingSection,
+  },
+  {
+    id: "imports",
+    title: "Imports",
+    description: "History of project and task imports, error reports and undo.",
+    keywords: ["import", "excel", "xlsx", "csv", "spreadsheet", "upload", "undo", "history"],
+    roles: ADMIN,
+    icon: LuFileUp,
+    component: ImportsHistorySection,
   },
   {
     id: "security",

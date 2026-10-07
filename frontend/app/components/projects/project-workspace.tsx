@@ -20,6 +20,7 @@ import { FiltersSheet, SheetSelect, SheetSwitch } from "@/components/globals/dat
 import { DataTablePager } from "@/components/globals/data-table/pagination";
 import { DataTableToolbar, ViewToggle, type ViewOption } from "@/components/globals/data-table/toolbar";
 import { FilterSelect } from "@/components/globals/filter-select";
+import { ImportButton } from "@/components/imports/import-button";
 import { EmptyState, PageHeader } from "@/components/globals/query-states";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import {
@@ -87,6 +88,8 @@ export function ProjectWorkspace() {
   const role: Role = user?.role ?? "employee";
   const isAdmin = role === "admin";
   const isHeadOrAdmin = isAdmin || role === "head";
+  // Heads import into their own department, so they need one.
+  const canImport = isAdmin || (role === "head" && Boolean(user?.department));
   const me = useMemo(() => ({ _id: user?._id ?? "", role }), [user?._id, role]);
 
   useProjectRealtime();
@@ -266,6 +269,7 @@ export function ProjectWorkspace() {
                 )}
                 Export
               </Button>
+              {canImport && <ImportButton type="projects" />}
             </>
           }
           end={

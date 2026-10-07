@@ -111,6 +111,8 @@ const ACTION_META: Record<
   meeting_deleted: { label: "Deleted meeting", badge: "destructive" },
   meeting_tasks_created: { label: "Created tasks from meeting", badge: "secondary" },
   settings_updated: { label: "Updated company settings", badge: "secondary" },
+  import_completed: { label: "Imported records", badge: "default" },
+  import_undone: { label: "Undid import", badge: "destructive" },
 };
 
 function detailsSummary(log: ActivityLog): string | null {
@@ -236,6 +238,22 @@ function detailsSummary(log: ActivityLog): string | null {
       return Array.isArray(changed) && changed.length > 0
         ? `Changed: ${changed.join(", ")}`
         : null;
+    }
+    case "import_completed": {
+      const parts = [
+        typeof details.created === "number" ? `${details.created} created` : null,
+        typeof details.updated === "number" && details.updated > 0 ? `${details.updated} updated` : null,
+        typeof details.skipped === "number" && details.skipped > 0 ? `${details.skipped} skipped` : null,
+        typeof details.errors === "number" && details.errors > 0 ? `${details.errors} errors` : null,
+      ];
+      return parts.filter((part): part is string => part !== null).join(" · ") || null;
+    }
+    case "import_undone": {
+      const parts = [
+        typeof details.deleted === "number" ? `${details.deleted} deleted` : null,
+        typeof details.skipped === "number" && details.skipped > 0 ? `${details.skipped} kept (edited)` : null,
+      ];
+      return parts.filter((part): part is string => part !== null).join(" · ") || null;
     }
     case "login_failed":
       return "Invalid credentials";
