@@ -23,6 +23,11 @@ body {
 @theme inline {
   --font-heading: var(--font-sans);
   --font-sans: "Geist Variable", sans-serif;
+  --color-good: var(--good);
+  --color-warn: var(--warn);
+  --color-critical: var(--critical);
+  --color-pulse-blue: var(--pulse-blue);
+  --color-pulse-lime: var(--pulse-lime);
   --color-brand: var(--brand);
   --color-brand-foreground: var(--brand-foreground);
   --color-brand-accent: var(--brand-accent);
@@ -105,6 +110,12 @@ body {
   --brand-foreground: oklch(0.985 0 0);
   --brand-accent: oklch(0.861 0.292 142.6);
   --brand-surface: oklch(1 0 0);
+  /* Status tones for KPI values / delta pills (Delivery Pulse) + brand accents */
+  --good: oklch(0.56 0.14 155);
+  --warn: oklch(0.62 0.15 65);
+  --critical: oklch(0.56 0.21 27);
+  --pulse-blue: oklch(0.52 0.19 258);
+  --pulse-lime: oklch(0.72 0.2 130);
 }
 
 .dark {
@@ -143,6 +154,11 @@ body {
   --brand-foreground: oklch(0.985 0 0);
   --brand-accent: oklch(0.861 0.292 142.6);
   --brand-surface: oklch(1 0 0);
+  --good: oklch(0.76 0.16 155);
+  --warn: oklch(0.8 0.15 75);
+  --critical: oklch(0.71 0.18 25);
+  --pulse-blue: oklch(0.7 0.15 255);
+  --pulse-lime: oklch(0.86 0.2 130);
 }
 
 @layer base {

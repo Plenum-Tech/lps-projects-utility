@@ -48,6 +48,8 @@ export interface ProjectFilters {
   deadline: "" | "overdue";
   /** Member user id. */
   member?: string;
+  /** Brand id, or "none" for projects without a brand. */
+  brand?: string;
   /** Start→deadline overlaps this range ("YYYY-MM-DD"). */
   from?: string;
   to?: string;
@@ -101,6 +103,7 @@ export function projectQueryParams(
     "manager",
     "deadline",
     "member",
+    "brand",
     "from",
     "to",
     "progress",

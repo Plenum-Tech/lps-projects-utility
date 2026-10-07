@@ -32,6 +32,7 @@ import { ProjectsCalendar } from "@/components/projects/projects-calendar";
 import { ProjectsTable, type ProjectDialogKind } from "@/components/projects/projects-table";
 import { Button } from "@/components/ui/button";
 import { useCurrentUser } from "@/hooks/use-auth";
+import { useBrands } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
 import { useProjectCategories, useProjectStatuses } from "@/hooks/use-project-meta";
 import {
@@ -66,6 +67,7 @@ const DEFAULTS = {
   to: "",
   progress: "",
   category: "",
+  brand: "",
   department: "",
   manager: "",
   member: "",
@@ -73,7 +75,7 @@ const DEFAULTS = {
 };
 
 type FilterKey = keyof typeof DEFAULTS;
-const SHEET_KEYS: FilterKey[] = ["category", "department", "manager", "member", "deadline"];
+const SHEET_KEYS: FilterKey[] = ["category", "brand", "department", "manager", "member", "deadline"];
 const INLINE_KEYS: FilterKey[] = ["search", "status", "from", "to", "progress"];
 
 const SORT_FIELDS: ProjectSortField[] = ["code", "name", "startDate", "deadline", "progress", "status"];
@@ -104,6 +106,7 @@ export function ProjectWorkspace() {
     search: filters.search,
     status: filters.status,
     category: filters.category,
+    brand: filters.brand,
     department: filters.department,
     manager: filters.manager,
     member: filters.member,
@@ -124,6 +127,7 @@ export function ProjectWorkspace() {
 
   const statuses = useProjectStatuses();
   const categories = useProjectCategories();
+  const brands = useBrands(false, Boolean(user));
   const people = useAssignableUsers(Boolean(user) && isHeadOrAdmin);
 
   const selection = useRowSelection();
@@ -401,6 +405,18 @@ export function ProjectWorkspace() {
           value={filters.category}
           onChange={(category) => table.setFilters({ category })}
           options={(categories.data ?? []).map((category) => ({ value: category._id, label: category.name }))}
+        />
+        <SheetSelect
+          label="Brand"
+          value={filters.brand}
+          onChange={(brand) => table.setFilters({ brand })}
+          options={[
+            { value: "none", label: "No brand" },
+            ...(brands.data ?? []).map((brand) => ({
+              value: brand._id,
+              label: brand.active ? brand.name : `${brand.name} (inactive)`,
+            })),
+          ]}
         />
         {isAdmin && (
           <DepartmentSheetSelect

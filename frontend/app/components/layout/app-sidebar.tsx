@@ -1,4 +1,5 @@
 import {
+  Activity,
   BarChart3,
   Building2,
   CalendarCheck,
@@ -173,6 +174,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Reports",
     collapsible: true,
     items: [
+      { title: "Delivery Pulse", to: "/reports/delivery", icon: Activity, roles: MANAGERS },
       { title: "Task Report", to: "/reports/tasks", icon: ListChecks, roles: MANAGERS },
       { title: "Time Log Report", to: "/reports/time", icon: BarChart3, roles: MANAGERS },
       { title: "Weekly Timesheet", to: "/reports/timesheets", icon: Sheet, roles: MANAGERS },

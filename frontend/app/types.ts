@@ -1595,6 +1595,8 @@ export interface Project {
   code: string;
   summary?: string;
   category: { _id: string; name: string } | null;
+  /** Client brand (populated); null when unset. */
+  brand?: ProjectBrandRef | null;
   departments: { _id: string; name: string }[];
   manager: UserRef | null;
   members: ProjectMember[];
@@ -1682,6 +1684,8 @@ export interface ProjectInput {
   code: string;
   summary?: string;
   category?: string | null;
+  /** Brand id; null / "" clears it. */
+  brand?: string | null;
   departments?: string[];
   manager?: string | null;
   members?: (string | { user: string; hourlyRate?: number })[];
@@ -2700,4 +2704,293 @@ export interface ImportListResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+// ---------------------------------------------------------------------------
+// Brands + Delivery Pulse (see backend/API-CONTRACT-pulse.md)
+// ---------------------------------------------------------------------------
+
+export type BrandColor = LabelColor;
+
+export interface Brand {
+  _id: string;
+  name: string;
+  shortName: string;
+  color: BrandColor;
+  active: boolean;
+  projectCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BrandInput {
+  name?: string;
+  shortName?: string;
+  color?: BrandColor;
+  active?: boolean;
+}
+
+/** Brand as populated on a project. */
+export interface ProjectBrandRef {
+  _id: string;
+  name: string;
+  shortName: string;
+  color: BrandColor;
+  active: boolean;
+}
+
+export interface DeliverySettings {
+  trafficManagers: string[];
+  dashboardTeams: string[] | null;
+  reworkKeywords: string[];
+  reworkCategories: string[];
+  briefingWeekday: number;
+  minLeadDays: number;
+  sameDayBrands: string[];
+  finalAssetDomains: string[];
+  briefMinLength: number;
+  minCompletedToRank: number;
+  staleDays: number;
+  brandTeamMap: { brand: string; users: string[] }[];
+  teamMapStartDate: string;
+  updatedAt: string | null;
+}
+
+export type DeliverySettingsInput = Partial<Omit<DeliverySettings, "updatedAt">>;
+
+export interface DeliverySettingsResponse {
+  settings: DeliverySettings;
+  defaults: {
+    reworkKeywords: string[];
+    reworkCategoryNames: string[];
+    briefingWeekday: number;
+    minLeadDays: number;
+    finalAssetDomains: string[];
+    briefMinLength: number;
+    minCompletedToRank: number;
+    staleDays: number;
+  };
+  changed?: string[];
+}
+
+export type DeliveryPeriod = "7d" | "30d" | "90d" | "12m" | "all";
+
+export interface DeliveryFilters {
+  period: DeliveryPeriod;
+  team: string;
+  brand: string;
+  person: string;
+}
+
+export interface DeliveryMeta {
+  period: DeliveryPeriod;
+  days: number;
+  today: string;
+  range: { start: string; end: string };
+  previous: { start: string; end: string } | null;
+  asOf: string;
+  timezone: string;
+  filters: { team: string | null; brand: string | null; person: string | null };
+  scope: {
+    kind: "all" | "department";
+    departmentId: string | null;
+    departmentName: string | null;
+    noDepartment: boolean;
+  };
+}
+
+export interface DeliveryStats {
+  created: number;
+  completed: number;
+  completedWithDue: number;
+  completedNoDue: number;
+  onTimePct: number | null;
+  meanDays: number | null;
+  rework: number;
+  reworkPct: number | null;
+  open: number;
+  overdue: number;
+}
+
+export interface DeliveryDelta {
+  current: number | null;
+  previous: number | null;
+  change: number | null;
+  direction: "up" | "down" | "flat" | null;
+  good: boolean | null;
+  betterWhen: "higher" | "lower" | "neutral";
+  noPreviousData: boolean;
+}
+
+export interface DeliveryUserRef {
+  id: string | null;
+  name: string;
+  former: boolean;
+}
+
+export interface DeliveryBrandRef {
+  id: string;
+  name: string;
+  shortName: string;
+  color: string;
+  active: boolean;
+  noBrand: boolean;
+}
+
+export type DeliveryTaskStatus = "todo" | "in_progress" | "in_review" | "completed" | "rejected";
+
+export interface DeliveryTaskRow {
+  id: string;
+  code: string;
+  title: string;
+  status: DeliveryTaskStatus;
+  brand: DeliveryBrandRef;
+  project: { id: string; code: string; name: string } | null;
+  doers: DeliveryUserRef[];
+  briefer: DeliveryUserRef;
+  createdDate: string;
+  dueDate: string | null;
+  daysLate: number | null;
+}
+
+export interface DeliverySummaryResponse {
+  meta: DeliveryMeta;
+  kpis: DeliveryStats;
+  previous: DeliveryStats | null;
+  deltas: {
+    created: DeliveryDelta;
+    completed: DeliveryDelta;
+    onTimePct: DeliveryDelta;
+    meanDays: DeliveryDelta;
+    reworkPct: DeliveryDelta;
+    open: DeliveryDelta;
+    overdue: DeliveryDelta;
+  };
+}
+
+export interface DeliveryWeekRow {
+  weekStart: string;
+  weekEnd: string;
+  created: number;
+  completed: number;
+  onTimePct: number | null;
+  meanDays: number | null;
+  open: number;
+  overdue: number;
+  overduePct: number | null;
+  rework: number;
+  reworkPct: number | null;
+}
+
+export interface DeliveryWeeklyResponse {
+  meta: DeliveryMeta;
+  capped: boolean;
+  maxWeeks: number;
+  weeks: DeliveryWeekRow[];
+}
+
+export type DeliveryTeamRow = DeliveryStats & {
+  team: { id: string; name: string };
+  volume: number;
+};
+
+export interface DeliveryTeamsResponse {
+  meta: DeliveryMeta;
+  rows: DeliveryTeamRow[];
+}
+
+export type DeliveryBrandDeltaKey = "created" | "completed" | "onTimePct" | "meanDays" | "reworkPct" | "overdue";
+
+export type DeliveryBrandRow = DeliveryStats & {
+  brand: DeliveryBrandRef;
+  previous: DeliveryStats | null;
+  deltas: Record<DeliveryBrandDeltaKey, DeliveryDelta> | null;
+};
+
+export interface DeliveryBrandsResponse {
+  meta: DeliveryMeta;
+  rows: DeliveryBrandRow[];
+}
+
+export type DeliveryDelayedRow = DeliveryTaskRow & { stale: boolean; rejected: boolean };
+
+export interface DeliveryDelayedResponse {
+  meta: DeliveryMeta;
+  staleDays: number;
+  includeStale: boolean;
+  total: number;
+  hiddenStale: number;
+  truncated: boolean;
+  rows: DeliveryDelayedRow[];
+}
+
+export interface DeliveryRuleRate {
+  id: number;
+  passed: number;
+  applicable: number;
+  pct: number | null;
+}
+
+export interface DeliveryRuleDef {
+  id: number;
+  key: "attached" | "written" | "weekday" | "leadTime" | "noSameDay" | "teamMap" | "finalAsset";
+  label: string;
+}
+
+export type DeliveryWeakBrief = DeliveryTaskRow & {
+  score: number;
+  passed: number;
+  applicable: number;
+  results: ("pass" | "fail" | "na")[];
+  failed: number[];
+};
+
+export interface DeliveryBriefsResponse {
+  meta: DeliveryMeta;
+  rules: DeliveryRuleDef[];
+  settings: { briefingWeekday: number; minLeadDays: number; briefMinLength: number };
+  totals: { briefs: number; avgScore: number | null; rules: DeliveryRuleRate[] };
+  byBriefer: {
+    briefer: DeliveryUserRef;
+    briefs: number;
+    avgScore: number | null;
+    rules: DeliveryRuleRate[];
+    rework: number;
+    reworkPct: number | null;
+  }[];
+  weakestWindowDays: number;
+  weakest: DeliveryWeakBrief[];
+}
+
+export interface DeliveryPerson extends DeliveryUserRef {
+  department: { id: string; name: string } | null;
+  team: { id: string; name: string };
+  isTrafficManager: boolean;
+}
+
+export type DeliveryPersonStats = DeliveryStats & { brandCount: number; ranked: boolean };
+
+export interface DeliveryPeopleResponse {
+  meta: DeliveryMeta;
+  minCompletedToRank: number;
+  rows: (DeliveryPersonStats & { person: DeliveryPerson })[];
+}
+
+export interface DeliveryPersonResponse {
+  meta: DeliveryMeta;
+  person: DeliveryPerson;
+  minCompletedToRank: number;
+  stats: DeliveryPersonStats;
+  brands: (DeliveryStats & { brand: DeliveryBrandRef })[];
+  weekly: { capped: boolean; weeks: DeliveryWeekRow[] };
+  openWork: DeliveryTaskRow[];
+}
+
+export interface DeliveryTeamMapResponse {
+  meta: DeliveryMeta;
+  startDate: string;
+  mappedBrands: number;
+  offMap: { brand: DeliveryBrandRef; total: number; people: { person: DeliveryUserRef; count: number }[] }[];
+  mappedUnused: { brand: DeliveryBrandRef; people: DeliveryUserRef[] }[];
+  unmappedBrands: { brand: DeliveryBrandRef; tasks: number }[];
 }

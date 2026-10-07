@@ -19,6 +19,7 @@ import {
   MobileField,
   type DataTableColumn,
 } from "@/components/globals/data-table/table";
+import { BrandName } from "@/components/delivery/brand-dot";
 import { ShortCode } from "@/components/projects/project-badges";
 import { useChangeProjectStatus, useTogglePin } from "@/hooks/use-projects";
 import type { RowSelection, SortDir } from "@/hooks/use-table-state";
@@ -205,6 +206,12 @@ export function ProjectsTable({
       ),
     },
     {
+      id: "brand",
+      header: "Brand",
+      className: "max-w-40 pt-3",
+      cell: (project) => <ProjectBrandCell project={project} />,
+    },
+    {
       id: "members",
       header: "Members",
       className: "pt-3",
@@ -292,6 +299,9 @@ export function ProjectsTable({
           </div>
           <ProjectProgressBar value={project.progress} />
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+            <MobileField label="Brand">
+              <ProjectBrandCell project={project} />
+            </MobileField>
             <MobileField label="Start date">{formatDMY(project.startDate)}</MobileField>
             <MobileField label="Deadline">
               <DeadlineCell project={project} />
@@ -303,6 +313,18 @@ export function ProjectsTable({
           </dl>
         </div>
       )}
+    />
+  );
+}
+
+function ProjectBrandCell({ project }: { project: Project }) {
+  if (!project.brand) return <span className="text-sm text-muted-foreground">—</span>;
+  return (
+    <BrandName
+      name={project.brand.name}
+      color={project.brand.color}
+      active={project.brand.active}
+      className="max-w-40 text-sm"
     />
   );
 }

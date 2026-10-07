@@ -24,6 +24,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/hooks/use-auth";
+import { useBrands } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
 import { useProjectCategories, useProjectStatuses } from "@/hooks/use-project-meta";
 import { useCreateProject, useUpdateProject } from "@/hooks/use-projects";
@@ -36,7 +37,7 @@ import {
   suggestCode,
 } from "@/lib/projects";
 import { currencySymbol } from "@/lib/format";
-import { toDateInput, todayKey } from "@/lib/tasks";
+import { LABEL_COLOR_META, toDateInput, todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { ProgressMode, Project, ProjectInput, ProjectUpdateInput } from "@/types";
 
@@ -48,6 +49,7 @@ interface FormState {
   code: string;
   summary: string;
   category: string;
+  brand: string;
   departments: string[];
   manager: string;
   members: string[];
@@ -73,6 +75,7 @@ function initialState(project?: Project | null): FormState {
     code: project?.code ?? "",
     summary: project?.summary ?? "",
     category: project?.category?._id ?? NONE,
+    brand: project?.brand?._id ?? NONE,
     departments: project?.departments.map((department) => department._id) ?? [],
     manager: project?.manager?._id ?? NONE,
     members: [],
@@ -129,7 +132,9 @@ export function ProjectFormDialog({
   // Employees (project managers editing) get 403 here — only fetch for head/admin.
   const assignable = useAssignableUsers(open && isHeadOrAdmin);
 
+  const brands = useBrands(false, open);
   useRefetchOnFocus(categories.refetch, open && isAdmin);
+  useRefetchOnFocus(brands.refetch, open && isAdmin);
 
   const [form, setForm] = useState<FormState>(() => initialState(project));
   const [codeTouched, setCodeTouched] = useState(isEdit);
@@ -208,6 +213,26 @@ export function ProjectFormDialog({
     [categories.data]
   );
 
+  // Active brands, plus the project's current one even if it was deactivated since.
+  const brandOptions = useMemo<OptionItem[]>(() => {
+    const currentId = project?.brand?._id;
+    return [
+      { value: NONE, label: "No brand" },
+      ...(brands.data ?? [])
+        .filter((brand) => brand.active || brand._id === currentId)
+        .map((brand) => ({
+          value: brand._id,
+          label: brand.active ? brand.name : `${brand.name} (inactive)`,
+          icon: (
+            <span
+              aria-hidden
+              className={cn("size-2 rounded-full", (LABEL_COLOR_META[brand.color] ?? LABEL_COLOR_META.muted).dot)}
+            />
+          ),
+        })),
+    ];
+  }, [brands.data, project?.brand?._id]);
+
   const statusOptions = useMemo<OptionItem[]>(
     () =>
       (statuses.data ?? [])
@@ -268,6 +293,7 @@ export function ProjectFormDialog({
     if (hasErrors || hours === "invalid" || budget === "invalid") return;
 
     const category = form.category === NONE ? null : form.category;
+    const brand = form.brand === NONE ? null : form.brand;
     const manager = form.manager === NONE ? null : form.manager;
 
     if (!project) {
@@ -276,6 +302,7 @@ export function ProjectFormDialog({
         code,
         summary: form.summary.trim() || undefined,
         category,
+        brand,
         manager,
         members: form.members,
         status: form.status || undefined,
@@ -305,6 +332,7 @@ export function ProjectFormDialog({
     if (code !== original.code) input.code = code;
     if (form.summary.trim() !== original.summary.trim()) input.summary = form.summary.trim();
     if (form.category !== original.category) input.category = category;
+    if (form.brand !== original.brand) input.brand = brand;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -406,6 +434,18 @@ export function ProjectFormDialog({
                 options={categoryOptions}
               />
               {isAdmin && <ManageLink to="/settings/projects">Manage categories</ManageLink>}
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="project-brand">Brand</Label>
+              <OptionSelect
+                id="project-brand"
+                value={form.brand}
+                onChange={(value) => set("brand", value)}
+                options={brandOptions}
+                disabled={brands.isPending}
+              />
+              {isAdmin && <ManageLink to="/settings/brands">Manage brands</ManageLink>}
             </div>
 
             {!isEdit && (

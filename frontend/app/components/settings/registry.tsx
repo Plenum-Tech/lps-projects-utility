@@ -1,6 +1,7 @@
 import type { ComponentType } from "react";
 import type { IconType } from "react-icons";
 import {
+  LuActivity,
   LuBell,
   LuBuilding2,
   LuCalendarDays,
@@ -11,10 +12,13 @@ import {
   LuMessagesSquare,
   LuShieldCheck,
   LuSlidersHorizontal,
+  LuTags,
   LuTimer,
   LuUserRound,
 } from "react-icons/lu";
 
+import { BrandsSection } from "@/components/delivery/settings/brands-section";
+import { DeliverySettingsSection } from "@/components/delivery/settings/delivery-settings-section";
 import { ImportsHistorySection } from "@/components/imports/imports-history";
 import { AddressSection } from "@/components/settings/sections/address-section";
 import { AppSection } from "@/components/settings/sections/app-section";
@@ -108,6 +112,24 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     roles: ADMIN,
     icon: LuFolderKanban,
     component: ProjectSection,
+  },
+  {
+    id: "brands",
+    title: "Brands",
+    description: "Client brands that projects belong to: names, colours and active state.",
+    keywords: ["brand", "brands", "client", "clients", "colour", "color", "project"],
+    roles: ADMIN,
+    icon: LuTags,
+    component: BrandsSection,
+  },
+  {
+    id: "delivery",
+    title: "Delivery",
+    description: "Delivery Pulse: traffic managers, teams, rework, brief rules and brand team maps.",
+    keywords: ["delivery", "pulse", "traffic manager", "rework", "brief", "team map", "stale", "lead time", "same-day", "frame.io"],
+    roles: ADMIN,
+    icon: LuActivity,
+    component: DeliverySettingsSection,
   },
   {
     id: "time-logs",
