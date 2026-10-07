@@ -74,6 +74,7 @@ async function readSheet(file: string) {
   if (!ps) throw new Error('Sheet "Projects" not found');
   const ph = headerIndex(ps);
   const idCol = ph.get("project_id");
+  const legacyCol = ph.get("legacy_id");
   const finalCol = ph.get("final_brand");
   if (!idCol || !finalCol) throw new Error('"Projects" needs project_id and FINAL_BRAND columns');
 
@@ -93,13 +94,15 @@ async function readSheet(file: string) {
     }
   }
 
-  const rows: Array<{ line: number; id: string; brand: string }> = [];
+  const rows: Array<{ line: number; id: string; legacyId: number | null; brand: string }> = [];
   ps.eachRow((row, n) => {
     if (n === 1) return;
     const id = tidy(cellText(row.getCell(idCol).value));
+    const legacyRaw = legacyCol ? tidy(cellText(row.getCell(legacyCol).value)) : "";
+    const legacyId = /^\d+$/.test(legacyRaw) ? Number(legacyRaw) : null;
     const raw = tidy(cellText(row.getCell(finalCol).value));
     if (!id && !raw) return;
-    rows.push({ line: n, id, brand: raw ? (renames.get(ciKey(raw)) ?? raw) : "" });
+    rows.push({ line: n, id, legacyId, brand: raw ? (renames.get(ciKey(raw)) ?? raw) : "" });
   });
   return { rows, renames };
 }
@@ -125,12 +128,39 @@ async function main(): Promise<number> {
   }
   if (!args.dryRun) await Brand.init(); // unique (case-insensitive) nameKey index
 
-  // Validate rows; last row wins for a repeated project_id.
+  // Resolve each row to a project in THIS database: by project_id first; if
+  // that id isn't here (the sheet was generated from another database, e.g.
+  // local dev vs Azure), fall back to the Worksuite legacy id.
+  const sheetIds = rows
+    .filter((r) => /^[0-9a-f]{24}$/i.test(r.id))
+    .map((r) => new mongoose.Types.ObjectId(r.id));
+  const presentIds = new Set(
+    (await Project.find({ _id: { $in: sheetIds } }).select("_id").lean()).map((p) => String(p._id))
+  );
+  const legacyIds = rows.filter((r) => !presentIds.has(r.id) && r.legacyId !== null).map((r) => r.legacyId!);
+  const byLegacy = new Map<number, string>();
+  if (legacyIds.length) {
+    const found = await Project.find({ "legacy.source": "worksuite", "legacy.table": "projects", "legacy.id": { $in: legacyIds } })
+      .select("_id legacy")
+      .lean();
+    // `legacy` is added by addLegacyRef(), not declared on IProject.
+    for (const p of found as Array<{ _id: unknown; legacy?: { id: number } }>) {
+      if (p.legacy) byLegacy.set(p.legacy.id, String(p._id));
+    }
+  }
+  let resolvedByLegacy = 0;
+
+  // Validate rows; last row wins for a repeated project.
   const errors: string[] = [];
   const target = new Map<string, string>(); // projectId → brand name ("" = none)
   let duplicates = 0;
   for (const r of rows) {
-    if (!mongoose.isValidObjectId(r.id) || !/^[0-9a-f]{24}$/i.test(r.id)) {
+    let id = r.id;
+    if (!presentIds.has(id) && r.legacyId !== null && byLegacy.has(r.legacyId)) {
+      id = byLegacy.get(r.legacyId)!;
+      resolvedByLegacy += 1;
+    }
+    if (!mongoose.isValidObjectId(id) || !/^[0-9a-f]{24}$/i.test(id)) {
       errors.push(`row ${r.line}: invalid project_id`);
       continue;
     }
@@ -138,9 +168,10 @@ async function main(): Promise<number> {
       errors.push(`row ${r.line}: brand name longer than ${BRAND_LIMITS.nameMax} characters`);
       continue;
     }
-    if (target.has(r.id)) duplicates += 1;
-    target.set(r.id, r.brand);
+    if (target.has(id)) duplicates += 1;
+    target.set(id, r.brand);
   }
+  if (resolvedByLegacy) console.log(`Matched ${resolvedByLegacy} row(s) by Worksuite legacy id (project_id belongs to another database).`);
 
   // Brands: reuse existing (case-insensitive), create the rest.
   const existing = await Brand.find({}).select("_id name active").lean();
