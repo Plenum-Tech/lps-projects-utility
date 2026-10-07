@@ -1,6 +1,7 @@
 import { DELIVERY_DEFAULTS, DeliverySettings, type IDeliverySettings } from "../../models/DeliverySettings.js";
 import { TaskCategory } from "../../models/TaskCategory.js";
 import { appDateKey, appToday } from "../appTime.js";
+import { exactNameRegex } from "../pagination.js";
 import { deliveryCached } from "./cache.js";
 
 // ---------------------------------------------------------------------------
@@ -31,8 +32,7 @@ export interface DeliverySettingsSnapshot {
 /** Ids of task categories named like the default rework categories ("Amends"), case-insensitive. */
 async function defaultReworkCategoryIds(): Promise<string[]> {
   const names: readonly string[] = DELIVERY_DEFAULTS.reworkCategoryNames;
-  const rows = await TaskCategory.find({ name: { $in: [...names] } })
-    .collation({ locale: "en", strength: 2 })
+  const rows = await TaskCategory.find({ name: { $in: names.map(exactNameRegex) } })
     .select("_id")
     .lean();
   return rows.map((r) => String(r._id));

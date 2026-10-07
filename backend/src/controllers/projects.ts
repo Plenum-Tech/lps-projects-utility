@@ -6,6 +6,7 @@ import { isDuplicateKeyError } from "../lib/errors.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { formatDueDate, notifyUsers } from "../lib/notifications.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
+import { naturalSortKey } from "../lib/naturalSort.js";
 import {
   canCreateProject,
   canManageProject,
@@ -392,9 +393,6 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
   return and;
 }
 
-/** Natural, case-insensitive ordering for code/name. */
-const SORT_COLLATION = { locale: "en", numericOrdering: true, strength: 2 };
-
 /** Ids of one page of projects in `sort` order (status = the status's configured order). */
 async function sortedProjectIds(
   filter: Record<string, unknown>,
@@ -408,6 +406,10 @@ async function sortedProjectIds(
   switch (sort.field) {
     case "code":
     case "name":
+      // Natural, case-insensitive (computed key — see lib/naturalSort.ts).
+      pipeline.push({ $addFields: { _sortKey: naturalSortKey(`$${sort.field}`) } });
+      order = { _sortKey: d, _id: d };
+      break;
     case "startDate":
     case "progress":
       order = { [sort.field]: d, _id: d };
@@ -430,7 +432,7 @@ async function sortedProjectIds(
         {
           $addFields: {
             _statusOrder: { $ifNull: [{ $arrayElemAt: ["$_status.order", 0] }, 9999] },
-            _statusName: { $ifNull: [{ $arrayElemAt: ["$_status.name", 0] }, ""] },
+            _statusName: naturalSortKey({ $arrayElemAt: ["$_status.name", 0] }),
           },
         }
       );
@@ -443,7 +445,7 @@ async function sortedProjectIds(
   if (offset > 0) pipeline.push({ $skip: offset });
   if (limit !== null) pipeline.push({ $limit: limit });
   pipeline.push({ $project: { _id: 1 } });
-  const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId }>(pipeline).collation(SORT_COLLATION);
+  const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId }>(pipeline);
   return rows.map((r) => r._id);
 }
 

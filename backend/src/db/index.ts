@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { refreshCompanySettings } from "../lib/companySettings.js";
+import { runDbMaintenance } from "../lib/dbMaintenance.js";
 
 function envInt(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -61,6 +62,8 @@ export async function connectDB(): Promise<void> {
         "On a large existing database, let the first deploy finish building them (or set MONGO_AUTO_INDEX=false after)."
     );
   }
+  // Idempotent Cosmos-compat migrations (legacy index drop, key backfills).
+  await runDbMaintenance();
   // Load company settings (timezone, app URL, branding) for request-less code:
   // jobs and scripts. Never throws — env fallbacks apply on failure.
   await refreshCompanySettings();

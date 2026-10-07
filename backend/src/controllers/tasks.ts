@@ -5,6 +5,7 @@ import { deleteFromGridFs } from "../lib/gridfs.js";
 import { notifyTask } from "../lib/notifications.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
+import { naturalSortKey } from "../lib/naturalSort.js";
 import {
   allowedTransitions,
   canManageTask,
@@ -567,9 +568,6 @@ function parseTaskSort(req: Request): TaskSort | Invalid {
   return { field: sort as TaskSortField, dir: dir === "desc" ? -1 : 1 };
 }
 
-/** Natural (PEAR-2 < PEAR-12), case-insensitive ordering for text sorts. */
-const SORT_COLLATION = { locale: "en", numericOrdering: true, strength: 2 };
-
 /** Sort key that puts missing values last in either direction. */
 function missingLast(field: string): Record<string, unknown> {
   return { $cond: [{ $eq: [{ $ifNull: [`$${field}`, null] }, null] }, 1, 0] };
@@ -592,10 +590,13 @@ async function sortedTaskIds(
   switch (sort.field) {
     case "code":
       // Project tasks by short code; standalone tasks ("#12") by number.
-      order = { shortCode: d, number: d, _id: d };
+      // Natural (PEAR-2 < PEAR-12), case-insensitive — see lib/naturalSort.ts.
+      pipeline.push({ $addFields: { _sortKey: naturalSortKey("$shortCode") } });
+      order = { _sortKey: d, number: d, _id: d };
       break;
     case "title":
-      order = { title: d, _id: d };
+      pipeline.push({ $addFields: { _sortKey: naturalSortKey("$title") } });
+      order = { _sortKey: d, _id: d };
       break;
     case "startDate":
     case "dueDate":
@@ -645,7 +646,7 @@ async function sortedTaskIds(
   if (limit !== null) pipeline.push({ $limit: limit });
   pipeline.push({ $project: { _id: 1 } });
 
-  const rows = await Task.aggregate<{ _id: mongoose.Types.ObjectId }>(pipeline).collation(SORT_COLLATION);
+  const rows = await Task.aggregate<{ _id: mongoose.Types.ObjectId }>(pipeline);
   return rows.map((r) => r._id);
 }
 

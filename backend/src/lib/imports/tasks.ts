@@ -9,6 +9,7 @@ import { TaskCategory } from "../../models/TaskCategory.js";
 import { TaskLabel } from "../../models/TaskLabel.js";
 import type { IUser } from "../../models/User.js";
 import { isDuplicateKeyError } from "../errors.js";
+import { exactNameRegex } from "../pagination.js";
 import { canCreateProjectTasks, canManageProject, isProjectMember } from "../projectAccess.js";
 import { invalidate } from "../refCache.js";
 import {
@@ -63,12 +64,12 @@ async function taskContext(actor: IUser, options: ImportOptions, rows: ParsedRow
     if (t) refs.add(t);
   }
   const values = [...refs];
-  const or: Record<string, unknown>[] = [{ code: { $in: values.map((v) => v.toUpperCase()) } }, { name: { $in: values } }];
+  const or: Record<string, unknown>[] = [{ code: { $in: values.map((v) => v.toUpperCase()) } }, { name: { $in: values.map(exactNameRegex) } }];
   if (options.defaultProject) or.push({ _id: options.defaultProject });
   const [base, projects, categories, labels] = await Promise.all([
     baseContext("tasks", actor, options),
     values.length > 0 || options.defaultProject
-      ? Project.find({ $or: or }).collation({ locale: "en", strength: 2 })
+      ? Project.find({ $or: or })
       : Promise.resolve([] as IProject[]),
     TaskCategory.find().select("name").lean(),
     TaskLabel.find().select("name").lean(),
@@ -259,14 +260,14 @@ export async function validateTaskRows(
 
 async function ensureNamed(model: "category" | "label", name: string): Promise<string> {
   const Model = (model === "category" ? TaskCategory : TaskLabel) as unknown as mongoose.Model<{ name: string }>;
-  const existing = await Model.findOne({ name }).collation({ locale: "en", strength: 2 }).select("_id").lean();
+  const existing = await Model.findOne({ name: exactNameRegex(name) }).select("_id").lean();
   if (existing) return existing._id.toString();
   try {
     const created = await Model.create({ name });
     return created._id.toString();
   } catch (err) {
     if (!isDuplicateKeyError(err)) throw err;
-    const found = await Model.findOne({ name }).collation({ locale: "en", strength: 2 }).select("_id").lean();
+    const found = await Model.findOne({ name: exactNameRegex(name) }).select("_id").lean();
     return found!._id.toString();
   }
 }

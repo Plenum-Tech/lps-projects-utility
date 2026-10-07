@@ -12,8 +12,6 @@ import { Project } from "../models/Project.js";
 // A brand used by projects can't be deleted (409) — deactivate it instead.
 // ---------------------------------------------------------------------------
 
-const NAME_COLLATION = { locale: "en", strength: 2 };
-
 class FieldError extends Error {
   constructor(
     readonly field: string,
@@ -80,7 +78,7 @@ function sendFieldError(res: Response, err: unknown): boolean {
 /** GET /api/brands[?active=true] — any signed-in user; sorted by name, with `projectCount`. */
 export async function listBrands(req: Request, res: Response): Promise<void> {
   const filter = req.query.active === "true" ? { active: true } : {};
-  const brands = await Brand.find(filter).collation(NAME_COLLATION).sort({ name: 1 });
+  const brands = await Brand.find(filter).sort({ nameKey: 1, name: 1, _id: 1 });
   const counts = await projectCounts(brands.map((b) => b._id as mongoose.Types.ObjectId));
   res.json({ brands: brands.map((b) => serialize(b, counts.get(String(b._id)) ?? 0)), total: brands.length });
 }

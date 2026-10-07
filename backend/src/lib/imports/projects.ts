@@ -1,12 +1,13 @@
 import mongoose from "mongoose";
 import { applyProjectStatus, createProjectCore, updateProjectCore, type ProjectBody } from "../../controllers/projects.js";
-import { Brand, BRAND_LIMITS } from "../../models/Brand.js";
+import { Brand, BRAND_LIMITS, brandNameKey } from "../../models/Brand.js";
 import { Department } from "../../models/Department.js";
 import { Project, PROJECT_CODE_REGEX, PROJECT_LIMITS } from "../../models/Project.js";
 import type { IProject } from "../../models/Project.js";
 import { ProjectCategory } from "../../models/ProjectCategory.js";
 import { getDefaultProjectStatus, ProjectStatus } from "../../models/ProjectStatus.js";
 import { isDuplicateKeyError } from "../errors.js";
+import { exactNameRegex } from "../pagination.js";
 import { canCreateProject, canManageProject, isInvalid } from "../projectAccess.js";
 import { invalidate } from "../refCache.js";
 import {
@@ -278,20 +279,20 @@ async function ensureProjectCategory(name: string): Promise<string> {
     return created._id.toString();
   } catch (err) {
     if (!isDuplicateKeyError(err)) throw err;
-    const found = await ProjectCategory.findOne({ name }).collation({ locale: "en", strength: 2 });
+    const found = await ProjectCategory.findOne({ name: exactNameRegex(name) });
     return found!._id.toString();
   }
 }
 
 async function ensureBrand(name: string): Promise<string> {
-  const existing = await Brand.findOne({ name }).collation({ locale: "en", strength: 2 });
+  const existing = await Brand.findOne({ nameKey: brandNameKey(name) });
   if (existing) return existing._id.toString();
   try {
     const created = await Brand.create({ name });
     return created._id.toString();
   } catch (err) {
     if (!isDuplicateKeyError(err)) throw err;
-    const found = await Brand.findOne({ name }).collation({ locale: "en", strength: 2 });
+    const found = await Brand.findOne({ nameKey: brandNameKey(name) });
     return found!._id.toString();
   }
 }

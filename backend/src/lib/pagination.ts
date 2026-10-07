@@ -38,3 +38,11 @@ export function searchRegex(search: unknown): RegExp | null {
   if (!value) return null;
   return new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
+
+/**
+ * Anchored, case-insensitive exact match for `name` (regex-escaped) — the
+ * portable equivalent of a strength-2 (case-insensitive) ICU match on `{ field: name }`.
+ */
+export function exactNameRegex(name: string): RegExp {
+  return new RegExp(`^${name.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+}

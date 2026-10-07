@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import ExcelJS from "exceljs";
 import mongoose from "mongoose";
 import { connectDB, disconnectDB } from "../db/index.js";
-import { Brand, BRAND_COLORS, BRAND_LIMITS, type BrandColor } from "../models/Brand.js";
+import { Brand, BRAND_COLORS, BRAND_LIMITS, brandNameKey, type BrandColor } from "../models/Brand.js";
 import { Project } from "../models/Project.js";
 
 /**
@@ -123,7 +123,7 @@ async function main(): Promise<number> {
     console.error("Refusing to run without --confirm. Check the target above, then re-run with --confirm.");
     return 2;
   }
-  if (!args.dryRun) await Brand.init(); // unique (case-insensitive) name index
+  if (!args.dryRun) await Brand.init(); // unique (case-insensitive) nameKey index
 
   // Validate rows; last row wins for a repeated project_id.
   const errors: string[] = [];
@@ -167,11 +167,11 @@ async function main(): Promise<number> {
       continue;
     }
     try {
-      const doc = await Brand.create({ name, color, active: true });
+      const doc = await Brand.create({ name, nameKey: brandNameKey(name), color, active: true });
       brandId.set(key, doc._id as mongoose.Types.ObjectId);
     } catch (error) {
       // Created concurrently (duplicate key) → reuse it.
-      const again = await Brand.findOne({ name }).collation({ locale: "en", strength: 2 }).select("_id").lean();
+      const again = await Brand.findOne({ nameKey: brandNameKey(name) }).select("_id").lean();
       if (!again) throw error;
       created -= 1;
       reused += 1;
