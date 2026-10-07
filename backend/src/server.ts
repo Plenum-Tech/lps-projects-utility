@@ -46,6 +46,8 @@ import timeReportsRouter from "./routes/timeReports.js";
 import timesheetsRouter from "./routes/timesheets.js";
 import usersRouter from "./routes/users.js";
 import settingsRouter from "./routes/settings.js";
+import analyticsRouter from "./routes/analytics.js";
+import brandsRouter from "./routes/brands.js";
 import { companySettingsFreshness } from "./lib/companySettings.js";
 import { isProduction, jobsMode, validateEnvironment } from "./lib/env.js";
 import { startScheduler, stopScheduler } from "./lib/scheduler.js";
@@ -239,6 +241,8 @@ app.use("/api/timesheets", timesheetsRouter);
 app.use("/api/documents", documentsRouter);
 app.use("/api/meetings", meetingsRouter);
 app.use("/api/imports", importsRouter);
+app.use("/api/brands", brandsRouter);
+app.use("/api/analytics", analyticsRouter);
 
 // --- Inngest serve endpoint ---
 app.use("/api/inngest", serve({ client: inngest, functions }));

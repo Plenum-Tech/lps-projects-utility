@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 export const TASK_NOTE_VISIBILITIES = ["task", "private"] as const;
 
@@ -54,5 +55,8 @@ taskNoteSchema.set("toJSON", {
     return json;
   },
 });
+
+// Brief rules 1 and 7 read files, comments and notes.
+deliveryInvalidateOnWrite(taskNoteSchema);
 
 export const TaskNote = mongoose.model<ITaskNote>("TaskNote", taskNoteSchema);

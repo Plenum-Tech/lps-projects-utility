@@ -2,6 +2,7 @@ import mongoose, { Schema } from "mongoose";
 import bcrypt from "bcryptjs";
 import { nextEmployeeId } from "../lib/employeeIds.js";
 import { invalidateOnWrite } from "../lib/refCache.js";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 /** Per-employee annual leave balance for the tracked leave types. */
 export interface LeaveBalance {
@@ -171,5 +172,7 @@ userSchema.set("toJSON", {
 
 // requireAuth caches users briefly; any user write drops that cache.
 invalidateOnWrite(userSchema, "user:");
+// Departments decide Delivery Pulse teams; names show in its tables.
+deliveryInvalidateOnWrite(userSchema);
 
 export const User = mongoose.model<IUser>("User", userSchema);

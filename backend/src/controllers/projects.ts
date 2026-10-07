@@ -35,6 +35,7 @@ import { parseDateOnly } from "../lib/taskAccess.js";
 import { appToday } from "../lib/taskJobs.js";
 import { nextTaskNumber } from "../lib/taskNumbers.js";
 import { stopTimersWhere } from "../lib/timeLogs.js";
+import { Brand } from "../models/Brand.js";
 import { Department } from "../models/Department.js";
 import { Meeting } from "../models/Meeting.js";
 import { Milestone } from "../models/Milestone.js";
@@ -104,6 +105,21 @@ async function parseCategory(raw: unknown): Promise<mongoose.Types.ObjectId | nu
   if (typeof raw !== "string" || isInvalidObjectId(raw)) return bad("category must be a valid category ID or null");
   if (!(await ProjectCategory.exists({ _id: raw }))) return bad("Category not found", 404);
   return new mongoose.Types.ObjectId(raw);
+}
+
+/** Brand id or null/"" (no brand). Inactive brands can't be newly assigned (`current` = the project's brand). */
+async function parseBrand(
+  raw: unknown,
+  current: mongoose.Types.ObjectId | null = null
+): Promise<mongoose.Types.ObjectId | null | Invalid> {
+  if (raw === null || raw === "") return null;
+  if (typeof raw !== "string" || isInvalidObjectId(raw)) return bad("brand must be a valid brand ID or null");
+  const brand = await Brand.findById(raw).select("active");
+  if (!brand) return bad("Brand not found", 404);
+  if (!brand.active && !(current && current.equals(brand._id as mongoose.Types.ObjectId))) {
+    return bad("This brand is inactive");
+  }
+  return brand._id as mongoose.Types.ObjectId;
 }
 
 async function parseStatus(raw: unknown): Promise<mongoose.Types.ObjectId | Invalid> {
@@ -336,6 +352,7 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
   const idFilters: Array<[unknown, string, string]> = [
     [req.query.status, "status", "status"],
     [req.query.category, "category", "category"],
+    [req.query.brand === "none" ? undefined : req.query.brand, "brand", "brand"],
     [req.query.department, "departments", "department"],
     [req.query.manager, "manager", "manager"],
     [req.query.member, "members.user", "member"],
@@ -345,6 +362,8 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
     if (typeof value !== "string" || isInvalidObjectId(value)) return bad(`${name} must be a valid ID`);
     and.push({ [field]: new mongoose.Types.ObjectId(value) });
   }
+
+  if (req.query.brand === "none") and.push({ brand: null });
 
   if (req.query.pinned === "true") {
     and.push({ _id: { $in: user.pinnedProjects ?? [] } });
@@ -484,9 +503,10 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     sortedProjectIds(filter, sort, EXPORT_ROW_LIMIT, 0),
     Project.countDocuments(filter),
   ]);
-  type Row = Omit<IProject, "status" | "category" | "manager" | "departments" | "members"> & {
+  type Row = Omit<IProject, "status" | "category" | "brand" | "manager" | "departments" | "members"> & {
     status?: { name?: string } | null;
     category?: { name?: string } | null;
+    brand?: { name?: string } | null;
     manager?: { name?: string } | null;
     departments: Array<{ name?: string }>;
     members: Array<{ user?: { name?: string } | null }>;
@@ -495,6 +515,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     .populate([
       { path: "status", select: "name" },
       { path: "category", select: "name" },
+      { path: "brand", select: "name" },
       { path: "manager", select: "name" },
       { path: "departments", select: "name" },
       { path: "members.user", select: "name" },
@@ -507,6 +528,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     "Code",
     "Project",
     "Category",
+    "Brand",
     "Departments",
     "Manager",
     "Members",
@@ -528,6 +550,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
         p.code,
         p.name,
         p.category?.name ?? "",
+        p.brand?.name ?? "",
         p.departments.map((d) => d.name ?? "").filter(Boolean).join("; "),
         p.manager?.name ?? "",
         p.members.map((m) => m.user?.name ?? "").filter(Boolean).join("; "),
@@ -615,6 +638,7 @@ export interface ProjectBody {
   code?: unknown;
   summary?: unknown;
   category?: unknown;
+  brand?: unknown;
   departments?: unknown;
   manager?: unknown;
   members?: unknown;
@@ -686,6 +710,13 @@ export async function createProjectCore(
     category = parsed;
   }
 
+  let brand: mongoose.Types.ObjectId | null = null;
+  if (body.brand !== undefined) {
+    const parsed = await parseBrand(body.brand);
+    if (isInvalid(parsed)) return parsed;
+    brand = parsed;
+  }
+
   let departments: mongoose.Types.ObjectId[] = actor.role === "head" && actor.department ? [actor.department] : [];
   if (body.departments !== undefined) {
     const parsed = await parseDepartments(actor, body.departments);
@@ -751,6 +782,7 @@ export async function createProjectCore(
       code,
       summary: summary || undefined,
       category,
+      brand,
       departments,
       manager,
       members: members.map((m) => ({ user: m.user, hourlyRate: m.hourlyRate, addedAt: new Date() })),
@@ -850,6 +882,14 @@ export async function updateProjectCore(
     if (isInvalid(category)) return category;
     project.category = category;
     changed.push("category");
+  }
+  if (body.brand !== undefined) {
+    const brand = await parseBrand(body.brand, project.brand ?? null);
+    if (isInvalid(brand)) return brand;
+    if (String(brand ?? "") !== String(project.brand ?? "")) {
+      project.brand = brand;
+      changed.push("brand");
+    }
   }
   if (body.departments !== undefined) {
     const departments = await parseDepartments(actor, body.departments);
@@ -1266,6 +1306,7 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
       code,
       summary: source.summary,
       category: source.category ?? null,
+      brand: source.brand ?? null,
       departments,
       manager,
       members,

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { applyProjectStatus, createProjectCore, updateProjectCore, type ProjectBody } from "../../controllers/projects.js";
+import { Brand, BRAND_LIMITS } from "../../models/Brand.js";
 import { Department } from "../../models/Department.js";
 import { Project, PROJECT_CODE_REGEX, PROJECT_LIMITS } from "../../models/Project.js";
 import type { IProject } from "../../models/Project.js";
@@ -33,6 +34,8 @@ export interface ProjectPlan {
   body: ProjectBody;
   /** Category to create first (admins), by name. */
   createCategory: string | null;
+  /** Brand to create first (admins), by name. */
+  createBrand?: string | null;
   statusId: string | null;
   code: string;
 }
@@ -40,6 +43,7 @@ export interface ProjectPlan {
 interface ProjectContext extends BaseContext {
   departments: Map<string, { _id: mongoose.Types.ObjectId; name: string }>;
   categories: Map<string, { _id: mongoose.Types.ObjectId; name: string }>;
+  brands: Map<string, { _id: mongoose.Types.ObjectId; name: string; active: boolean }>;
   statuses: Array<{ _id: mongoose.Types.ObjectId; name: string; active: boolean; isDefault: boolean }>;
   existing: Map<string, IProject>;
   takenCodes: Set<string>;
@@ -47,17 +51,19 @@ interface ProjectContext extends BaseContext {
 
 async function projectContext(actor: IUser, options: ImportOptions): Promise<ProjectContext> {
   await getDefaultProjectStatus(); // seeds the default statuses on a fresh database
-  const [base, departments, categories, statuses, projects] = await Promise.all([
+  const [base, departments, categories, brands, statuses, projects] = await Promise.all([
     baseContext("projects", actor, options),
     Department.find().select("name").lean(),
     ProjectCategory.find().select("name").lean(),
+    Brand.find().select("name active").lean(),
     ProjectStatus.find().select("name active isDefault").sort({ order: 1 }).lean(),
-    Project.find().select("code name manager createdBy departments members archivedAt isPublic status"),
+    Project.find().select("code name manager createdBy departments members archivedAt isPublic status brand"),
   ]);
   return {
     ...base,
     departments: byLowerName(departments as Array<{ _id: mongoose.Types.ObjectId; name: string }>),
     categories: byLowerName(categories as Array<{ _id: mongoose.Types.ObjectId; name: string }>),
+    brands: byLowerName(brands as Array<{ _id: mongoose.Types.ObjectId; name: string; active: boolean }>),
     statuses: statuses as ProjectContext["statuses"],
     existing: new Map(projects.map((p) => [p.code, p])),
     takenCodes: new Set(projects.map((p) => p.code)),
@@ -141,6 +147,21 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
     } else issues.warn(`Unknown category "${categoryName}" skipped`);
   }
 
+  // --- brand (matched by name, case-insensitive; admins create missing ones) ---
+  let createBrand: string | null = null;
+  const brandName = r.text("brand").replace(/\s+/g, " ");
+  if (brandName) {
+    const found = ctx.brands.get(brandName.toLowerCase());
+    if (found) {
+      if (found.active || (existing?.brand && existing.brand.equals(found._id))) body.brand = found._id.toString();
+      else issues.warn(`Brand "${found.name}" is inactive — skipped`);
+    } else if (brandName.length > BRAND_LIMITS.nameMax) issues.warn(`Brand "${brandName.slice(0, 30)}…" is too long — skipped`);
+    else if (actor.role === "admin") {
+      createBrand = brandName;
+      issues.note(`Brand "${brandName}" will be created`);
+    } else issues.warn(`Unknown brand "${brandName}" skipped`);
+  }
+
   // --- departments (heads: only their own) ---
   const deptNames = V.list(r.get("departments"));
   if (deptNames.length > 0) {
@@ -218,10 +239,10 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
   if (V.isValueError(isPublic)) issues.error(isPublic.error);
   else if (isPublic !== null) body.isPublic = isPublic;
 
-  if (action === "update" && Object.keys(body).length === 0 && !statusId && !createCategory) {
+  if (action === "update" && Object.keys(body).length === 0 && !statusId && !createCategory && !createBrand) {
     issues.warn("No mapped values to update — row will be skipped");
     return issues.result(row, "skip", {
-      action: "skip", existingId: existing!._id.toString(), body, createCategory, statusId, code,
+      action: "skip", existingId: existing!._id.toString(), body, createCategory, createBrand, statusId, code,
     });
   }
 
@@ -230,6 +251,7 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
     existingId: existing ? existing._id.toString() : null,
     body,
     createCategory,
+    createBrand,
     statusId,
     code,
   });
@@ -261,6 +283,19 @@ async function ensureProjectCategory(name: string): Promise<string> {
   }
 }
 
+async function ensureBrand(name: string): Promise<string> {
+  const existing = await Brand.findOne({ name }).collation({ locale: "en", strength: 2 });
+  if (existing) return existing._id.toString();
+  try {
+    const created = await Brand.create({ name });
+    return created._id.toString();
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err;
+    const found = await Brand.findOne({ name }).collation({ locale: "en", strength: 2 });
+    return found!._id.toString();
+  }
+}
+
 export interface RunRowResult {
   status: "created" | "updated" | "skipped" | "error";
   messages: string[];
@@ -285,6 +320,7 @@ export async function runProjectRow(
     body.category = await ensureProjectCategory(plan.createCategory);
     invalidate("projectCategory:");
   }
+  if (plan.createBrand) body.brand = await ensureBrand(plan.createBrand);
   const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId } };
 
   if (plan.action === "create") {

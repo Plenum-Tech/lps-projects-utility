@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 export const TASK_STATUSES = [
   "todo",
@@ -255,6 +256,11 @@ taskSchema.index({ recurringParent: 1 }, { sparse: true });
 // Tasks created from a meeting (unset when the meeting is deleted).
 taskSchema.index({ "sourceMeeting.meeting": 1 }, { sparse: true });
 
+// Delivery Pulse: completed-in-period / created-in-period windows, per project.
+taskSchema.index({ completedAt: 1 });
+taskSchema.index({ createdAt: 1 });
+taskSchema.index({ project: 1, createdAt: 1 });
+
 // Never leak the internal version key in JSON responses.
 taskSchema.set("toJSON", {
   transform: (_doc, ret) => {
@@ -266,5 +272,7 @@ taskSchema.set("toJSON", {
     return json;
   },
 });
+
+deliveryInvalidateOnWrite(taskSchema);
 
 export const Task = mongoose.model<ITask>("Task", taskSchema);

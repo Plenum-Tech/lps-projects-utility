@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 /** Upload limits for task attachments. */
 export const TASK_FILE_LIMITS = {
@@ -65,5 +66,8 @@ taskFileSchema.set("toJSON", {
     return json;
   },
 });
+
+// Brief rules 1 and 7 read files, comments and notes.
+deliveryInvalidateOnWrite(taskFileSchema);
 
 export const TaskFile = mongoose.model<ITaskFile>("TaskFile", taskFileSchema);

@@ -1,5 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import { cached, invalidateOnWrite } from "../lib/refCache.js";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 export const PROGRESS_MODES = ["manual", "task_completion", "total_time", "deadline"] as const;
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
@@ -26,6 +27,8 @@ export interface IProject extends mongoose.Document {
   code: string;
   summary?: string;
   category?: mongoose.Types.ObjectId | null;
+  /** Brand (client); a task's brand is its project's brand. */
+  brand?: mongoose.Types.ObjectId | null;
   departments: mongoose.Types.ObjectId[];
   /** Project manager (Worksuite project_admin). */
   manager?: mongoose.Types.ObjectId | null;
@@ -64,6 +67,7 @@ const projectSchema = new Schema<IProject>(
     code: { type: String, required: true, trim: true, uppercase: true, match: PROJECT_CODE_REGEX },
     summary: { type: String, trim: true, maxlength: PROJECT_LIMITS.summaryMax },
     category: { type: Schema.Types.ObjectId, ref: "ProjectCategory", default: null },
+    brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
     departments: { type: [{ type: Schema.Types.ObjectId, ref: "Department" }], default: [] },
     manager: { type: Schema.Types.ObjectId, ref: "User", default: null },
     members: { type: [memberSchema], default: [] },
@@ -89,6 +93,8 @@ projectSchema.index({ code: 1 }, { unique: true });
 projectSchema.index({ "members.user": 1, archivedAt: 1 });
 projectSchema.index({ departments: 1 });
 projectSchema.index({ deadline: 1, archivedAt: 1 });
+// Brand filter / project counts per brand / Delivery Pulse brand joins.
+projectSchema.index({ brand: 1 });
 
 projectSchema.set("toJSON", {
   transform: (_doc, ret) => {
@@ -100,6 +106,7 @@ projectSchema.set("toJSON", {
 });
 
 invalidateOnWrite(projectSchema, "project:");
+deliveryInvalidateOnWrite(projectSchema);
 
 export const Project = mongoose.model<IProject>("Project", projectSchema);
 

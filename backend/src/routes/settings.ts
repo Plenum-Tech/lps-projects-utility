@@ -8,6 +8,7 @@ import {
   updateCompanySettings,
   uploadCompanyLogo,
 } from "../controllers/settings.js";
+import { getDeliverySettingsHandler, updateDeliverySettings } from "../controllers/deliverySettings.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
@@ -22,5 +23,9 @@ router.get("/company", requireAuth, requireRole("admin"), getCompanySettings);
 router.patch("/company", requireAuth, requireRole("admin"), updateCompanySettings);
 router.put("/company/logo", requireAuth, requireRole("admin"), logoUploadMiddleware, uploadCompanyLogo);
 router.delete("/company/logo", requireAuth, requireRole("admin"), deleteCompanyLogo);
+
+// Delivery Pulse settings (traffic managers, teams, rework, brief rules, brand team map).
+router.get("/delivery", requireAuth, requireRole("admin"), getDeliverySettingsHandler);
+router.patch("/delivery", requireAuth, requireRole("admin"), updateDeliverySettings);
 
 export default router;

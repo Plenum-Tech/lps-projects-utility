@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 
 export interface ITaskComment extends mongoose.Document {
   task: mongoose.Types.ObjectId;
@@ -34,5 +35,8 @@ taskCommentSchema.set("toJSON", {
     return json;
   },
 });
+
+// Brief rules 1 and 7 read files, comments and notes.
+deliveryInvalidateOnWrite(taskCommentSchema);
 
 export const TaskComment = mongoose.model<ITaskComment>("TaskComment", taskCommentSchema);
