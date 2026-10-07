@@ -53,6 +53,8 @@
     "jobs:hr": "bun src/scripts/runJobs.ts hr",
     "migrate:hr": "bun src/scripts/migrateHr.ts",
     "import:worksuite": "bun src/scripts/importWorksuite.ts",
+    "brands:suggest": "bun src/scripts/brandsSuggest.ts",
+    "brands:apply": "bun src/scripts/brandsApply.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc --project tsconfig.build.json",
     "vercel-build": "tsc --project tsconfig.build.json"
