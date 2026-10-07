@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { AlertCircle, Eye, EyeOff, LoaderCircle, LogIn } from "lucide-react";
+import { LuKeyRound } from "react-icons/lu";
 import { useNavigate } from "react-router";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -7,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/hooks/use-auth";
+import { isPasswordSetupRequiredError } from "@/hooks/use-password-setup";
 import { getErrorMessage } from "@/lib/api";
 
 /**
@@ -96,7 +98,16 @@ export function LoginForm() {
         )}
       </div>
 
-      {login.isError && (
+      {login.isError && isPasswordSetupRequiredError(login.error) ? (
+        <Alert className="border-primary/30 bg-primary/5">
+          <LuKeyRound aria-hidden className="size-4" />
+          <AlertTitle>Set your password first</AlertTitle>
+          <AlertDescription>
+            Your account needs a password — use the set-password link from your administrator. If you
+            can&apos;t find it or it has expired, ask them to send a new one.
+          </AlertDescription>
+        </Alert>
+      ) : login.isError && (
         <Alert variant="destructive">
           <AlertCircle className="size-4" />
           <AlertTitle>Sign-in failed</AlertTitle>

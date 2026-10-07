@@ -4,6 +4,8 @@ export default [
   index("routes/home.tsx"),
   // Public: accept an email invitation (outside the auth guard).
   route("invite/:token", "routes/invite.$token.tsx"),
+  // Public: set a password from an admin-issued link (imported accounts, resets).
+  route("set-password/:token", "routes/set-password.$token.tsx"),
   layout("routes/protected.tsx", [
     route("dashboard", "routes/dashboard.tsx"),
     route("profile", "routes/profile.tsx"),

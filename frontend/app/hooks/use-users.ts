@@ -19,7 +19,7 @@ export const usersKeys = {
     search: string,
     limit: number | null,
     offset: number,
-    filters: { role?: string; department?: string } = {}
+    filters: { role?: string; department?: string; passwordSetup?: string } = {}
   ) => ["users", "list", { search, limit, offset, ...filters }] as const,
 };
 
@@ -29,6 +29,8 @@ export interface UsersQueryParams {
   role?: string;
   /** Department id, or "none" for unassigned users. */
   department?: string;
+  /** "required" = only users who still need to set a password (imported accounts). */
+  passwordSetup?: "required" | "done";
   limit?: number;
   offset?: number;
 }
@@ -39,16 +41,17 @@ export interface UsersQueryParams {
  * Manage Members dialog and department assignment.
  */
 export function useUsers(params: UsersQueryParams = {}) {
-  const { search = "", limit, offset = 0, role, department } = params;
+  const { search = "", limit, offset = 0, role, department, passwordSetup } = params;
 
   return useQuery({
-    queryKey: usersKeys.list(search, limit ?? null, offset, { role, department }),
+    queryKey: usersKeys.list(search, limit ?? null, offset, { role, department, passwordSetup }),
     queryFn: async () => {
       const { data } = await api.get<UsersListResponse>("/users", {
         params: {
           ...(search ? { search } : {}),
           ...(role ? { role } : {}),
           ...(department ? { department } : {}),
+          ...(passwordSetup ? { passwordSetup } : {}),
           ...(limit !== undefined ? { limit, offset } : {}),
         },
       });

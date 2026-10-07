@@ -72,6 +72,12 @@ import {
   type EmploymentForm,
 } from "@/components/users/employment-fields";
 import { InviteDialog } from "@/components/users/invite-dialog";
+import {
+  BulkPasswordLinksButton,
+  NeedsPasswordBadge,
+  NeedsPasswordFilterChip,
+  PasswordLinkRowActions,
+} from "@/components/users/password-setup";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useDepartments } from "@/hooks/use-departments";
 import { usePagination } from "@/hooks/use-pagination";
@@ -209,10 +215,11 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
-  const filtered = search !== "" || roleFilter !== "" || departmentFilter !== "";
+  const [needsPassword, setNeedsPassword] = useState(false);
+  const filtered = search !== "" || roleFilter !== "" || departmentFilter !== "" || needsPassword;
   const { page, setPage, offset, total, setTotal } = usePagination({
     limit: PAGE_SIZE,
-    resetKey: `${search}|${roleFilter}|${departmentFilter}`,
+    resetKey: `${search}|${roleFilter}|${departmentFilter}|${needsPassword}`,
   });
   const {
     data,
@@ -225,10 +232,14 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
     search: search || undefined,
     role: roleFilter || undefined,
     department: departmentFilter || undefined,
+    passwordSetup: needsPassword ? "required" : undefined,
     limit: PAGE_SIZE,
     offset,
   });
   const users = data?.users;
+  // Total only (limit 1): drives the "Needs password (N)" chip and the bulk action.
+  const { data: pendingData } = useUsers({ passwordSetup: "required", limit: 1 });
+  const pendingCount = pendingData?.total ?? 0;
   const { data: departmentsData } = useDepartments();
 
   useEffect(() => {
@@ -253,6 +264,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
     setSearch("");
     setRoleFilter("");
     setDepartmentFilter("");
+    setNeedsPassword(false);
   };
 
   return (
@@ -300,7 +312,19 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                     onChange={setDepartmentFilter}
                     options={departmentFilterOptions}
                   />
+                  {(pendingCount > 0 || needsPassword) && (
+                    <NeedsPasswordFilterChip
+                      count={pendingCount}
+                      active={needsPassword}
+                      onToggle={() => setNeedsPassword((value) => !value)}
+                    />
+                  )}
                 </div>
+                {pendingCount > 0 && (
+                  <div className="sm:ml-auto">
+                    <BulkPasswordLinksButton count={pendingCount} />
+                  </div>
+                )}
               </div>
             )}
             {total > 0 ? (
@@ -336,6 +360,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                             You
                                           </Badge>
                                         )}
+                                        {user.passwordSetupRequired && <NeedsPasswordBadge />}
                                       </p>
                                       <p className="truncate text-xs text-muted-foreground">
                                         {user.email}
@@ -377,6 +402,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex justify-end gap-1">
+                                    {!isSelf && <PasswordLinkRowActions user={user} />}
                                     <Button
                                       variant="ghost"
                                       size="icon-sm"
@@ -425,6 +451,8 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                   <EmptyDescription>
                     {search !== "" ? (
                       <>No users match &ldquo;{search}&rdquo; with these filters.</>
+                    ) : needsPassword && !roleFilter && !departmentFilter ? (
+                      "Everyone has set a password."
                     ) : (
                       "No users match these filters."
                     )}

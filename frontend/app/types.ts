@@ -28,6 +28,8 @@ export interface User {
   internshipEndDate?: string | null;
   noticePeriodStart?: string | null;
   noticePeriodEnd?: string | null;
+  /** True for imported accounts that must set a password via a link before signing in. */
+  passwordSetupRequired?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2993,4 +2995,43 @@ export interface DeliveryTeamMapResponse {
   offMap: { brand: DeliveryBrandRef; total: number; people: { person: DeliveryUserRef; count: number }[] }[];
   mappedUnused: { brand: DeliveryBrandRef; people: DeliveryUserRef[] }[];
   unmappedBrands: { brand: DeliveryBrandRef; tasks: number }[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Set-password links (POST /api/users/:id/password-link, /password-setup/:token) */
+/* ------------------------------------------------------------------ */
+
+/** Why a set-password link can no longer be used (410 `reason`). */
+export type PasswordSetupGoneReason = "used" | "expired" | "revoked";
+
+/** Public preview of a set-password link (GET /password-setup/:token). */
+export interface PasswordSetupPreview {
+  name: string;
+  email: string;
+  expiresAt: string;
+}
+
+/** POST /users/:id/password-link response. A new link revokes older unused ones. */
+export interface PasswordLinkResponse {
+  setupUrl: string;
+  expiresAt: string;
+  /** False when SMTP isn't configured or `sendEmail` was false — share the link manually. */
+  emailed: boolean;
+  passwordSetupRequired: boolean;
+}
+
+export type PasswordLinkResultStatus = "created" | "not_found" | "invalid";
+
+export interface PasswordLinkResult {
+  userId: string;
+  status: PasswordLinkResultStatus;
+  setupUrl?: string;
+  expiresAt?: string;
+  emailed?: boolean;
+}
+
+/** POST /users/password-links response. */
+export interface PasswordLinksResponse {
+  results: PasswordLinkResult[];
+  emailConfigured: boolean;
 }
