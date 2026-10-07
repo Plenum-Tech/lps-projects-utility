@@ -116,7 +116,7 @@ function validateRow(ctx: TaskContext, r: RowReader, row: number): RowPlan<TaskP
   if (!title) issues.error("Title is required");
   else if (title.length > 200) issues.error("Title must be 200 characters or fewer");
   const description = r.text("description");
-  if (description.length > 2000) issues.error("Description must be 2000 characters or fewer");
+  if (description.length > TASK_LIMITS.maxDescription) issues.error(`Description must be ${TASK_LIMITS.maxDescription} characters or fewer`);
 
   // --- project ---
   let project: IProject | null = null;

@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 /** Theme token names a label may use — the frontend maps them to CSS variables. */
 export const TASK_LABEL_COLORS = [
@@ -39,5 +40,8 @@ taskLabelSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskLabelSchema);
 
 export const TaskLabel = mongoose.model<ITaskLabel>("TaskLabel", taskLabelSchema);

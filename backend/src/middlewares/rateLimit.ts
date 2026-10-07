@@ -166,6 +166,16 @@ export const standardRateLimit = rateLimit({
 });
 
 /**
+ * Public set-password link endpoints (GET preview + POST set): 10 requests per
+ * 15 minutes per IP, in its own store.
+ */
+export const passwordSetupRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many attempts. Please wait a few minutes and try again.",
+});
+
+/**
  * Public invitation accept endpoints (GET preview + POST accept): 10 requests per
  * 15 minutes per IP, in its own store so it never shares a bucket with login.
  */

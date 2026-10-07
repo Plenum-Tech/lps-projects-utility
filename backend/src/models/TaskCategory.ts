@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export interface ITaskCategory extends mongoose.Document {
   name: string;
@@ -19,5 +20,8 @@ taskCategorySchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskCategorySchema);
 
 export const TaskCategory = mongoose.model<ITaskCategory>("TaskCategory", taskCategorySchema);

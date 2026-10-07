@@ -30,6 +30,21 @@ export async function login(req: Request, res: Response): Promise<void> {
 
   const user = await User.findOne({ email: email.trim().toLowerCase() }).select("+password");
 
+  // Imported accounts have no usable password until the user opens a set-password link.
+  if (user?.passwordSetupRequired) {
+    logActivity({
+      action: "login_failed",
+      actorEmail: email.trim().toLowerCase(),
+      details: { reason: "password_setup_required" },
+      ip: req.ip,
+    });
+    res.status(403).json({
+      error: "Your account needs a password — use the link from your administrator.",
+      code: "password_setup_required",
+    });
+    return;
+  }
+
   if (!user || !(await user.comparePassword(password))) {
     // Audit failed attempts — actor is unknown, so snapshot the attempted email.
     logActivity({

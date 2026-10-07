@@ -36,7 +36,7 @@ export const PROJECT_FIELDS: ImportField[] = [
 
 export const TASK_FIELDS: ImportField[] = [
   { key: "title", label: "Title", required: true, accepts: "Text, up to 200 characters", example: "Design the home page", synonyms: ["title", "task", "task name", "task title", "heading", "subject", "name"] },
-  { key: "description", label: "Description", required: false, accepts: "Text, up to 2000 characters", example: "Hero, features and pricing sections", synonyms: ["description", "task description", "details", "notes"] },
+  { key: "description", label: "Description", required: false, accepts: "Text, up to 5000 characters", example: "Hero, features and pricing sections", synonyms: ["description", "task description", "details", "notes"] },
   { key: "project", label: "Project", required: false, accepts: "Project code (preferred) or exact project name", example: "WEB", synonyms: ["project", "project code", "project name", "project short code", "projectname"] },
   { key: "milestone", label: "Milestone", required: false, accepts: "Milestone title in that project", example: "Phase 1", synonyms: ["milestone", "milestone title", "milestones"] },
   { key: "assignees", label: "Assignees", required: true, accepts: "Comma/semicolon list of emails or exact names", example: "jane@example.com", synonyms: ["assignees", "assignee", "assigned to", "assign to", "assigned", "responsible", "users", "employee", "employees", "members"] },

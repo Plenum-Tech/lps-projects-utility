@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 /** Every action recorded in a task's history timeline. Keep in sync with the frontend. */
 export const TASK_HISTORY_ACTIONS = [
@@ -55,5 +56,8 @@ taskHistorySchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskHistorySchema);
 
 export const TaskHistory = mongoose.model<ITaskHistory>("TaskHistory", taskHistorySchema);

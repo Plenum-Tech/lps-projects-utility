@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 /** Same per-file limit as task files; 50 files per project. */
 export const PROJECT_FILE_LIMITS = {
@@ -38,5 +39,8 @@ projectFileSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(projectFileSchema);
 
 export const ProjectFile = mongoose.model<IProjectFile>("ProjectFile", projectFileSchema);

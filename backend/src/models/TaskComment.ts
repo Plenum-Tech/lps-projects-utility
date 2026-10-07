@@ -1,5 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef } from "./legacy.js";
 
 export interface ITaskComment extends mongoose.Document {
   task: mongoose.Types.ObjectId;
@@ -38,5 +39,8 @@ taskCommentSchema.set("toJSON", {
 
 // Brief rules 1 and 7 read files, comments and notes.
 deliveryInvalidateOnWrite(taskCommentSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskCommentSchema);
 
 export const TaskComment = mongoose.model<ITaskComment>("TaskComment", taskCommentSchema);

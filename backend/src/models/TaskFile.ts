@@ -1,5 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef } from "./legacy.js";
 
 /** Upload limits for task attachments. */
 export const TASK_FILE_LIMITS = {
@@ -69,5 +70,8 @@ taskFileSchema.set("toJSON", {
 
 // Brief rules 1 and 7 read files, comments and notes.
 deliveryInvalidateOnWrite(taskFileSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskFileSchema);
 
 export const TaskFile = mongoose.model<ITaskFile>("TaskFile", taskFileSchema);

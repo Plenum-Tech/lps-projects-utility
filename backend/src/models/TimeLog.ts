@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export const TIMELOG_SOURCES = ["timer", "manual", "timesheet"] as const;
 export type TimeLogSource = (typeof TIMELOG_SOURCES)[number];
@@ -92,5 +93,8 @@ timeLogSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(timeLogSchema);
 
 export const TimeLog = mongoose.model<ITimeLog>("TimeLog", timeLogSchema);

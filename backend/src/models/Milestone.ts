@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export const MILESTONE_STATUSES = ["incomplete", "complete"] as const;
 export type MilestoneStatus = (typeof MILESTONE_STATUSES)[number];
@@ -35,5 +36,8 @@ milestoneSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(milestoneSchema);
 
 export const Milestone = mongoose.model<IMilestone>("Milestone", milestoneSchema);

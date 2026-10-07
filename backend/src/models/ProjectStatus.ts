@@ -2,6 +2,7 @@ import mongoose, { Schema } from "mongoose";
 import { cached, invalidateOnWrite } from "../lib/refCache.js";
 import { TASK_LABEL_COLORS } from "./TaskLabel.js";
 import type { TaskLabelColor } from "./TaskLabel.js";
+import { addLegacyRef } from "./legacy.js";
 
 /** Same theme tokens as task labels — the frontend maps them to CSS variables. */
 export const PROJECT_STATUS_COLORS = TASK_LABEL_COLORS;
@@ -41,6 +42,9 @@ projectStatusSchema.set("toJSON", {
 });
 
 invalidateOnWrite(projectStatusSchema, "projectStatus:");
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(projectStatusSchema);
 
 export const ProjectStatus = mongoose.model<IProjectStatus>("ProjectStatus", projectStatusSchema);
 

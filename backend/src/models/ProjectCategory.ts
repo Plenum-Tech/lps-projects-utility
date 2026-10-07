@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export interface IProjectCategory extends mongoose.Document {
   name: string;
@@ -20,5 +21,8 @@ projectCategorySchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(projectCategorySchema);
 
 export const ProjectCategory = mongoose.model<IProjectCategory>("ProjectCategory", projectCategorySchema);

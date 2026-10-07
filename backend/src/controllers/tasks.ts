@@ -987,8 +987,8 @@ export async function createTaskCore(
   }
 
   // Description validation
-  if (description !== undefined && description !== null && (typeof description !== "string" || description.trim().length > 2000)) {
-    return { status: 400, error: "description must be 2000 characters or fewer" };
+  if (description !== undefined && description !== null && (typeof description !== "string" || description.trim().length > TASK_LIMITS.maxDescription)) {
+    return { status: 400, error: `description must be ${TASK_LIMITS.maxDescription} characters or fewer` };
   }
 
   // Validate priority
@@ -1467,8 +1467,8 @@ async function applyTaskUpdate(
   }
 
   if (description !== undefined) {
-    if (description !== null && (typeof description !== "string" || description.trim().length > 2000)) {
-      return { status: 400, error: "description must be 2000 characters or fewer" };
+    if (description !== null && (typeof description !== "string" || description.trim().length > TASK_LIMITS.maxDescription)) {
+      return { status: 400, error: `description must be ${TASK_LIMITS.maxDescription} characters or fewer` };
     }
     const next = typeof description === "string" ? description.trim() || undefined : undefined;
     if ((task.description ?? undefined) !== next) {

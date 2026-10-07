@@ -1,6 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import { cached, invalidateOnWrite } from "../lib/refCache.js";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef } from "./legacy.js";
 
 export const PROGRESS_MODES = ["manual", "task_completion", "total_time", "deadline"] as const;
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
@@ -107,6 +108,9 @@ projectSchema.set("toJSON", {
 
 invalidateOnWrite(projectSchema, "project:");
 deliveryInvalidateOnWrite(projectSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(projectSchema);
 
 export const Project = mongoose.model<IProject>("Project", projectSchema);
 

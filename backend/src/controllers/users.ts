@@ -72,7 +72,10 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }
-  const { role, department } = req.query;
+  const { role, department, passwordSetup } = req.query;
+  // "Needs password" filter (imported users who haven't set one yet).
+  if (passwordSetup === "required") filter.passwordSetupRequired = true;
+  else if (passwordSetup === "done") filter.passwordSetupRequired = { $ne: true };
   if (role === "admin" || role === "employee" || role === "head") {
     filter.role = role;
   }
@@ -255,6 +258,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   if (password !== undefined) {
     // The model's pre-save hook rehashes whenever password is modified.
     user.password = password;
+    user.passwordSetupRequired = false;
     changed.push("password");
   }
   if (rate !== undefined) {

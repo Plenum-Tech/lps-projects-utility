@@ -7,7 +7,7 @@ import cors from "cors";
 import helmet from "helmet";
 import mongoose from "mongoose";
 import morgan from "morgan";
-import { inviteAcceptRateLimit, strictRateLimit, moderateRateLimit, standardRateLimit } from "./middlewares/rateLimit.js";
+import { inviteAcceptRateLimit, passwordSetupRateLimit, strictRateLimit, moderateRateLimit, standardRateLimit } from "./middlewares/rateLimit.js";
 import { serve } from "inngest/express";
 import { connectDB, disconnectDB, pingDB } from "./db/index.js";
 import { inngest, functions } from "./inngest/index.js";
@@ -29,6 +29,7 @@ import documentsRouter from "./routes/documents.js";
 import feedbackRouter from "./routes/feedback.js";
 import importsRouter from "./routes/imports.js";
 import invitationsRouter from "./routes/invitations.js";
+import passwordSetupRouter from "./routes/passwordSetup.js";
 import leavePoliciesRouter from "./routes/leavePolicies.js";
 import leavesRouter from "./routes/leaves.js";
 import meetingsRouter from "./routes/meetings.js";
@@ -79,7 +80,7 @@ const corsOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
 
 // --- Global middleware (order matters: env first, then security/cors/parsing) ---
 // Invite tokens are credentials: mask them in the logged URL so they never reach the logs.
-const INVITE_TOKEN_PATH = /(\/api\/invitations\/accept\/)[^/?#]+/;
+const INVITE_TOKEN_PATH = /(\/api\/(?:invitations\/accept|password-setup)\/)[^/?#]+/;
 morgan.token("url", (req) => {
   const url = (req as express.Request).originalUrl || req.url || "";
   return url.replace(INVITE_TOKEN_PATH, "$1[redacted]");
@@ -192,6 +193,7 @@ if (!spa) {
 app.use("/api/auth/login", strictRateLimit);
 // Strict: public invitation preview/accept (token guessing + password set).
 app.use("/api/invitations/accept", inviteAcceptRateLimit);
+app.use("/api/password-setup", passwordSetupRateLimit);
 // Moderate: expensive compute operations
 app.use("/api/ai-insights", moderateRateLimit);
 // Work reports (tasks/time/timesheets) are plain aggregates the report pages call
@@ -215,6 +217,7 @@ app.use("/api/settings", settingsRouter);
 app.use("/api/auth", authRouter);
 app.use("/api/users", usersRouter);
 app.use("/api/invitations", invitationsRouter);
+app.use("/api/password-setup", passwordSetupRouter);
 app.use("/api/departments", departmentsRouter);
 app.use("/api/leaves", leavesRouter);
 app.use("/api/leave-policies", leavePoliciesRouter);

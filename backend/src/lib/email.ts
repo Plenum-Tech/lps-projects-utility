@@ -31,6 +31,11 @@ function readSmtpConfig(): SmtpConfig | null {
   return { host, port, secure, user, pass };
 }
 
+/** True when SMTP credentials are configured (emails will actually be attempted). */
+export function emailConfigured(): boolean {
+  return readSmtpConfig() !== null;
+}
+
 /** Returns the pooled transporter, or null (with one warning) when SMTP is not configured. */
 function getTransporter(): Transporter | null {
   if (transporter) return transporter;
@@ -794,4 +799,25 @@ export function invitationTemplate(params: {
     <p style="color: #6b7280; font-size: 13px;">If you weren't expecting this, ignore this email.</p>
   `;
   return wrapTemplate("You're invited", body);
+}
+
+/**
+ * Set-password link for an existing account without a usable password (e.g.
+ * migrated from Worksuite). `setupUrl` carries the one-time token.
+ */
+export function passwordSetupTemplate(params: { firstName: string; setupUrl: string; expiresAt: Date }): string {
+  const expires = params.expiresAt.toLocaleDateString("en-US", {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+  const body = `
+    <p>Hi ${escapeHtml(params.firstName)},</p>
+    <p>Your ${escapeHtml(companyName())} account is ready. Choose a password to sign in.</p>
+    <a href="${escapeHtml(params.setupUrl)}" style="${BUTTON_STYLE}">Set your password</a>
+    <p style="color: #6b7280; font-size: 13px;">This link expires on <strong>${escapeHtml(expires)}</strong> and can be used once.</p>
+    <p style="color: #6b7280; font-size: 13px;">If you weren't expecting this, ignore this email or contact your administrator.</p>
+  `;
+  return wrapTemplate("Set your password", body);
 }

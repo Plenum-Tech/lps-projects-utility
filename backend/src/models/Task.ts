@@ -1,5 +1,7 @@
 import mongoose, { Schema } from "mongoose";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef, legacyRefSchema } from "./legacy.js";
+import type { ILegacyRef } from "./legacy.js";
 
 export const TASK_STATUSES = [
   "todo",
@@ -26,6 +28,8 @@ export const TASK_LIMITS = {
   maxSubtasks: 50,
   /** Estimated time in minutes (0 – 100000). */
   maxEstimateMinutes: 100000,
+  /** Task description length (raised for long Worksuite briefs). */
+  maxDescription: 20000,
 } as const;
 
 /** Creation/assignment notifications held back until the form's file uploads finish. */
@@ -46,6 +50,8 @@ export interface ISubtask {
   updatedBy?: mongoose.Types.ObjectId | null;
   /** Set when the client deferred notifications (see POST .../subtasks/:subId/notify). */
   pendingNotify?: SubtaskPendingNotify | null;
+  /** Set on subtasks imported from Worksuite. */
+  legacy?: ILegacyRef;
 }
 
 export interface ITaskRecurrence {
@@ -129,6 +135,8 @@ const subtaskSchema = new Schema<ISubtask>({
   createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   pendingNotify: { type: String, enum: [...SUBTASK_PENDING_NOTIFY, null], default: null },
+  /** Worksuite sub_tasks id for imported subtasks (see models/legacy.ts). */
+  legacy: { type: legacyRefSchema, default: undefined },
 });
 
 const recurrenceSchema = new Schema<ITaskRecurrence>(
@@ -153,7 +161,7 @@ const sourceMeetingSchema = new Schema<ITaskSourceMeeting>(
 const taskSchema = new Schema<ITask>(
   {
     title: { type: String, required: true, trim: true, maxlength: 200 },
-    description: { type: String, trim: true, maxlength: 2000 },
+    description: { type: String, trim: true, maxlength: TASK_LIMITS.maxDescription },
     assignees: {
       type: [{ type: Schema.Types.ObjectId, ref: "User" }],
       validate: {
@@ -274,5 +282,8 @@ taskSchema.set("toJSON", {
 });
 
 deliveryInvalidateOnWrite(taskSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskSchema);
 
 export const Task = mongoose.model<ITask>("Task", taskSchema);

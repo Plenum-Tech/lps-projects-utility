@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export interface IDepartment extends mongoose.Document {
   name: string;
@@ -21,5 +22,8 @@ departmentSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(departmentSchema);
 
 export const Department = mongoose.model<IDepartment>("Department", departmentSchema);

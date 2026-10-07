@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { addLegacyRef } from "./legacy.js";
 
 export const NOTE_VISIBILITIES = ["members", "private"] as const;
 export type NoteVisibility = (typeof NOTE_VISIBILITIES)[number];
@@ -36,5 +37,8 @@ projectNoteSchema.set("toJSON", {
     return json;
   },
 });
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(projectNoteSchema);
 
 export const ProjectNote = mongoose.model<IProjectNote>("ProjectNote", projectNoteSchema);

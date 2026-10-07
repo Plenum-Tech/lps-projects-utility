@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { nextEmployeeId } from "../lib/employeeIds.js";
 import { invalidateOnWrite } from "../lib/refCache.js";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef } from "./legacy.js";
 
 /** Per-employee annual leave balance for the tracked leave types. */
 export interface LeaveBalance {
@@ -52,6 +53,12 @@ export interface IUser extends mongoose.Document {
   email: string;
   password: string;
   role: "admin" | "employee" | "head";
+  /**
+   * True for accounts created without a usable password (e.g. imported from
+   * Worksuite): sign-in is refused until the user sets one through a
+   * set-password link (POST /api/users/:id/password-link).
+   */
+  passwordSetupRequired: boolean;
   /** Single department per employee (null until assigned). */
   department?: mongoose.Types.ObjectId | null;
   leaveBalance?: LeaveBalance;
@@ -92,6 +99,7 @@ const userSchema = new Schema<IUser>(
     },
     password: { type: String, required: true, minlength: 8, select: false },
     role: { type: String, enum: ["admin", "employee", "head"], default: "employee" },
+    passwordSetupRequired: { type: Boolean, default: false },
     department: { type: Schema.Types.ObjectId, ref: "Department", default: null },
     leaveBalance: {
       type: {
@@ -174,5 +182,8 @@ userSchema.set("toJSON", {
 invalidateOnWrite(userSchema, "user:");
 // Departments decide Delivery Pulse teams; names show in its tables.
 deliveryInvalidateOnWrite(userSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(userSchema);
 
 export const User = mongoose.model<IUser>("User", userSchema);

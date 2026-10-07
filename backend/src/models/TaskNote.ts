@@ -1,5 +1,6 @@
 import mongoose, { Schema } from "mongoose";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { addLegacyRef } from "./legacy.js";
 
 export const TASK_NOTE_VISIBILITIES = ["task", "private"] as const;
 
@@ -58,5 +59,8 @@ taskNoteSchema.set("toJSON", {
 
 // Brief rules 1 and 7 read files, comments and notes.
 deliveryInvalidateOnWrite(taskNoteSchema);
+
+// Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
+addLegacyRef(taskNoteSchema);
 
 export const TaskNote = mongoose.model<ITaskNote>("TaskNote", taskNoteSchema);
