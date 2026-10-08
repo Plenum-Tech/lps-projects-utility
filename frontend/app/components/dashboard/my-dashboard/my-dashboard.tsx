@@ -11,10 +11,10 @@ import {
   OnLeaveTodayCard,
 } from "@/components/dashboard/my-dashboard/people-cards";
 import {
-  completedProjectsHref,
   MyPeriodPicker,
   periodCaption,
   periodDays,
+  projectLinks,
   taskLinks,
   useMyDashboardPeriod,
 } from "@/components/dashboard/my-dashboard/period";
@@ -99,7 +99,7 @@ function MyDashboardGrid({
   // Captions and links follow the period the numbers were computed for.
   const caption = periodCaption(data.period.key);
   const links = taskLinks(data.period);
-  const projectsHref = profile.role === "employee" ? "/projects" : `/projects?member=${profile._id}`;
+  const projectHrefs = projectLinks(data.period, profile._id);
   // Restricted HR cards: always for heads/admins (department / all); for
   // "self" only when the viewer has a date coming up.
   const showHr = (count: number) => hrScope !== "self" || count > 0;
@@ -110,7 +110,7 @@ function MyDashboardGrid({
         <ProfileCard
           profile={profile}
           counts={counts}
-          projectsHref={projectsHref}
+          projectsHref={projectHrefs.inProgress}
           openTasksHref={links.open}
           caption={caption}
           loading={loading}
@@ -140,8 +140,7 @@ function MyDashboardGrid({
             counts={counts}
             completed={data.completedProjects}
             caption={caption}
-            projectsHref={projectsHref}
-            completedHref={completedProjectsHref(data.period, profile._id)}
+            links={projectHrefs}
             loading={loading}
           />
         </div>

@@ -8,7 +8,7 @@ import type { DeliveryDelta, MyDashboard, MyDashboardPeriod } from "@/types";
 
 // ---------------------------------------------------------------------------
 // My dashboard period (prompts/my-dashboard-period.md): last N days ending
-// today, or all time. Kept in the URL (?period=30d) and in localStorage.
+// today, or all time (the default). Kept in the URL (?period=30d) and in localStorage.
 // ---------------------------------------------------------------------------
 
 export const MY_PERIODS: (SegmentedOption<MyDashboardPeriod> & { caption: string; days: number | null })[] = [
@@ -20,7 +20,7 @@ export const MY_PERIODS: (SegmentedOption<MyDashboardPeriod> & { caption: string
   { value: "all", label: "All", title: "All time", caption: "all time", days: null },
 ];
 
-export const DEFAULT_MY_PERIOD: MyDashboardPeriod = "30d";
+export const DEFAULT_MY_PERIOD: MyDashboardPeriod = "all";
 const STORAGE_KEY = "ems.myDashboard.period";
 
 export function isMyPeriod(value: string | null | undefined): value is MyDashboardPeriod {
@@ -55,7 +55,7 @@ function store(period: MyDashboardPeriod) {
 }
 
 /**
- * The selected period: `?period=` wins, then the remembered choice, then 30d.
+ * The selected period: `?period=` wins, then the remembered choice, then all time.
  * Choosing one writes both. The ?task / other params are left untouched.
  */
 export function useMyDashboardPeriod() {
@@ -140,19 +140,39 @@ export function countDelta(current: number, previous: number | null): DeliveryDe
   };
 }
 
-/** /projects filtered like the Projects → Completed tile (my projects completed in the period). */
-export function completedProjectsHref(period: PeriodRange, userId: string): string {
-  const query = new URLSearchParams({ member: userId, completed: "1" });
-  if (period.from) {
-    query.set("completedFrom", period.from);
-    query.set("completedTo", period.to);
-  }
+// --- Project list links (/projects URL filters) ------------------------------
+
+function projectsHref(userId: string, params: Record<string, string | null>): string {
+  // memberOnly: on the team (members[].user) — Worksuite doesn't count manager-only projects.
+  const query = new URLSearchParams({ memberOnly: userId });
+  for (const [key, value] of Object.entries(params)) if (value) query.set(key, value);
   return `/projects?${query.toString()}`;
+}
+
+/** Links to /projects filtered exactly like each My dashboard project number (Worksuite definitions). */
+export function projectLinks(period: PeriodRange, userId: string) {
+  const ranged = Boolean(period.from);
+  return {
+    /** Profile → Projects / Projects → In progress: member, progress < 100 %, active in the period. */
+    inProgress: projectsHref(userId, {
+      active: "1",
+      activeFrom: ranged ? period.from : null,
+      activeTo: ranged ? period.to : null,
+    }),
+    /** Member, progress < 100 %, deadline on or before today (inside the period). */
+    overdue: projectsHref(userId, { active: "1", deadlineFrom: period.from, deadlineTo: period.to }),
+    /** Member projects moved to a completed status in the period. */
+    completed: projectsHref(userId, {
+      completed: "1",
+      completedFrom: period.from,
+      completedTo: ranged ? period.to : null,
+    }),
+  };
 }
 
 // --- Task list links (/tasks URL filters) -------------------------------------
 
-const PENDING_STATUSES = "todo,in_progress,in_review";
+/** Every status but completed (Worksuite "pending"). */
 const OPEN_STATUSES = "todo,in_progress,in_review,rejected";
 
 type PeriodRange = MyDashboard["period"];
@@ -167,9 +187,9 @@ function tasksHref(params: Record<string, string | null>): string {
 export function taskLinks(period: PeriodRange) {
   const createdOrDue = { createdOrDueFrom: period.from, createdOrDueTo: period.from ? period.to : null };
   return {
-    /** Profile → Open tasks / My tasks "View all": not completed, created or due in the period. */
+    /** Profile → Open tasks / Tasks → Pending / My tasks "View all": not completed, created or due in the period. */
     open: tasksHref({ statusIn: OPEN_STATUSES, ...createdOrDue }),
-    pending: tasksHref({ statusIn: PENDING_STATUSES, ...createdOrDue }),
+    pending: tasksHref({ statusIn: OPEN_STATUSES, ...createdOrDue }),
     /** Due before today (the API's `overdue`), due date inside the period. */
     overdue: tasksHref({ overdue: "on", from: period.from, to: period.from ? period.to : null }),
     completed: tasksHref({

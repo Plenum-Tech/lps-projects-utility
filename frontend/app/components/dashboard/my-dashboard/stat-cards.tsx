@@ -17,6 +17,8 @@ interface Stat {
   detail?: ReactNode;
   /** Accessible extra text for the link. */
   srDetail?: string;
+  /** What the number counts (tooltip + screen readers), e.g. "assigned to you, not completed". */
+  hint?: string;
 }
 
 const TONE: Record<Stat["tone"], string> = {
@@ -61,7 +63,8 @@ function StatGroupCard({
           <Link
             key={stat.label}
             to={stat.to}
-            aria-label={`${stat.value} ${stat.label.toLowerCase()} ${title.toLowerCase()}, ${caption}${stat.srDetail ? `, ${stat.srDetail}` : ""}`}
+            title={stat.hint ? `${stat.label} · ${stat.hint}` : undefined}
+            aria-label={`${stat.value} ${stat.label.toLowerCase()} ${title.toLowerCase()}, ${caption}${stat.hint ? `, ${stat.hint}` : ""}${stat.srDetail ? `, ${stat.srDetail}` : ""}`}
             className="group min-w-0 px-3 py-3 outline-none transition-colors duration-150 first:rounded-bl-xl last:rounded-br-xl hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset sm:px-4"
           >
             <span className={cn("block font-heading text-3xl font-semibold tabular-nums", TONE[stat.tone])}>
@@ -113,8 +116,20 @@ export function TasksStatCard({
       caption={caption}
       loading={loading}
       stats={[
-        { label: "Pending", value: counts.pendingTasks, to: links.pending, tone: "primary" },
-        { label: "Overdue", value: counts.overdueTasks, to: links.overdue, tone: "destructive" },
+        {
+          label: "Pending",
+          value: counts.pendingTasks,
+          to: links.pending,
+          tone: "primary",
+          hint: "assigned to you, not completed",
+        },
+        {
+          label: "Overdue",
+          value: counts.overdueTasks,
+          to: links.overdue,
+          tone: "destructive",
+          hint: "pending, due before today",
+        },
         {
           label: "Completed",
           value: completed.count,
@@ -137,20 +152,16 @@ export function ProjectsStatCard({
   counts,
   completed,
   caption,
-  projectsHref,
-  completedHref,
+  links,
   loading,
 }: {
   counts: MyDashboard["counts"];
   completed: MyDashboard["completedProjects"];
   caption: string;
-  /** /projects, plus `?member=<me>` for admins and heads. */
-  projectsHref: string;
-  /** /projects filtered to my projects completed in the period (same count). */
-  completedHref: string;
+  /** /projects filtered exactly like each number (see projectLinks). */
+  links: { inProgress: string; overdue: string; completed: string };
   loading?: boolean;
 }) {
-  const join = projectsHref.includes("?") ? "&" : "?";
   const delta = countDelta(completed.count, completed.previous);
   return (
     <StatGroupCard
@@ -159,17 +170,25 @@ export function ProjectsStatCard({
       caption={caption}
       loading={loading}
       stats={[
-        { label: "In progress", value: counts.projectsInProgress, to: projectsHref, tone: "primary" },
+        {
+          label: "In progress",
+          value: counts.projectsInProgress,
+          to: links.inProgress,
+          tone: "primary",
+          hint: "you're a member, progress < 100%",
+        },
         {
           label: "Overdue",
           value: counts.projectsOverdue,
-          to: `${projectsHref}${join}deadline=overdue`,
+          to: links.overdue,
           tone: "destructive",
+          hint: "in progress, deadline passed",
         },
         {
           label: "Completed",
           value: completed.count,
-          to: completedHref,
+          to: links.completed,
+          hint: "you're a member, moved to a completed status",
           tone: "good",
           detail: delta ? <CompletedDetail delta={delta} /> : undefined,
           srDetail: completed.previous !== null ? `${completed.previous} in the previous period` : undefined,

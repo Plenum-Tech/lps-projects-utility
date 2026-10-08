@@ -43,6 +43,7 @@ import type { Invalid } from "../lib/projectAccess.js";
 import { recalcProjectProgress } from "../lib/projectProgress.js";
 import { addDays, appDayStart } from "../lib/appTime.js";
 import { projectIdsCompletedWithin } from "../lib/projectCompletion.js";
+import { activeInRangeFilter, PROGRESS_NOT_DONE } from "../lib/myProjects.js";
 import { parseDateOnly } from "../lib/taskAccess.js";
 import { appToday } from "../lib/taskJobs.js";
 import { nextTaskNumber } from "../lib/taskNumbers.js";
@@ -428,6 +429,7 @@ function queryDate(raw: unknown, name: string): Date | undefined | Invalid {
  * deadline=overdue, from/to (start→deadline overlaps; no deadline = open-ended),
  * progress buckets, completed=true (completed status) with optional
  * completedFrom/completedTo (app-timezone days; completion date as on My dashboard,
+ * memberOnly, active, deadlineFrom/To, activeFrom/To — see lib/myProjects.ts;
  * see lib/projectCompletion.ts).
  */
 async function buildProjectFilter(req: Request): Promise<Record<string, unknown>[] | Invalid> {
@@ -470,6 +472,44 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
     if (typeof member !== "string" || isInvalidObjectId(member)) return bad("member must be a valid ID");
     const memberId = new mongoose.Types.ObjectId(member);
     and.push({ $or: [{ "members.user": memberId }, { manager: memberId }] });
+  }
+
+  // My dashboard links (Worksuite definitions, lib/myProjects.ts):
+  // `memberOnly=<id>` — on the team (members[].user; a manager-only project is excluded);
+  // `active=1` — progress ≠ 100; `deadlineFrom/To` — deadline within the days;
+  // `activeFrom/To` — active in the days for memberOnly (else the caller).
+  const memberOnly = req.query.memberOnly;
+  let memberOnlyId: mongoose.Types.ObjectId | null = null;
+  if (memberOnly !== undefined && memberOnly !== "") {
+    if (typeof memberOnly !== "string" || isInvalidObjectId(memberOnly)) return bad("memberOnly must be a valid ID");
+    memberOnlyId = new mongoose.Types.ObjectId(memberOnly);
+    and.push({ "members.user": memberOnlyId });
+  }
+  const active = req.query.active;
+  if (active !== undefined && active !== "") {
+    if (active !== "1" && active !== "true") return bad("active must be 1 or true");
+    and.push({ ...PROGRESS_NOT_DONE });
+  }
+  const deadlineFrom = queryDate(req.query.deadlineFrom, "deadlineFrom");
+  if (isInvalid(deadlineFrom)) return deadlineFrom;
+  const deadlineTo = queryDate(req.query.deadlineTo, "deadlineTo");
+  if (isInvalid(deadlineTo)) return deadlineTo;
+  if (deadlineFrom && deadlineTo && deadlineFrom.getTime() > deadlineTo.getTime()) {
+    return bad("deadlineFrom must be on or before deadlineTo");
+  }
+  if (deadlineFrom || deadlineTo) {
+    and.push({
+      deadline: { $ne: null, ...(deadlineFrom ? { $gte: deadlineFrom } : {}), ...(deadlineTo ? { $lte: deadlineTo } : {}) },
+    });
+  }
+  const activeFrom = queryDate(req.query.activeFrom, "activeFrom");
+  if (isInvalid(activeFrom)) return activeFrom;
+  const activeTo = queryDate(req.query.activeTo, "activeTo");
+  if (isInvalid(activeTo)) return activeTo;
+  if (activeFrom || activeTo) {
+    if (!activeFrom || !activeTo) return bad("activeFrom and activeTo go together");
+    if (activeFrom.getTime() > activeTo.getTime()) return bad("activeFrom must be on or before activeTo");
+    and.push(await activeInRangeFilter(memberOnlyId ?? (user._id as mongoose.Types.ObjectId), activeFrom, activeTo));
   }
 
   if (req.query.pinned === "true") {

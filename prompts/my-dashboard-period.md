@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a period selector to **My dashboard** only. The Organisation view and Delivery Pulse already have their own filters. The choices are **7 days · 30 days · 90 days · 120 days · 1 year · All time**. The task and project numbers, the My tasks table and the calendar follow the chosen period. The default is **30 days**, and the choice is remembered in the URL (`?period=30d`) and in localStorage.
+Add a period selector to **My dashboard** only. The Organisation view and Delivery Pulse already have their own filters. The choices are **7 days · 30 days · 90 days · 120 days · 1 year · All time**. The task and project numbers, the My tasks table and the calendar follow the chosen period. The default is **All time** (Worksuite definitions, see below), and the choice is remembered in the URL (`?period=30d`) and in localStorage.
 
 The period is "the last N days ending today", computed date-only in the app timezone.
 
@@ -28,7 +28,7 @@ The period is "the last N days ending today", computed date-only in the app time
 
 ## Backend
 
-- `GET /api/dashboard/me?period=7d|30d|90d|120d|365d|all` (default `30d` when omitted, so old clients keep working).
+- `GET /api/dashboard/me?period=7d|30d|90d|120d|365d|all` (default `all` when omitted).
   - The counts in `counts` and the `myTasks` list are filtered as above.
   - The response adds `completedTasks: { count, onTimePct, previous }` and `completedProjects: { count, previous }`.
   - It echoes `period: { key, from, to }`.
@@ -46,3 +46,12 @@ The period is "the last N days ending today", computed date-only in the app time
 - Both type checks and the build pass.
 - **API tests** confirm the counts for each period against hand-built fixtures (created, due and completed dates spread across the ranges). "All time" equals the current behaviour.
 - **Browser**: switching the period updates the numbers and captions, survives a reload, links open correctly filtered task lists, and it works at 375px.
+
+## Worksuite alignment
+
+"All time" matches Worksuite's employee dashboard; periods narrow these base sets.
+
+- **Pending = Open tasks**: assigned to me, not completed. **Overdue**: those due before today (date-only).
+- **Projects = In progress**: I'm a member (`members[].user`, not manager-only), progress ≠ 100, not archived. **Overdue**: those with a deadline on or before today.
+- **Completed projects**: member projects moved to a completed status (lib/projectCompletion.ts).
+- Links: `/projects?memberOnly=<me>&active=1` (+ `activeFrom/To`, `deadlineFrom/To`, `completed`/`completedFrom/To`); `/tasks?mine=on&statusIn=<all but completed>` (+ `createdOrDueFrom/To`, `overdue`, `from/to`). Shared filters in lib/myProjects.ts keep tile == list total.

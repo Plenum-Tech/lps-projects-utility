@@ -54,17 +54,43 @@ export function ProfileCard({
         aria-busy={loading || undefined}
         className={cn("grid grid-cols-2 divide-x border-t transition-opacity duration-150", loading && "opacity-60")}
       >
-        <CountLink to={openTasksHref} label="Open tasks" caption={caption} value={counts.openTasks} />
-        <CountLink to={projectsHref} label="Projects" caption={caption} value={counts.projects} />
+        <CountLink
+          to={openTasksHref}
+          label="Open tasks"
+          hint="Pending · assigned to you, not completed"
+          caption={caption}
+          value={counts.openTasks}
+        />
+        <CountLink
+          to={projectsHref}
+          label="Projects"
+          hint="Projects · you're a member, progress < 100%"
+          caption={caption}
+          value={counts.projects}
+        />
       </div>
     </section>
   );
 }
 
-function CountLink({ to, label, caption, value }: { to: string; label: string; caption: string; value: number }) {
+function CountLink({
+  to,
+  label,
+  hint,
+  caption,
+  value,
+}: {
+  to: string;
+  label: string;
+  /** Tooltip: what the number counts. */
+  hint: string;
+  caption: string;
+  value: number;
+}) {
   return (
     <Link
       to={to}
+      title={hint}
       className="group px-4 py-3 outline-none transition-colors duration-150 first:rounded-bl-xl last:rounded-br-xl hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
     >
       <span className="block text-xs text-muted-foreground group-hover:text-foreground">

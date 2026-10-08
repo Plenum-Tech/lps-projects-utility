@@ -47,8 +47,18 @@ export interface ProjectFilters {
   department: string;
   manager: string;
   deadline: "" | "overdue";
-  /** Member user id. */
+  /** Member user id (on the team or the manager). */
   member?: string;
+  /** On the team only (members[].user) — My dashboard links, Worksuite definitions. */
+  memberOnly?: string;
+  /** "1" = progress below 100 %. */
+  active?: string;
+  /** Deadline within this range ("YYYY-MM-DD"). */
+  deadlineFrom?: string;
+  deadlineTo?: string;
+  /** Active in this range (start → deadline overlaps, or a task of memberOnly's was updated in it). */
+  activeFrom?: string;
+  activeTo?: string;
   /** Brand id, or "none" for projects without a brand. */
   brand?: string;
   /** Structured-name Type ("none" = legacy names). */
@@ -114,6 +124,12 @@ export function projectQueryParams(
     "manager",
     "deadline",
     "member",
+    "memberOnly",
+    "active",
+    "deadlineFrom",
+    "deadlineTo",
+    "activeFrom",
+    "activeTo",
     "brand",
     "type",
     "month",

@@ -82,13 +82,29 @@ const DEFAULTS = {
   completed: "",
   completedFrom: "",
   completedTo: "",
+  /** My dashboard links (Worksuite definitions): team member only, progress < 100 %, deadline / active ranges. */
+  memberOnly: "",
+  active: "",
+  deadlineFrom: "",
+  deadlineTo: "",
+  activeFrom: "",
+  activeTo: "",
 };
 
 type FilterKey = keyof typeof DEFAULTS;
 const SHEET_KEYS: FilterKey[] = ["category", "brand", "type", "month", "department", "manager", "member", "deadline", "completed"];
 const INLINE_KEYS: FilterKey[] = ["search", "status", "from", "to", "progress"];
 /** Only shown as removable chips (no control of their own). */
-const CHIP_KEYS: FilterKey[] = ["completedFrom", "completedTo"];
+const CHIP_KEYS: FilterKey[] = [
+  "completedFrom",
+  "completedTo",
+  "memberOnly",
+  "active",
+  "deadlineFrom",
+  "deadlineTo",
+  "activeFrom",
+  "activeTo",
+];
 const CLEARABLE_KEYS: FilterKey[] = [...INLINE_KEYS, ...SHEET_KEYS, ...CHIP_KEYS];
 const NO_COMPLETED = { completed: "", completedFrom: "", completedTo: "" };
 
@@ -140,6 +156,12 @@ export function ProjectWorkspace() {
     completed: filters.completed || filters.completedFrom || filters.completedTo ? "true" : "",
     completedFrom: filters.completedFrom,
     completedTo: filters.completedTo,
+    memberOnly: filters.memberOnly,
+    active: filters.active === "1" ? "1" : "",
+    deadlineFrom: filters.deadlineFrom,
+    deadlineTo: filters.deadlineTo,
+    activeFrom: filters.activeFrom && filters.activeTo ? filters.activeFrom : "",
+    activeTo: filters.activeFrom && filters.activeTo ? filters.activeTo : "",
   };
   const completedOn = listFilters.completed === "true";
   // Employees have no Member select; show "my projects" (dashboard links) as a chip.
@@ -326,7 +348,15 @@ export function ProjectWorkspace() {
           canClear={filtered}
           onClearAll={() => table.clearFilters(CLEARABLE_KEYS)}
           chips={
-            completedOn || memberChip || filters.type || listFilters.month ? (
+            completedOn ||
+            memberChip ||
+            filters.type ||
+            listFilters.month ||
+            filters.memberOnly ||
+            listFilters.active ||
+            filters.deadlineFrom ||
+            filters.deadlineTo ||
+            listFilters.activeFrom ? (
               <>
                 {filters.type && (
                   <FilterChip onRemove={() => table.setFilters({ type: "" })}>Type · {typeLabel}</FilterChip>
@@ -339,6 +369,24 @@ export function ProjectWorkspace() {
                 {memberChip && (
                   <FilterChip onRemove={() => table.setFilters({ member: "" })}>
                     {filters.member === me._id ? "My projects" : "Member filter"}
+                  </FilterChip>
+                )}
+                {filters.memberOnly && (
+                  <FilterChip onRemove={() => table.setFilters({ memberOnly: "" })}>
+                    {filters.memberOnly === me._id ? "I'm a member" : "Team member filter"}
+                  </FilterChip>
+                )}
+                {listFilters.active && (
+                  <FilterChip onRemove={() => table.setFilters({ active: "" })}>Progress &lt; 100%</FilterChip>
+                )}
+                {(filters.deadlineFrom || filters.deadlineTo) && (
+                  <FilterChip onRemove={() => table.setFilters({ deadlineFrom: "", deadlineTo: "" })}>
+                    Deadline {rangeText(filters.deadlineFrom, filters.deadlineTo)}
+                  </FilterChip>
+                )}
+                {listFilters.activeFrom && (
+                  <FilterChip onRemove={() => table.setFilters({ activeFrom: "", activeTo: "" })}>
+                    Active {rangeText(filters.activeFrom, filters.activeTo)}
                   </FilterChip>
                 )}
                 {completedOn && (

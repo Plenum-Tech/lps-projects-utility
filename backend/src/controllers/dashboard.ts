@@ -12,6 +12,7 @@ import { User } from "../models/User.js";
 import { EmployeeDocument } from "../models/EmployeeDocument.js";
 import { archivedProjectIds, Project } from "../models/Project.js";
 import { completedWithin, projectCompletionDates } from "../lib/projectCompletion.js";
+import { activeInRangeFilter, memberProjectFilter, PROGRESS_NOT_DONE } from "../lib/myProjects.js";
 import { cached } from "../lib/refCache.js";
 import { completedStatusIds } from "../models/ProjectStatus.js";
 import { TimeLog } from "../models/TimeLog.js";
@@ -390,7 +391,6 @@ export async function getEmployeeDashboard(req: Request, res: Response): Promise
 
 /** Every list in GET /api/dashboard/me is capped at this many rows. */
 const MY_LIST_CAP = 10;
-const PENDING_TASK_STATUSES = ["todo", "in_progress", "in_review"];
 const BIRTHDAY_WINDOW_DAYS = 30;
 const HR_END_WINDOW_DAYS = 30;
 const DOCUMENT_EXPIRY_WINDOW_DAYS = 60;
@@ -443,7 +443,7 @@ const MY_PERIOD_DAYS: Record<Exclude<MyPeriodKey, "all">, number> = {
   "120d": 120,
   "365d": 365,
 };
-const DEFAULT_MY_PERIOD: MyPeriodKey = "30d";
+const DEFAULT_MY_PERIOD: MyPeriodKey = "all";
 
 interface DayRange {
   /** Date-only bounds (UTC midnight of the calendar dates, inclusive). */
@@ -465,7 +465,7 @@ function dayRange(from: Date, to: Date): DayRange {
   return { from, to, start: appDayStart(from), end: appDayStart(addDays(to, 1)) };
 }
 
-/** `?period=` → resolved ranges (undefined/"" → 30d; null when invalid). */
+/** `?period=` → resolved ranges (undefined/"" → all; null when invalid). */
 function resolveMyPeriod(raw: unknown, today: Date): MyPeriod | null {
   const key = raw === undefined || raw === "" ? DEFAULT_MY_PERIOD : raw;
   if (typeof key !== "string" || !(MY_PERIODS as readonly string[]).includes(key)) return null;
@@ -545,10 +545,17 @@ type HrUserRow = {
 
 /**
  * GET /api/dashboard/me?period=7d|30d|90d|120d|365d|all — one aggregated call
- * for the personal dashboard (default 30d; see prompts/my-dashboard-period.md).
- * The period (last N days ending today, app timezone) filters the task / project
- * counts, the completed tiles (with the previous equal period) and My tasks;
- * "all" is the unfiltered behaviour. The people / HR / document cards are
+ * for the personal dashboard (default all; see prompts/my-dashboard-period.md).
+ * "All time" counts exactly like Worksuite's employee dashboard:
+ * - Pending (= Open tasks): assigned to me, not completed;
+ * - Tasks overdue: those due before today (date-only, app timezone);
+ * - Projects (= In progress): I'm a member (members[].user, not manager-only),
+ *   progress ≠ 100, not archived;
+ * - Projects overdue: those with a deadline on or before today ("earlier than now").
+ * The period (last N days ending today, app timezone) narrows these base sets
+ * (created/due, active in, deadline in the period) and dates the completed tiles
+ * (with the previous equal period); My tasks follows it. Every tile equals the
+ * total of the /tasks or /projects list it links to. The people / HR / document cards are
  * forward-looking and ignore it. Restricted lists (probation / notice / internship / document expiries) are
  * scoped: self (employee, head without department) / department (head) / all (admin).
  */
@@ -622,26 +629,33 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   };
   if (cur) logMatch.startTime = { $gte: cur.start, $lt: cur.end };
 
+  // Projects (Worksuite): member, progress ≠ 100, not archived; with a period,
+  // also active in it. Overdue: deadline on or before today (inside the period).
+  const memberProjects = memberProjectFilter(meId);
+  const inProgressBase = { ...memberProjects, ...PROGRESS_NOT_DONE };
+  const projectDeadline: Record<string, unknown> = { $ne: null, $lte: today };
+  if (cur) projectDeadline.$gte = cur.from;
+
   const [
     taskCounts,
     myTaskRows,
-    projects,
+    projectsInProgress,
+    projectsOverdue,
+    finished,
     leavesToday,
     people,
     docRows,
     docTotal,
     weekTimelogs,
     completedRows,
-    touchedProjectIds,
     loggedRows,
   ] = await Promise.all([
-    Task.aggregate<{ open: number; pending: number; overdue: number }>([
+    Task.aggregate<{ open: number; overdue: number }>([
       { $match: openMatch },
       {
         $group: {
           _id: null,
           open: { $sum: 1 },
-          pending: { $sum: { $cond: [{ $in: ["$status", PENDING_TASK_STATUSES] }, 1, 0] } },
           overdue: { $sum: { $cond: [{ $and: overdueCond }, 1, 0] } },
         },
       },
@@ -653,7 +667,14 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       { $limit: MY_LIST_CAP },
       { $project: { title: 1, shortCode: 1, number: 1, labels: 1, status: 1, dueDate: 1, priority: 1, project: 1 } },
     ]),
-    Project.find(myProjectsFilter(meId)).select("status startDate deadline updatedAt").lean(),
+    (cur ? activeInRangeFilter(meId, cur.from, cur.to) : Promise.resolve(null)).then((active) =>
+      Project.countDocuments(active ? { $and: [inProgressBase, active] } : inProgressBase)
+    ),
+    Project.countDocuments({ ...inProgressBase, deadline: projectDeadline }),
+    // My finished projects (completed status) — dated below for the Completed tile.
+    Project.find({ ...memberProjects, status: { $in: completedStatuses } })
+      .select("_id updatedAt")
+      .lean<Array<{ _id: ObjectId; updatedAt: Date }>>(),
     Leave.find({ status: "approved", startDate: { $lte: today }, endDate: { $gte: today } })
       .select("user endDate")
       .populate<{ user: { _id: ObjectId; name: string; designation?: string } | null }>({
@@ -700,10 +721,6 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
         },
       },
     ]),
-    // Projects with a task of mine updated in the period ("active in the period").
-    cur
-      ? Task.distinct("project", { assignees: meId, updatedAt: { $gte: cur.start, $lt: cur.end } })
-      : Promise.resolve([] as unknown[]),
     TimeLog.aggregate<{ minutes: number }>([
       { $match: logMatch },
       { $group: { _id: null, minutes: { $sum: "$durationMinutes" } } },
@@ -711,9 +728,7 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   ]);
 
   // --- Tasks ------------------------------------------------------------------
-  const counts = taskCounts[0] ?? { open: 0, pending: 0, overdue: 0 };
-  const completedSet = new Set(completedStatuses.map((id) => id.toString()));
-  const finished = projects.filter((p) => completedSet.has(String(p.status)));
+  const counts = taskCounts[0] ?? { open: 0, overdue: 0 };
 
   const [populated, completionDates] = await Promise.all([
     Task.populate(myTaskRows, [
@@ -749,26 +764,8 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   // --- Projects ---------------------------------------------------------------
   // Finished = in a completed status; its completion moment is the last status
   // change (projects that never changed status fall back to updatedAt).
-  const completionOf = (p: (typeof projects)[number]): Date =>
+  const completionOf = (p: (typeof finished)[number]): Date =>
     completionDates.get(String(p._id)) ?? p.updatedAt;
-  const touched = new Set(touchedProjectIds.filter(Boolean).map(String));
-  /** start → deadline (else completion, else open-ended) overlaps the period, or a task of mine was updated in it. */
-  const activeInPeriod = (p: (typeof projects)[number]): boolean => {
-    if (!cur) return true;
-    if (touched.has(String(p._id))) return true;
-    if (p.startDate && p.startDate.getTime() > cur.to.getTime()) return false;
-    if (p.deadline) return p.deadline.getTime() >= cur.from.getTime();
-    if (completedSet.has(String(p.status))) return completionOf(p).getTime() >= cur.start.getTime();
-    return true;
-  };
-  const periodProjects = projects.filter(activeInPeriod);
-  const activeProjects = periodProjects.filter((p) => !completedSet.has(String(p.status)));
-  const projectsOverdue = activeProjects.filter(
-    (p) =>
-      p.deadline &&
-      p.deadline.getTime() < today.getTime() &&
-      (!cur || p.deadline.getTime() >= cur.from.getTime())
-  ).length;
   const completedProjects = cur
     ? {
         count: finished.filter((p) => completedWithin(completionOf(p), cur)).length,
@@ -865,11 +862,13 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       joiningDate: me.joiningDate ?? null,
     },
     counts: {
+      // Worksuite: Profile → Open tasks and Tasks → Pending are the same number,
+      // as are Profile → Projects and Projects → In progress.
       openTasks: counts.open,
-      pendingTasks: counts.pending,
+      pendingTasks: counts.open,
       overdueTasks: counts.overdue,
-      projects: periodProjects.length,
-      projectsInProgress: activeProjects.length,
+      projects: projectsInProgress,
+      projectsInProgress,
       projectsOverdue,
     },
     completedTasks,
