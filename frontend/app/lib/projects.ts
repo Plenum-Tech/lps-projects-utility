@@ -47,6 +47,61 @@ export function suggestCode(name: string): string {
     .slice(0, 6);
 }
 
+// ---------------------------------------------------------------------------
+// Structured names: `Brand_Type_MonYYYY_Name` (mirrors backend lib/projectNaming.ts)
+// ---------------------------------------------------------------------------
+
+export const NAMING_SEPARATOR = "_";
+export const NAMING_TITLE_MAX = 80;
+export const DEFAULT_PROJECT_TYPES = ["Campaign", "Program", "Project"];
+
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const MONTH_LONG = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+/** "2026-10" → "Oct2026" ("" when not a month). */
+export function formatNamingMonth(month: string): string {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  return match ? `${MONTH_ABBR[Number(match[2]) - 1]}${match[1]}` : "";
+}
+
+/** "2026-10" → "October 2026" (filter chips / labels). */
+export function namingMonthLabel(month: string): string {
+  const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(month);
+  return match ? `${MONTH_LONG[Number(match[2]) - 1]} ${match[1]}` : month;
+}
+
+/** Whitespace collapsed and trimmed. */
+export function tidyNamePart(text: string): string {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+/** The composed project name, with "…" placeholders for missing parts (live preview). */
+export function composeProjectName(parts: { brand: string; type: string; month: string; title: string }): string {
+  return [
+    tidyNamePart(parts.brand) || "Brand",
+    tidyNamePart(parts.type) || "Type",
+    formatNamingMonth(parts.month) || "MonYYYY",
+    tidyNamePart(parts.title) || "Name",
+  ].join(NAMING_SEPARATOR);
+}
+
+/** Short code suggestion from brand (short name preferred) + type: "Wasl" + "Campaign" → "WASLC". */
+export function suggestNamingCode(brand: string, type: string): string {
+  const head = brand.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  const initial = type.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 1);
+  const code = `${head}${initial}`;
+  if (!head) return "";
+  return code.length >= 2 ? code : `${code}PR`.slice(0, 2);
+}
+
+/** true = legacy free-text name (no structured parts). */
+export function isLegacyProjectName(project: Pick<Project, "naming">): boolean {
+  return !project.naming;
+}
+
 export function isProjectOverdue(project: Pick<Project, "deadline" | "isOverdue">): boolean {
   if (typeof project.isOverdue === "boolean") return project.isOverdue;
   return Boolean(project.deadline && toDateInput(project.deadline) < todayKey());

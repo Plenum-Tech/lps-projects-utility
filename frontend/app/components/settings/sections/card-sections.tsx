@@ -12,6 +12,7 @@ import {
 import { ProjectCategoriesCard } from "@/components/projects/settings/project-categories-card";
 import { ProjectReminderCard } from "@/components/projects/settings/project-reminder-card";
 import { ProjectStatusesCard } from "@/components/projects/settings/project-statuses-card";
+import { ProjectTypesCard } from "@/components/projects/settings/project-types-card";
 import { TimeLogSettingsCard } from "@/components/projects/settings/time-log-settings-card";
 import { ReminderSettingsCard } from "@/components/tasks/settings/reminder-settings-card";
 import { SmtpStatusCard } from "@/components/tasks/settings/smtp-status-card";
@@ -98,11 +99,12 @@ export function TaskSection() {
   );
 }
 
-/** Settings → Projects: statuses, categories, deadline reminders. */
+/** Settings → Projects: statuses, name types, categories, deadline reminders. */
 export function ProjectSection() {
   return (
     <div className="space-y-6">
       <ProjectStatusesCard />
+      <ProjectTypesCard />
       <ProjectCategoriesCard />
       <ProjectReminderCard />
     </div>

@@ -27,6 +27,21 @@ export function ProjectStatusPill({
   );
 }
 
+/** Small marker for projects that still have a legacy free-text name (no Brand_Type_MonYYYY_Name parts). */
+export function LegacyNameBadge({ className }: { className?: string }) {
+  return (
+    <span
+      title="Legacy name — edit the project to convert it to Brand_Type_MonYYYY_Name"
+      className={cn(
+        "inline-flex h-4.5 shrink-0 items-center rounded-full border border-dashed px-1.5 text-[0.65rem] font-medium whitespace-nowrap text-muted-foreground",
+        className
+      )}
+    >
+      Legacy name
+    </span>
+  );
+}
+
 /** Circular progress ring (SVG, uses currentColor from theme tokens). */
 export function ProgressRing({
   value,

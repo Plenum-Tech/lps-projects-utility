@@ -218,7 +218,11 @@ export type ActivityAction =
   | "settings_updated"
   | "import_completed"
   | "import_undone"
-  | "password_reset";
+  | "password_reset"
+  | "pearity_tag_created"
+  | "pearity_key_created"
+  | "pearity_key_revoked"
+  | "pearity_settings_updated";
 
 /** Mirrors the backend ActivityLog model as returned by the API (Mongoose toJSON). */
 export interface ActivityLog {
@@ -856,6 +860,11 @@ export interface Subtask {
   startDate?: string | null;
   dueDate: string | null;
   completedAt: string | null;
+  /** Actual start / end (ISO date-time); end is set when ticked off. */
+  actualStartAt?: string | null;
+  actualEndAt?: string | null;
+  actualStartSource?: ActualDateSource | null;
+  actualEndSource?: ActualDateSource | null;
   /** User id (not populated). */
   createdBy: string;
   /** User id of the last editor. */
@@ -942,6 +951,77 @@ export interface Task {
    * detail (GET /api/tasks/:id) populates `{ _id, title }` and the line's `start`.
    */
   sourceMeeting?: TaskSourceMeeting | null;
+  /** The task's Pearity tag (one per task), null until someone clicks Generate. */
+  pearityTag?: PearityTagRef | null;
+}
+
+// --- Pearity integration ------------------------------------------------------
+
+export interface PearityTagRef {
+  tagId: string;
+  tagName: string;
+  createdAt: string;
+  createdBy: { id: string; name: string } | null;
+}
+
+export type PearityUsageSource = "utility" | "pearity";
+
+/** GET /api/tasks/:id/pearity */
+export interface TaskPearityInfo {
+  enabled: boolean;
+  tag: PearityTagRef | null;
+  /** The name the tag gets on first Generate (or the existing name). */
+  proposedTagName: string;
+  generateUrl: string | null;
+  usageCount: number;
+  generatedBy: Array<{
+    user: { _id: string; name: string };
+    count: number;
+    lastAt: string;
+    sources: PearityUsageSource[];
+  }>;
+}
+
+/** POST /api/tasks/:id/pearity/generate */
+export interface PearityGenerateResponse {
+  created: boolean;
+  tag: PearityTagRef;
+  generateUrl: string | null;
+}
+
+export type PearityPlaceholder = "tagId" | "tagName" | "taskId" | "taskCode" | "brand" | "category" | "project";
+
+export interface PearitySettings {
+  enabled: boolean;
+  engineUrlTemplate: string;
+  allowedIps: string[];
+  updatedAt: string | null;
+}
+
+export interface PearitySettingsResponse {
+  settings: PearitySettings;
+  placeholders: PearityPlaceholder[];
+  apiBasePath: string;
+}
+
+export type PearityApiScope = "pearity:read" | "pearity:tags";
+
+export interface PearityApiKey {
+  _id: string;
+  name: string;
+  /** First 12 characters, e.g. "pty_AbCd1234". */
+  prefix: string;
+  scopes: PearityApiScope[];
+  lastUsedAt: string | null;
+  createdAt: string;
+  createdBy: { _id: string; name: string } | null;
+  revokedAt: string | null;
+}
+
+/** POST /api/integrations/pearity/keys — `key` is shown once. */
+export interface PearityKeyCreateResponse {
+  key: string;
+  apiKey: PearityApiKey;
 }
 
 export interface TaskSourceMeeting {
@@ -995,6 +1075,9 @@ export interface SubtaskInput {
   assignee?: string | null;
   startDate?: string | null;
   dueDate?: string | null;
+  /** Subtask endpoint only: ISO date-time (null = empty). */
+  actualStartAt?: string | null;
+  actualEndAt?: string | null;
   /** Hold notifications until POST .../notify (after the form uploads files). */
   deferNotifications?: boolean;
 }
@@ -1039,6 +1122,11 @@ export interface SubtaskUpdateInput {
   startDate?: string | null;
   dueDate?: string | null;
   done?: boolean;
+  /** ISO date-time; null clears it (back to automatic). */
+  actualStartAt?: string | null;
+  actualEndAt?: string | null;
+  /** "Start now": sets an empty actual start to the current time. */
+  startNow?: boolean;
   deferNotifications?: boolean;
 }
 
@@ -1246,7 +1334,9 @@ export type TaskHistoryAction =
   | "reviewed"
   | "reminder_sent"
   | "created_from_meeting"
-  | "actual_dates_updated";
+  | "actual_dates_updated"
+  | "subtask_actual_dates_updated"
+  | "pearity_generated";
 
 export interface TaskHistoryEntry {
   _id: string;
@@ -1607,9 +1697,41 @@ export interface ProjectMember {
 
 export type ProgressMode = "manual" | "task_completion" | "total_time" | "deadline";
 
+/** Structured project name parts: `Brand_Type_MonYYYY_Name`. */
+export interface ProjectNaming {
+  /** Brand id. */
+  brand: string;
+  type: string;
+  /** "YYYY-MM". */
+  month: string;
+  /** The free "Name" part (≤ 80 characters, no "_"). */
+  title: string;
+}
+
+/** GET /projects/:id/naming-suggestion — pre-fill for the edit form. */
+export interface ProjectNamingSuggestion {
+  brand: string | null;
+  type: string | null;
+  month: string;
+  title: string;
+  /** true = the project still has a legacy free-text name. */
+  legacy: boolean;
+  monthSource: "naming" | "name" | "startDate";
+  typeDetected: boolean;
+}
+
+/** A project name Type (Settings → Projects). */
+export interface ProjectTypeOption {
+  name: string;
+  projectCount: number;
+}
+
 export interface Project {
   _id: string;
+  /** Composed `Brand_Type_MonYYYY_Name` when `naming` is set; legacy free text otherwise. */
   name: string;
+  /** null / absent = legacy name. */
+  naming?: ProjectNaming | null;
   code: string;
   summary?: string;
   category: { _id: string; name: string } | null;
@@ -1698,7 +1820,10 @@ export interface ProjectListResponse {
 }
 
 export interface ProjectInput {
-  name: string;
+  /** Legacy free-text name (legacy projects only; new projects use `naming`). */
+  name?: string;
+  /** Structured name parts (required on create); the server composes `name`. */
+  naming?: ProjectNaming;
   code: string;
   summary?: string;
   category?: string | null;
@@ -1834,6 +1959,8 @@ export interface ProjectSettings {
   deadlineReminderDays: number;
   deadlineReminderTo: ("manager" | "members" | "admins")[];
   dailyTimeLogReport: boolean;
+  /** Project name Types (`Brand_Type_MonYYYY_Name`). */
+  projectTypes: string[];
   createdAt: string;
   updatedAt: string;
 }

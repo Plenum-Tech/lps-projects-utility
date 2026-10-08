@@ -38,6 +38,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useDepartments } from "@/hooks/use-departments";
+import { usePearityStatus } from "@/hooks/use-pearity";
 import { useMilestones, useProjectOptions } from "@/hooks/use-projects";
 import { useRowSelection, useTableState } from "@/hooks/use-table-state";
 import { useAssignableUsers, useTaskCategories, useTaskLabels } from "@/hooks/use-task-meta";
@@ -87,6 +88,7 @@ const BASE_DEFAULTS = {
   milestone: "",
   department: "",
   overdue: "",
+  pearityTag: "",
   recurringParent: "",
   // Set by My dashboard links (shown as removable chips).
   statusIn: "",
@@ -106,6 +108,7 @@ const SHEET_KEYS: FilterKey[] = [
   "milestone",
   "department",
   "overdue",
+  "pearityTag",
 ];
 
 /** Filters without an inline control, shown as removable chips. */
@@ -237,6 +240,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const scope: TaskScope = view === "approvals" ? "approvals" : mine ? "assigned" : "all";
   const status = (filters.status || "all") as TaskStatusFilter;
   const sort = (SORT_FIELDS as string[]).includes(table.sort) ? (table.sort as TaskSortField) : "";
+  const pearityOn = usePearityStatus(Boolean(user)).data === true;
   const taskFilters: TaskFilters = {
     scope,
     search: filters.search,
@@ -251,6 +255,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
     from: filters.from || undefined,
     to: filters.to || undefined,
     overdue: filters.overdue === "on",
+    pearityTag: pearityOn && (filters.pearityTag === "has" || filters.pearityTag === "none") ? filters.pearityTag : "",
     pinned: view === "pinned",
     recurringParent: filters.recurringParent || undefined,
     statusIn: filters.statusIn || undefined,
@@ -323,7 +328,9 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const milestones = useMilestones(milestoneProject || null, Boolean(milestoneProject));
   const recurringParent = useTask(filters.recurringParent || null);
 
-  const sheetKeys = SHEET_KEYS.filter((key) => key !== "department" || role === "admin");
+  const sheetKeys = SHEET_KEYS.filter(
+    (key) => (key !== "department" || role === "admin") && (key !== "pearityTag" || pearityOn)
+  );
   const sheetCount = table.countActive(sheetKeys);
   const inlineKeys = INLINE_KEYS.filter((key) => key !== "project" || !project);
   const clearableKeys: FilterKey[] = [...inlineKeys, ...sheetKeys, ...CHIP_KEYS];
@@ -658,6 +665,18 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
           <DepartmentSheetSelect
             value={filters.department}
             onChange={(department) => table.setFilters({ department })}
+          />
+        )}
+        {pearityOn && (
+          <SheetSelect
+            label="Pearity tag"
+            value={filters.pearityTag}
+            onChange={(pearityTag) => table.setFilters({ pearityTag })}
+            anyLabel="Any"
+            options={[
+              { value: "has", label: "Has tag" },
+              { value: "none", label: "No tag" },
+            ]}
           />
         )}
         <SheetSwitch

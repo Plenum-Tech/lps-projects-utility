@@ -109,7 +109,8 @@ export function splitSegments(name: string): string[] {
     .filter(Boolean);
 }
 
-function isDateToken(token: string): boolean {
+/** Month / year / quarter token ("June", "'25", "2026", "Q3"...). */
+export function isDateToken(token: string): boolean {
   return DATE_TOKEN.test(token.replace(/[.,]$/, ""));
 }
 

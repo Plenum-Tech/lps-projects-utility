@@ -85,6 +85,8 @@ export interface TaskFilters {
   /** Completed (completedAt day) within this "YYYY-MM-DD" range (inclusive). */
   completedFrom?: string;
   completedTo?: string;
+  /** Pearity tag: "has" / "none". */
+  pearityTag?: "has" | "none" | "";
 }
 
 /** Server-side sort fields of GET /api/tasks. */
@@ -152,6 +154,7 @@ function filterParams(filters: TaskFilters): Record<string, string> {
   if (filters.createdOrDueTo) params.createdOrDueTo = filters.createdOrDueTo;
   if (filters.completedFrom) params.completedFrom = filters.completedFrom;
   if (filters.completedTo) params.completedTo = filters.completedTo;
+  if (filters.pearityTag) params.pearityTag = filters.pearityTag;
   return params;
 }
 
@@ -902,6 +905,9 @@ export async function createSubtasksFromDrafts(
     description: string;
     startDate: string;
     dueDate: string;
+    /** ISO date-times (empty = none). */
+    actualStartAt?: string;
+    actualEndAt?: string;
     assignee: { _id: string } | null;
     files: File[];
   }>
@@ -919,6 +925,8 @@ export async function createSubtasksFromDrafts(
           description: draft.description || undefined,
           startDate: draft.startDate || null,
           dueDate: draft.dueDate || null,
+          ...(draft.actualStartAt ? { actualStartAt: draft.actualStartAt } : {}),
+          ...(draft.actualEndAt ? { actualEndAt: draft.actualEndAt } : {}),
           assignee: draft.assignee?._id ?? null,
           ...(hasFiles ? { deferNotifications: true } : {}),
         } satisfies SubtaskInput

@@ -114,6 +114,10 @@ const ACTION_META: Record<
   import_completed: { label: "Imported records", badge: "default" },
   import_undone: { label: "Undid import", badge: "destructive" },
   password_reset: { label: "Reset password", badge: "secondary" },
+  pearity_tag_created: { label: "Created Pearity tag", badge: "default" },
+  pearity_key_created: { label: "Created Pearity API key", badge: "default" },
+  pearity_key_revoked: { label: "Revoked Pearity API key", badge: "destructive" },
+  pearity_settings_updated: { label: "Updated Pearity settings", badge: "secondary" },
 };
 
 function detailsSummary(log: ActivityLog): string | null {

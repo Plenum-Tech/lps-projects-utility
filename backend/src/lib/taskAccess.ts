@@ -13,6 +13,7 @@ import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { canCreateProjectTasks, canManageProject, canViewProject, departmentUserIds } from "./projectAccess.js";
+import { pearityTagsByTask } from "./pearity.js";
 import { createEvent, pushToUsers } from "./sse.js";
 
 // ---------------------------------------------------------------------------
@@ -411,10 +412,11 @@ export async function serializeTasks(
   viewer?: { pinnedTasks?: mongoose.Types.ObjectId[] } | null
 ): Promise<Record<string, unknown>[]> {
   const ids = tasks.map((t) => t._id as mongoose.Types.ObjectId);
-  const [comments, files, logged] = await Promise.all([
+  const [comments, files, logged, pearityTags] = await Promise.all([
     countByTask(TaskComment, ids),
     countByTask(TaskFile, ids),
     loggedMinutesByTask(ids),
+    pearityTagsByTask(ids),
   ]);
   const pinned = new Set((viewer?.pinnedTasks ?? []).map((id) => id.toString()));
   return tasks.map((t) => {
@@ -432,6 +434,8 @@ export async function serializeTasks(
       fileCount: files.get(id) ?? 0,
       loggedMinutes: logged.get(id) ?? 0,
       pinned: pinned.has(id),
+      /** Pearity tag `{ tagId, tagName, createdAt, createdBy }` or null (lib/pearity.ts). */
+      pearityTag: pearityTags.get(id) ?? null,
     };
   });
 }

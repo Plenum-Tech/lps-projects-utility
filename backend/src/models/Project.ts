@@ -7,7 +7,8 @@ export const PROGRESS_MODES = ["manual", "task_completion", "total_time", "deadl
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
 
 export const PROJECT_LIMITS = {
-  nameMax: 150,
+  /** Composed names (brand 80 + type 30 + month + title 80) fit; legacy names too. */
+  nameMax: 200,
   summaryMax: 5000,
   maxMembers: 200,
   maxDepartments: 20,
@@ -23,8 +24,22 @@ export interface IProjectMember {
   addedAt: Date;
 }
 
+/**
+ * Structured name parts (`Brand_Type_MonYYYY_Name`, see lib/projectNaming.ts).
+ * null/absent = legacy free-text name.
+ */
+export interface IProjectNaming {
+  brand: mongoose.Types.ObjectId;
+  type: string;
+  /** "YYYY-MM". */
+  month: string;
+  title: string;
+}
+
 export interface IProject extends mongoose.Document {
+  /** Composed from `naming` when set (lists, search, sort, CSV use this). */
   name: string;
+  naming?: IProjectNaming | null;
   code: string;
   summary?: string;
   category?: mongoose.Types.ObjectId | null;
@@ -62,9 +77,20 @@ const memberSchema = new Schema<IProjectMember>(
   { _id: false }
 );
 
+const namingSchema = new Schema<IProjectNaming>(
+  {
+    brand: { type: Schema.Types.ObjectId, ref: "Brand", required: true },
+    type: { type: String, required: true, trim: true, maxlength: 30 },
+    month: { type: String, required: true, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
+    title: { type: String, required: true, trim: true, maxlength: 80 },
+  },
+  { _id: false }
+);
+
 const projectSchema = new Schema<IProject>(
   {
     name: { type: String, required: true, trim: true, maxlength: PROJECT_LIMITS.nameMax },
+    naming: { type: namingSchema, default: null },
     code: { type: String, required: true, trim: true, uppercase: true, match: PROJECT_CODE_REGEX },
     summary: { type: String, trim: true, maxlength: PROJECT_LIMITS.summaryMax },
     category: { type: Schema.Types.ObjectId, ref: "ProjectCategory", default: null },
@@ -96,6 +122,8 @@ projectSchema.index({ departments: 1 });
 projectSchema.index({ deadline: 1, archivedAt: 1 });
 // Brand filter / project counts per brand / Delivery Pulse brand joins.
 projectSchema.index({ brand: 1 });
+// Type / Month filters on the projects list.
+projectSchema.index({ "naming.type": 1, "naming.month": 1 });
 
 projectSchema.set("toJSON", {
   transform: (_doc, ret) => {

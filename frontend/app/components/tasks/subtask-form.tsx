@@ -49,6 +49,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
 import { formatDateOnly, formatFileSize, toDateInput } from "@/lib/tasks";
+import { fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Subtask, SubtaskUpdateInput, Task, UserRef } from "@/types";
 
@@ -76,6 +77,9 @@ export interface SubtaskDraft {
   description: string;
   startDate: string;
   dueDate: string;
+  /** ISO date-times; "" = none. */
+  actualStartAt?: string;
+  actualEndAt?: string;
   assignee: UserRef | null;
   files: File[];
 }
@@ -126,6 +130,9 @@ export function SubtaskFormDialog({
   const [title, setTitle] = useState("");
   const [startDate, setStartDate] = useState("");
   const [dueDate, setDueDate] = useState("");
+  /** <input type="datetime-local"> values; "" = empty (automatic). */
+  const [actualStart, setActualStart] = useState("");
+  const [actualEnd, setActualEnd] = useState("");
   const [assignee, setAssignee] = useState<string>(UNASSIGNED);
   const [description, setDescription] = useState("");
   const [pending, setPending] = useState<File[]>([]);
@@ -143,6 +150,8 @@ export function SubtaskFormDialog({
       setTitle(initialDraft?.title ?? "");
       setStartDate(initialDraft?.startDate ?? "");
       setDueDate(initialDraft?.dueDate ?? "");
+      setActualStart(initialDraft?.actualStartAt ? toDateTimeInput(initialDraft.actualStartAt) : "");
+      setActualEnd(initialDraft?.actualEndAt ? toDateTimeInput(initialDraft.actualEndAt) : "");
       setAssignee(initialDraft?.assignee?._id ?? UNASSIGNED);
       setDescription(initialDraft?.description ?? "");
       setPending(initialDraft?.files ?? []);
@@ -150,6 +159,8 @@ export function SubtaskFormDialog({
       setTitle(subtask?.title ?? "");
       setStartDate(toDateInput(subtask?.startDate));
       setDueDate(toDateInput(subtask?.dueDate));
+      setActualStart(subtask?.actualStartAt ? toDateTimeInput(subtask.actualStartAt) : "");
+      setActualEnd(subtask?.actualEndAt ? toDateTimeInput(subtask.actualEndAt) : "");
       setAssignee(subtask?.assignee?._id ?? UNASSIGNED);
       setDescription(subtask?.description ?? "");
       setPending([]);
@@ -192,6 +203,13 @@ export function SubtaskFormDialog({
       : null;
   const datesError =
     startDate && dueDate && startDate > dueDate ? "The due date can't be before the start date." : null;
+  const nowInput = toDateTimeInput(new Date(Date.now() + 2 * 60_000));
+  const actualError =
+    (actualStart && actualStart > nowInput) || (actualEnd && actualEnd > nowInput)
+      ? "Actual dates can't be in the future."
+      : actualStart && actualEnd && actualEnd < actualStart
+        ? "The actual end can't be before the actual start."
+        : null;
   const descriptionError =
     description.length > MAX_DESCRIPTION ? `Keep it under ${MAX_DESCRIPTION.toLocaleString()} characters.` : null;
   const taskDue = toDateInput(task.dueDate);
@@ -239,7 +257,9 @@ export function SubtaskFormDialog({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (titleError || datesError || descriptionError || locked) return;
+    if (titleError || datesError || actualError || descriptionError || locked) return;
+    const actualStartIso = actualStart ? fromDateTimeInput(actualStart) : null;
+    const actualEndIso = actualEnd ? fromDateTimeInput(actualEnd) : null;
 
     if (draft) {
       draft.onSave({
@@ -247,6 +267,8 @@ export function SubtaskFormDialog({
         description: description.trim(),
         startDate,
         dueDate,
+        actualStartAt: actualStartIso ?? "",
+        actualEndAt: actualEndIso ?? "",
         assignee: selected ? { _id: selected.value, name: selected.label, email: selected.email } : null,
         files: pending,
       });
@@ -267,6 +289,13 @@ export function SubtaskFormDialog({
         if (startDate !== toDateInput(subtask.startDate)) input.startDate = startDate || null;
         if (dueDate !== toDateInput(subtask.dueDate)) input.dueDate = dueDate || null;
         if (nextAssignee !== (subtask.assignee?._id ?? null)) input.assignee = nextAssignee;
+        // Emptying an actual date returns it to automatic.
+        if (actualStart !== (subtask.actualStartAt ? toDateTimeInput(subtask.actualStartAt) : "")) {
+          input.actualStartAt = actualStartIso;
+        }
+        if (actualEnd !== (subtask.actualEndAt ? toDateTimeInput(subtask.actualEndAt) : "")) {
+          input.actualEndAt = actualEndIso;
+        }
         subId = subtask._id;
         if (Object.keys(input).length > 0) {
           deferred = hasFiles && input.assignee !== undefined && nextAssignee !== null;
@@ -287,6 +316,8 @@ export function SubtaskFormDialog({
           description: description.trim() || undefined,
           startDate: startDate || null,
           dueDate: dueDate || null,
+          ...(actualStartIso ? { actualStartAt: actualStartIso } : {}),
+          ...(actualEndIso ? { actualEndAt: actualEndIso } : {}),
           assignee: nextAssignee,
           ...(deferred ? { deferNotifications: true } : {}),
         });
@@ -440,6 +471,45 @@ export function SubtaskFormDialog({
                   Heads up: this is after the task&apos;s due date ({formatDateOnly(task.dueDate, true)}).
                 </p>
               )}
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="subtask-actual-start">Actual start</Label>
+                <Input
+                  id="subtask-actual-start"
+                  type="datetime-local"
+                  value={actualStart}
+                  max={nowInput}
+                  onChange={(event) => setActualStart(event.target.value)}
+                  aria-invalid={Boolean(actualError) || undefined}
+                  aria-describedby="subtask-actual-hint"
+                  disabled={locked}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="subtask-actual-end">Actual end</Label>
+                <Input
+                  id="subtask-actual-end"
+                  type="datetime-local"
+                  value={actualEnd}
+                  min={actualStart || undefined}
+                  max={nowInput}
+                  onChange={(event) => setActualEnd(event.target.value)}
+                  aria-invalid={Boolean(actualError) || undefined}
+                  aria-describedby="subtask-actual-hint"
+                  disabled={locked}
+                />
+              </div>
+              <div className="sm:col-span-2" id="subtask-actual-hint">
+                {actualError ? (
+                  <FieldError>{actualError}</FieldError>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Optional. Actual end fills in when the subtask is ticked off; leave empty to keep it automatic.
+                  </p>
+                )}
+              </div>
             </div>
 
             <div className="space-y-1.5">

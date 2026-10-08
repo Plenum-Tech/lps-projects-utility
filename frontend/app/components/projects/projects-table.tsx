@@ -20,7 +20,7 @@ import {
   type DataTableColumn,
 } from "@/components/globals/data-table/table";
 import { BrandName } from "@/components/delivery/brand-dot";
-import { ShortCode } from "@/components/projects/project-badges";
+import { LegacyNameBadge, ShortCode } from "@/components/projects/project-badges";
 import { useChangeProjectStatus, useTogglePin } from "@/hooks/use-projects";
 import type { RowSelection, SortDir } from "@/hooks/use-table-state";
 import { canManageProjectClient, progressTone, statusColor } from "@/lib/projects";
@@ -198,6 +198,7 @@ export function ProjectsTable({
             {project.pinned && (
               <LuPin aria-label="Pinned" className="size-3.5 shrink-0 text-primary" />
             )}
+            {!project.naming && <LegacyNameBadge />}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {project.category?.name ?? "Uncategorised"}
@@ -286,6 +287,7 @@ export function ProjectsTable({
               <div className="flex items-center gap-1.5">
                 <ShortCode code={project.code} />
                 {project.pinned && <LuPin aria-label="Pinned" className="size-3.5 text-primary" />}
+                {!project.naming && <LegacyNameBadge />}
               </div>
               <Link
                 to={`/projects/${project._id}`}

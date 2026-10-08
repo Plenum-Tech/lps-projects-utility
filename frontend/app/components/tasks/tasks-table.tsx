@@ -8,6 +8,7 @@ import {
   LuPin,
   LuPinOff,
   LuRepeat,
+  LuSparkles,
   LuTrash2,
 } from "react-icons/lu";
 
@@ -23,8 +24,10 @@ import { DataTable, MobileField, type DataTableColumn } from "@/components/globa
 import { ActualDateCell } from "@/components/tasks/actual-dates";
 import { ApprovalActions } from "@/components/tasks/approval-actions";
 import { LabelChip } from "@/components/tasks/label-chip";
+import { PearityTagCell, usePearityGenerateAction } from "@/components/tasks/pearity";
 import { PriorityIndicator } from "@/components/tasks/task-badges";
 import { TaskTimerButton } from "@/components/tasks/task-timer-button";
+import { usePearityStatus } from "@/hooks/use-pearity";
 import type { RowSelection, SortDir } from "@/hooks/use-table-state";
 import {
   useDuplicateTask,
@@ -55,6 +58,9 @@ const OPTIONAL_COLUMNS: OptionalColumn[] = [
   { id: "actualStart", label: "Actual start" },
   { id: "actualEnd", label: "Actual end" },
 ];
+
+/** Shown in the columns menu only while the Pearity integration is on. */
+const PEARITY_COLUMN: OptionalColumn = { id: "pearityTag", label: "Pearity tag" };
 
 const STATUS_OPTIONS: StatusOption[] = TASK_STATUSES.map((status) => ({
   value: status,
@@ -180,6 +186,7 @@ function TaskRowMenu({
   const duplicate = useDuplicateTask();
   const pin = useToggleTaskPin();
   const remind = useRemindTask();
+  const pearity = usePearityGenerateAction(task);
 
   // From the row's detail (fetched when the menu opens) — employees only in projects they manage.
   const canDuplicate = Boolean(permissions?.canDuplicate);
@@ -195,6 +202,14 @@ function TaskRowMenu({
       icon: LuCopy,
       disabled: duplicate.isPending,
       onSelect: () => duplicate.mutate(task._id),
+    });
+  }
+  if (pearity.visible) {
+    actions.push({
+      label: task.pearityTag ? "Generate (Pearity)" : "Generate (creates Pearity tag)",
+      icon: LuSparkles,
+      disabled: pearity.pending,
+      onSelect: pearity.onSelect,
     });
   }
   actions.push({
@@ -221,12 +236,15 @@ function TaskRowMenu({
   }
 
   return (
-    <RowActions
-      label={`Actions for ${taskCode(task) || task.title}`}
-      actions={actions}
-      loading={opened && detail.isPending}
-      onOpenChange={(open) => open && setOpened(true)}
-    />
+    <>
+      <RowActions
+        label={`Actions for ${taskCode(task) || task.title}`}
+        actions={actions}
+        loading={opened && detail.isPending}
+        onOpenChange={(open) => open && setOpened(true)}
+      />
+      {pearity.dialog}
+    </>
   );
 }
 
@@ -271,6 +289,9 @@ export function TasksTable({
   footer: ReactNode;
 }) {
   const optional = useColumnVisibility("tasks", me._id);
+  const pearityOn = usePearityStatus().data === true;
+  const optionalColumns = pearityOn ? [...OPTIONAL_COLUMNS, PEARITY_COLUMN] : OPTIONAL_COLUMNS;
+  const showPearity = pearityOn && optional.isVisible("pearityTag");
   const columns: DataTableColumn<Task>[] = [
     {
       id: "code",
@@ -335,6 +356,15 @@ export function TasksTable({
           } satisfies DataTableColumn<Task>,
         ]
       : []),
+    ...(showPearity
+      ? [
+          {
+            id: "pearityTag",
+            header: "Pearity tag",
+            cell: (task: Task) => <PearityTagCell task={task} />,
+          } satisfies DataTableColumn<Task>,
+        ]
+      : []),
     {
       id: "estimate",
       header: "Estimated time",
@@ -364,7 +394,7 @@ export function TasksTable({
       id: "actions",
       header: (
         <span className="flex justify-end">
-          <ColumnVisibilityMenu columns={OPTIONAL_COLUMNS} isVisible={optional.isVisible} onToggle={optional.toggle} />
+          <ColumnVisibilityMenu columns={optionalColumns} isVisible={optional.isVisible} onToggle={optional.toggle} />
         </span>
       ),
       headClassName: "w-12 text-right",
@@ -431,6 +461,11 @@ export function TasksTable({
             {optional.isVisible("actualEnd") && (
               <MobileField label="Actual end">
                 <ActualDateCell task={task} field="actualEndAt" />
+              </MobileField>
+            )}
+            {showPearity && (
+              <MobileField label="Pearity tag">
+                <PearityTagCell task={task} />
               </MobileField>
             )}
           </dl>

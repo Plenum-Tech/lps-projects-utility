@@ -7,6 +7,7 @@ import {
   getSettings,
   getTimeSettings,
   listCategories,
+  listProjectTypes,
   listStatuses,
   reorderStatuses,
   setDefaultStatus,
@@ -33,6 +34,9 @@ router.get("/categories", listCategories);
 router.post("/categories", requireRole("admin"), createCategory);
 router.patch("/categories/:id", requireRole("admin"), updateCategory);
 router.delete("/categories/:id", requireRole("admin"), deleteCategory);
+
+// Project name Types (read: everyone; edit via PATCH /settings { projectTypes }).
+router.get("/types", listProjectTypes);
 
 // Any signed-in user: the public subset (where time may be logged).
 router.get("/settings/time", getTimeSettings);

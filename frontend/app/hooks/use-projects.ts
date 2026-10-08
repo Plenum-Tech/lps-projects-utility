@@ -26,6 +26,7 @@ import type {
   ProjectFile,
   ProjectInput,
   ProjectListResponse,
+  ProjectNamingSuggestion,
   ProjectNote,
   ProjectNoteInput,
   ProjectUpdateInput,
@@ -50,6 +51,10 @@ export interface ProjectFilters {
   member?: string;
   /** Brand id, or "none" for projects without a brand. */
   brand?: string;
+  /** Structured-name Type ("none" = legacy names). */
+  type?: string;
+  /** Structured-name month, "YYYY-MM". */
+  month?: string;
   /** Start→deadline overlaps this range ("YYYY-MM-DD"). */
   from?: string;
   to?: string;
@@ -90,6 +95,7 @@ export const projectKeys = {
   files: (id: string) => ["projects", "files", id] as const,
   activity: (id: string, limit: number) => ["projects", "activity", id, limit] as const,
   activityAll: (id: string) => ["projects", "activity", id] as const,
+  naming: (id: string) => ["projects", "naming", id] as const,
   assignable: (id: string) => ["projects", "assignable", id] as const,
 };
 
@@ -109,6 +115,8 @@ export function projectQueryParams(
     "deadline",
     "member",
     "brand",
+    "type",
+    "month",
     "from",
     "to",
     "progress",
@@ -192,6 +200,19 @@ export function useProjectOptions(enabled = true) {
     },
     staleTime: 60_000,
     enabled,
+  });
+}
+
+/** Pre-fill for the structured name fields (legacy names: detected parts). */
+export function useProjectNamingSuggestion(id: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: projectKeys.naming(id ?? ""),
+    queryFn: async () => {
+      const { data } = await api.get<{ suggestion: ProjectNamingSuggestion }>(`/projects/${id}/naming-suggestion`);
+      return data.suggestion;
+    },
+    enabled: Boolean(id) && enabled,
+    staleTime: 0,
   });
 }
 

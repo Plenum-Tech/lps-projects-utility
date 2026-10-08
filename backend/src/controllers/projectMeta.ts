@@ -4,12 +4,14 @@ import { logActivity } from "../lib/activityLog.js";
 import { parseHhmm } from "../lib/appTime.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
+import { NAMING_SEPARATOR, PROJECT_NAMING_LIMITS, tidy } from "../lib/projectNaming.js";
 import { recalcProjectProgress } from "../lib/projectProgress.js";
 import { Project } from "../models/Project.js";
 import { ProjectCategory } from "../models/ProjectCategory.js";
 import {
   DEADLINE_REMINDER_TARGETS,
   getProjectSettings,
+  getProjectTypes,
   LOG_TIME_FOR,
 } from "../models/ProjectSettings.js";
 import type { DeadlineReminderTarget, LogTimeFor } from "../models/ProjectSettings.js";
@@ -287,6 +289,36 @@ export async function getTimeSettings(_req: Request, res: Response): Promise<voi
   res.json({ settings: { logTimeFor: settings.logTimeFor } });
 }
 
+/** GET /api/project-meta/types — any signed-in user: the project name Types. */
+export async function listProjectTypes(_req: Request, res: Response): Promise<void> {
+  const types = await getProjectTypes();
+  // Projects per type (structured names only), for the settings card.
+  const counts = await Project.aggregate<{ _id: string; count: number }>([
+    { $match: { naming: { $ne: null } } },
+    { $group: { _id: "$naming.type", count: { $sum: 1 } } },
+  ]);
+  const byType = new Map(counts.map((c) => [String(c._id).toLowerCase(), c.count]));
+  res.json({ types: types.map((name) => ({ name, projectCount: byType.get(name.toLowerCase()) ?? 0 })) });
+}
+
+/** Validated, de-duplicated (case-insensitive) Type list, or an error message. */
+function parseProjectTypes(raw: unknown): string[] | { error: string } {
+  if (!Array.isArray(raw) || raw.some((t) => typeof t !== "string")) return { error: "projectTypes must be an array of names" };
+  const out: string[] = [];
+  for (const item of raw as string[]) {
+    const name = tidy(item);
+    if (!name) continue;
+    if (name.length > PROJECT_NAMING_LIMITS.typeMax) {
+      return { error: `Type names must be ${PROJECT_NAMING_LIMITS.typeMax} characters or fewer` };
+    }
+    if (name.includes(NAMING_SEPARATOR)) return { error: 'Type names can\'t contain "_"' };
+    if (!out.some((t) => t.toLowerCase() === name.toLowerCase())) out.push(name);
+  }
+  if (out.length === 0) return { error: "Keep at least one project type" };
+  if (out.length > PROJECT_NAMING_LIMITS.maxTypes) return { error: `At most ${PROJECT_NAMING_LIMITS.maxTypes} project types` };
+  return out;
+}
+
 interface SettingsBody {
   logTimeFor?: unknown;
   approvalRequired?: unknown;
@@ -295,6 +327,7 @@ interface SettingsBody {
   deadlineReminderDays?: unknown;
   deadlineReminderTo?: unknown;
   dailyTimeLogReport?: unknown;
+  projectTypes?: unknown;
 }
 
 /** PATCH /api/project-meta/settings — admin. */
@@ -350,6 +383,14 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
       return;
     }
     settings.deadlineReminderTo = [...new Set(v as DeadlineReminderTarget[])];
+  }
+  if (body.projectTypes !== undefined) {
+    const types = parseProjectTypes(body.projectTypes);
+    if (!Array.isArray(types)) {
+      res.status(400).json({ error: types.error });
+      return;
+    }
+    settings.projectTypes = types;
   }
   await settings.save();
 

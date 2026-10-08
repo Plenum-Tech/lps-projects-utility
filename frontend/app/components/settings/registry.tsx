@@ -10,6 +10,7 @@ import {
   LuFolderKanban,
   LuMapPin,
   LuMessagesSquare,
+  LuPlug,
   LuShieldCheck,
   LuSlidersHorizontal,
   LuTags,
@@ -33,6 +34,7 @@ import {
   TimeLogSection,
 } from "@/components/settings/sections/card-sections";
 import { CompanySection } from "@/components/settings/sections/company-section";
+import { IntegrationsSection } from "@/components/settings/sections/integrations-section";
 import type { Role } from "@/types";
 
 export interface SettingsSectionDef {
@@ -107,8 +109,8 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
   {
     id: "projects",
     title: "Project Settings",
-    description: "Project statuses, categories and deadline reminders.",
-    keywords: ["statuses", "categories", "deadline", "reminders"],
+    description: "Project statuses, name types, categories and deadline reminders.",
+    keywords: ["statuses", "categories", "deadline", "reminders", "types", "project name", "naming"],
     roles: ADMIN,
     icon: LuFolderKanban,
     component: ProjectSection,
@@ -157,6 +159,15 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     roles: ADMIN,
     icon: LuMessagesSquare,
     component: MeetingSection,
+  },
+  {
+    id: "integrations",
+    title: "Integrations",
+    description: "Pearity: Generate button, production engine URL, API keys and allowed IPs.",
+    keywords: ["integration", "integrations", "pearity", "api", "api key", "keys", "tag", "generate", "engine", "webhook"],
+    roles: ADMIN,
+    icon: LuPlug,
+    component: IntegrationsSection,
   },
   {
     id: "imports",

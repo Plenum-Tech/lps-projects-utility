@@ -28,6 +28,7 @@ export function OptionSelect({
   disabled,
   invalid,
   className,
+  placeholder,
   "aria-label": ariaLabel,
 }: {
   id?: string;
@@ -37,9 +38,12 @@ export function OptionSelect({
   disabled?: boolean;
   invalid?: boolean;
   className?: string;
+  /** Shown while `value` is "" (nothing picked yet). */
+  placeholder?: string;
   "aria-label"?: string;
 }) {
   const items: Record<string, string> = {};
+  if (placeholder) items[""] = placeholder;
   for (const option of options) items[option.value] = option.label;
   return (
     <Select
@@ -52,7 +56,7 @@ export function OptionSelect({
     >
       <SelectTrigger
         id={id}
-        className={cn("w-full", className)}
+        className={cn("w-full", placeholder && value === "" && "text-muted-foreground", className)}
         aria-invalid={invalid || undefined}
         aria-label={ariaLabel}
       >

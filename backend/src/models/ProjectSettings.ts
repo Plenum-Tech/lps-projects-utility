@@ -1,4 +1,5 @@
 import mongoose, { Schema } from "mongoose";
+import { DEFAULT_PROJECT_TYPES } from "../lib/projectNaming.js";
 
 export const LOG_TIME_FOR = ["project", "task"] as const;
 export type LogTimeFor = (typeof LOG_TIME_FOR)[number];
@@ -18,6 +19,8 @@ export interface IProjectSettings extends mongoose.Document {
   deadlineReminderDays: number;
   deadlineReminderTo: DeadlineReminderTarget[];
   dailyTimeLogReport: boolean;
+  /** Project name Types (`Brand_Type_MonYYYY_Name`); admins manage the list. */
+  projectTypes: string[];
   /** "YYYY-MM-DD" idempotency key for the daily report job. */
   lastDailyReportOn?: string | null;
   createdAt: Date;
@@ -38,6 +41,7 @@ const projectSettingsSchema = new Schema<IProjectSettings>(
       default: ["manager", "members"],
     },
     dailyTimeLogReport: { type: Boolean, default: false },
+    projectTypes: { type: [{ type: String, trim: true }], default: () => [...DEFAULT_PROJECT_TYPES] },
     lastDailyReportOn: { type: String, default: null },
   },
   { timestamps: true }
@@ -69,9 +73,17 @@ export async function getProjectSettings(): Promise<IProjectSettings> {
         deadlineReminderDays: 3,
         deadlineReminderTo: ["manager", "members"],
         dailyTimeLogReport: false,
+        projectTypes: [...DEFAULT_PROJECT_TYPES],
       },
     },
     { upsert: true, returnDocument: "after" }
   );
   return created!;
+}
+
+/** The configured project Types (defaults when the stored list is empty). */
+export async function getProjectTypes(): Promise<string[]> {
+  const settings = await getProjectSettings();
+  const types = (settings.projectTypes ?? []).filter(Boolean);
+  return types.length > 0 ? types : [...DEFAULT_PROJECT_TYPES];
 }

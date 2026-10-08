@@ -20,6 +20,7 @@ import {
 import { FieldError, SwitchRow } from "@/components/projects/project-fields";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import {
+  LegacyNameBadge,
   ProgressRing,
   ProjectStatusPill,
   ShortCode,
@@ -112,6 +113,7 @@ export function ProjectHeader({
             <div className="flex flex-wrap items-center gap-2">
               <ShortCode code={project.code} />
               <ProjectStatusPill status={project.status} />
+              {!project.naming && <LegacyNameBadge />}
               {archived && (
                 <Badge variant="outline" className="gap-1">
                   <LuArchive aria-hidden className="size-3" />
@@ -471,7 +473,7 @@ export function DuplicateProjectDialog({
                 id="duplicate-name"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
-                maxLength={120}
+                maxLength={200}
                 aria-invalid={(submitted && Boolean(nameError)) || undefined}
                 autoFocus
               />

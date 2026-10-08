@@ -63,6 +63,10 @@ export const ACTIVITY_ACTIONS = [
   "import_completed",
   "import_undone",
   "password_reset",
+  "pearity_tag_created",
+  "pearity_key_created",
+  "pearity_key_revoked",
+  "pearity_settings_updated",
 ] as const;
 
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];

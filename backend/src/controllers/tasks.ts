@@ -68,6 +68,7 @@ import { TaskComment } from "../models/TaskComment.js";
 import { TaskFile } from "../models/TaskFile.js";
 import { TaskHistory } from "../models/TaskHistory.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
+import { PearityTag } from "../models/PearityTag.js";
 import { TaskLabel } from "../models/TaskLabel.js";
 import { TaskNote } from "../models/TaskNote.js";
 import type { IUser } from "../models/User.js";
@@ -494,6 +495,16 @@ async function buildListFilter(
   }
 
   if (req.query.recurring === "true") and.push({ recurrence: { $ne: null } });
+
+  // `?pearityTag=has|none` — tasks with / without a Pearity tag.
+  const pearityTag = req.query.pearityTag;
+  if (pearityTag !== undefined && pearityTag !== "") {
+    if (pearityTag !== "has" && pearityTag !== "none") {
+      return { status: 400, error: "pearityTag must be one of: has, none" };
+    }
+    const tagged = (await PearityTag.find().select("task").lean()).map((t) => t.task);
+    and.push({ _id: pearityTag === "has" ? { $in: tagged } : { $nin: tagged } });
+  }
 
   if (priority !== undefined && priority !== "") {
     if (typeof priority !== "string" || !TASK_PRIORITIES.includes(priority as TaskPriority)) {

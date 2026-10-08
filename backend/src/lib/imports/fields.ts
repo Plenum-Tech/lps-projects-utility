@@ -17,11 +17,13 @@ export interface ImportField {
 }
 
 export const PROJECT_FIELDS: ImportField[] = [
-  { key: "name", label: "Project name", required: true, accepts: "Text, up to 150 characters", example: "Website redesign", synonyms: ["project name", "project", "name", "project title", "title"] },
-  { key: "code", label: "Project code", required: false, accepts: "2-10 letters/digits, unique (generated from the name when empty)", example: "WEB", synonyms: ["project code", "code", "short code", "project short code", "shortcode", "key", "project key"] },
+  { key: "brand", label: "Brand", required: false, accepts: "Brand (client) name (created if missing — admins only). With Type + Month the name is composed: Brand_Type_MonYYYY_Name", example: "Wasl", synonyms: ["brand", "brand name", "client", "client name", "project brand"] },
+  { key: "type", label: "Type", required: false, accepts: "Project type from Settings → Projects (Campaign / Program / Project)", example: "Campaign", synonyms: ["type", "project type", "name type"] },
+  { key: "month", label: "Month", required: false, accepts: "Month and year: Oct2026, Oct 2026, 2026-10 or a date", example: "Oct2026", synonyms: ["month", "project month", "name month", "campaign month"] },
+  { key: "name", label: "Name", required: true, accepts: "With Brand + Type + Month: the name part (up to 80 characters, no \"_\"). Alone: a full project name, kept as a legacy name (warning)", example: "JGE Launch", synonyms: ["project name", "project", "name", "project title", "title"] },
+  { key: "code", label: "Project code", required: false, accepts: "2-10 letters/digits, unique (suggested from brand + type, or the name, when empty)", example: "WASLC", synonyms: ["project code", "code", "short code", "project short code", "shortcode", "key", "project key"] },
   { key: "summary", label: "Summary", required: false, accepts: "Text, up to 5000 characters", example: "Refresh the marketing site", synonyms: ["summary", "project summary", "description", "project description", "details", "notes"] },
   { key: "category", label: "Category", required: false, accepts: "Project category name (created if missing — admins only)", example: "Marketing", synonyms: ["category", "project category"] },
-  { key: "brand", label: "Brand", required: false, accepts: "Brand (client) name (created if missing — admins only)", example: "Ajmal", synonyms: ["brand", "brand name", "client", "client name", "project brand"] },
   { key: "departments", label: "Departments", required: false, accepts: "Comma-separated department names", example: "Engineering", synonyms: ["departments", "department", "dept", "team department"] },
   { key: "manager", label: "Project manager", required: false, accepts: "Email (preferred) or exact full name", example: "jane@example.com", synonyms: ["project manager", "manager", "project admin", "pm", "owner", "project owner"] },
   { key: "members", label: "Members", required: false, accepts: "Comma/semicolon list of emails or exact names", example: "jane@example.com; john@example.com", synonyms: ["members", "project members", "team", "team members", "member"] },

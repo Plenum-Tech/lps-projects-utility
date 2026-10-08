@@ -8,6 +8,15 @@ import { ProjectCategory } from "../../models/ProjectCategory.js";
 import { getDefaultProjectStatus, ProjectStatus } from "../../models/ProjectStatus.js";
 import { isDuplicateKeyError } from "../errors.js";
 import { exactNameRegex } from "../pagination.js";
+import {
+  composeProjectName,
+  NAMING_SEPARATOR,
+  parseMonthInput,
+  PROJECT_NAMING_LIMITS,
+  suggestNamingCode,
+  tidy,
+} from "../projectNaming.js";
+import { getProjectTypes } from "../../models/ProjectSettings.js";
 import { canCreateProject, canManageProject, isInvalid } from "../projectAccess.js";
 import { invalidate } from "../refCache.js";
 import {
@@ -44,7 +53,10 @@ export interface ProjectPlan {
 interface ProjectContext extends BaseContext {
   departments: Map<string, { _id: mongoose.Types.ObjectId; name: string }>;
   categories: Map<string, { _id: mongoose.Types.ObjectId; name: string }>;
-  brands: Map<string, { _id: mongoose.Types.ObjectId; name: string; active: boolean }>;
+  brands: Map<string, { _id: mongoose.Types.ObjectId; name: string; active: boolean; shortName?: string }>;
+  types: string[];
+  /** Lower-cased names of active projects → project id (uniqueness). */
+  activeNames: Map<string, string>;
   statuses: Array<{ _id: mongoose.Types.ObjectId; name: string; active: boolean; isDefault: boolean }>;
   existing: Map<string, IProject>;
   takenCodes: Set<string>;
@@ -52,19 +64,22 @@ interface ProjectContext extends BaseContext {
 
 async function projectContext(actor: IUser, options: ImportOptions): Promise<ProjectContext> {
   await getDefaultProjectStatus(); // seeds the default statuses on a fresh database
-  const [base, departments, categories, brands, statuses, projects] = await Promise.all([
+  const [base, departments, categories, brands, statuses, projects, types] = await Promise.all([
     baseContext("projects", actor, options),
     Department.find().select("name").lean(),
     ProjectCategory.find().select("name").lean(),
-    Brand.find().select("name active").lean(),
+    Brand.find().select("name active shortName").lean(),
     ProjectStatus.find().select("name active isDefault").sort({ order: 1 }).lean(),
-    Project.find().select("code name manager createdBy departments members archivedAt isPublic status brand"),
+    Project.find().select("code name naming manager createdBy departments members archivedAt isPublic status brand"),
+    getProjectTypes(),
   ]);
   return {
     ...base,
     departments: byLowerName(departments as Array<{ _id: mongoose.Types.ObjectId; name: string }>),
     categories: byLowerName(categories as Array<{ _id: mongoose.Types.ObjectId; name: string }>),
-    brands: byLowerName(brands as Array<{ _id: mongoose.Types.ObjectId; name: string; active: boolean }>),
+    brands: byLowerName(brands as Array<{ _id: mongoose.Types.ObjectId; name: string; active: boolean; shortName?: string }>),
+    types,
+    activeNames: new Map(projects.filter((p) => !p.archivedAt).map((p) => [tidy(p.name).toLowerCase(), p._id.toString()])),
     statuses: statuses as ProjectContext["statuses"],
     existing: new Map(projects.map((p) => [p.code, p])),
     takenCodes: new Set(projects.map((p) => p.code)),
@@ -83,7 +98,13 @@ function uniqueCode(base: string, taken: Set<string>): string {
   return code;
 }
 
-function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: Map<string, number>): RowPlan<ProjectPlan> {
+function validateRow(
+  ctx: ProjectContext,
+  r: RowReader,
+  row: number,
+  fileCodes: Map<string, number>,
+  fileNames: Map<string, number>
+): RowPlan<ProjectPlan> {
   const issues = new RowIssues();
   const { actor, options } = ctx;
   for (const f of r.oversizeFields()) issues.error(`${f}: cell is longer than 5000 characters`);
@@ -109,9 +130,19 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
     }
   }
 
-  const name = r.text("name");
+  const name = tidy(r.text("name"));
+  const typeText = tidy(r.text("type"));
+  const monthCell = r.get("month");
+  const monthText = r.text("month");
+  // Type or Month present → structured name (Brand_Type_MonYYYY_Name).
+  const structured = Boolean(typeText || monthText);
   if (!name && action !== "update") issues.error("Project name is required");
-  if (name.length > PROJECT_LIMITS.nameMax) issues.error(`Project name must be ${PROJECT_LIMITS.nameMax} characters or fewer`);
+  if (structured) {
+    if (name.length > PROJECT_NAMING_LIMITS.titleMax) issues.error(`Name must be ${PROJECT_NAMING_LIMITS.titleMax} characters or fewer`);
+    if (name.includes(NAMING_SEPARATOR)) issues.error('Name can\'t contain "_" (it separates the parts)');
+  } else if (name.length > PROJECT_LIMITS.nameMax) {
+    issues.error(`Project name must be ${PROJECT_LIMITS.nameMax} characters or fewer`);
+  }
 
   if (action === "skip") {
     issues.warn(`Project code ${rawCode} already exists — row will be skipped`);
@@ -119,15 +150,8 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
       action, existingId: existing!._id.toString(), body: {}, createCategory: null, statusId: null, code: rawCode,
     });
   }
-  if (action === "create" && !rawCode && name) {
-    code = uniqueCode(V.codeFromName(name), new Set([...ctx.takenCodes, ...fileCodes.keys()]));
-    fileCodes.set(code, row);
-    issues.note(`Code ${code} generated from the name`);
-  }
-
   const body: ProjectBody = {};
-  if (name) body.name = name;
-  if (action === "create") body.code = code;
+  if (name && !structured) body.name = name;
 
   const summary = r.text("summary");
   if (summary) {
@@ -162,6 +186,50 @@ function validateRow(ctx: ProjectContext, r: RowReader, row: number, fileCodes: 
       issues.note(`Brand "${brandName}" will be created`);
     } else issues.warn(`Unknown brand "${brandName}" skipped`);
   }
+
+  // --- structured name (brand + type + month + name) or legacy full name ---
+  let composedName = name;
+  let codeBase = name ? V.codeFromName(name) : "";
+  if (structured) {
+    const brandDoc = brandName ? ctx.brands.get(brandName.toLowerCase()) : undefined;
+    const brandLabel = brandDoc?.name ?? (createBrand ? brandName : "");
+    const type = ctx.types.find((t) => t.toLowerCase() === typeText.toLowerCase()) ??
+      (existing?.naming && existing.naming.type.toLowerCase() === typeText.toLowerCase() ? existing.naming.type : null);
+    const month = parseMonthInput(monthCell instanceof Date ? monthCell : monthText);
+    if (!brandName) issues.error("Brand is required with Type and Month");
+    else if (!brandLabel || (!body.brand && !createBrand)) issues.error(`Brand "${brandName}" can't be used for the project name`);
+    else if (brandLabel.includes(NAMING_SEPARATOR)) issues.error(`Brand "${brandLabel}" contains "_" — rename it first`);
+    if (!typeText) issues.error("Type is required with Month");
+    else if (!type) issues.error(`Unknown type "${typeText}" (use: ${ctx.types.join(", ")})`);
+    if (!monthText) issues.error("Month is required with Type");
+    else if (!month) issues.error(`Month "${monthText}" must look like Oct2026 or 2026-10`);
+    if (brandLabel && type && month && name) {
+      composedName = composeProjectName(brandLabel, type, month, name);
+      body.naming = { brand: typeof body.brand === "string" ? body.brand : null, type, month, title: name };
+      codeBase = suggestNamingCode(brandDoc?.shortName || brandLabel, type);
+      issues.note(`Name: ${composedName}`);
+    }
+  } else if (name && action === "create") {
+    issues.warn("No Type / Month — the full name is kept as a legacy name");
+  } else if (name && existing?.naming) {
+    issues.warn("This project has a structured name — use Brand, Type, Month and Name to rename it; name skipped");
+    delete body.name;
+  }
+  if (composedName && (body.name || body.naming)) {
+    const key = tidy(composedName).toLowerCase();
+    const owner = ctx.activeNames.get(key);
+    const firstRow = fileNames.get(key);
+    if (owner && owner !== existing?._id.toString()) issues.error(`A project named "${composedName}" already exists`);
+    else if (firstRow !== undefined) issues.error(`Duplicate project name "${composedName}" (already used on row ${firstRow})`);
+    else fileNames.set(key, row);
+  }
+
+  if (action === "create" && !rawCode && codeBase) {
+    code = uniqueCode(codeBase, new Set([...ctx.takenCodes, ...fileCodes.keys()]));
+    fileCodes.set(code, row);
+    issues.note(`Code ${code} ${body.naming ? "suggested from the brand and type" : "generated from the name"}`);
+  }
+  if (action === "create") body.code = code;
 
   // --- departments (heads: only their own) ---
   const deptNames = V.list(r.get("departments"));
@@ -270,7 +338,8 @@ export async function validateProjectRows(
   }
   const ctx = await projectContext(actor, options);
   const fileCodes = new Map<string, number>();
-  return rows.map((row) => validateRow(ctx, new RowReader(row, columns), row.row, fileCodes));
+  const fileNames = new Map<string, number>();
+  return rows.map((row) => validateRow(ctx, new RowReader(row, columns), row.row, fileCodes, fileNames));
 }
 
 async function ensureProjectCategory(name: string): Promise<string> {
@@ -322,7 +391,8 @@ export async function runProjectRow(
     invalidate("projectCategory:");
   }
   if (plan.createBrand) body.brand = await ensureBrand(plan.createBrand);
-  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId } };
+  if (body.naming && typeof body.naming === "object") body.naming = { ...(body.naming as object), brand: body.brand };
+  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId }, allowLegacyName: true };
 
   if (plan.action === "create") {
     const result = await createProjectCore(actor, body, ip, writeOptions);

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import {
   LuArchive,
   LuArchiveRestore,
@@ -31,10 +31,12 @@ import {
 import { ProjectsCalendar } from "@/components/projects/projects-calendar";
 import { ProjectsTable, type ProjectDialogKind } from "@/components/projects/projects-table";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useBrands } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
-import { useProjectCategories, useProjectStatuses } from "@/hooks/use-project-meta";
+import { useProjectCategories, useProjectStatuses, useProjectTypes } from "@/hooks/use-project-meta";
 import {
   projectQueryParams,
   useBulkProjects,
@@ -48,7 +50,7 @@ import {
 import { useRowSelection, useTableState } from "@/hooks/use-table-state";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { formatDateOnly } from "@/lib/format";
-import { canManageProjectClient, PROGRESS_BUCKETS, statusColor } from "@/lib/projects";
+import { canManageProjectClient, namingMonthLabel, PROGRESS_BUCKETS, statusColor } from "@/lib/projects";
 import type { Project, Role } from "@/types";
 
 type ProjectView = "list" | "archive" | "calendar" | "pinned";
@@ -69,6 +71,9 @@ const DEFAULTS = {
   progress: "",
   category: "",
   brand: "",
+  /** Structured-name Type ("none" = legacy names) and Month ("YYYY-MM"). */
+  type: "",
+  month: "",
   department: "",
   manager: "",
   member: "",
@@ -80,7 +85,7 @@ const DEFAULTS = {
 };
 
 type FilterKey = keyof typeof DEFAULTS;
-const SHEET_KEYS: FilterKey[] = ["category", "brand", "department", "manager", "member", "deadline", "completed"];
+const SHEET_KEYS: FilterKey[] = ["category", "brand", "type", "month", "department", "manager", "member", "deadline", "completed"];
 const INLINE_KEYS: FilterKey[] = ["search", "status", "from", "to", "progress"];
 /** Only shown as removable chips (no control of their own). */
 const CHIP_KEYS: FilterKey[] = ["completedFrom", "completedTo"];
@@ -122,6 +127,8 @@ export function ProjectWorkspace() {
     status: filters.status,
     category: filters.category,
     brand: filters.brand,
+    type: filters.type,
+    month: /^\d{4}-(0[1-9]|1[0-2])$/.test(filters.month) ? filters.month : "",
     department: filters.department,
     manager: filters.manager,
     member: filters.member,
@@ -150,6 +157,8 @@ export function ProjectWorkspace() {
   const statuses = useProjectStatuses();
   const categories = useProjectCategories();
   const brands = useBrands(false, Boolean(user));
+  const projectTypes = useProjectTypes(Boolean(user));
+  const typeLabel = filters.type === "none" ? "Legacy names" : filters.type;
   const people = useAssignableUsers(Boolean(user) && isHeadOrAdmin);
 
   const selection = useRowSelection();
@@ -317,8 +326,16 @@ export function ProjectWorkspace() {
           canClear={filtered}
           onClearAll={() => table.clearFilters(CLEARABLE_KEYS)}
           chips={
-            completedOn || memberChip ? (
+            completedOn || memberChip || filters.type || listFilters.month ? (
               <>
+                {filters.type && (
+                  <FilterChip onRemove={() => table.setFilters({ type: "" })}>Type · {typeLabel}</FilterChip>
+                )}
+                {listFilters.month && (
+                  <FilterChip onRemove={() => table.setFilters({ month: "" })}>
+                    Month · {namingMonthLabel(listFilters.month)}
+                  </FilterChip>
+                )}
                 {memberChip && (
                   <FilterChip onRemove={() => table.setFilters({ member: "" })}>
                     {filters.member === me._id ? "My projects" : "Member filter"}
@@ -458,6 +475,20 @@ export function ProjectWorkspace() {
             })),
           ]}
         />
+        <SheetSelect
+          label="Type"
+          value={filters.type}
+          onChange={(type) => table.setFilters({ type })}
+          options={[
+            ...(projectTypes.data ?? []).map((type) => ({ value: type.name, label: type.name })),
+            { value: "none", label: "Legacy names (no type)" },
+          ]}
+        />
+        <SheetMonth
+          label="Month"
+          value={listFilters.month ?? ""}
+          onChange={(month) => table.setFilters({ month })}
+        />
         {isAdmin && (
           <DepartmentSheetSelect
             value={filters.department}
@@ -575,5 +606,24 @@ function DepartmentSheetSelect({ value, onChange }: { value: string; onChange: (
         label: department.name,
       }))}
     />
+  );
+}
+
+/** Month ("YYYY-MM") of the structured project name; empty = any. */
+function SheetMonth({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  const id = useId();
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <div className="flex gap-2">
+        <Input id={id} type="month" value={value} onChange={(event) => onChange(event.target.value)} />
+        {value && (
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange("")}>
+            Any
+          </Button>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">The month in the project name (e.g. Oct2026).</p>
+    </div>
   );
 }

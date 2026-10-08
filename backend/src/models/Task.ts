@@ -51,6 +51,11 @@ export interface ISubtask {
   startDate?: Date | null;
   dueDate?: Date | null;
   completedAt?: Date | null;
+  /** Actual start / end (see lib/actualDates.ts — subtask rules). */
+  actualStartAt?: Date | null;
+  actualEndAt?: Date | null;
+  actualStartSource?: ActualDateSource | null;
+  actualEndSource?: ActualDateSource | null;
   createdBy: mongoose.Types.ObjectId;
   updatedBy?: mongoose.Types.ObjectId | null;
   /** Set when the client deferred notifications (see POST .../subtasks/:subId/notify). */
@@ -142,6 +147,10 @@ const subtaskSchema = new Schema<ISubtask>({
   startDate: { type: Date, default: null },
   dueDate: { type: Date, default: null },
   completedAt: { type: Date, default: null },
+  actualStartAt: { type: Date, default: null },
+  actualEndAt: { type: Date, default: null },
+  actualStartSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
+  actualEndSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
   createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   pendingNotify: { type: String, enum: [...SUBTASK_PENDING_NOTIFY, null], default: null },

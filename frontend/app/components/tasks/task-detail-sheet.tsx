@@ -24,6 +24,7 @@ import { ShortCode } from "@/components/projects/project-badges";
 import { ActualDatesBlock } from "@/components/tasks/actual-dates";
 import { EstimateEditor } from "@/components/tasks/estimate-field";
 import { LabelChip } from "@/components/tasks/label-chip";
+import { PearityGenerateButton, PearityTagSection } from "@/components/tasks/pearity";
 import { TimeLogPanel } from "@/components/timelogs/time-log-panel";
 import {
   DeleteTaskDialog,
@@ -241,6 +242,7 @@ function TaskDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            <PearityGenerateButton task={task} />
             {permissions.canEdit && (
               <Button variant="outline" size="sm" onClick={() => setDialog("edit")}>
                 <LuPencil aria-hidden />
@@ -409,6 +411,8 @@ function TaskDetail({
           </dl>
 
           <ActualDatesBlock task={task} permissions={permissions} />
+
+          <PearityTagSection task={task} />
 
           {task.description && (
             <section aria-labelledby="task-description-heading" className="space-y-1.5">

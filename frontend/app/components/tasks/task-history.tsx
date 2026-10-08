@@ -19,6 +19,7 @@ import {
   LuPencil,
   LuRefreshCw,
   LuSend,
+  LuSparkles,
   LuTrash2,
   LuUsers,
 } from "react-icons/lu";
@@ -56,6 +57,8 @@ const ACTION_ICONS: Record<TaskHistoryAction, { icon: IconType; tone: string }> 
   reminder_sent: { icon: LuBellRing, tone: "bg-chart-4/15 text-foreground" },
   created_from_meeting: { icon: LuMessagesSquare, tone: "bg-primary/10 text-primary" },
   actual_dates_updated: { icon: LuCalendarClock, tone: "bg-chart-3/15 text-foreground" },
+  subtask_actual_dates_updated: { icon: LuCalendarClock, tone: "bg-muted text-muted-foreground" },
+  pearity_generated: { icon: LuSparkles, tone: "bg-chart-5/15 text-foreground" },
 };
 
 function str(value: unknown): string {
@@ -68,6 +71,21 @@ function list(value: unknown): string {
 
 function statusLabel(value: unknown): string {
   return STATUS_META[value as TaskStatus]?.label ?? str(value);
+}
+
+/** "set the actual start to …" phrases for an actual-dates history entry. */
+function actualChangeParts(raw: unknown): string[] {
+  const changes = Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+  return changes.map((change) => {
+    const label = change.field === "actualEndAt" ? "actual end" : "actual start";
+    const to = str(change.to);
+    if (!to) return `cleared the ${label}`;
+    const from = str(change.from);
+    if (change.source !== "manual") {
+      return from ? `reset the ${label} to automatic (${formatDateTime(to)})` : `set the ${label} to ${formatDateTime(to)}`;
+    }
+    return `set the ${label} to ${formatDateTime(to)}${from ? ` (was ${formatDateTime(from)})` : ""}`;
+  });
 }
 
 /** Human sentence for a history entry (actor name is rendered separately). */
@@ -133,16 +151,18 @@ function describe(entry: TaskHistoryEntry): string {
       return "sent an upcoming due-date reminder";
     }
     case "actual_dates_updated": {
-      const changes = Array.isArray(d.changes) ? (d.changes as Array<Record<string, unknown>>) : [];
-      const parts = changes.map((change) => {
-        const label = change.field === "actualEndAt" ? "actual end" : "actual start";
-        const to = str(change.to);
-        if (!to) return `cleared the ${label}`;
-        if (change.source !== "manual") return `reset the ${label} to automatic (${formatDateTime(to)})`;
-        const from = str(change.from);
-        return `set the ${label} to ${formatDateTime(to)}${from ? ` (was ${formatDateTime(from)})` : ""}`;
-      });
+      const parts = actualChangeParts(d.changes);
       return parts.length ? parts.join(" and ") : "updated the actual dates";
+    }
+    case "subtask_actual_dates_updated": {
+      const parts = actualChangeParts(d.changes);
+      return `${parts.length ? parts.join(" and ") : "updated the actual dates"} of subtask "${str(d.title)}"`;
+    }
+    case "pearity_generated": {
+      const tag = str(d.tagName);
+      const via = d.source === "pearity" ? " from Pearity" : "";
+      if (d.created) return `created the Pearity tag ${tag} and opened the production engine${via}`;
+      return `generated in Pearity with the tag ${tag}${via}`;
     }
     default:
       return "made a change";

@@ -833,13 +833,29 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
   // Existing imported tasks: keep their numbers / short codes / subtask ids.
   const existingTaskDocs = taskLegacy.size
     ? await Task.collection
-        .find({ "legacy.source": LEGACY_SOURCE }, { projection: { shortCode: 1, project: 1, "subtasks._id": 1, "subtasks.legacy": 1 } })
+        .find({ "legacy.source": LEGACY_SOURCE }, {
+          projection: {
+            shortCode: 1,
+            project: 1,
+            "subtasks._id": 1,
+            "subtasks.legacy": 1,
+            "subtasks.actualStartAt": 1,
+            "subtasks.actualEndAt": 1,
+            "subtasks.actualStartSource": 1,
+            "subtasks.actualEndSource": 1,
+          },
+        })
         .toArray()
     : [];
   const subtaskIdByLegacy = new Map<number, Id>();
+  /** Actual dates already on imported subtasks (the subtasks array is rewritten on re-runs). */
+  type SubActual = { actualStartAt?: Date | null; actualEndAt?: Date | null; actualStartSource?: string | null; actualEndSource?: string | null };
+  const subtaskActualByLegacy = new Map<number, SubActual>();
   for (const t of existingTaskDocs) {
-    for (const s of (t.subtasks as Array<{ _id: Id; legacy?: { id?: number } }> | undefined) ?? []) {
-      if (typeof s.legacy?.id === "number") subtaskIdByLegacy.set(s.legacy.id, s._id);
+    for (const s of (t.subtasks as Array<{ _id: Id; legacy?: { id?: number } } & SubActual> | undefined) ?? []) {
+      if (typeof s.legacy?.id !== "number") continue;
+      subtaskIdByLegacy.set(s.legacy.id, s._id);
+      subtaskActualByLegacy.set(s.legacy.id, s);
     }
   }
   const importedProjectIdList = [...projectIds.values()];
@@ -955,6 +971,21 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
       const done = str(s.status) === "complete";
       const subId = subtaskIdByLegacy.get(subLegacy) ?? newId();
       const subTitle = truncate(fullTitle, 200);
+      const subCompletedAt = done ? (utcDateTime(s.updated_at) ?? updatedAt) : null;
+      // Actual end = updated_at of completed subtasks (source import) — only when
+      // empty or import-sourced; a manual or in-app value is never overwritten.
+      const prevActual = subtaskActualByLegacy.get(subLegacy) ?? {};
+      let subActualEnd = prevActual.actualEndAt ?? null;
+      let subActualEndSource = prevActual.actualEndSource ?? null;
+      if (!subActualEnd || subActualEndSource === "import") {
+        subActualEnd = done ? subCompletedAt : null;
+        subActualEndSource = subActualEnd ? "import" : null;
+      }
+      const subActualStart = prevActual.actualStartAt ?? null;
+      if (subActualEnd && subActualStart && subActualEnd.getTime() < subActualStart.getTime() && subActualEndSource === "import") {
+        subActualEnd = null;
+        subActualEndSource = null;
+      }
       subtasks.push({
         _id: subId,
         title: subTitle,
@@ -963,7 +994,11 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
         assignee: user(s.assigned_to),
         startDate: dateOnly(s.start_date),
         dueDate: dateOnly(s.due_date),
-        completedAt: done ? (utcDateTime(s.updated_at) ?? updatedAt) : null,
+        completedAt: subCompletedAt,
+        actualStartAt: subActualStart,
+        actualStartSource: subActualStart ? (prevActual.actualStartSource ?? null) : null,
+        actualEndAt: subActualEnd,
+        actualEndSource: subActualEndSource,
         createdBy: user(s.added_by) ?? assignedBy,
         updatedBy: user(s.last_updated_by),
         legacy: { source: LEGACY_SOURCE, table: "sub_tasks", id: subLegacy },

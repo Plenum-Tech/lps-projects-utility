@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { applySubtaskDoneActualDates, applySubtaskManualActualDates } from "../lib/actualDates.js";
+import type { ActualDateChange } from "../lib/actualDates.js";
 import { subtaskTemplate } from "../lib/email.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { formatDueDate, notifyTask } from "../lib/notifications.js";
@@ -40,12 +42,36 @@ interface SubtaskBody {
   startDate?: unknown;
   dueDate?: unknown;
   done?: unknown;
+  /** ISO date-time; null/"" clears it (back to automatic). */
+  actualStartAt?: unknown;
+  actualEndAt?: unknown;
+  /** "Start now": sets an empty actual start to the current time. */
+  startNow?: unknown;
   /** The client uploads files next — hold notifications until POST .../notify. */
   deferNotifications?: unknown;
 }
 
 type SubtaskDoc = ITask["subtasks"][number];
 type Invalid = { error: string };
+
+/** True when the body touches the subtask's actual dates. */
+function touchesActualDates(body: SubtaskBody): boolean {
+  return body.actualStartAt !== undefined || body.actualEndAt !== undefined || body.startNow !== undefined;
+}
+
+function recordActualChanges(
+  taskId: mongoose.Types.ObjectId,
+  user: IUser,
+  subtask: SubtaskDoc,
+  changes: ActualDateChange[]
+): void {
+  if (changes.length === 0) return;
+  recordTaskHistory(taskId, user, "subtask_actual_dates_updated", {
+    subtaskId: subtask._id.toString(),
+    title: subtask.title,
+    changes,
+  });
+}
 
 function isInvalid(value: unknown): value is Invalid {
   return (
@@ -303,6 +329,19 @@ export async function addSubtask(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: assignee.error });
     return;
   }
+  const actual = {
+    done: false,
+    completedAt: null,
+    actualStartAt: null as Date | null,
+    actualEndAt: null as Date | null,
+    actualStartSource: null as "auto" | "manual" | "import" | null,
+    actualEndSource: null as "auto" | "manual" | "import" | null,
+  };
+  const actualChanges = applySubtaskManualActualDates(actual, body);
+  if (!Array.isArray(actualChanges)) {
+    res.status(actualChanges.status).json({ error: actualChanges.error });
+    return;
+  }
   const defer = body.deferNotifications === true;
 
   task.subtasks.push({
@@ -313,6 +352,10 @@ export async function addSubtask(req: Request, res: Response): Promise<void> {
     startDate,
     dueDate,
     completedAt: null,
+    actualStartAt: actual.actualStartAt,
+    actualEndAt: actual.actualEndAt,
+    actualStartSource: actual.actualStartSource,
+    actualEndSource: actual.actualEndSource,
     createdBy: user._id,
     updatedBy: null,
     pendingNotify: defer ? "created" : null,
@@ -325,6 +368,7 @@ export async function addSubtask(req: Request, res: Response): Promise<void> {
     subtaskId: subtask._id.toString(),
     title: subtask.title,
   });
+  recordActualChanges(taskId, user, subtask, actualChanges);
   if (!defer) notifyCreated(task, subtask, user);
   pushTaskUpdate(task, "subtask-added", { subtaskId: subtask._id.toString() });
 
@@ -355,7 +399,8 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
   const editingFields = (["title", "description", "assignee", "startDate", "dueDate"] as const).some(
     (key) => body[key] !== undefined
   );
-  if (!editingFields && body.done === undefined) {
+  const editingActual = touchesActualDates(body);
+  if (!editingFields && !editingActual && body.done === undefined) {
     res.status(400).json({ error: "At least one field to update is required" });
     return;
   }
@@ -368,6 +413,11 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
     role.manage || !subtask.assignee || subtask.assignee.equals(user._id);
   if (body.done !== undefined && !canToggle) {
     res.status(403).json({ error: "You can only tick off subtasks assigned to you" });
+    return;
+  }
+  // Actual dates: whoever may edit or tick off the subtask.
+  if (editingActual && !canEdit && !canToggle) {
+    res.status(403).json({ error: "You can't change this subtask's actual dates" });
     return;
   }
 
@@ -438,14 +488,26 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
       return;
     }
     if (subtask.done !== body.done) {
+      const at = new Date();
       subtask.done = body.done;
-      subtask.completedAt = body.done ? new Date() : null;
+      subtask.completedAt = body.done ? at : null;
+      applySubtaskDoneActualDates(subtask, body.done, at);
       doneChanged = true;
     }
   }
 
+  let actualChanges: ActualDateChange[] = [];
+  if (editingActual) {
+    const result = applySubtaskManualActualDates(subtask, body);
+    if (!Array.isArray(result)) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    actualChanges = result;
+  }
+
   const defer = body.deferNotifications === true;
-  if (changed.length > 0) subtask.updatedBy = user._id;
+  if (changed.length > 0 || actualChanges.length > 0) subtask.updatedBy = user._id;
   if (assigneeChanged && subtask.assignee && defer && subtask.pendingNotify !== "created") {
     subtask.pendingNotify = "assigned";
   }
@@ -477,6 +539,7 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
   if (changed.length > 0) {
     recordTaskHistory(taskId, user, "subtask_updated", { subtaskId, title: subtask.title, fields: changed });
   }
+  recordActualChanges(taskId, user, subtask, actualChanges);
   if (assigneeChanged && !defer) notifyAssigned(task, subtask, user);
 
   pushTaskUpdate(task, "subtask-updated", { subtaskId });

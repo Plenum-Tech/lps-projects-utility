@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { LuLoaderCircle, LuPlus, LuSave } from "react-icons/lu";
+import { LuInfo, LuLoaderCircle, LuPlus, LuSave, LuX } from "react-icons/lu";
 
 import { ManageLink, useRefetchOnFocus } from "@/components/globals/manage-link";
 import { MultiSelect, type MultiSelectOption } from "@/components/globals/multi-select";
@@ -11,6 +11,14 @@ import {
   type OptionItem,
 } from "@/components/projects/project-fields";
 import { Button } from "@/components/ui/button";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
 import {
   Dialog,
   DialogContent,
@@ -24,28 +32,36 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useBrands } from "@/hooks/use-brands";
+import { useBrands, useCreateBrand } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
-import { useProjectCategories, useProjectStatuses } from "@/hooks/use-project-meta";
-import { useCreateProject, useUpdateProject } from "@/hooks/use-projects";
+import { useProjectCategories, useProjectStatuses, useProjectTypes } from "@/hooks/use-project-meta";
+import { useCreateProject, useProjectNamingSuggestion, useUpdateProject } from "@/hooks/use-projects";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import {
+  composeProjectName,
+  DEFAULT_PROJECT_TYPES,
+  NAMING_SEPARATOR,
+  NAMING_TITLE_MAX,
   PROGRESS_MODES,
   PROGRESS_MODE_META,
   PROJECT_CODE_PATTERN,
   statusColor,
-  suggestCode,
+  suggestNamingCode,
+  tidyNamePart,
 } from "@/lib/projects";
 import { currencySymbol } from "@/lib/format";
 import { LABEL_COLOR_META, toDateInput, todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { ProgressMode, Project, ProjectInput, ProjectUpdateInput } from "@/types";
+import type { ProgressMode, Project, ProjectInput, ProjectNaming, ProjectUpdateInput } from "@/types";
 
 const NONE = "none";
 const MAX_SUMMARY = 2000;
 
 interface FormState {
-  name: string;
+  /** Structured name parts (brand is `brand` below). */
+  type: string;
+  month: string;
+  title: string;
   code: string;
   summary: string;
   category: string;
@@ -71,11 +87,13 @@ function numberText(value: number | null | undefined): string {
 
 function initialState(project?: Project | null): FormState {
   return {
-    name: project?.name ?? "",
+    type: project?.naming?.type ?? "",
+    month: project?.naming?.month ?? (project ? "" : todayKey().slice(0, 7)),
+    title: project?.naming?.title ?? "",
     code: project?.code ?? "",
     summary: project?.summary ?? "",
     category: project?.category?._id ?? NONE,
-    brand: project?.brand?._id ?? NONE,
+    brand: project?.naming?.brand ?? project?.brand?._id ?? NONE,
     departments: project?.departments.map((department) => department._id) ?? [],
     manager: project?.manager?._id ?? NONE,
     members: [],
@@ -96,6 +114,12 @@ function parseOptionalNumber(text: string): number | null | "invalid" {
   if (text.trim() === "") return null;
   const value = Number(text);
   return Number.isFinite(value) && value >= 0 ? value : "invalid";
+}
+
+const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+function sameNaming(a: ProjectNaming | null | undefined, b: ProjectNaming) {
+  return Boolean(a) && a!.brand === b.brand && a!.type === b.type && a!.month === b.month && a!.title === b.title;
 }
 
 function sameIds(a: string[], b: string[]) {
@@ -133,6 +157,12 @@ export function ProjectFormDialog({
   const assignable = useAssignableUsers(open && isHeadOrAdmin);
 
   const brands = useBrands(false, open);
+  const types = useProjectTypes(open);
+  // Legacy names: brand / type / month / name detected from the old name.
+  const legacy = Boolean(project && !project.naming);
+  const suggestion = useProjectNamingSuggestion(project?._id, open && legacy);
+  const createBrand = useCreateBrand();
+  const [newBrand, setNewBrand] = useState<string | null>(null);
   useRefetchOnFocus(categories.refetch, open && isAdmin);
   useRefetchOnFocus(brands.refetch, open && isAdmin);
 
@@ -146,9 +176,23 @@ export function ProjectFormDialog({
       setForm(initialState(project));
       setCodeTouched(Boolean(project));
       setSubmitted(false);
+      setNewBrand(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, project?._id]);
+
+  // Legacy project: pre-fill the four name fields once the detection arrives.
+  const suggested = suggestion.data;
+  useEffect(() => {
+    if (!open || !legacy || !suggested) return;
+    setForm((current) => ({
+      ...current,
+      brand: suggested.brand ?? current.brand,
+      type: suggested.type ?? current.type,
+      month: suggested.month || current.month,
+      title: suggested.title.replaceAll(NAMING_SEPARATOR, " ").slice(0, NAMING_TITLE_MAX),
+    }));
+  }, [open, legacy, suggested]);
 
   // Default status for new projects.
   useEffect(() => {
@@ -161,12 +205,29 @@ export function ProjectFormDialog({
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function changeName(name: string) {
-    setForm((current) => ({
-      ...current,
-      name,
-      code: codeTouched ? current.code : suggestCode(name),
-    }));
+  /** Brand / type change: re-suggest the short code (brand short name + type initial) until it's edited. */
+  function changeNamePart(patch: Partial<Pick<FormState, "brand" | "type">>) {
+    setForm((current) => {
+      const next = { ...current, ...patch };
+      if (codeTouched) return next;
+      const brand = brands.data?.find((item) => item._id === next.brand);
+      const code = brand && next.type ? suggestNamingCode(brand.shortName || brand.name, next.type) : current.code;
+      return { ...next, code };
+    });
+  }
+
+  function addBrand() {
+    const name = tidyNamePart(newBrand ?? "");
+    if (!name || name.includes(NAMING_SEPARATOR)) return;
+    createBrand.mutate(
+      { name },
+      {
+        onSuccess: (brand) => {
+          setNewBrand(null);
+          changeNamePart({ brand: brand._id });
+        },
+      }
+    );
   }
 
   const memberOptions = useMemo<MultiSelectOption[]>(
@@ -217,7 +278,6 @@ export function ProjectFormDialog({
   const brandOptions = useMemo<OptionItem[]>(() => {
     const currentId = project?.brand?._id;
     return [
-      { value: NONE, label: "No brand" },
       ...(brands.data ?? [])
         .filter((brand) => brand.active || brand._id === currentId)
         .map((brand) => ({
@@ -250,6 +310,14 @@ export function ProjectFormDialog({
     [statuses.data]
   );
 
+  // Configured types, plus the project's current type if it was removed from Settings since.
+  const typeOptions = useMemo<OptionItem[]>(() => {
+    const names = types.data?.map((type) => type.name) ?? (types.isError ? DEFAULT_PROJECT_TYPES : []);
+    const current = project?.naming?.type;
+    const all = current && !names.some((name) => name.toLowerCase() === current.toLowerCase()) ? [...names, current] : names;
+    return all.map((name) => ({ value: name, label: name }));
+  }, [types.data, types.isError, project?.naming?.type]);
+
   const modeOptions: OptionItem[] = PROGRESS_MODES.map((mode) => ({
     value: mode,
     label: PROGRESS_MODE_META[mode].label,
@@ -257,9 +325,31 @@ export function ProjectFormDialog({
   }));
 
   // ---- validation ---------------------------------------------------------
-  const name = form.name.trim();
+  const selectedBrand = brands.data?.find((brand) => brand._id === form.brand);
+  const title = tidyNamePart(form.title);
   const code = form.code.trim().toUpperCase();
-  const nameError = !name ? "A name is required." : name.length > 120 ? "Max 120 characters." : null;
+  const brandError =
+    form.brand === NONE
+      ? "Pick a brand."
+      : selectedBrand?.name.includes(NAMING_SEPARATOR)
+        ? "This brand's name contains \"_\" — rename it first."
+        : null;
+  const typeError = form.type ? null : "Pick a type.";
+  const monthError = MONTH_PATTERN.test(form.month) ? null : "Pick a month.";
+  const nameError = !title
+    ? "A name is required."
+    : title.length > NAMING_TITLE_MAX
+      ? `Max ${NAMING_TITLE_MAX} characters.`
+      : title.includes(NAMING_SEPARATOR)
+        ? "Underscores separate the parts — use a space or dash instead."
+        : null;
+  const preview = composeProjectName({
+    brand: selectedBrand?.name ?? "",
+    type: form.type,
+    month: form.month,
+    title,
+  });
+  const namingLoading = legacy && suggestion.isPending;
   const codeError = PROJECT_CODE_PATTERN.test(code)
     ? null
     : "2–10 uppercase letters or digits (e.g. WEB).";
@@ -277,7 +367,10 @@ export function ProjectFormDialog({
       : null;
   const summaryError = form.summary.length > MAX_SUMMARY ? "Keep the summary shorter." : null;
   const hasErrors = Boolean(
-    nameError ||
+    brandError ||
+      typeError ||
+      monthError ||
+      nameError ||
       codeError ||
       datesError ||
       progressError ||
@@ -290,19 +383,19 @@ export function ProjectFormDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (hasErrors || hours === "invalid" || budget === "invalid") return;
+    if (hasErrors || namingLoading || hours === "invalid" || budget === "invalid") return;
 
     const category = form.category === NONE ? null : form.category;
-    const brand = form.brand === NONE ? null : form.brand;
     const manager = form.manager === NONE ? null : form.manager;
+    // The server composes the name (Brand_Type_MonYYYY_Name) and keeps Project.brand in sync.
+    const naming: ProjectNaming = { brand: form.brand, type: form.type, month: form.month, title };
 
     if (!project) {
       const input: ProjectInput = {
-        name,
+        naming,
         code,
         summary: form.summary.trim() || undefined,
         category,
-        brand,
         manager,
         members: form.members,
         status: form.status || undefined,
@@ -328,11 +421,11 @@ export function ProjectFormDialog({
 
     const original = initialState(project);
     const input: ProjectUpdateInput = {};
-    if (name !== original.name) input.name = name;
+    // Legacy names are converted on save; structured ones only when a part changed.
+    if (!sameNaming(project.naming, naming)) input.naming = naming;
     if (code !== original.code) input.code = code;
     if (form.summary.trim() !== original.summary.trim()) input.summary = form.summary.trim();
     if (form.category !== original.category) input.category = category;
-    if (form.brand !== original.brand) input.brand = brand;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -371,21 +464,176 @@ export function ProjectFormDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-[1fr_9rem]">
+          {legacy && project && (
+            <div className="flex gap-2.5 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm">
+              <LuInfo aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 space-y-0.5">
+                <p className="font-medium text-foreground">This project has a legacy name</p>
+                <p className="break-words text-muted-foreground">
+                  “{project.name}”. Check the fields below — saving renames it to the new format.
+                  {suggested && !suggested.typeDetected && " No type was found in the old name."}
+                  {suggested?.monthSource === "startDate" && " The month comes from the start date."}
+                </p>
+              </div>
+            </div>
+          )}
+
+          <fieldset className="space-y-4" disabled={namingLoading}>
+            <legend className="sr-only">Project name</legend>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="project-brand">Brand</Label>
+                {newBrand === null ? (
+                  <Combobox
+                    items={brandOptions}
+                    value={brandOptions.find((option) => option.value === form.brand) ?? null}
+                    onValueChange={(item) => changeNamePart({ brand: item?.value ?? NONE })}
+                    disabled={brands.isPending || namingLoading}
+                    autoHighlight
+                  >
+                    <ComboboxInput
+                      id="project-brand"
+                      placeholder={brands.isPending ? "Loading brands…" : "Search brands…"}
+                      className="w-full"
+                      aria-invalid={show(brandError) || undefined}
+                    />
+                    <ComboboxContent sideOffset={4}>
+                      <ComboboxEmpty>No brands found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(item: OptionItem) => (
+                          <ComboboxItem key={item.value} value={item}>
+                            {item.icon}
+                            {item.label}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                ) : (
+                  <div className="flex gap-1.5">
+                    <Input
+                      id="project-brand"
+                      value={newBrand}
+                      onChange={(event) => setNewBrand(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          event.preventDefault();
+                          addBrand();
+                        }
+                        if (event.key === "Escape") {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setNewBrand(null);
+                        }
+                      }}
+                      maxLength={80}
+                      placeholder="New brand name"
+                      aria-label="New brand name"
+                      autoFocus
+                    />
+                    <Button
+                      type="button"
+                      size="icon"
+                      onClick={addBrand}
+                      disabled={
+                        createBrand.isPending ||
+                        !tidyNamePart(newBrand) ||
+                        newBrand.includes(NAMING_SEPARATOR)
+                      }
+                      aria-label="Add brand"
+                    >
+                      {createBrand.isPending ? (
+                        <LuLoaderCircle aria-hidden className="animate-spin" />
+                      ) : (
+                        <LuPlus aria-hidden />
+                      )}
+                    </Button>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      onClick={() => setNewBrand(null)}
+                      aria-label="Cancel new brand"
+                    >
+                      <LuX aria-hidden />
+                    </Button>
+                  </div>
+                )}
+                {show(brandError) && <FieldError>{brandError}</FieldError>}
+                {newBrand !== null && newBrand.includes(NAMING_SEPARATOR) && (
+                  <FieldError>Brand names can’t contain “_”.</FieldError>
+                )}
+                {isAdmin && newBrand === null && (
+                  <button
+                    type="button"
+                    onClick={() => setNewBrand("")}
+                    className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:underline"
+                  >
+                    + New brand
+                  </button>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-type">Type</Label>
+                <OptionSelect
+                  id="project-type"
+                  value={form.type}
+                  onChange={(value) => changeNamePart({ type: value })}
+                  options={typeOptions}
+                  disabled={types.isPending || namingLoading}
+                  invalid={show(typeError)}
+                  placeholder="Select a type…"
+                  aria-label="Type"
+                />
+                {show(typeError) && <FieldError>{typeError}</FieldError>}
+                {isAdmin && <ManageLink to="/settings/projects">Manage types</ManageLink>}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-month">Month</Label>
+                <Input
+                  id="project-month"
+                  type="month"
+                  value={form.month}
+                  onChange={(event) => set("month", event.target.value)}
+                  aria-invalid={show(monthError) || undefined}
+                />
+                {show(monthError) && <FieldError>{monthError}</FieldError>}
+              </div>
+            </div>
+
             <div className="space-y-1.5">
               <Label htmlFor="project-name">Name</Label>
               <Input
                 id="project-name"
-                value={form.name}
-                onChange={(event) => changeName(event.target.value)}
-                maxLength={120}
-                placeholder="e.g. Website redesign"
+                value={form.title}
+                onChange={(event) => set("title", event.target.value)}
+                maxLength={NAMING_TITLE_MAX + 20}
+                placeholder="e.g. JGE Launch"
                 aria-invalid={show(nameError) || undefined}
-                aria-describedby={show(nameError) ? "project-name-error" : undefined}
-                autoFocus
+                aria-describedby="project-name-hint"
+                autoFocus={!isEdit}
               />
-              {show(nameError) && <FieldError id="project-name-error">{nameError}</FieldError>}
+              {show(nameError) ? (
+                <FieldError id="project-name-hint">{nameError}</FieldError>
+              ) : (
+                <p id="project-name-hint" className="text-xs text-muted-foreground">
+                  Up to {NAMING_TITLE_MAX} characters, no underscores. {title.length}/{NAMING_TITLE_MAX}
+                </p>
+              )}
             </div>
+
+            <div
+              className="rounded-lg border bg-muted/40 px-3 py-2 text-sm"
+              aria-live="polite"
+            >
+              <span className="text-muted-foreground">Project name: </span>
+              <code className="font-mono font-medium break-all text-foreground">
+                {namingLoading ? "Detecting from the old name…" : preview}
+              </code>
+            </div>
+          </fieldset>
+
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="project-code">Code</Label>
               <Input
@@ -396,7 +644,7 @@ export function ProjectFormDialog({
                   set("code", event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
                 }}
                 maxLength={10}
-                placeholder="WEB"
+                placeholder="WASLC"
                 className="font-mono uppercase"
                 aria-invalid={show(codeError) || undefined}
                 aria-describedby="project-code-hint"
@@ -405,7 +653,9 @@ export function ProjectFormDialog({
                 <FieldError id="project-code-hint">{codeError}</FieldError>
               ) : (
                 <p id="project-code-hint" className="text-xs text-muted-foreground">
-                  {isEdit ? "Only new tasks use a new code." : "Prefixes task codes (WEB-1)."}
+                  {isEdit
+                    ? "Only new tasks use a new code."
+                    : "Suggested from the brand and type; prefixes task codes (WASLC-1)."}
                 </p>
               )}
             </div>
@@ -434,18 +684,6 @@ export function ProjectFormDialog({
                 options={categoryOptions}
               />
               {isAdmin && <ManageLink to="/settings/projects">Manage categories</ManageLink>}
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="project-brand">Brand</Label>
-              <OptionSelect
-                id="project-brand"
-                value={form.brand}
-                onChange={(value) => set("brand", value)}
-                options={brandOptions}
-                disabled={brands.isPending}
-              />
-              {isAdmin && <ManageLink to="/settings/brands">Manage brands</ManageLink>}
             </div>
 
             {!isEdit && (

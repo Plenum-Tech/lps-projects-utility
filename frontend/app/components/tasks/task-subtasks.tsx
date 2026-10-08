@@ -7,10 +7,13 @@ import {
   LuLoaderCircle,
   LuPaperclip,
   LuPencil,
+  LuPlay,
   LuPlus,
+  LuTimer,
   LuTrash2,
 } from "react-icons/lu";
 
+import { VarianceChip, varianceDays } from "@/components/tasks/actual-dates";
 import { SubtaskFormDialog } from "@/components/tasks/subtask-form";
 import { UserAvatar } from "@/components/tasks/task-badges";
 import { FileRow } from "@/components/tasks/task-files";
@@ -33,6 +36,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useDeleteSubtask, useTaskFiles, useUpdateSubtask } from "@/hooks/use-tasks";
+import { formatDate, formatDateTime, formatTimeOfDay } from "@/lib/format";
 import { formatDateOnly, toDateInput, todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Role, Subtask, Task, TaskFile, TaskPermissions } from "@/types";
@@ -226,6 +230,32 @@ function SubtaskDates({ subtask }: { subtask: Subtask }) {
   );
 }
 
+/** Compact "Actual 8 Oct · 10:30 → 12:05" chip plus late/early chips vs the planned dates. */
+function SubtaskActual({ subtask }: { subtask: Subtask }) {
+  const start = subtask.actualStartAt ?? null;
+  const end = subtask.actualEndAt ?? null;
+  if (!start && !end) return null;
+  const sameDay = Boolean(start && end && formatDate(start) === formatDate(end));
+  const endText = end ? (sameDay ? formatTimeOfDay(end) : formatDateTime(end)) : "…";
+  const label = start ? `${formatDateTime(start)} → ${endText}` : `Ended ${formatDateTime(end)}`;
+  const startVariance = varianceDays(start, subtask.startDate ?? null);
+  const finishVariance = varianceDays(end, subtask.dueDate);
+  return (
+    <>
+      <span
+        className="inline-flex items-center gap-1 rounded-full bg-muted px-1.5 py-0.5 text-[0.7rem] whitespace-nowrap text-muted-foreground tabular-nums"
+        title={`Actual start: ${formatDateTime(start)} · Actual end: ${formatDateTime(end)}`}
+      >
+        <LuTimer aria-hidden className="size-3" />
+        <span className="sr-only">Actual: </span>
+        {label}
+      </span>
+      <VarianceChip kind="start" days={startVariance} />
+      <VarianceChip kind="finish" days={finishVariance} />
+    </>
+  );
+}
+
 function SubtaskRow({
   task,
   subtask,
@@ -259,6 +289,8 @@ function SubtaskRow({
   const rowRef = useRef<HTMLLIElement>(null);
   const isMine = subtask.assignee?._id === me._id;
   const panelId = `subtask-panel-${subtask._id}`;
+  // "Start now" — open subtasks without an actual start, for whoever may edit or tick it off.
+  const canStartNow = (canEdit || canToggle) && !subtask.done && !subtask.actualStartAt;
 
   useEffect(() => {
     if (focused) rowRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
@@ -301,6 +333,11 @@ function SubtaskRow({
             <span className="mt-0.5 flex flex-wrap items-center gap-1.5 sm:hidden">
               <SubtaskDates subtask={subtask} />
             </span>
+            {(subtask.actualStartAt || subtask.actualEndAt) && (
+              <span className="mt-1 flex flex-wrap items-center gap-1.5">
+                <SubtaskActual subtask={subtask} />
+              </span>
+            )}
           </span>
         </button>
 
@@ -331,7 +368,7 @@ function SubtaskRow({
           <span className="hidden text-xs text-muted-foreground sm:inline">Unassigned</span>
         )}
 
-        {canEdit ? (
+        {canEdit || canStartNow ? (
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -341,14 +378,27 @@ function SubtaskRow({
               <LuEllipsis aria-hidden />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onEdit}>
-                <LuPencil aria-hidden />
-                Edit
-              </DropdownMenuItem>
-              <DropdownMenuItem variant="destructive" onClick={onDelete}>
-                <LuTrash2 aria-hidden />
-                Delete
-              </DropdownMenuItem>
+              {canStartNow && (
+                <DropdownMenuItem
+                  disabled={update.isPending}
+                  onClick={() => update.mutate({ subId: subtask._id, input: { startNow: true } })}
+                >
+                  <LuPlay aria-hidden />
+                  Start now
+                </DropdownMenuItem>
+              )}
+              {canEdit && (
+                <>
+                  <DropdownMenuItem onClick={onEdit}>
+                    <LuPencil aria-hidden />
+                    Edit
+                  </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onClick={onDelete}>
+                    <LuTrash2 aria-hidden />
+                    Delete
+                  </DropdownMenuItem>
+                </>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
@@ -377,6 +427,14 @@ function SubtaskRow({
             <div className="flex gap-1">
               <dt>Due</dt>
               <dd className="font-medium text-foreground">{formatDateOnly(subtask.dueDate, true)}</dd>
+            </div>
+            <div className="flex gap-1">
+              <dt>Actual start</dt>
+              <dd className="font-medium text-foreground tabular-nums">{formatDateTime(subtask.actualStartAt)}</dd>
+            </div>
+            <div className="flex gap-1">
+              <dt>Actual end</dt>
+              <dd className="font-medium text-foreground tabular-nums">{formatDateTime(subtask.actualEndAt)}</dd>
             </div>
           </dl>
           <div className="space-y-1.5">

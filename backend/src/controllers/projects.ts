@@ -5,7 +5,16 @@ import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { formatDueDate, notifyUsers } from "../lib/notifications.js";
-import { parsePagination, searchRegex } from "../lib/pagination.js";
+import { exactNameRegex, parsePagination, searchRegex } from "../lib/pagination.js";
+import {
+  composeProjectName,
+  detectLegacyNaming,
+  NAMING_SEPARATOR,
+  parseMonthInput,
+  parseStructuredName,
+  PROJECT_NAMING_LIMITS,
+  tidy,
+} from "../lib/projectNaming.js";
 import { naturalSortKey } from "../lib/naturalSort.js";
 import {
   canCreateProject,
@@ -44,12 +53,13 @@ import { Meeting } from "../models/Meeting.js";
 import { Milestone } from "../models/Milestone.js";
 import { Notification } from "../models/Notification.js";
 import { Project, PROGRESS_MODES, PROJECT_CODE_REGEX, PROJECT_LIMITS } from "../models/Project.js";
-import type { IProject, ProgressMode } from "../models/Project.js";
+import type { IProject, IProjectNaming, ProgressMode } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { ProjectActivity } from "../models/ProjectActivity.js";
 import { ProjectCategory } from "../models/ProjectCategory.js";
 import { ProjectFile } from "../models/ProjectFile.js";
 import { ProjectNote } from "../models/ProjectNote.js";
+import { getProjectTypes } from "../models/ProjectSettings.js";
 import { completedStatusIds, getDefaultProjectStatus, ProjectStatus } from "../models/ProjectStatus.js";
 import { Task } from "../models/Task.js";
 import { TaskComment } from "../models/TaskComment.js";
@@ -131,6 +141,78 @@ async function parseStatus(raw: unknown): Promise<mongoose.Types.ObjectId | Inva
   if (!status) return bad("Status not found", 404);
   if (!status.active) return bad("This status is inactive");
   return status._id as mongoose.Types.ObjectId;
+}
+
+// ---------------------------------------------------------------------------
+// Structured names (`Brand_Type_MonYYYY_Name`, lib/projectNaming.ts)
+// ---------------------------------------------------------------------------
+
+interface ParsedNaming {
+  naming: IProjectNaming;
+  name: string;
+}
+
+/**
+ * `naming: { brand, type, month, title }` → the parts + composed name.
+ * `current` = the project's naming (a type removed from Settings may be kept;
+ * an inactive brand may be kept).
+ */
+async function parseNaming(
+  raw: unknown,
+  current: { naming?: IProjectNaming | null; brand?: mongoose.Types.ObjectId | null } = {}
+): Promise<ParsedNaming | Invalid> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return bad("naming must be an object { brand, type, month, title }");
+  }
+  const input = raw as { brand?: unknown; type?: unknown; month?: unknown; title?: unknown };
+  const missing = (["brand", "type", "month", "title"] as const).filter((k) => {
+    const v = input[k];
+    return v === undefined || v === null || (typeof v === "string" && !tidy(v));
+  });
+  if (missing.length > 0) {
+    const labels = missing.map((k) => (k === "title" ? "name" : k));
+    return bad(`Project ${labels.join(", ")} ${labels.length === 1 ? "is" : "are"} required`);
+  }
+
+  const brandId = await parseBrand(input.brand, current.naming?.brand ?? current.brand ?? null);
+  if (isInvalid(brandId)) return brandId;
+  if (!brandId) return bad("Brand is required");
+  const brand = await Brand.findById(brandId).select("name").lean<{ name: string }>();
+  if (!brand) return bad("Brand not found", 404);
+  if (brand.name.includes(NAMING_SEPARATOR)) {
+    return bad(`The brand name "${brand.name}" contains "_" — rename the brand first`);
+  }
+
+  if (typeof input.type !== "string") return bad("type must be text");
+  const typeText = tidy(input.type);
+  const keptType =
+    current.naming && current.naming.type.toLowerCase() === typeText.toLowerCase() ? current.naming.type : null;
+  const types = await getProjectTypes();
+  const type = types.find((t) => t.toLowerCase() === typeText.toLowerCase()) ?? keptType;
+  if (!type) return bad(`type must be one of: ${types.join(", ")}`);
+
+  const month = parseMonthInput(input.month);
+  if (!month) return bad('month must be a month like "2026-10"');
+
+  if (typeof input.title !== "string") return bad("name must be text");
+  const title = tidy(input.title);
+  if (title.includes(NAMING_SEPARATOR)) return bad('Name can\'t contain "_" (it separates the parts)');
+  if (title.length > PROJECT_NAMING_LIMITS.titleMax) {
+    return bad(`Name must be ${PROJECT_NAMING_LIMITS.titleMax} characters or fewer`);
+  }
+
+  return {
+    naming: { brand: brandId, type, month, title },
+    name: composeProjectName(brand.name, type, month, title),
+  };
+}
+
+/** 409 when another active (non-archived) project already has this name (case-insensitive, no collation). */
+async function ensureUniqueName(name: string, excludeId?: mongoose.Types.ObjectId): Promise<Invalid | null> {
+  const filter: Record<string, unknown> = { archivedAt: null, name: exactNameRegex(name) };
+  if (excludeId) filter._id = { $ne: excludeId };
+  const clash = await Project.findOne(filter).select("code").lean<{ code: string }>();
+  return clash ? bad(`A project named "${name}" already exists (${clash.code})`, 409) : null;
 }
 
 /** Heads may only use their own department; admins any existing department. */
@@ -369,6 +451,18 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
 
   if (req.query.brand === "none") and.push({ brand: null });
 
+  // Structured-name Type ("none" = legacy names) and Month ("YYYY-MM").
+  const type = req.query.type;
+  if (type !== undefined && type !== "") {
+    if (typeof type !== "string" || type.length > 60) return bad("type must be a project type");
+    and.push(type === "none" ? { naming: null } : { "naming.type": exactNameRegex(type) });
+  }
+  const month = req.query.month;
+  if (month !== undefined && month !== "") {
+    if (typeof month !== "string" || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return bad("month must be YYYY-MM");
+    and.push({ "naming.month": month });
+  }
+
   // Member = on the team or the manager (managers are added as members; legacy
   // data may lack it) — the same "my projects" as My dashboard.
   const member = req.query.member;
@@ -582,6 +676,9 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     "Open tasks",
     "Hours logged",
     "Archived",
+    "Type",
+    "Month",
+    "Name part",
   ];
   const rows = pageIds.flatMap((id) => {
     const p = byId.get(id.toString());
@@ -604,6 +701,9 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
         c?.open ?? 0,
         csvHours(logged.get(id.toString())?.minutes ?? 0),
         p.archivedAt ? "Yes" : "No",
+        p.naming?.type ?? "",
+        p.naming?.month ?? "",
+        p.naming?.title ?? "",
       ],
     ];
   });
@@ -676,7 +776,10 @@ export async function bulkProjects(req: Request, res: Response): Promise<void> {
 
 
 export interface ProjectBody {
+  /** Legacy free-text name (imports / legacy projects only). */
   name?: unknown;
+  /** Structured name parts `{ brand, type, month, title }` (required on create). */
+  naming?: unknown;
   code?: unknown;
   summary?: unknown;
   category?: unknown;
@@ -721,6 +824,8 @@ export interface ProjectWriteOptions {
   sendEmail?: boolean;
   /** Extra details for the project activity / audit entries (e.g. the import job). */
   activityExtra?: Record<string, unknown>;
+  /** Create with a free-text `name` when `naming` is absent (Excel import, with a warning). */
+  allowLegacyName?: boolean;
 }
 
 /**
@@ -738,8 +843,19 @@ export async function createProjectCore(
     return bad("Only admins and department heads can create projects", 403);
   }
 
-  const name = parseName(body.name);
-  if (isInvalid(name)) return name;
+  let name: string;
+  let naming: IProjectNaming | null = null;
+  if (body.naming !== undefined && body.naming !== null) {
+    const parsed = await parseNaming(body.naming);
+    if (isInvalid(parsed)) return parsed;
+    ({ name, naming } = parsed);
+  } else if (options.allowLegacyName) {
+    const parsed = parseName(body.name);
+    if (isInvalid(parsed)) return parsed;
+    name = parsed;
+  } else {
+    return bad("Project brand, type, month and name are required");
+  }
   const code = parseCode(body.code);
   if (isInvalid(code)) return code;
   const summary = parseSummary(body.summary);
@@ -752,8 +868,8 @@ export async function createProjectCore(
     category = parsed;
   }
 
-  let brand: mongoose.Types.ObjectId | null = null;
-  if (body.brand !== undefined) {
+  let brand: mongoose.Types.ObjectId | null = naming?.brand ?? null;
+  if (body.brand !== undefined && !naming) {
     const parsed = await parseBrand(body.brand);
     if (isInvalid(parsed)) return parsed;
     brand = parsed;
@@ -817,10 +933,14 @@ export async function createProjectCore(
   const requireTaskApproval = optionalBoolean(body.requireTaskApproval, "requireTaskApproval");
   if (isInvalid(requireTaskApproval)) return requireTaskApproval;
 
+  const clash = await ensureUniqueName(name);
+  if (clash) return clash;
+
   let project: IProject;
   try {
     project = await Project.create({
       name,
+      naming,
       code,
       summary: summary || undefined,
       category,
@@ -870,6 +990,49 @@ export async function createProject(req: Request, res: Response): Promise<void> 
   await respondDetail(res, result.project._id as mongoose.Types.ObjectId, actor, 201);
 }
 
+/**
+ * GET /api/projects/:id/naming-suggestion — the four name parts to pre-fill the
+ * edit form: the stored ones, or (legacy name) the brand from Project.brand and
+ * type / month / name detected from the old name. The month falls back to the
+ * start date's month (`monthSource: "startDate"`).
+ */
+export async function getNamingSuggestion(req: Request, res: Response): Promise<void> {
+  const project = await getViewableProjectOr404(req, res);
+  if (!project) return;
+  if (project.naming) {
+    res.json({
+      suggestion: {
+        brand: project.naming.brand.toString(),
+        type: project.naming.type,
+        month: project.naming.month,
+        title: project.naming.title,
+        legacy: false,
+        monthSource: "naming",
+        typeDetected: true,
+      },
+    });
+    return;
+  }
+  const [types, brand] = await Promise.all([
+    getProjectTypes(),
+    project.brand ? Brand.findById(project.brand).select("name").lean<{ name: string }>() : null,
+  ]);
+  const start = project.startDate;
+  const detected = detectLegacyNaming(project.name, types, brand?.name ?? null, start.getUTCFullYear());
+  const startMonth = `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, "0")}`;
+  res.json({
+    suggestion: {
+      brand: project.brand ? project.brand.toString() : null,
+      type: detected.type,
+      month: detected.month ?? startMonth,
+      title: detected.title,
+      legacy: true,
+      monthSource: detected.month ? "name" : "startDate",
+      typeDetected: Boolean(detected.type),
+    },
+  });
+}
+
 /** GET /api/projects/:id — `{ project, permissions, stats }`. */
 export async function getProject(req: Request, res: Response): Promise<void> {
   const project = await getViewableProjectOr404(req, res);
@@ -896,10 +1059,48 @@ export async function updateProjectCore(
   const changed: string[] = [];
   let newManager: mongoose.Types.ObjectId | null = null;
 
-  if (body.name !== undefined) {
+  // Name: `naming` converts a legacy name / changes the parts; a brand change on a
+  // structured project re-composes the name; a plain `name` only for legacy projects.
+  let namingInput: unknown = body.naming;
+  if (namingInput === undefined && project.naming && body.brand !== undefined) {
+    if (body.brand === null || body.brand === "") return bad("Brand is required for a structured project name");
+    const current = project.naming;
+    namingInput = { brand: body.brand, type: current.type, month: current.month, title: current.title };
+  }
+  if (namingInput === null) return bad("naming can't be cleared");
+  if (namingInput !== undefined) {
+    const parsed = await parseNaming(namingInput, { naming: project.naming ?? null, brand: project.brand ?? null });
+    if (isInvalid(parsed)) return parsed;
+    const before = project.naming;
+    const namingChanged =
+      !before ||
+      !before.brand.equals(parsed.naming.brand) ||
+      before.type !== parsed.naming.type ||
+      before.month !== parsed.naming.month ||
+      before.title !== parsed.naming.title;
+    if (namingChanged) {
+      project.naming = parsed.naming;
+      changed.push("naming");
+    }
+    if (parsed.name !== project.name) {
+      const clash = await ensureUniqueName(parsed.name, project._id as mongoose.Types.ObjectId);
+      if (clash) return clash;
+      project.name = parsed.name;
+      changed.push("name");
+    }
+    if (String(project.brand ?? "") !== String(parsed.naming.brand)) {
+      project.brand = parsed.naming.brand;
+      changed.push("brand");
+    }
+  } else if (body.name !== undefined) {
     const name = parseName(body.name);
     if (isInvalid(name)) return name;
     if (name !== project.name) {
+      if (project.naming) {
+        return bad("This project uses a structured name — change its brand, type, month or name instead");
+      }
+      const clash = await ensureUniqueName(name, project._id as mongoose.Types.ObjectId);
+      if (clash) return clash;
       project.name = name;
       changed.push("name");
     }
@@ -925,7 +1126,7 @@ export async function updateProjectCore(
     project.category = category;
     changed.push("category");
   }
-  if (body.brand !== undefined) {
+  if (body.brand !== undefined && namingInput === undefined) {
     const brand = await parseBrand(body.brand, project.brand ?? null);
     if (isInvalid(brand)) return brand;
     if (String(brand ?? "") !== String(project.brand ?? "")) {
@@ -1186,6 +1387,10 @@ async function applyRestore(actor: IUser, project: IProject, ip: string | undefi
     return bad("Only the project manager, its creator or an admin can restore this project", 403);
   }
   if (!project.archivedAt) return bad("Project is not archived", 409);
+  if (project.naming) {
+    const clash = await ensureUniqueName(project.name, project._id as mongoose.Types.ObjectId);
+    if (clash) return bad(`${clash.error} — rename one of them first`, 409);
+  }
   project.archivedAt = null;
   await project.save();
   const projectId = project._id as mongoose.Types.ObjectId;
@@ -1307,9 +1512,41 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
     res.status(403).json({ error: "Only the project manager, its creator or an admin can duplicate this project" });
     return;
   }
-  const body = (req.body ?? {}) as { name?: unknown; code?: unknown; includeTasks?: unknown; startDate?: unknown; deadline?: unknown };
-  const name = parseName(body.name ?? `${source.name} (copy)`);
-  if (isInvalid(name)) return send(res, name);
+  const body = (req.body ?? {}) as {
+    name?: unknown;
+    naming?: unknown;
+    code?: unknown;
+    includeTasks?: unknown;
+    startDate?: unknown;
+    deadline?: unknown;
+  };
+  // Structured copies stay structured: explicit `naming`, a `name` in the
+  // Brand_Type_MonYYYY_Name format (brand stays the source's), or "<name> (copy)".
+  let name: string;
+  let naming: IProjectNaming | null = null;
+  let namingInput: unknown = body.naming;
+  if (namingInput === undefined && source.naming) {
+    const fromName = typeof body.name === "string" ? parseStructuredName(body.name) : null;
+    if (body.name === undefined || fromName) {
+      namingInput = {
+        brand: source.naming.brand.toString(),
+        type: fromName?.type ?? source.naming.type,
+        month: fromName?.month ?? source.naming.month,
+        title: fromName ? fromName.title : `${source.naming.title} (copy)`.slice(0, PROJECT_NAMING_LIMITS.titleMax),
+      };
+    }
+  }
+  if (namingInput !== undefined && namingInput !== null) {
+    const parsed = await parseNaming(namingInput, { naming: source.naming ?? null, brand: source.brand ?? null });
+    if (isInvalid(parsed)) return send(res, parsed);
+    ({ name, naming } = parsed);
+  } else {
+    const parsed = parseName(body.name ?? `${source.name} (copy)`);
+    if (isInvalid(parsed)) return send(res, parsed);
+    name = parsed;
+  }
+  const clash = await ensureUniqueName(name);
+  if (clash) return send(res, clash);
   const code = parseCode(body.code);
   if (isInvalid(code)) return send(res, code);
   const includeTasks = optionalBoolean(body.includeTasks, "includeTasks");
@@ -1345,10 +1582,11 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
   try {
     copy = await Project.create({
       name,
+      naming,
       code,
       summary: source.summary,
       category: source.category ?? null,
-      brand: source.brand ?? null,
+      brand: naming?.brand ?? source.brand ?? null,
       departments,
       manager,
       members,

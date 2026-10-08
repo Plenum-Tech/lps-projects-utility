@@ -269,3 +269,113 @@ export function varianceDays(actual: Date | null | undefined, planned: Date | nu
   if (!actual || !planned) return null;
   return dayFromKey(appDateKey(actual)) - dayFromKey(planned.toISOString().slice(0, 10));
 }
+
+// ---------------------------------------------------------------------------
+// Subtask Actual start / Actual end (Task.subtasks[]).
+//
+// Subtasks are only done / not done, so the rules are simpler than a task's:
+// - end: set when the subtask is ticked off (same moment as completedAt); an
+//   auto/import end is cleared when it is reopened, a manual one is kept;
+// - start: never invented — it is set manually, or by the row's "Start now"
+//   action (source "auto", so clearing it simply empties it again).
+// ---------------------------------------------------------------------------
+
+/** The subtask fields the rules read and write. */
+export interface SubtaskActualFields {
+  done?: boolean;
+  completedAt?: Date | null;
+  actualStartAt?: Date | null;
+  actualEndAt?: Date | null;
+  actualStartSource?: ActualDateSource | null;
+  actualEndSource?: ActualDateSource | null;
+}
+
+/** The subtask was ticked off (`done`) or reopened at `at`. Mutates `subtask`. */
+export function applySubtaskDoneActualDates(subtask: SubtaskActualFields, done: boolean, at: Date): void {
+  if (done) {
+    if (!subtask.actualEndAt || subtask.actualEndSource !== "manual") {
+      // A manual start may sit inside the clock-skew grace; never end before it.
+      const start = subtask.actualStartAt?.getTime() ?? 0;
+      subtask.actualEndAt = start > at.getTime() ? new Date(start) : at;
+      subtask.actualEndSource = "auto";
+    }
+  } else if (subtask.actualEndAt && subtask.actualEndSource !== "manual") {
+    subtask.actualEndAt = null;
+    subtask.actualEndSource = null;
+  }
+}
+
+/**
+ * Validates and applies a manual edit (and/or "Start now") to a subtask in
+ * memory. Clearing a field returns it to automatic: end = completedAt while
+ * done, start = empty. Returns the changes for `subtask_actual_dates_updated`.
+ */
+export function applySubtaskManualActualDates(
+  subtask: SubtaskActualFields,
+  body: ActualDatesInput & { startNow?: unknown },
+  now = new Date()
+): Invalid | ActualDateChange[] {
+  const start = parseInstant(body.actualStartAt, "actualStartAt");
+  if (isInvalid(start)) return start;
+  const end = parseInstant(body.actualEndAt, "actualEndAt");
+  if (isInvalid(end)) return end;
+  if (body.startNow !== undefined && typeof body.startNow !== "boolean") {
+    return { status: 400, error: "startNow must be a boolean" };
+  }
+  const startNow = body.startNow === true;
+  if (startNow && start !== undefined) {
+    return { status: 400, error: "Send either startNow or actualStartAt, not both" };
+  }
+  if (start === undefined && end === undefined && !startNow) return [];
+
+  const limit = now.getTime() + ACTUAL_FUTURE_GRACE_MS;
+  if (start && start.getTime() > limit) return { status: 400, error: "Actual start can't be in the future" };
+  if (end && end.getTime() > limit) return { status: 400, error: "Actual end can't be in the future" };
+
+  let nextStart = subtask.actualStartAt ?? null;
+  let nextStartSource = subtask.actualStartSource ?? null;
+  let nextEnd = subtask.actualEndAt ?? null;
+  let nextEndSource = subtask.actualEndSource ?? null;
+  if (startNow) {
+    if (nextStart) return { status: 409, error: "This subtask already has an actual start" };
+    nextStart = now;
+    nextStartSource = "auto";
+  } else if (start !== undefined) {
+    nextStart = start;
+    nextStartSource = start ? "manual" : null;
+  }
+  if (end !== undefined) {
+    const autoEnd = subtask.done ? (subtask.completedAt ?? null) : null;
+    nextEnd = end ?? autoEnd;
+    nextEndSource = end ? "manual" : nextEnd ? "auto" : null;
+  }
+  if (nextStart && nextEnd && nextEnd.getTime() < nextStart.getTime()) {
+    return { status: 400, error: "Actual end must be on or after the actual start" };
+  }
+
+  const changes: ActualDateChange[] = [];
+  const iso = (d: Date | null) => (d ? d.toISOString() : null);
+  if (iso(nextStart) !== iso(subtask.actualStartAt ?? null) || nextStartSource !== (subtask.actualStartSource ?? null)) {
+    changes.push({
+      field: "actualStartAt",
+      from: iso(subtask.actualStartAt ?? null),
+      to: iso(nextStart),
+      fromSource: subtask.actualStartSource ?? null,
+      source: nextStartSource,
+    });
+    subtask.actualStartAt = nextStart;
+    subtask.actualStartSource = nextStartSource;
+  }
+  if (iso(nextEnd) !== iso(subtask.actualEndAt ?? null) || nextEndSource !== (subtask.actualEndSource ?? null)) {
+    changes.push({
+      field: "actualEndAt",
+      from: iso(subtask.actualEndAt ?? null),
+      to: iso(nextEnd),
+      fromSource: subtask.actualEndSource ?? null,
+      source: nextEndSource,
+    });
+    subtask.actualEndAt = nextEnd;
+    subtask.actualEndSource = nextEndSource;
+  }
+  return changes;
+}

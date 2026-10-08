@@ -10,6 +10,7 @@ import type {
   ProjectSettingsInput,
   ProjectStatus,
   ProjectStatusInput,
+  ProjectTypeOption,
 } from "@/types";
 
 export const projectMetaKeys = {
@@ -18,7 +19,22 @@ export const projectMetaKeys = {
   settings: ["project-settings"] as const,
   /** Public subset for every role (where time may be logged). */
   timeSettings: ["project-settings", "time"] as const,
+  /** Project name Types (every role). */
+  types: ["project-types"] as const,
 };
+
+/** Project name Types (`Brand_Type_MonYYYY_Name`), any signed-in user. */
+export function useProjectTypes(enabled = true) {
+  return useQuery({
+    queryKey: projectMetaKeys.types,
+    queryFn: async () => {
+      const { data } = await api.get<{ types: ProjectTypeOption[] }>("/project-meta/types");
+      return data.types;
+    },
+    staleTime: 60_000,
+    enabled,
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Statuses
@@ -259,6 +275,7 @@ export function useUpdateProjectSettings() {
     onSuccess: (settings) => {
       queryClient.setQueryData(projectMetaKeys.settings, settings);
       void queryClient.invalidateQueries({ queryKey: projectMetaKeys.timeSettings });
+      void queryClient.invalidateQueries({ queryKey: projectMetaKeys.types });
       toast.success("Settings saved");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),

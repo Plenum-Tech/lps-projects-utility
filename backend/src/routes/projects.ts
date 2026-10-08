@@ -21,6 +21,7 @@ import {
   deleteProject,
   duplicateProject,
   exportProjects,
+  getNamingSuggestion,
   getProject,
   listAssignableMembers,
   listProjectActivity,
@@ -52,6 +53,7 @@ router.get("/export", exportProjects);
 router.post("/bulk", bulkProjects);
 
 router.get("/:id", getProject);
+router.get("/:id/naming-suggestion", getNamingSuggestion);
 router.patch("/:id", updateProject);
 router.delete("/:id", requireRole("admin"), deleteProject);
 router.patch("/:id/status", updateProjectStatus);

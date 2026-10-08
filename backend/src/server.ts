@@ -58,6 +58,7 @@ import usersRouter from "./routes/users.js";
 import settingsRouter from "./routes/settings.js";
 import analyticsRouter from "./routes/analytics.js";
 import brandsRouter from "./routes/brands.js";
+import integrationsRouter, { pearityApiRouter } from "./routes/integrations.js";
 import { companySettingsFreshness } from "./lib/companySettings.js";
 import { isProduction, jobsMode, validateEnvironment } from "./lib/env.js";
 import { startScheduler, stopScheduler } from "./lib/scheduler.js";
@@ -89,10 +90,12 @@ const corsOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
 
 // --- Global middleware (order matters: env first, then security/cors/parsing) ---
 // Invite tokens are credentials: mask them in the logged URL so they never reach the logs.
+const SECRET_QUERY_PARAM = /([?&](?:api_?key|key|token|access_token)=)[^&#]*/gi;
 const INVITE_TOKEN_PATH = /(\/api\/(?:invitations\/accept|password-setup)\/)[^/?#]+/;
 morgan.token("url", (req) => {
   const url = (req as express.Request).originalUrl || req.url || "";
-  return url.replace(INVITE_TOKEN_PATH, "$1[redacted]");
+  // API keys travel only in the Authorization header (never logged); mask key-like query params defensively.
+  return url.replace(INVITE_TOKEN_PATH, "$1[redacted]").replace(SECRET_QUERY_PARAM, "$1[redacted]");
 });
 // Production: one JSON line per request on stdout (ACA -> Log Analytics); probes are not logged.
 const jsonLogFormat: morgan.FormatFn = (tokens, req, res) => {
@@ -218,7 +221,10 @@ app.use("/api/reports", (req, res, next) =>
 // Standard: general API endpoints. The SSE stream is long-lived and reconnects on
 // its own, so it is exempt — a 429 there would trigger a reconnect loop.
 app.use("/api", (req, res, next) =>
-  req.path === "/notifications/stream" ? next() : standardRateLimit(req, res, next),
+  // The Pearity server-to-server API has its own per-key limit (routes/integrations.ts).
+  req.path === "/notifications/stream" || req.path.startsWith("/integrations/pearity/v1/")
+    ? next()
+    : standardRateLimit(req, res, next),
 );
 
 // Company settings (timezone, app URL, branding) are cached in memory; re-read
@@ -259,6 +265,9 @@ app.use("/api/meetings", meetingsRouter);
 app.use("/api/imports", importsRouter);
 app.use("/api/brands", brandsRouter);
 app.use("/api/analytics", analyticsRouter);
+// Pearity: server-to-server API (Bearer key) first, then the session/admin endpoints.
+app.use("/api/integrations/pearity/v1", pearityApiRouter);
+app.use("/api/integrations", integrationsRouter);
 
 // --- Inngest serve endpoint ---
 app.use("/api/inngest", serve({ client: inngest, functions }));
