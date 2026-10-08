@@ -38,6 +38,7 @@ import {
   taskVisibilityFilter,
 } from "../lib/taskAccess.js";
 import { addDays, appDateKey, appToday, nextRunAfter } from "../lib/taskJobs.js";
+import { appDayStart } from "../lib/appTime.js";
 import { notifyUsers } from "../lib/notifications.js";
 import {
   canCreateProjectTasks,
@@ -397,6 +398,22 @@ function queryDate(raw: unknown, name: string): Date | undefined | Invalid {
   return parsed ?? { status: 400, error: `${name} must be a valid date (YYYY-MM-DD)` };
 }
 
+/** Optional inclusive date-only range from two query params (null when both are absent). */
+function dayRangeQuery(
+  req: Request,
+  fromName: string,
+  toName: string
+): { from?: Date; to?: Date } | null | Invalid {
+  const from = queryDate(req.query[fromName], fromName);
+  if (isInvalid(from)) return from;
+  const to = queryDate(req.query[toName], toName);
+  if (isInvalid(to)) return to;
+  if (from && to && from.getTime() > to.getTime()) {
+    return { status: 400, error: `${fromName} must be on or before ${toName}` };
+  }
+  return from || to ? { from, to } : null;
+}
+
 interface ListFilterOptions {
   /** The calendar applies its own overlap range — `from`/`to` are not a due-date filter there. */
   calendar?: boolean;
@@ -510,6 +527,44 @@ async function buildListFilter(
     if (from || to) {
       and.push({ dueDate: { $ne: null, ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } });
     }
+  }
+
+  // `?statusIn=todo,in_progress` — any of several statuses (My dashboard links).
+  const statusIn = req.query.statusIn;
+  if (statusIn !== undefined && statusIn !== "") {
+    const list = typeof statusIn === "string" ? statusIn.split(",").map((s) => s.trim()).filter(Boolean) : [];
+    if (list.length === 0 || list.some((s) => !TASK_STATUSES.includes(s as TaskStatus))) {
+      return { status: 400, error: `statusIn must be a comma-separated list of: ${TASK_STATUSES.join(", ")}` };
+    }
+    and.push({ status: { $in: [...new Set(list)] } });
+  }
+
+  // `?createdOrDueFrom/To` — created (app-timezone day) or due within the range.
+  const createdOrDue = dayRangeQuery(req, "createdOrDueFrom", "createdOrDueTo");
+  if (isInvalid(createdOrDue)) return createdOrDue;
+  if (createdOrDue) {
+    const { from, to } = createdOrDue;
+    and.push({
+      $or: [
+        { createdAt: { ...(from ? { $gte: appDayStart(from) } : {}), ...(to ? { $lt: appDayStart(addDays(to, 1)) } : {}) } },
+        { dueDate: { $ne: null, ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) } },
+      ],
+    });
+  }
+
+  // `?completedFrom/To` — completed (completedAt, app-timezone day) within the range.
+  const completed = dayRangeQuery(req, "completedFrom", "completedTo");
+  if (isInvalid(completed)) return completed;
+  if (completed) {
+    const { from, to } = completed;
+    and.push({
+      status: "completed",
+      completedAt: {
+        $ne: null,
+        ...(from ? { $gte: appDayStart(from) } : {}),
+        ...(to ? { $lt: appDayStart(addDays(to, 1)) } : {}),
+      },
+    });
   }
 
   const search = searchRegex(req.query.search);

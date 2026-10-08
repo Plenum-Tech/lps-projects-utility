@@ -11,6 +11,7 @@ import { Task } from "../models/Task.js";
 import { User } from "../models/User.js";
 import { EmployeeDocument } from "../models/EmployeeDocument.js";
 import { archivedProjectIds, Project } from "../models/Project.js";
+import { ProjectActivity } from "../models/ProjectActivity.js";
 import { cached } from "../lib/refCache.js";
 import { completedStatusIds } from "../models/ProjectStatus.js";
 import { TimeLog } from "../models/TimeLog.js";
@@ -432,6 +433,57 @@ function dateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** My dashboard periods: the last N days ending today (app timezone), or all time. */
+export const MY_PERIODS = ["7d", "30d", "90d", "120d", "365d", "all"] as const;
+export type MyPeriodKey = (typeof MY_PERIODS)[number];
+const MY_PERIOD_DAYS: Record<Exclude<MyPeriodKey, "all">, number> = {
+  "7d": 7,
+  "30d": 30,
+  "90d": 90,
+  "120d": 120,
+  "365d": 365,
+};
+const DEFAULT_MY_PERIOD: MyPeriodKey = "30d";
+
+interface DayRange {
+  /** Date-only bounds (UTC midnight of the calendar dates, inclusive). */
+  from: Date;
+  to: Date;
+  /** UTC instants: 00:00 app time on `from` … 00:00 app time the day after `to` (exclusive). */
+  start: Date;
+  end: Date;
+}
+
+interface MyPeriod {
+  key: MyPeriodKey;
+  /** null for "all". */
+  current: DayRange | null;
+  previous: DayRange | null;
+}
+
+function dayRange(from: Date, to: Date): DayRange {
+  return { from, to, start: appDayStart(from), end: appDayStart(addDays(to, 1)) };
+}
+
+/** `?period=` → resolved ranges (undefined/"" → 30d; null when invalid). */
+function resolveMyPeriod(raw: unknown, today: Date): MyPeriod | null {
+  const key = raw === undefined || raw === "" ? DEFAULT_MY_PERIOD : raw;
+  if (typeof key !== "string" || !(MY_PERIODS as readonly string[]).includes(key)) return null;
+  if (key === "all") return { key, current: null, previous: null };
+  const days = MY_PERIOD_DAYS[key as Exclude<MyPeriodKey, "all">];
+  const from = addDays(today, -(days - 1));
+  return {
+    key: key as MyPeriodKey,
+    current: dayRange(from, today),
+    previous: dayRange(addDays(from, -days), addDays(from, -1)),
+  };
+}
+
+/** Share (one decimal) or null without a denominator. */
+function pct1(part: number, whole: number): number | null {
+  return whole > 0 ? Math.round((part / whole) * 1000) / 10 : null;
+}
+
 export interface WeekTimelogs {
   weekStart: string;
   weekEnd: string;
@@ -492,8 +544,12 @@ type HrUserRow = {
 };
 
 /**
- * GET /api/dashboard/me — one aggregated call for the personal dashboard.
- * Restricted lists (probation / notice / internship / document expiries) are
+ * GET /api/dashboard/me?period=7d|30d|90d|120d|365d|all — one aggregated call
+ * for the personal dashboard (default 30d; see prompts/my-dashboard-period.md).
+ * The period (last N days ending today, app timezone) filters the task / project
+ * counts, the completed tiles (with the previous equal period) and My tasks;
+ * "all" is the unfiltered behaviour. The people / HR / document cards are
+ * forward-looking and ignore it. Restricted lists (probation / notice / internship / document expiries) are
  * scoped: self (employee, head without department) / department (head) / all (admin).
  */
 export async function getMyDashboard(req: Request, res: Response): Promise<void> {
@@ -501,6 +557,13 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   const meId = me._id as ObjectId;
   const today = appToday();
   const scope = hrScopeOf(me);
+  const period = resolveMyPeriod(req.query.period, today);
+  if (!period) {
+    res.status(400).json({ error: `period must be one of: ${MY_PERIODS.join(", ")}` });
+    return;
+  }
+  const cur = period.current;
+  const prev = period.previous;
 
   const [archived, completedStatuses, department, deptMembers] = await Promise.all([
     archivedProjectIdList(),
@@ -519,26 +582,78 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   if (scope === "self") docFilter.user = meId;
   else if (scope === "department") docFilter.user = { $in: [meId, ...deptMembers.map((m) => m._id as ObjectId)] };
 
-  const [taskCounts, myTaskRows, projects, leavesToday, people, docRows, docTotal, weekTimelogs] = await Promise.all([
+  // Open tasks in the period: created or due inside it (all time: every open task).
+  const openMatch: Record<string, unknown> = { ...taskBase, status: { $ne: "completed" } };
+  if (cur) {
+    openMatch.$or = [
+      { createdAt: { $gte: cur.start, $lt: cur.end } },
+      { dueDate: { $gte: cur.from, $lte: cur.to } },
+    ];
+  }
+  // Overdue: due before today (and, with a period, on or after its first day).
+  const overdueCond: Record<string, unknown>[] = [isDate("$dueDate"), { $lt: ["$dueDate", today] }];
+  if (cur) overdueCond.push({ $gte: ["$dueDate", cur.from] });
+
+  // Completed by me: completedAt in the current or previous period (all time: every completed task).
+  const completedMatch: Record<string, unknown> = { ...taskBase, status: "completed" };
+  if (cur && prev) completedMatch.completedAt = { $gte: prev.start, $lt: cur.end };
+  const inCurrent = cur
+    ? { $and: [isDate("$completedAt"), { $gte: ["$completedAt", cur.start] }] }
+    : true;
+  // On time: completed (app-timezone day) on or before the due date.
+  const onTimeCond = {
+    $and: [
+      inCurrent,
+      isDate("$completedAt"),
+      isDate("$dueDate"),
+      {
+        $lte: [
+          { $dateToString: { format: "%Y-%m-%d", date: "$completedAt", timezone: appTimeZone() } },
+          { $dateToString: { format: "%Y-%m-%d", date: "$dueDate" } },
+        ],
+      },
+    ],
+  };
+
+  const logMatch: Record<string, unknown> = {
+    user: meId,
+    endTime: { $ne: null },
+    status: { $in: ["pending", "approved"] },
+  };
+  if (cur) logMatch.startTime = { $gte: cur.start, $lt: cur.end };
+
+  const [
+    taskCounts,
+    myTaskRows,
+    projects,
+    leavesToday,
+    people,
+    docRows,
+    docTotal,
+    weekTimelogs,
+    completedRows,
+    touchedProjectIds,
+    loggedRows,
+  ] = await Promise.all([
     Task.aggregate<{ open: number; pending: number; overdue: number }>([
-      { $match: { ...taskBase, status: { $ne: "completed" } } },
+      { $match: openMatch },
       {
         $group: {
           _id: null,
           open: { $sum: 1 },
           pending: { $sum: { $cond: [{ $in: ["$status", PENDING_TASK_STATUSES] }, 1, 0] } },
-          overdue: { $sum: { $cond: [{ $and: [isDate("$dueDate"), { $lt: ["$dueDate", today] }] }, 1, 0] } },
+          overdue: { $sum: { $cond: [{ $and: overdueCond }, 1, 0] } },
         },
       },
     ]),
     Task.aggregate([
-      { $match: { ...taskBase, status: { $ne: "completed" } } },
+      { $match: openMatch },
       { $addFields: { _noDue: { $cond: [isDate("$dueDate"), 0, 1] } } },
       { $sort: { _noDue: 1, dueDate: 1, _id: 1 } },
       { $limit: MY_LIST_CAP },
       { $project: { title: 1, shortCode: 1, number: 1, labels: 1, status: 1, dueDate: 1, priority: 1, project: 1 } },
     ]),
-    Project.find(myProjectsFilter(meId)).select("status deadline").lean(),
+    Project.find(myProjectsFilter(meId)).select("status startDate deadline updatedAt").lean(),
     Leave.find({ status: "approved", startDate: { $lte: today }, endDate: { $gte: today } })
       .select("user endDate")
       .populate<{ user: { _id: ObjectId; name: string; designation?: string } | null }>({
@@ -571,14 +686,50 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       .lean(),
     EmployeeDocument.countDocuments(docFilter),
     computeWeekTimelogs(meId, currentWeekStart()),
+    Task.aggregate<{ count: number; previous: number; withDue: number; onTime: number }>([
+      { $match: completedMatch },
+      {
+        $group: {
+          _id: null,
+          count: { $sum: { $cond: [inCurrent, 1, 0] } },
+          previous: { $sum: { $cond: [inCurrent, 0, 1] } },
+          withDue: {
+            $sum: { $cond: [{ $and: [inCurrent, isDate("$completedAt"), isDate("$dueDate")] }, 1, 0] },
+          },
+          onTime: { $sum: { $cond: [onTimeCond, 1, 0] } },
+        },
+      },
+    ]),
+    // Projects with a task of mine updated in the period ("active in the period").
+    cur
+      ? Task.distinct("project", { assignees: meId, updatedAt: { $gte: cur.start, $lt: cur.end } })
+      : Promise.resolve([] as unknown[]),
+    TimeLog.aggregate<{ minutes: number }>([
+      { $match: logMatch },
+      { $group: { _id: null, minutes: { $sum: "$durationMinutes" } } },
+    ]),
   ]);
 
   // --- Tasks ------------------------------------------------------------------
   const counts = taskCounts[0] ?? { open: 0, pending: 0, overdue: 0 };
-  const populatedTasks = (await Task.populate(myTaskRows, [
-    { path: "labels", select: "name color" },
-    { path: "project", select: "name code" },
-  ])) as unknown as Array<{
+  const completedSet = new Set(completedStatuses.map((id) => id.toString()));
+  const finishedIds = projects.filter((p) => completedSet.has(String(p.status))).map((p) => p._id as ObjectId);
+
+  const [populated, completionRows] = await Promise.all([
+    Task.populate(myTaskRows, [
+      { path: "labels", select: "name color" },
+      { path: "project", select: "name code" },
+    ]),
+    // When each finished project last changed status (= moved to its completed status).
+    cur && finishedIds.length > 0
+      ? ProjectActivity.aggregate<{ _id: ObjectId; at: Date }>([
+          { $match: { project: { $in: finishedIds }, action: "status_changed" } },
+          { $sort: { createdAt: -1 } },
+          { $group: { _id: "$project", at: { $first: "$createdAt" } } },
+        ])
+      : Promise.resolve([] as Array<{ _id: ObjectId; at: Date }>),
+  ]);
+  const populatedTasks = populated as unknown as Array<{
     _id: ObjectId;
     title: string;
     shortCode?: string | null;
@@ -602,9 +753,45 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   }));
 
   // --- Projects ---------------------------------------------------------------
-  const completedSet = new Set(completedStatuses.map((id) => id.toString()));
-  const activeProjects = projects.filter((p) => !completedSet.has(String(p.status)));
-  const projectsOverdue = activeProjects.filter((p) => p.deadline && p.deadline.getTime() < today.getTime()).length;
+  // Finished = in a completed status; its completion moment is the last status
+  // change (projects that never changed status fall back to updatedAt).
+  const completedAtById = new Map(completionRows.map((r) => [String(r._id), r.at]));
+  const completionOf = (p: (typeof projects)[number]): Date =>
+    completedAtById.get(String(p._id)) ?? p.updatedAt;
+  const touched = new Set(touchedProjectIds.filter(Boolean).map(String));
+  /** start → deadline (else completion, else open-ended) overlaps the period, or a task of mine was updated in it. */
+  const activeInPeriod = (p: (typeof projects)[number]): boolean => {
+    if (!cur) return true;
+    if (touched.has(String(p._id))) return true;
+    if (p.startDate && p.startDate.getTime() > cur.to.getTime()) return false;
+    if (p.deadline) return p.deadline.getTime() >= cur.from.getTime();
+    if (completedSet.has(String(p.status))) return completionOf(p).getTime() >= cur.start.getTime();
+    return true;
+  };
+  const periodProjects = projects.filter(activeInPeriod);
+  const activeProjects = periodProjects.filter((p) => !completedSet.has(String(p.status)));
+  const projectsOverdue = activeProjects.filter(
+    (p) =>
+      p.deadline &&
+      p.deadline.getTime() < today.getTime() &&
+      (!cur || p.deadline.getTime() >= cur.from.getTime())
+  ).length;
+  const finished = projects.filter((p) => completedSet.has(String(p.status)));
+  const inRange = (at: Date, range: DayRange) =>
+    at.getTime() >= range.start.getTime() && at.getTime() < range.end.getTime();
+  const completedProjects = cur
+    ? {
+        count: finished.filter((p) => inRange(completionOf(p), cur)).length,
+        previous: prev ? finished.filter((p) => inRange(completionOf(p), prev)).length : null,
+      }
+    : { count: finished.length, previous: null };
+
+  const done = completedRows[0] ?? { count: 0, previous: 0, withDue: 0, onTime: 0 };
+  const completedTasks = {
+    count: done.count,
+    onTimePct: pct1(done.onTime, done.withDue),
+    previous: cur ? done.previous : null,
+  };
 
   // --- People cards -----------------------------------------------------------
   const onLeave = leavesToday
@@ -674,6 +861,7 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
 
   res.json({
     today: dateKey(today),
+    period: { key: period.key, from: cur ? dateKey(cur.from) : null, to: dateKey(today) },
     hrScope: scope,
     profile: {
       _id: meId,
@@ -690,10 +878,14 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       openTasks: counts.open,
       pendingTasks: counts.pending,
       overdueTasks: counts.overdue,
-      projects: projects.length,
+      projects: periodProjects.length,
       projectsInProgress: activeProjects.length,
       projectsOverdue,
     },
+    completedTasks,
+    completedProjects,
+    /** Finished time logs (pending + approved) started in the period. */
+    loggedMinutes: loggedRows[0]?.minutes ?? 0,
     myTasks,
     onLeaveToday: onLeave.slice(0, MY_LIST_CAP),
     birthdays: birthdays.slice(0, MY_LIST_CAP),

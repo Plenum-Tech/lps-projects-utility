@@ -2193,9 +2193,14 @@ export interface MyDashboardHrDate {
   inDays: number;
 }
 
+/** My dashboard period: the last N days ending today (app timezone), or all time. */
+export type MyDashboardPeriod = "7d" | "30d" | "90d" | "120d" | "365d" | "all";
+
 export interface MyDashboard {
   /** "YYYY-MM-DD" in the server's APP_TIMEZONE. */
   today: string;
+  /** The period the counts were computed for (`from` is null for "all"). */
+  period: { key: MyDashboardPeriod; from: string | null; to: string };
   hrScope: HrScope;
   profile: {
     _id: string;
@@ -2216,6 +2221,12 @@ export interface MyDashboard {
     projectsInProgress: number;
     projectsOverdue: number;
   };
+  /** Completed by me in the period; `previous` = the previous equal period (null for "all"). */
+  completedTasks: { count: number; onTimePct: number | null; previous: number | null };
+  /** My projects moved to a completed status in the period. */
+  completedProjects: { count: number; previous: number | null };
+  /** Minutes of finished time logs started in the period. */
+  loggedMinutes: number;
   myTasks: MyDashboardTask[];
   onLeaveToday: { user: PersonRef; until: string }[];
   birthdays: { user: PersonRef; day: number; month: number; inDays: number }[];

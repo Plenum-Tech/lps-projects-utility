@@ -15,23 +15,38 @@ export function MyTasksTable({
   tasks,
   total,
   onOpen,
+  viewAllHref,
+  caption,
+  allTime,
+  loading,
 }: {
   tasks: MyDashboard["myTasks"];
-  /** All open tasks assigned to me (for the badge). */
+  /** Open tasks assigned to me in the period (for the badge). */
   total: number;
   onOpen: (taskId: string) => void;
+  /** /tasks filtered like this list (mine, open, created or due in the period). */
+  viewAllHref: string;
+  /** "last 30 days" / "all time". */
+  caption: string;
+  allTime: boolean;
+  loading?: boolean;
 }) {
   return (
     <DashboardCard
       title="My tasks"
       icon={LuClipboardList}
       badge={total}
-      viewAll={{ to: "/tasks?mine=on" }}
+      headerExtra={<span className="text-xs text-muted-foreground">{caption}</span>}
+      viewAll={{ to: viewAllHref }}
+      className={cn("transition-opacity duration-150", loading && "opacity-60")}
     >
       {tasks.length === 0 ? (
-        <CardEmpty icon={LuClipboardList} text="No open tasks — you're all caught up" />
+        <CardEmpty
+          icon={LuClipboardList}
+          text={allTime ? "No open tasks — you're all caught up" : `No open tasks created or due in the ${caption}`}
+        />
       ) : (
-        <div className="max-h-[19.5rem] overflow-auto">
+        <div className="max-h-[19.5rem] overflow-auto" aria-busy={loading || undefined}>
           <table className="w-full text-sm">
             <caption className="sr-only">My most urgent open tasks</caption>
             <thead className="sticky top-0 z-10 bg-muted/80 backdrop-blur supports-[backdrop-filter]:bg-muted/60">

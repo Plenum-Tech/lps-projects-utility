@@ -53,14 +53,23 @@ function describe(item: MyCalendarItem): string {
 /**
  * My calendar: tasks, subtasks, leaves and project deadlines in month, week,
  * day and list views. Tasks / subtasks open the task sheet.
+ *
+ * It always opens on today — week view for a 7-day period, month view
+ * otherwise — so the default 30-day period doesn't land on last month. It can
+ * be navigated freely (remount with a new `key` to re-open on another period).
  */
 export function MyCalendar({
   onOpenTask,
+  periodDays,
 }: {
   onOpenTask: (taskId: string, subtaskId?: string) => void;
+  /** First day of the dashboard period ("YYYY-MM-DD"), null for all time. */
+  periodFrom: string | null;
+  /** Length of the period in days (null for all time). */
+  periodDays: number | null;
 }) {
   const navigate = useNavigate();
-  const calendar = useCalendarState("month");
+  const calendar = useCalendarState(periodDays !== null && periodDays <= 7 ? "week" : "month");
   const query = useMyCalendar(calendar.range.fromKey, calendar.range.toKey);
 
   const items = query.data?.items;

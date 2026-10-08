@@ -95,9 +95,9 @@ function eventDates(event: CalendarEvent) {
 }
 
 /** Mode + anchor date state, with the visible range for fetching. */
-export function useCalendarState(initialMode: CalendarMode = "month") {
+export function useCalendarState(initialMode: CalendarMode = "month", initialAnchor?: Date) {
   const [mode, setMode] = useState<CalendarMode>(initialMode);
-  const [anchor, setAnchor] = useState(() => new Date());
+  const [anchor, setAnchor] = useState(() => initialAnchor ?? new Date());
   const range = useMemo(() => getCalendarRange(mode, anchor), [mode, anchor]);
   return { mode, setMode, anchor, setAnchor, range };
 }

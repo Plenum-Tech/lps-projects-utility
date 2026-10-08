@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { LuActivity, LuFilterX, LuRefreshCw } from "react-icons/lu";
 
 import { PERIODS } from "@/components/delivery/delivery-format";
 import { FilterSelect } from "@/components/globals/filter-select";
+import { SegmentedControl } from "@/components/globals/segmented-control";
 import { Button } from "@/components/ui/button";
 import { useBrands } from "@/hooks/use-brands";
 import { useDeliveryTeamOptions } from "@/hooks/use-delivery";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { formatTimeOfDay } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { DeliveryFilters, DeliveryPeriod } from "@/types";
+import type { DeliveryFilters } from "@/types";
 
 export const PULSE_SECTIONS = [
   { id: "results", label: "Results" },
@@ -17,49 +18,6 @@ export const PULSE_SECTIONS = [
   { id: "actions", label: "Actions" },
   { id: "people", label: "People" },
 ] as const;
-
-/** Segmented control (radiogroup) for the period; arrow keys move the choice. */
-function PeriodControl({ value, onChange }: { value: DeliveryPeriod; onChange: (value: DeliveryPeriod) => void }) {
-  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const delta = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-    if (!delta) return;
-    event.preventDefault();
-    const index = PERIODS.findIndex((period) => period.value === value);
-    const next = (index + delta + PERIODS.length) % PERIODS.length;
-    onChange(PERIODS[next].value);
-    event.currentTarget.querySelectorAll<HTMLButtonElement>("button")[next]?.focus();
-  }
-  return (
-    <div
-      role="radiogroup"
-      aria-label="Period"
-      onKeyDown={onKeyDown}
-      className="inline-flex h-8 items-center rounded-lg bg-muted p-0.5"
-    >
-      {PERIODS.map((period) => {
-        const selected = period.value === value;
-        return (
-          <button
-            key={period.value}
-            type="button"
-            role="radio"
-            aria-checked={selected}
-            tabIndex={selected ? 0 : -1}
-            title={period.title}
-            onClick={() => onChange(period.value)}
-            className={cn(
-              "h-7 rounded-md px-2.5 text-xs font-medium tabular-nums outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/50",
-              selected ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {period.label}
-            <span className="sr-only">: {period.title}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /**
  * Sticky page header (≥ lg): title, "data as of", period + Team/Brand/Person
@@ -141,7 +99,12 @@ export function DeliveryHeader({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
-        <PeriodControl value={filters.period} onChange={(period) => onChange({ period })} />
+        <SegmentedControl
+          label="Period"
+          value={filters.period}
+          onChange={(period) => onChange({ period })}
+          options={PERIODS}
+        />
         <FilterSelect
           label="Team"
           value={filters.team}

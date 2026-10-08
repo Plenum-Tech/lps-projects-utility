@@ -77,6 +77,14 @@ export interface TaskFilters {
   recurringParent?: string;
   /** Due before today and not completed. */
   overdue?: boolean;
+  /** Any of these statuses, comma-joined (My dashboard links). */
+  statusIn?: string;
+  /** Created (app-timezone day) or due within this "YYYY-MM-DD" range (inclusive). */
+  createdOrDueFrom?: string;
+  createdOrDueTo?: string;
+  /** Completed (completedAt day) within this "YYYY-MM-DD" range (inclusive). */
+  completedFrom?: string;
+  completedTo?: string;
 }
 
 /** Server-side sort fields of GET /api/tasks. */
@@ -139,6 +147,11 @@ function filterParams(filters: TaskFilters): Record<string, string> {
   if (filters.recurring) params.recurring = "true";
   if (filters.recurringParent) params.recurringParent = filters.recurringParent;
   if (filters.overdue) params.overdue = "true";
+  if (filters.statusIn) params.statusIn = filters.statusIn;
+  if (filters.createdOrDueFrom) params.createdOrDueFrom = filters.createdOrDueFrom;
+  if (filters.createdOrDueTo) params.createdOrDueTo = filters.createdOrDueTo;
+  if (filters.completedFrom) params.completedFrom = filters.completedFrom;
+  if (filters.completedTo) params.completedTo = filters.completedTo;
   return params;
 }
 

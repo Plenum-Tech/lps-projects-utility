@@ -53,6 +53,7 @@ import {
   type TaskFilters,
   type TaskSortField,
 } from "@/hooks/use-tasks";
+import { formatDateOnly } from "@/lib/format";
 import { PRIORITIES, PRIORITY_META, STATUS_META, TASK_STATUSES } from "@/lib/tasks";
 import type { Role, Task, TaskPriority, TaskScope, TaskStatus, TaskStatusFilter } from "@/types";
 
@@ -87,6 +88,12 @@ const BASE_DEFAULTS = {
   department: "",
   overdue: "",
   recurringParent: "",
+  // Set by My dashboard links (shown as removable chips).
+  statusIn: "",
+  createdOrDueFrom: "",
+  createdOrDueTo: "",
+  completedFrom: "",
+  completedTo: "",
 };
 type FilterKey = keyof typeof BASE_DEFAULTS;
 
@@ -100,6 +107,22 @@ const SHEET_KEYS: FilterKey[] = [
   "department",
   "overdue",
 ];
+
+/** Filters without an inline control, shown as removable chips. */
+const CHIP_KEYS: FilterKey[] = [
+  "recurringParent",
+  "statusIn",
+  "createdOrDueFrom",
+  "createdOrDueTo",
+  "completedFrom",
+  "completedTo",
+];
+
+/** "9 Sep 2026 – 8 Oct 2026" / "from …" / "until …". */
+function rangeText(from: string, to: string): string {
+  if (from && to) return `${formatDateOnly(from)} – ${formatDateOnly(to)}`;
+  return from ? `from ${formatDateOnly(from)}` : `until ${formatDateOnly(to)}`;
+}
 
 const SUBTITLES: Record<Role, string> = {
   admin: "Plan, assign and review work across the organisation.",
@@ -230,6 +253,11 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
     overdue: filters.overdue === "on",
     pinned: view === "pinned",
     recurringParent: filters.recurringParent || undefined,
+    statusIn: filters.statusIn || undefined,
+    createdOrDueFrom: filters.createdOrDueFrom || undefined,
+    createdOrDueTo: filters.createdOrDueTo || undefined,
+    completedFrom: filters.completedFrom || undefined,
+    completedTo: filters.completedTo || undefined,
   };
 
   const list = useTaskList(
@@ -298,7 +326,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const sheetKeys = SHEET_KEYS.filter((key) => key !== "department" || role === "admin");
   const sheetCount = table.countActive(sheetKeys);
   const inlineKeys = INLINE_KEYS.filter((key) => key !== "project" || !project);
-  const clearableKeys: FilterKey[] = [...inlineKeys, ...sheetKeys, "recurringParent"];
+  const clearableKeys: FilterKey[] = [...inlineKeys, ...sheetKeys, ...CHIP_KEYS];
   const filtered = table.countActive(clearableKeys) > 0;
 
   const projectFilterOptions = useMemo(
@@ -430,14 +458,37 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
           canClear={filtered}
           onClearAll={() => table.clearFilters(clearableKeys)}
           chips={
-            filters.recurringParent ? (
-              <FilterChip onRemove={() => table.setFilters({ recurringParent: "" })}>
-                <LuRepeat aria-hidden className="size-3.5 text-muted-foreground" />
-                Copies of{" "}
-                {recurringParent.data
-                  ? `“${recurringParent.data.task.title}”`
-                  : "a recurring task"}
-              </FilterChip>
+            table.countActive(CHIP_KEYS) > 0 ? (
+              <>
+                {filters.recurringParent && (
+                  <FilterChip onRemove={() => table.setFilters({ recurringParent: "" })}>
+                    <LuRepeat aria-hidden className="size-3.5 text-muted-foreground" />
+                    Copies of{" "}
+                    {recurringParent.data
+                      ? `“${recurringParent.data.task.title}”`
+                      : "a recurring task"}
+                  </FilterChip>
+                )}
+                {filters.statusIn && (
+                  <FilterChip onRemove={() => table.setFilters({ statusIn: "" })}>
+                    Status:{" "}
+                    {filters.statusIn
+                      .split(",")
+                      .map((value) => STATUS_META[value as TaskStatus]?.label ?? value)
+                      .join(", ")}
+                  </FilterChip>
+                )}
+                {(filters.createdOrDueFrom || filters.createdOrDueTo) && (
+                  <FilterChip onRemove={() => table.setFilters({ createdOrDueFrom: "", createdOrDueTo: "" })}>
+                    Created or due {rangeText(filters.createdOrDueFrom, filters.createdOrDueTo)}
+                  </FilterChip>
+                )}
+                {(filters.completedFrom || filters.completedTo) && (
+                  <FilterChip onRemove={() => table.setFilters({ completedFrom: "", completedTo: "" })}>
+                    Completed {rangeText(filters.completedFrom, filters.completedTo)}
+                  </FilterChip>
+                )}
+              </>
             ) : undefined
           }
         >

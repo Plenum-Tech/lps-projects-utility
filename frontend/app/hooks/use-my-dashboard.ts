@@ -1,24 +1,28 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
-import type { MyCalendarResponse, MyDashboard, WeekTimelogs } from "@/types";
+import type { MyCalendarResponse, MyDashboard, MyDashboardPeriod, WeekTimelogs } from "@/types";
 
 export const myDashboardKeys = {
   all: ["dashboard", "me"] as const,
-  summary: () => ["dashboard", "me", "summary"] as const,
+  /** Without a period: every period's summary (for invalidation). */
+  summary: (period?: MyDashboardPeriod) =>
+    period ? (["dashboard", "me", "summary", period] as const) : (["dashboard", "me", "summary"] as const),
   calendar: (from: string, to: string) => ["dashboard", "me", "calendar", { from, to }] as const,
   timelogs: (weekStart: string) => ["dashboard", "me", "timelogs", weekStart] as const,
 };
 
-/** Personal dashboard in one call (`GET /dashboard/me`). */
-export function useMyDashboard() {
+/** Personal dashboard in one call (`GET /dashboard/me?period=`); the period is always sent explicitly. */
+export function useMyDashboard(period: MyDashboardPeriod) {
   return useQuery({
-    queryKey: myDashboardKeys.summary(),
+    queryKey: myDashboardKeys.summary(period),
     queryFn: async () => {
-      const { data } = await api.get<MyDashboard>("/dashboard/me");
+      const { data } = await api.get<MyDashboard>("/dashboard/me", { params: { period } });
       return data;
     },
     staleTime: 30_000,
+    // Keep the cards on screen (dimmed) while another period loads.
+    placeholderData: keepPreviousData,
   });
 }
 

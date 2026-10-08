@@ -1,8 +1,8 @@
 import { formatTimeOfDay } from "@/lib/format";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-/** "Welcome {name}" with a live clock (ticks on the minute). */
-export function WelcomeClock({ name }: { name: string }) {
+/** "Welcome {name}" with a live clock (ticks on the minute); `extra` sits next to the clock (period picker). */
+export function WelcomeClock({ name, extra }: { name: string; extra?: ReactNode }) {
   const [now, setNow] = useState<Date | null>(null);
 
   useEffect(() => {
@@ -30,17 +30,20 @@ export function WelcomeClock({ name }: { name: string }) {
       <h1 className="min-w-0 font-heading text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
         Welcome <span className="text-primary">{name}</span>
       </h1>
-      {now && (
-        <p className="text-right leading-tight" aria-label={`${weekday}, ${time}`}>
-          <time
-            dateTime={now.toISOString()}
-            className="block font-heading text-xl font-semibold text-foreground tabular-nums"
-          >
-            {time}
-          </time>
-          <span className="text-xs text-muted-foreground">{weekday}</span>
-        </p>
-      )}
+      <div className="flex flex-wrap items-end justify-end gap-x-4 gap-y-2">
+        {extra}
+        {now && (
+          <p className="text-right leading-tight" aria-label={`${weekday}, ${time}`}>
+            <time
+              dateTime={now.toISOString()}
+              className="block font-heading text-xl font-semibold text-foreground tabular-nums"
+            >
+              {time}
+            </time>
+            <span className="text-xs text-muted-foreground">{weekday}</span>
+          </p>
+        )}
+      </div>
     </div>
   );
 }

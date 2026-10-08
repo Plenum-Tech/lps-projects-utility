@@ -2,17 +2,25 @@ import { LuBuilding2, LuIdCard } from "react-icons/lu";
 import { Link } from "react-router";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
 import type { MyDashboard } from "@/types";
 
-/** Avatar, name, designation, employee ID, department + open tasks / projects counts. */
+/** Avatar, name, designation, employee ID, department + open tasks / projects counts for the period. */
 export function ProfileCard({
   profile,
   counts,
   projectsHref,
+  openTasksHref,
+  caption,
+  loading,
 }: {
   profile: MyDashboard["profile"];
   counts: MyDashboard["counts"];
   projectsHref: string;
+  openTasksHref: string;
+  /** "last 30 days" / "all time". */
+  caption: string;
+  loading?: boolean;
 }) {
   return (
     <section aria-label="My profile" className="rounded-xl border bg-card text-card-foreground">
@@ -42,21 +50,27 @@ export function ProfileCard({
           </div>
         </div>
       </div>
-      <div className="grid grid-cols-2 divide-x border-t">
-        <CountLink to="/tasks?mine=on" label="Open tasks" value={counts.openTasks} />
-        <CountLink to={projectsHref} label="Projects" value={counts.projects} />
+      <div
+        aria-busy={loading || undefined}
+        className={cn("grid grid-cols-2 divide-x border-t transition-opacity duration-150", loading && "opacity-60")}
+      >
+        <CountLink to={openTasksHref} label="Open tasks" caption={caption} value={counts.openTasks} />
+        <CountLink to={projectsHref} label="Projects" caption={caption} value={counts.projects} />
       </div>
     </section>
   );
 }
 
-function CountLink({ to, label, value }: { to: string; label: string; value: number }) {
+function CountLink({ to, label, caption, value }: { to: string; label: string; caption: string; value: number }) {
   return (
     <Link
       to={to}
       className="group px-4 py-3 outline-none transition-colors duration-150 first:rounded-bl-xl last:rounded-br-xl hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
     >
-      <span className="block text-xs text-muted-foreground group-hover:text-foreground">{label}</span>
+      <span className="block text-xs text-muted-foreground group-hover:text-foreground">
+        {label}
+        <span className="text-muted-foreground/80"> · {caption}</span>
+      </span>
       <span className="block font-heading text-xl font-semibold text-foreground tabular-nums">
         {value}
       </span>

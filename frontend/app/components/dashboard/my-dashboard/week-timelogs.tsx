@@ -24,7 +24,19 @@ function displayWeekStart(key: string): string {
  * Monday-based weeks, so a Sunday-first week stitches two server weeks
  * together. The current server week comes embedded in /dashboard/me.
  */
-export function WeekTimelogs({ initial, today }: { initial: WeekTimelogsData; today: string }) {
+export function WeekTimelogs({
+  initial,
+  today,
+  periodMinutes,
+  periodCaption,
+}: {
+  initial: WeekTimelogsData;
+  today: string;
+  /** Minutes logged in the dashboard period (the week navigation is independent of it). */
+  periodMinutes: number;
+  /** "last 30 days" / "all time". */
+  periodCaption: string;
+}) {
   const currentWeek = displayWeekStart(today);
   const [weekStart, setWeekStart] = useState(currentWeek);
   const [selected, setSelected] = useState(today);
@@ -77,6 +89,12 @@ export function WeekTimelogs({ initial, today }: { initial: WeekTimelogsData; to
       title="Week time logs"
       icon={LuClock3}
       badge={data ? `${formatMinutes(data.totalMinutes)} ${isCurrent ? "this week" : "total"}` : undefined}
+      headerExtra={
+        <span className="text-xs text-muted-foreground" title={`Logged in the ${periodCaption}`}>
+          <span className="font-medium text-foreground tabular-nums">{formatMinutes(periodMinutes)}</span> logged ·{" "}
+          {periodCaption}
+        </span>
+      }
       viewAll={{ to: "/timelogs", label: "Time logs" }}
     >
       <div className="space-y-4 p-4">
