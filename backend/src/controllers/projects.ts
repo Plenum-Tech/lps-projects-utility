@@ -32,6 +32,8 @@ import {
 } from "../lib/projectAccess.js";
 import type { Invalid } from "../lib/projectAccess.js";
 import { recalcProjectProgress } from "../lib/projectProgress.js";
+import { addDays, appDayStart } from "../lib/appTime.js";
+import { projectIdsCompletedWithin } from "../lib/projectCompletion.js";
 import { parseDateOnly } from "../lib/taskAccess.js";
 import { appToday } from "../lib/taskJobs.js";
 import { nextTaskNumber } from "../lib/taskNumbers.js";
@@ -342,7 +344,9 @@ function queryDate(raw: unknown, name: string): Date | undefined | Invalid {
  * Filters shared by GET /api/projects and /export: status, category, department,
  * manager, member, search (name/code/summary), archived=true, pinned=true,
  * deadline=overdue, from/to (start→deadline overlaps; no deadline = open-ended),
- * progress buckets.
+ * progress buckets, completed=true (completed status) with optional
+ * completedFrom/completedTo (app-timezone days; completion date as on My dashboard,
+ * see lib/projectCompletion.ts).
  */
 async function buildProjectFilter(req: Request): Promise<Record<string, unknown>[] | Invalid> {
   const user = req.user!;
@@ -356,7 +360,6 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
     [req.query.brand === "none" ? undefined : req.query.brand, "brand", "brand"],
     [req.query.department, "departments", "department"],
     [req.query.manager, "manager", "manager"],
-    [req.query.member, "members.user", "member"],
   ];
   for (const [value, field, name] of idFilters) {
     if (value === undefined || value === "") continue;
@@ -365,6 +368,15 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
   }
 
   if (req.query.brand === "none") and.push({ brand: null });
+
+  // Member = on the team or the manager (managers are added as members; legacy
+  // data may lack it) — the same "my projects" as My dashboard.
+  const member = req.query.member;
+  if (member !== undefined && member !== "") {
+    if (typeof member !== "string" || isInvalidObjectId(member)) return bad("member must be a valid ID");
+    const memberId = new mongoose.Types.ObjectId(member);
+    and.push({ $or: [{ "members.user": memberId }, { manager: memberId }] });
+  }
 
   if (req.query.pinned === "true") {
     and.push({ _id: { $in: user.pinnedProjects ?? [] } });
@@ -389,6 +401,34 @@ async function buildProjectFilter(req: Request): Promise<Record<string, unknown>
 
   const search = searchRegex(req.query.search);
   if (search) and.push({ $or: [{ name: search }, { code: search }, { summary: search }] });
+
+  const completed = req.query.completed;
+  if (completed !== undefined && completed !== "" && completed !== "true" && completed !== "false") {
+    return bad("completed must be true or false");
+  }
+  const completedFrom = queryDate(req.query.completedFrom, "completedFrom");
+  if (isInvalid(completedFrom)) return completedFrom;
+  const completedTo = queryDate(req.query.completedTo, "completedTo");
+  if (isInvalid(completedTo)) return completedTo;
+  if (completedFrom && completedTo && completedFrom.getTime() > completedTo.getTime()) {
+    return bad("completedFrom must be on or before completedTo");
+  }
+  if (completedFrom || completedTo) {
+    if (completed === "false") return bad("completedFrom/completedTo require completed=true");
+    // Every other filter applies first; only the matching completed projects are dated.
+    const ids = await projectIdsCompletedWithin(
+      { $and: [...and] },
+      {
+        start: completedFrom ? appDayStart(completedFrom) : undefined,
+        end: completedTo ? appDayStart(addDays(completedTo, 1)) : undefined,
+      }
+    );
+    and.push({ _id: { $in: ids } });
+  } else if (completed === "true") {
+    and.push({ status: { $in: await completedStatusIds() } });
+  } else if (completed === "false") {
+    and.push({ status: { $nin: await completedStatusIds() } });
+  }
 
   return and;
 }

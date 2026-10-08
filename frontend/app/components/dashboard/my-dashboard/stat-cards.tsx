@@ -138,6 +138,7 @@ export function ProjectsStatCard({
   completed,
   caption,
   projectsHref,
+  completedHref,
   loading,
 }: {
   counts: MyDashboard["counts"];
@@ -145,6 +146,8 @@ export function ProjectsStatCard({
   caption: string;
   /** /projects, plus `?member=<me>` for admins and heads. */
   projectsHref: string;
+  /** /projects filtered to my projects completed in the period (same count). */
+  completedHref: string;
   loading?: boolean;
 }) {
   const join = projectsHref.includes("?") ? "&" : "?";
@@ -166,7 +169,7 @@ export function ProjectsStatCard({
         {
           label: "Completed",
           value: completed.count,
-          to: projectsHref,
+          to: completedHref,
           tone: "good",
           detail: delta ? <CompletedDetail delta={delta} /> : undefined,
           srDetail: completed.previous !== null ? `${completed.previous} in the previous period` : undefined,

@@ -55,6 +55,11 @@ export interface ProjectFilters {
   to?: string;
   /** Comma-joined buckets, e.g. "0-20,81-100". */
   progress?: string;
+  /** "true" = in a completed status (optionally completed within completedFrom/To). */
+  completed?: string;
+  /** Completed within this range ("YYYY-MM-DD", app timezone; same date as My dashboard). */
+  completedFrom?: string;
+  completedTo?: string;
 }
 
 /** Server-side sort fields of GET /api/projects. */
@@ -107,6 +112,9 @@ export function projectQueryParams(
     "from",
     "to",
     "progress",
+    "completed",
+    "completedFrom",
+    "completedTo",
   ] as const) {
     const value = params[key];
     if (value) out[key] = value;

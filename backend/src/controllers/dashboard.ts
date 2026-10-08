@@ -11,7 +11,7 @@ import { Task } from "../models/Task.js";
 import { User } from "../models/User.js";
 import { EmployeeDocument } from "../models/EmployeeDocument.js";
 import { archivedProjectIds, Project } from "../models/Project.js";
-import { ProjectActivity } from "../models/ProjectActivity.js";
+import { completedWithin, projectCompletionDates } from "../lib/projectCompletion.js";
 import { cached } from "../lib/refCache.js";
 import { completedStatusIds } from "../models/ProjectStatus.js";
 import { TimeLog } from "../models/TimeLog.js";
@@ -713,21 +713,15 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   // --- Tasks ------------------------------------------------------------------
   const counts = taskCounts[0] ?? { open: 0, pending: 0, overdue: 0 };
   const completedSet = new Set(completedStatuses.map((id) => id.toString()));
-  const finishedIds = projects.filter((p) => completedSet.has(String(p.status))).map((p) => p._id as ObjectId);
+  const finished = projects.filter((p) => completedSet.has(String(p.status)));
 
-  const [populated, completionRows] = await Promise.all([
+  const [populated, completionDates] = await Promise.all([
     Task.populate(myTaskRows, [
       { path: "labels", select: "name color" },
       { path: "project", select: "name code" },
     ]),
-    // When each finished project last changed status (= moved to its completed status).
-    cur && finishedIds.length > 0
-      ? ProjectActivity.aggregate<{ _id: ObjectId; at: Date }>([
-          { $match: { project: { $in: finishedIds }, action: "status_changed" } },
-          { $sort: { createdAt: -1 } },
-          { $group: { _id: "$project", at: { $first: "$createdAt" } } },
-        ])
-      : Promise.resolve([] as Array<{ _id: ObjectId; at: Date }>),
+    // When each finished project was completed (shared with GET /api/projects?completed).
+    cur ? projectCompletionDates(finished) : Promise.resolve(new Map<string, Date>()),
   ]);
   const populatedTasks = populated as unknown as Array<{
     _id: ObjectId;
@@ -755,9 +749,8 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
   // --- Projects ---------------------------------------------------------------
   // Finished = in a completed status; its completion moment is the last status
   // change (projects that never changed status fall back to updatedAt).
-  const completedAtById = new Map(completionRows.map((r) => [String(r._id), r.at]));
   const completionOf = (p: (typeof projects)[number]): Date =>
-    completedAtById.get(String(p._id)) ?? p.updatedAt;
+    completionDates.get(String(p._id)) ?? p.updatedAt;
   const touched = new Set(touchedProjectIds.filter(Boolean).map(String));
   /** start → deadline (else completion, else open-ended) overlaps the period, or a task of mine was updated in it. */
   const activeInPeriod = (p: (typeof projects)[number]): boolean => {
@@ -776,13 +769,10 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       p.deadline.getTime() < today.getTime() &&
       (!cur || p.deadline.getTime() >= cur.from.getTime())
   ).length;
-  const finished = projects.filter((p) => completedSet.has(String(p.status)));
-  const inRange = (at: Date, range: DayRange) =>
-    at.getTime() >= range.start.getTime() && at.getTime() < range.end.getTime();
   const completedProjects = cur
     ? {
-        count: finished.filter((p) => inRange(completionOf(p), cur)).length,
-        previous: prev ? finished.filter((p) => inRange(completionOf(p), prev)).length : null,
+        count: finished.filter((p) => completedWithin(completionOf(p), cur)).length,
+        previous: prev ? finished.filter((p) => completedWithin(completionOf(p), prev)).length : null,
       }
     : { count: finished.length, previous: null };
 

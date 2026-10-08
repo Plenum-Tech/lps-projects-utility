@@ -11,6 +11,7 @@ import {
   OnLeaveTodayCard,
 } from "@/components/dashboard/my-dashboard/people-cards";
 import {
+  completedProjectsHref,
   MyPeriodPicker,
   periodCaption,
   periodDays,
@@ -140,6 +141,7 @@ function MyDashboardGrid({
             completed={data.completedProjects}
             caption={caption}
             projectsHref={projectsHref}
+            completedHref={completedProjectsHref(data.period, profile._id)}
             loading={loading}
           />
         </div>

@@ -140,6 +140,16 @@ export function countDelta(current: number, previous: number | null): DeliveryDe
   };
 }
 
+/** /projects filtered like the Projects → Completed tile (my projects completed in the period). */
+export function completedProjectsHref(period: PeriodRange, userId: string): string {
+  const query = new URLSearchParams({ member: userId, completed: "1" });
+  if (period.from) {
+    query.set("completedFrom", period.from);
+    query.set("completedTo", period.to);
+  }
+  return `/projects?${query.toString()}`;
+}
+
 // --- Task list links (/tasks URL filters) -------------------------------------
 
 const PENDING_STATUSES = "todo,in_progress,in_review";

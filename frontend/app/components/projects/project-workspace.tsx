@@ -15,7 +15,7 @@ import {
 
 import { ConfirmDialog } from "@/components/globals/confirm-dialog";
 import { BulkBar, BulkMenu } from "@/components/globals/data-table/bulk-bar";
-import { DateRangeFilter, FiltersBar, MultiFilter } from "@/components/globals/data-table/filters-bar";
+import { DateRangeFilter, FilterChip, FiltersBar, MultiFilter } from "@/components/globals/data-table/filters-bar";
 import { FiltersSheet, SheetSelect, SheetSwitch } from "@/components/globals/data-table/filters-sheet";
 import { DataTablePager } from "@/components/globals/data-table/pagination";
 import { DataTableToolbar, ViewToggle, type ViewOption } from "@/components/globals/data-table/toolbar";
@@ -47,6 +47,7 @@ import {
 } from "@/hooks/use-projects";
 import { useRowSelection, useTableState } from "@/hooks/use-table-state";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
+import { formatDateOnly } from "@/lib/format";
 import { canManageProjectClient, PROGRESS_BUCKETS, statusColor } from "@/lib/projects";
 import type { Project, Role } from "@/types";
 
@@ -72,11 +73,25 @@ const DEFAULTS = {
   manager: "",
   member: "",
   deadline: "",
+  /** "1" = completed status only (My dashboard → Projects → Completed). */
+  completed: "",
+  completedFrom: "",
+  completedTo: "",
 };
 
 type FilterKey = keyof typeof DEFAULTS;
-const SHEET_KEYS: FilterKey[] = ["category", "brand", "department", "manager", "member", "deadline"];
+const SHEET_KEYS: FilterKey[] = ["category", "brand", "department", "manager", "member", "deadline", "completed"];
 const INLINE_KEYS: FilterKey[] = ["search", "status", "from", "to", "progress"];
+/** Only shown as removable chips (no control of their own). */
+const CHIP_KEYS: FilterKey[] = ["completedFrom", "completedTo"];
+const CLEARABLE_KEYS: FilterKey[] = [...INLINE_KEYS, ...SHEET_KEYS, ...CHIP_KEYS];
+const NO_COMPLETED = { completed: "", completedFrom: "", completedTo: "" };
+
+/** "8 Sep – 8 Oct 2026" / "from …" / "until …". */
+function rangeText(from: string, to: string): string {
+  if (from && to) return `${formatDateOnly(from)} – ${formatDateOnly(to)}`;
+  return from ? `from ${formatDateOnly(from)}` : `until ${formatDateOnly(to)}`;
+}
 
 const SORT_FIELDS: ProjectSortField[] = ["code", "name", "startDate", "deadline", "progress", "status"];
 
@@ -114,7 +129,14 @@ export function ProjectWorkspace() {
     from: filters.from,
     to: filters.to,
     progress: filters.progress,
+    // Dates imply completed (the API treats them so too).
+    completed: filters.completed || filters.completedFrom || filters.completedTo ? "true" : "",
+    completedFrom: filters.completedFrom,
+    completedTo: filters.completedTo,
   };
+  const completedOn = listFilters.completed === "true";
+  // Employees have no Member select; show "my projects" (dashboard links) as a chip.
+  const memberChip = !isHeadOrAdmin && Boolean(filters.member);
 
   const projects = useProjects(
     { ...listFilters, tab, sort, dir: table.dir, limit: table.pageSize, offset: table.offset },
@@ -176,7 +198,7 @@ export function ProjectWorkspace() {
     selectedOnPage.some((project) => canManageProjectClient(project, me));
 
   const sheetCount = table.countActive(SHEET_KEYS);
-  const filtered = table.countActive([...INLINE_KEYS, ...SHEET_KEYS]) > 0;
+  const filtered = table.countActive(CLEARABLE_KEYS) > 0;
 
   function runBulk(action: "status" | "archive" | "restore" | "delete", status?: string) {
     bulk.mutate(
@@ -206,7 +228,7 @@ export function ProjectWorkspace() {
       description="Try a different search or clear the filters."
       className="border-0"
     >
-      <Button variant="outline" onClick={() => table.clearFilters([...INLINE_KEYS, ...SHEET_KEYS])}>
+      <Button variant="outline" onClick={() => table.clearFilters(CLEARABLE_KEYS)}>
         Clear filters
       </Button>
     </EmptyState>
@@ -293,7 +315,25 @@ export function ProjectWorkspace() {
           sheetCount={sheetCount}
           onOpenSheet={() => setSheetOpen(true)}
           canClear={filtered}
-          onClearAll={() => table.clearFilters([...INLINE_KEYS, ...SHEET_KEYS])}
+          onClearAll={() => table.clearFilters(CLEARABLE_KEYS)}
+          chips={
+            completedOn || memberChip ? (
+              <>
+                {memberChip && (
+                  <FilterChip onRemove={() => table.setFilters({ member: "" })}>
+                    {filters.member === me._id ? "My projects" : "Member filter"}
+                  </FilterChip>
+                )}
+                {completedOn && (
+                  <FilterChip onRemove={() => table.setFilters(NO_COMPLETED)}>
+                    Completed
+                    {(filters.completedFrom || filters.completedTo) &&
+                      ` · ${rangeText(filters.completedFrom, filters.completedTo)}`}
+                  </FilterChip>
+                )}
+              </>
+            ) : undefined
+          }
         >
           {view !== "calendar" && (
             <DateRangeFilter
@@ -398,7 +438,7 @@ export function ProjectWorkspace() {
         open={sheetOpen}
         onOpenChange={setSheetOpen}
         activeCount={sheetCount}
-        onClear={() => table.clearFilters(SHEET_KEYS)}
+        onClear={() => table.clearFilters([...SHEET_KEYS, ...CHIP_KEYS])}
       >
         <SheetSelect
           label="Category"
@@ -445,6 +485,16 @@ export function ProjectWorkspace() {
           description="Deadline before today and not completed."
           checked={filters.deadline === "overdue"}
           onCheckedChange={(checked) => table.setFilters({ deadline: checked ? "overdue" : "" })}
+        />
+        <SheetSwitch
+          label="Completed only"
+          description={
+            filters.completedFrom || filters.completedTo
+              ? `Completed ${rangeText(filters.completedFrom, filters.completedTo)}.`
+              : "Projects in a completed status."
+          }
+          checked={completedOn}
+          onCheckedChange={(checked) => table.setFilters(checked ? { completed: "1" } : NO_COMPLETED)}
         />
       </FiltersSheet>
 
