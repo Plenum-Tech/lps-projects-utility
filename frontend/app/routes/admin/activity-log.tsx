@@ -118,6 +118,11 @@ const ACTION_META: Record<
   pearity_key_created: { label: "Created Pearity API key", badge: "default" },
   pearity_key_revoked: { label: "Revoked Pearity API key", badge: "destructive" },
   pearity_settings_updated: { label: "Updated Pearity settings", badge: "secondary" },
+  training_created: { label: "Created training", badge: "default" },
+  training_updated: { label: "Updated training", badge: "secondary" },
+  training_archived: { label: "Archived training", badge: "secondary" },
+  training_deleted: { label: "Deleted training", badge: "destructive" },
+  training_completed: { label: "Completed training", badge: "default" },
 };
 
 function detailsSummary(log: ActivityLog): string | null {

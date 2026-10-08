@@ -91,6 +91,8 @@ const EMAIL_PREF_BY_TYPE: Partial<Record<NotificationType, keyof EmailPreference
   user_joined: "teamUpdates",
   document_expiring: "hrReminders",
   hr_date_upcoming: "hrReminders",
+  training_assigned: "hrReminders",
+  training_reminder: "hrReminders",
   leave_requested: "leaveRequests",
 };
 

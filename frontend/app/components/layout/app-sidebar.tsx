@@ -8,6 +8,7 @@ import {
   ClipboardList,
   FileText,
   FolderKanban,
+  GraduationCap,
   History,
   ListChecks,
   MailPlus,
@@ -150,6 +151,7 @@ const NAV_GROUPS: NavGroup[] = [
         match: ["/admin/feedback"],
       },
       { title: "Announcements", to: "/announcements", icon: Megaphone },
+      { title: "Training", to: "/training", icon: GraduationCap, match: ["/training/"] },
       {
         title: "Invitations",
         to: "/admin/users?tab=invitations",

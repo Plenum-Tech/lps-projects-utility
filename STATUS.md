@@ -10,7 +10,7 @@ _Last updated: 8 Oct 2026_
 | **Live app (Azure)** | https://lps-projects-utility.greenground-16e2d951.uaenorth.azurecontainerapps.io |
 | **Azure** | Subscription *Azure-PlenumAgentic*, resource group `lps-projects-utility-rg` (UAE North) |
 | Container App | `lps-projects-utility`: 1 replica, 2 vCPU / 4 GiB, managed identity `lps-app-identity` |
-| Image | `plenumwebsiteacr.azurecr.io/lps-projects-utility:<commit>` (repository-scoped pull/push roles only) |
+| Image | `plenumwebsiteacr.azurecr.io/lps-projects-utility:<commit>` (repository-scoped pull/push roles only). Debian-based, ~870 MB: it includes LibreOffice + poppler to convert training decks |
 | Database | Cosmos DB for MongoDB vCore `lps-pu-mongo` (M20, no HA), database `lps`. Firewall: Azure services + one workstation IP |
 | Local dev | `backend/` → `bun run dev` (:5000, DB `ems` in Docker `ems-mongo`); `frontend/` → `bun run dev` (:5173) |
 
@@ -18,7 +18,7 @@ _Last updated: 8 Oct 2026_
 
 - **Work**: projects (structured names `Brand_Type_MonYYYY_Name`, brands, milestones, members), tasks (Worksuite-style table, board, calendar, subtasks with full form, comments, notes, files, history, actual start/end, estimates), meetings (Teams transcripts → tasks), timesheets and time logs, Excel/CSV import, recurring tasks.
 - **Reports**: Delivery Pulse, task, time-log, weekly timesheet, HR reports, activity log.
-- **HR**: employees and invitations, departments, leaves (heads approve their department), attendance, documents, performance reviews (manual; AI optional), feedback, announcements.
+- **HR**: employees and invitations, departments, leaves (heads approve their department), attendance, documents, performance reviews (manual; AI optional), feedback, announcements, **training** (admins upload a .pptx/.pdf deck and assign it; employees must read every slide, then tick the acknowledgement and complete; admins track and export progress, send reminders).
 - **Dashboard**: My dashboard with a period filter (7d–1y/all); Organisation view.
 - **Settings**: company, address, app (timezone, date format), profile, notifications, security, task/project/time-log/leave/meeting/delivery/brands, integrations (Pearity).
 - **Auth**: set-password links, forgot password with an emailed 6-digit code.
@@ -41,7 +41,7 @@ az acr build --registry plenumwebsiteacr --image lps-projects-utility:<sha> --im
 az containerapp update -n lps-projects-utility -g lps-projects-utility-rg --container-name app --image plenumwebsiteacr.azurecr.io/lps-projects-utility:<sha>
 ```
 
-Check `/api/health`: it shows the version and `db: up`. Data is in Cosmos, so it survives updates and restarts.
+Check `/api/health`: it shows the version and `db: up`. The ACR build takes longer now (LibreOffice install, ~5 min). Data is in Cosmos, so it survives updates and restarts.
 
 ## Open items for you
 

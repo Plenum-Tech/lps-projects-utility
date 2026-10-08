@@ -40,6 +40,7 @@ import {
   LuUserRoundCheck,
   LuFileWarning,
   LuCalendarRange,
+  LuGraduationCap,
   LuCalendarPlus,
 } from "react-icons/lu";
 import { Link, useNavigate } from "react-router";
@@ -104,6 +105,8 @@ const NOTIFICATION_ICONS: Record<NotificationType, NotificationIcon> = {
   user_joined: LuUserRoundCheck,
   document_expiring: LuFileWarning,
   hr_date_upcoming: LuCalendarRange,
+  training_assigned: LuGraduationCap,
+  training_reminder: LuGraduationCap,
 };
 
 /** Theme tokens only — no palette colours. */
@@ -146,6 +149,8 @@ const NOTIFICATION_ICON_COLORS: Record<NotificationType, string> = {
   user_joined: "text-primary",
   document_expiring: "text-destructive",
   hr_date_upcoming: "text-chart-4",
+  training_assigned: "text-chart-2",
+  training_reminder: "text-chart-4",
 };
 
 /**

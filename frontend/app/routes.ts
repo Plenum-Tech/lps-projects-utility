@@ -13,6 +13,8 @@ export default [
     route("profile", "routes/profile.tsx"),
     route("leaves", "routes/leaves.tsx"),
     route("announcements", "routes/announcements.tsx"),
+    route("training", "routes/training.tsx"),
+    route("training/:id", "routes/training.$id.tsx"),
     route("feedback", "routes/feedback.tsx"),
     route("attendance", "routes/attendance.tsx"),
     route("performance-reviews", "routes/performance-reviews.tsx"),

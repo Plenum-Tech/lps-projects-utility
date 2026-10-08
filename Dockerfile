@@ -10,9 +10,9 @@
 # ---------------------------------------------------------------------------
 
 ARG BUN_IMAGE=oven/bun:1.2.19@sha256:31f25ad4c661322a3dc9d9d98fbf34989502b1ea588a2ca629da98c8e5a2d116
-# Runtime base: Alpine (~150 MB) keeps the image under the 250 MB target; the
-# Debian -slim variant (oven/bun:1.2.19-slim, ~255 MB on its own) would not.
-ARG BUN_RUNTIME_IMAGE=oven/bun:1.2.19-alpine@sha256:7dc0e33a62cbc1606d14b07706c3a00ae66e8e9d0e81b83241ed609763e66d55
+# Runtime base: Debian slim. LibreOffice (HR trainings) crashes at startup on
+# Alpine/musl, and the Debian build adds ~600 MB; the image is ~870 MB.
+ARG BUN_RUNTIME_IMAGE=oven/bun:1.2.19-slim
 # The React Router build (it pre-renders index.html with react-dom/server) runs on
 # Node — the toolchain it supports; Bun is copied in only to install from bun.lock.
 ARG NODE_IMAGE=node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e
@@ -74,8 +74,12 @@ ENV NODE_ENV=production \
 ENV BUN_JSC_useConcurrentJIT=false \
     BUN_JSC_useConcurrentGC=false \
     BUN_JSC_numberOfGCMarkers=1
+# HR trainings: LibreOffice (pptx -> pdf) and poppler (pdf -> one PNG per slide),
+# with metric-compatible fonts for Calibri (Carlito) and Arial/Times (Liberation).
+RUN apt-get update && apt-get install -y --no-install-recommends libreoffice-impress poppler-utils fonts-crosextra-carlito fonts-liberation fonts-dejavu-core wget ca-certificates && rm -rf /var/lib/apt/lists/* && command -v soffice && command -v pdftoppm
 WORKDIR /app
-# Files stay root-owned (read-only for the app user); the app writes nothing to disk.
+# Files stay root-owned (read-only for the app user); the app writes only to /tmp
+# (slide conversion scratch space, removed after each upload).
 COPY --from=build-backend /src/backend/dist/package.json ./package.json
 COPY --from=build-backend /src/backend/dist ./dist
 COPY --from=build-frontend /src/frontend/build/client ./public

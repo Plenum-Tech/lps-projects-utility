@@ -40,6 +40,8 @@ export const NOTIFICATION_TYPES = [
   "user_joined",
   "document_expiring",
   "hr_date_upcoming",
+  "training_assigned",
+  "training_reminder",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

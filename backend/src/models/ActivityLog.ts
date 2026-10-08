@@ -67,6 +67,11 @@ export const ACTIVITY_ACTIONS = [
   "pearity_key_created",
   "pearity_key_revoked",
   "pearity_settings_updated",
+  "training_created",
+  "training_updated",
+  "training_archived",
+  "training_deleted",
+  "training_completed",
 ] as const;
 
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];

@@ -222,7 +222,12 @@ export type ActivityAction =
   | "pearity_tag_created"
   | "pearity_key_created"
   | "pearity_key_revoked"
-  | "pearity_settings_updated";
+  | "pearity_settings_updated"
+  | "training_created"
+  | "training_updated"
+  | "training_archived"
+  | "training_deleted"
+  | "training_completed";
 
 /** Mirrors the backend ActivityLog model as returned by the API (Mongoose toJSON). */
 export interface ActivityLog {
@@ -486,7 +491,9 @@ export type NotificationType =
   | "timer_auto_stopped"
   | "user_joined"
   | "document_expiring"
-  | "hr_date_upcoming";
+  | "hr_date_upcoming"
+  | "training_assigned"
+  | "training_reminder";
 
 /** Mirrors the backend Notification model as returned by the API. */
 export interface Notification {
@@ -3231,4 +3238,69 @@ export interface PasswordLinkResult {
 export interface PasswordLinksResponse {
   results: PasswordLinkResult[];
   emailConfigured: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// HR trainings
+// ---------------------------------------------------------------------------
+
+export type TrainingStatus = "not_started" | "in_progress" | "completed";
+
+export interface TrainingSummary {
+  _id: string;
+  title: string;
+  description: string;
+  slideCount: number;
+  dueDate: string | null;
+  version: number;
+  archived: boolean;
+  sourceFile: { filename: string; size: number };
+  assignAll: boolean;
+  departments: string[];
+  users: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TrainingProgressSummary {
+  viewedCount: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  status: TrainingStatus;
+}
+
+export interface MyTraining extends TrainingSummary {
+  progress: TrainingProgressSummary;
+}
+
+export interface TrainingDetailResponse {
+  training: TrainingSummary;
+  assigned: boolean;
+  progress: TrainingProgressSummary & { viewed: number[] };
+}
+
+export interface AdminTraining extends TrainingSummary {
+  stats: { assigned: number; started: number; completed: number };
+}
+
+export interface TrainingProgressRow extends TrainingProgressSummary {
+  user: {
+    _id: string;
+    name: string;
+    email: string;
+    designation: string;
+    department: Pick<Department, "_id" | "name"> | null;
+  };
+}
+
+export interface TrainingInput {
+  title: string;
+  description: string;
+  dueDate: string;
+  assignAll: boolean;
+  departments: string[];
+  users: string[];
+  file?: File | null;
+  resetProgress?: boolean;
+  archived?: boolean;
 }
