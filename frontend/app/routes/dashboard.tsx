@@ -118,6 +118,7 @@ const ACTIVITY_ACTION_LABELS: Record<string, string> = {
   document_created: "added a document",
   document_updated: "updated a document",
   document_deleted: "deleted a document",
+  password_reset: "reset their password",
 };
 
 function timeAgo(dateStr: string): string {

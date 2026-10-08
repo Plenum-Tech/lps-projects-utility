@@ -1,6 +1,7 @@
 import type { DateFormat } from "../../models/CompanySettings.js";
 import type { TaskPriority, TaskStatus } from "../../models/Task.js";
 import type { ProgressMode } from "../../models/Project.js";
+import { zonedToUtc } from "../appTime.js";
 import { appDateKey } from "../taskJobs.js";
 import { cellText, type CellValue } from "./parse.js";
 
@@ -93,6 +94,57 @@ export function dateOnly(v: CellValue | undefined, format: DateFormat): string |
     return Number.isNaN(instant.getTime()) ? bad : appDateKey(instant);
   }
   return bad;
+}
+
+/** "YYYY-MM-DD" + minutes of the day (app timezone wall clock) → UTC instant. */
+function wallClock(key: string, minutes: number): Date {
+  const [y, m, d] = key.split("-").map(Number);
+  return zonedToUtc(y!, m!, d!, Math.floor(minutes / 60), minutes % 60);
+}
+
+/**
+ * Date or date-time (time optional, app timezone) → UTC instant. Accepts every
+ * `dateOnly` form, Excel date-times and serials with a fraction, "<date> 14:30",
+ * "<date> 2:30 PM" and ISO date-times (with Z / an offset they are taken as-is).
+ * A date without a time is midnight in the app timezone.
+ */
+export function dateTime(v: CellValue | undefined, format: DateFormat): Date | null | ValueError {
+  if (v === null || v === undefined || (typeof v === "string" && !v.trim())) return null;
+  const bad = { error: `"${text(v).slice(0, 40)}" is not a valid date or date-time` };
+  if (v instanceof Date) {
+    // Spreadsheet cells carry the wall clock in the UTC fields.
+    if (Number.isNaN(v.getTime())) return bad;
+    const key = ymd(v.getUTCFullYear(), v.getUTCMonth() + 1, v.getUTCDate());
+    return key ? wallClock(key, v.getUTCHours() * 60 + v.getUTCMinutes()) : bad;
+  }
+  if (typeof v === "number") {
+    const key = fromSerial(v);
+    if (!key) return bad;
+    return wallClock(key, Math.min(1439, Math.round((v - Math.floor(v)) * 1440)));
+  }
+  if (typeof v === "boolean") return bad;
+  const s = v.trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    const instant = new Date(s);
+    return Number.isNaN(instant.getTime()) ? bad : instant;
+  }
+  const m = /^(.+?)[\sT]+(\d{1,2}):(\d{2})(?::\d{2}(?:\.\d+)?)?\s*([ap])?\.?\s*(?:m\.?)?$/i.exec(s);
+  if (m) {
+    const key = dateOnly(m[1]!.trim(), format);
+    if (typeof key !== "string") return bad;
+    let hour = Number(m[2]);
+    const minute = Number(m[3]);
+    const meridiem = m[4]?.toLowerCase();
+    if (meridiem) {
+      if (hour < 1 || hour > 12) return bad;
+      hour = (hour % 12) + (meridiem === "p" ? 12 : 0);
+    }
+    if (hour > 23 || minute > 59) return bad;
+    return wallClock(key, hour * 60 + minute);
+  }
+  const key = dateOnly(s, format);
+  if (typeof key !== "string") return bad;
+  return wallClock(key, 0);
 }
 
 /** Non-negative number ("1,250", "$300", "12.5"), capped at `max`. */

@@ -169,6 +169,7 @@ function PeopleTable({ rows, onSelect }: { rows: PersonRow[]; onSelect: (row: Pe
     { id: "completed", header: "Completed", align: "right", cell: (row) => fmtNum(row.completed), sortValue: (row) => row.completed },
     { id: "onTime", header: "On time", align: "right", cell: (row) => <span className={cn(row.ranked && row.onTimePct !== null && TONE_TEXT[rateTone(row.onTimePct)])}>{fmtPct(row.onTimePct)}</span>, sortValue: (row) => row.onTimePct },
     { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
+    { id: "startToDone", header: "Mean start → done", hint: "Days from the actual start to done, for tasks completed in the period that have an actual start", align: "right", cell: (row) => fmtDays(row.startToDoneDays), sortValue: (row) => row.startToDoneDays },
     { id: "rework", header: "Rework share", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => <span className={cn(row.ranked && row.reworkPct !== null && TONE_TEXT[lowRateTone(row.reworkPct)])}>{fmtPct(row.reworkPct)}</span>, sortValue: (row) => row.reworkPct },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.ranked && row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
     { id: "open", header: "Open now", align: "right", cell: (row) => fmtNum(row.open), sortValue: (row) => row.open },

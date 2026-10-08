@@ -465,6 +465,8 @@ export function taskPermissions(
     canDuplicate: !flags.archived && (task.project ? Boolean(flags.canCreateTasks) : user.role !== "employee"),
     /** Start a timer / log time on this task (server re-checks project rules). */
     canLogTime: (manage || assignee) && task.status !== "completed",
+    /** Edit Actual start / end: the task's managers (incl. its department head) and assignees. */
+    canEditActualDates: manageSubtasks || assignee,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */
     skipsReview: Boolean(flags.skipReview),
     /** The task belongs to an archived project. */

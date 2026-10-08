@@ -176,6 +176,26 @@ export const passwordSetupRateLimit = rateLimit({
 });
 
 /**
+ * Public forgot-password endpoints: 10 requests per 15 minutes per IP, one store
+ * per step (request / verify / complete) so they never share a bucket.
+ */
+export const passwordResetRequestRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many requests. Please wait a few minutes and try again.",
+});
+export const passwordResetVerifyRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many attempts. Please wait a few minutes and try again.",
+});
+export const passwordResetCompleteRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: "Too many attempts. Please wait a few minutes and try again.",
+});
+
+/**
  * Public invitation accept endpoints (GET preview + POST accept): 10 requests per
  * 15 minutes per IP, in its own store so it never shares a bucket with login.
  */

@@ -12,9 +12,15 @@ import {
 } from "react-icons/lu";
 
 import { AvatarStack } from "@/components/globals/data-table/avatar-stack";
+import {
+  ColumnVisibilityMenu,
+  useColumnVisibility,
+  type OptionalColumn,
+} from "@/components/globals/data-table/column-visibility";
 import { InlineStatus, type StatusOption } from "@/components/globals/data-table/inline-status";
 import { RowActions, type RowAction } from "@/components/globals/data-table/row-actions";
 import { DataTable, MobileField, type DataTableColumn } from "@/components/globals/data-table/table";
+import { ActualDateCell } from "@/components/tasks/actual-dates";
 import { ApprovalActions } from "@/components/tasks/approval-actions";
 import { LabelChip } from "@/components/tasks/label-chip";
 import { PriorityIndicator } from "@/components/tasks/task-badges";
@@ -43,6 +49,12 @@ import type { Role, Task } from "@/types";
 type Me = { _id: string; role: Role };
 
 export type TaskRowDialog = "edit" | "delete";
+
+/** Hidden by default; turned on from the columns menu (remembered per user). */
+const OPTIONAL_COLUMNS: OptionalColumn[] = [
+  { id: "actualStart", label: "Actual start" },
+  { id: "actualEnd", label: "Actual end" },
+];
 
 const STATUS_OPTIONS: StatusOption[] = TASK_STATUSES.map((status) => ({
   value: status,
@@ -258,6 +270,7 @@ export function TasksTable({
   empty: ReactNode;
   footer: ReactNode;
 }) {
+  const optional = useColumnVisibility("tasks", me._id);
   const columns: DataTableColumn<Task>[] = [
     {
       id: "code",
@@ -302,6 +315,26 @@ export function TasksTable({
       sortKey: "dueDate",
       cell: (task) => <DueCell task={task} />,
     },
+    ...(optional.isVisible("actualStart")
+      ? [
+          {
+            id: "actualStart",
+            header: "Actual start",
+            sortKey: "actualStartAt",
+            cell: (task: Task) => <ActualDateCell task={task} field="actualStartAt" />,
+          } satisfies DataTableColumn<Task>,
+        ]
+      : []),
+    ...(optional.isVisible("actualEnd")
+      ? [
+          {
+            id: "actualEnd",
+            header: "Actual end",
+            sortKey: "actualEndAt",
+            cell: (task: Task) => <ActualDateCell task={task} field="actualEndAt" />,
+          } satisfies DataTableColumn<Task>,
+        ]
+      : []),
     {
       id: "estimate",
       header: "Estimated time",
@@ -329,7 +362,12 @@ export function TasksTable({
     },
     {
       id: "actions",
-      header: <span className="sr-only">Actions</span>,
+      header: (
+        <span className="flex justify-end">
+          <ColumnVisibilityMenu columns={OPTIONAL_COLUMNS} isVisible={optional.isVisible} onToggle={optional.toggle} />
+        </span>
+      ),
+      headClassName: "w-12 text-right",
       className: "w-12 text-right",
       cell: (task) => <TaskRowMenu task={task} me={me} onOpen={onOpen} onDialog={onDialog} />,
     },
@@ -384,6 +422,16 @@ export function TasksTable({
             </MobileField>
             {task.completedAt && (
               <MobileField label="Completed on">{formatTimestampDMY(task.completedAt)}</MobileField>
+            )}
+            {optional.isVisible("actualStart") && (
+              <MobileField label="Actual start">
+                <ActualDateCell task={task} field="actualStartAt" />
+              </MobileField>
+            )}
+            {optional.isVisible("actualEnd") && (
+              <MobileField label="Actual end">
+                <ActualDateCell task={task} field="actualEndAt" />
+              </MobileField>
             )}
           </dl>
           {approvals && <ApprovalActions task={task} />}

@@ -3,11 +3,20 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { notifyTask } from "../lib/notifications.js";
-import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
+import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
+import {
+  applyAutoActualDates,
+  applyManualActualDates,
+  hasActualDates,
+  initialActualDates,
+  varianceDays,
+  type ActualDateChange,
+} from "../lib/actualDates.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
 import { naturalSortKey } from "../lib/naturalSort.js";
 import {
   allowedTransitions,
+  canManageSubtasks,
   canManageTask,
   canManageTaskAsync,
   canTransition,
@@ -543,6 +552,8 @@ export const TASK_SORT_FIELDS = [
   "title",
   "startDate",
   "dueDate",
+  "actualStartAt",
+  "actualEndAt",
   "estimate",
   "loggedMinutes",
   "status",
@@ -600,6 +611,8 @@ async function sortedTaskIds(
       break;
     case "startDate":
     case "dueDate":
+    case "actualStartAt":
+    case "actualEndAt":
       pipeline.push({ $addFields: { _missing: missingLast(sort.field) } });
       order = { _missing: 1, [sort.field]: d, _id: d };
       break;
@@ -797,6 +810,7 @@ async function applyStatusChange(
       task.reviewedAt = now;
       task.reviewedBy = user._id;
     }
+    await applyAutoActualDates(task, previousStatus, to, now);
   }
 
   if (position !== undefined) {
@@ -909,7 +923,11 @@ export interface CreateTaskBody {
   estimateMinutes?: unknown;
 }
 
-type UpdateTaskBody = Omit<CreateTaskBody, "subtasks">;
+type UpdateTaskBody = Omit<CreateTaskBody, "subtasks"> & {
+  /** ISO date-time; null clears it (back to automatic). */
+  actualStartAt?: unknown;
+  actualEndAt?: unknown;
+};
 
 interface UpdateStatusBody {
   status?: unknown;
@@ -942,6 +960,8 @@ export interface CreateTaskOptions {
   status?: TaskStatus;
   /** false = in-app notifications only, no emails (bulk imports). Default true. */
   sendEmail?: boolean;
+  /** Actual start / end supplied by an import (source "import"; validated by the caller). */
+  actual?: { start: Date | null; end: Date | null };
 }
 
 /**
@@ -1072,6 +1092,16 @@ export async function createTaskCore(
   const shortCode = project ? await nextShortCode(project._id as mongoose.Types.ObjectId) : null;
   const number = await nextTaskNumber();
   const warnings = milestoneWarnings(dueDate, milestone);
+  const createdAt = new Date();
+  const actual = initialActualDates(initialStatus, createdAt);
+  if (options.actual?.start) {
+    actual.actualStartAt = options.actual.start;
+    actual.actualStartSource = "import";
+  }
+  if (options.actual?.end) {
+    actual.actualEndAt = options.actual.end;
+    actual.actualEndSource = "import";
+  }
 
   const task = await Task.create({
     title: title.trim(),
@@ -1093,8 +1123,9 @@ export async function createTaskCore(
     subtasks,
     recurrence,
     status: initialStatus,
-    ...(initialStatus === "completed" ? { completedAt: new Date() } : {}),
-    ...(initialStatus === "in_review" ? { submittedAt: new Date() } : {}),
+    ...(initialStatus === "completed" ? { completedAt: createdAt } : {}),
+    ...(initialStatus === "in_review" ? { submittedAt: createdAt } : {}),
+    ...actual,
     sourceMeeting: options.sourceMeeting ?? null,
   });
   const taskId = task._id as mongoose.Types.ObjectId;
@@ -1307,6 +1338,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   task.submissionNotes = submissionNotes ? (submissionNotes as string).trim() : undefined;
   task.submittedAt = now;
   if (skipReview) task.completedAt = now;
+  await applyAutoActualDates(task, previousStatus, task.status, now);
   await task.save();
   const taskId = task._id as mongoose.Types.ObjectId;
   scheduleProgressRecalc(task.project ?? null);
@@ -1384,15 +1416,17 @@ export async function reviewTask(req: Request, res: Response): Promise<void> {
   }
 
   const isApproved = decision === "approved";
+  const reviewedAt = new Date();
   if (isApproved) {
     task.status = "completed";
-    task.completedAt = new Date();
+    task.completedAt = reviewedAt;
   } else {
     task.status = "rejected";
   }
+  await applyAutoActualDates(task, "in_review", task.status, reviewedAt);
 
   task.reviewNotes = reviewNotes ? (reviewNotes as string).trim() : undefined;
-  task.reviewedAt = new Date();
+  task.reviewedAt = reviewedAt;
   task.reviewedBy = user._id;
   await task.save();
   const taskId = task._id as mongoose.Types.ObjectId;
@@ -1519,6 +1553,13 @@ async function applyTaskUpdate(
     changed.push("estimateMinutes");
   }
 
+  let actualChanges: ActualDateChange[] = [];
+  if (hasActualDates(body)) {
+    const applied = await applyManualActualDates(task, body);
+    if (isInvalid(applied)) return applied;
+    actualChanges = applied;
+  }
+
   if (body.labels !== undefined) {
     const resolved = await resolveLabels(body.labels);
     if (isInvalid(resolved)) {
@@ -1640,6 +1681,10 @@ async function applyTaskUpdate(
   if (notable.length > 0 || changed.length > 0) {
     recordTaskHistory(taskId, user, "updated", { fields: [...notable, ...changed] });
   }
+  if (actualChanges.length > 0) {
+    recordTaskHistory(taskId, user, "actual_dates_updated", { changes: actualChanges });
+    changed.push("actualDates");
+  }
   if (added.length > 0 || removedIds.length > 0) {
     const removedUsers = await User.find({ _id: { $in: removedIds } }).select("name").lean();
     recordTaskHistory(taskId, user, "assignees_changed", {
@@ -1704,12 +1749,52 @@ async function applyTaskUpdate(
   return { warnings };
 }
 
-/** Creator or admin: edits a task's details (see `applyTaskUpdate`). */
+/**
+ * PATCH with only `actualStartAt` / `actualEndAt`: the task's managers (incl.
+ * the head of its department) and its assignees. Writes `actual_dates_updated`.
+ */
+async function applyActualDatesUpdate(
+  user: IUser,
+  task: ITask,
+  body: UpdateTaskBody,
+  ip: string | undefined
+): Promise<Invalid | { warnings: string[] }> {
+  const flags = await taskProjectFlags(task, user);
+  if (!canManageSubtasks(user, task, flags) && !isAssignee(user, task)) {
+    return { status: 403, error: "Only the task's managers and assignees can edit its actual dates" };
+  }
+  const changes = await applyManualActualDates(task, body);
+  if (isInvalid(changes)) return changes;
+  if (changes.length === 0) return { warnings: [] };
+  await task.save();
+  const taskId = task._id as mongoose.Types.ObjectId;
+  recordTaskHistory(taskId, user, "actual_dates_updated", { changes });
+  logActivity({
+    action: "task_updated",
+    actor: user,
+    targetType: "task",
+    targetId: taskId,
+    targetName: task.title,
+    details: { fields: ["actualDates"] },
+    ip,
+  });
+  pushTaskUpdate(task, "updated", { fields: ["actualDates"] });
+  return { warnings: [] };
+}
+
+const ACTUAL_DATE_KEYS = new Set(["actualStartAt", "actualEndAt"]);
+
+/** Creator or admin: edits a task's details (see `applyTaskUpdate`); actual dates alone also assignees. */
 export async function updateTask(req: Request, res: Response): Promise<void> {
   const task = await getTaskOr404(req, res);
   if (!task) return;
   const user = req.user!;
-  const result = await applyTaskUpdate(user, task, (req.body ?? {}) as UpdateTaskBody, req.ip);
+  const body = (req.body ?? {}) as UpdateTaskBody;
+  const keys = Object.keys(body);
+  const actualOnly = keys.length > 0 && keys.every((key) => ACTUAL_DATE_KEYS.has(key));
+  const result = actualOnly
+    ? await applyActualDatesUpdate(user, task, body, req.ip)
+    : await applyTaskUpdate(user, task, body, req.ip);
   if (isInvalid(result)) {
     res.status(result.status).json({ error: result.error });
     return;
@@ -2075,6 +2160,10 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
     "Start date",
     "Due date",
     "Completed on",
+    "Actual start",
+    "Actual end",
+    "Start variance (days)",
+    "Finish variance (days)",
     "Estimated hours",
     "Hours logged",
     "Created by",
@@ -2097,6 +2186,10 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
         csvDate(t.startDate),
         csvDate(t.dueDate),
         t.completedAt ? appDateKey(t.completedAt) : "",
+        csvDateTime(t.actualStartAt),
+        csvDateTime(t.actualEndAt),
+        varianceDays(t.actualStartAt, t.startDate) ?? "",
+        varianceDays(t.actualEndAt, t.dueDate) ?? "",
         csvHours(t.estimateMinutes ?? null),
         csvHours(logged.get(id.toString()) ?? 0),
         t.assignedBy?.name ?? "",

@@ -91,7 +91,7 @@ export function ResultsSection({ summary }: { summary: SummaryQuery }) {
     >
       {summary.isPending ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true" aria-label="Loading KPIs">
-          {Array.from({ length: 7 }).map((_, index) => (
+          {Array.from({ length: 9 }).map((_, index) => (
             <Skeleton key={index} className="h-32 rounded-xl" />
           ))}
         </div>
@@ -149,6 +149,23 @@ function Kpis({ data, dimmed }: { data: DeliverySummaryResponse; dimmed: boolean
         delta={deltas.meanDays}
         unit="days"
         explanation="Mean calendar days from brief (created) to completed."
+      />
+      <KpiTile
+        label="Mean days start → done"
+        value={fmtDays(kpis.startToDoneDays)}
+        delta={deltas.startToDoneDays}
+        unit="days"
+        explanation={`From the actual start to completed · ${fmtNum(kpis.startedCompleted)} of ${fmtNum(kpis.completed)} completed had an actual start.`}
+        tip="Tasks completed in the period that have an actual start (set automatically when work starts — first move to In progress, timer or time log — or edited on the task)."
+      />
+      <KpiTile
+        label="Late starts"
+        value={fmtPct(kpis.lateStartPct)}
+        tone={lowRateTone(kpis.lateStartPct)}
+        delta={deltas.lateStartPct}
+        unit="pct"
+        explanation={`${fmtNum(kpis.lateStarts)} of ${fmtNum(kpis.startsWithPlan)} started after the planned start date.`}
+        tip="Of tasks whose actual start falls in the period and that have a planned start date: the share whose actual start date is after the planned one."
       />
       <KpiTile
         label="Rework"

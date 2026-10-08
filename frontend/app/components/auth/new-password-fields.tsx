@@ -41,6 +41,8 @@ export function NewPasswordFields({
   submitted,
   autoFocus,
   label = "Password",
+  confirmLabel = "Confirm password",
+  liveMatch = false,
 }: {
   idPrefix: string;
   password: string;
@@ -50,12 +52,17 @@ export function NewPasswordFields({
   submitted: boolean;
   autoFocus?: boolean;
   label?: string;
+  confirmLabel?: string;
+  /** Flag a mismatch as soon as the confirmation diverges, not only after submit. */
+  liveMatch?: boolean;
 }) {
   const [showPassword, setShowPassword] = useState(false);
   const passed = STRENGTH_RULES.filter((rule) => rule.test(password)).length;
   const level = password.length < MIN_PASSWORD_LENGTH ? 0 : passed;
   const passwordInvalid = submitted && password.length < MIN_PASSWORD_LENGTH;
-  const confirmInvalid = submitted && confirm !== password;
+  // Live: wrong as soon as the confirmation stops being a prefix of the password (or is longer).
+  const liveMismatch = liveMatch && confirm.length > 0 && !(confirm.length < password.length && password.startsWith(confirm)) && confirm !== password;
+  const confirmInvalid = (submitted && confirm !== password) || liveMismatch;
   const passwordId = `${idPrefix}-password`;
   const confirmId = `${idPrefix}-confirm`;
   const hintsId = `${idPrefix}-password-hints`;
@@ -134,7 +141,7 @@ export function NewPasswordFields({
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor={confirmId}>Confirm password</Label>
+        <Label htmlFor={confirmId}>{confirmLabel}</Label>
         <Input
           id={confirmId}
           type={showPassword ? "text" : "password"}
@@ -146,7 +153,7 @@ export function NewPasswordFields({
           aria-describedby={confirmInvalid ? `${confirmId}-error` : undefined}
         />
         {confirmInvalid && (
-          <p id={`${confirmId}-error`} className="text-xs text-destructive">
+          <p id={`${confirmId}-error`} className="text-xs text-destructive" role="alert">
             Passwords don&apos;t match.
           </p>
         )}

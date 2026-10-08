@@ -217,7 +217,8 @@ export type ActivityAction =
   | "meeting_tasks_created"
   | "settings_updated"
   | "import_completed"
-  | "import_undone";
+  | "import_undone"
+  | "password_reset";
 
 /** Mirrors the backend ActivityLog model as returned by the API (Mongoose toJSON). */
 export interface ActivityLog {
@@ -879,6 +880,9 @@ export interface TaskLabelRef {
   color: LabelColor;
 }
 
+/** Where a task's Actual start / Actual end came from. */
+export type ActualDateSource = "auto" | "manual" | "import";
+
 /** Mirrors the backend Task model as returned by the API (populated refs). */
 export interface Task {
   _id: string;
@@ -908,6 +912,12 @@ export interface Task {
   reviewedAt: string | null;
   reviewedBy: Pick<User, "_id" | "name"> | null;
   completedAt: string | null;
+  /** When work actually started / finished (ISO instants; filled automatically, editable). */
+  actualStartAt?: string | null;
+  actualEndAt?: string | null;
+  /** "manual" values are never changed by the automatic rules. */
+  actualStartSource?: ActualDateSource | null;
+  actualEndSource?: ActualDateSource | null;
   createdAt: string;
   updatedAt: string;
   commentCount: number;
@@ -960,6 +970,8 @@ export interface TaskPermissions {
   canDuplicate?: boolean;
   /** May start a timer / log time on this task. */
   canLogTime?: boolean;
+  /** Edit Actual start / end (managers, the department head and assignees). */
+  canEditActualDates?: boolean;
   /** Project has requireTaskApproval: false — submitting completes directly. */
   skipsReview?: boolean;
   /** Task of an archived project — everything is read-only. */
@@ -1011,6 +1023,9 @@ export interface TaskInput {
   project?: string | null;
   /** Milestone id within the project (null clears). */
   milestone?: string | null;
+  /** Update only: ISO date-time; null clears it (back to automatic). */
+  actualStartAt?: string | null;
+  actualEndAt?: string | null;
 }
 
 /** PATCH /api/tasks/:id body — any subset of TaskInput except subtasks. */
@@ -1230,7 +1245,8 @@ export type TaskHistoryAction =
   | "submitted"
   | "reviewed"
   | "reminder_sent"
-  | "created_from_meeting";
+  | "created_from_meeting"
+  | "actual_dates_updated";
 
 export interface TaskHistoryEntry {
   _id: string;
@@ -2808,6 +2824,13 @@ export interface DeliveryStats {
   completedNoDue: number;
   onTimePct: number | null;
   meanDays: number | null;
+  /** Mean days from the actual start to done (completed in the period with an actual start). */
+  startToDoneDays: number | null;
+  startedCompleted: number;
+  /** Actual starts after the planned start date, of those with both. */
+  lateStartPct: number | null;
+  lateStarts: number;
+  startsWithPlan: number;
   rework: number;
   reworkPct: number | null;
   open: number;
@@ -2864,6 +2887,8 @@ export interface DeliverySummaryResponse {
     completed: DeliveryDelta;
     onTimePct: DeliveryDelta;
     meanDays: DeliveryDelta;
+    startToDoneDays: DeliveryDelta;
+    lateStartPct: DeliveryDelta;
     reworkPct: DeliveryDelta;
     open: DeliveryDelta;
     overdue: DeliveryDelta;
@@ -2877,6 +2902,7 @@ export interface DeliveryWeekRow {
   completed: number;
   onTimePct: number | null;
   meanDays: number | null;
+  startToDoneDays: number | null;
   open: number;
   overdue: number;
   overduePct: number | null;
@@ -2995,6 +3021,22 @@ export interface DeliveryTeamMapResponse {
   offMap: { brand: DeliveryBrandRef; total: number; people: { person: DeliveryUserRef; count: number }[] }[];
   mappedUnused: { brand: DeliveryBrandRef; people: DeliveryUserRef[] }[];
   unmappedBrands: { brand: DeliveryBrandRef; tasks: number }[];
+}
+
+/* ------------------------------------------------------------------ */
+/* Forgot password (POST /api/auth/password-reset/request|verify|complete) */
+/* ------------------------------------------------------------------ */
+
+/** POST /auth/password-reset/request — always the same generic answer. */
+export interface PasswordResetRequestResponse {
+  message: string;
+  resendAfterSeconds: number;
+}
+
+/** POST /auth/password-reset/verify — a correct code returns a short-lived reset token. */
+export interface PasswordResetVerifyResponse {
+  resetToken: string;
+  expiresInSeconds: number;
 }
 
 /* ------------------------------------------------------------------ */

@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import { zonedParts } from "./appTime.js";
 import { appDateKey } from "./taskJobs.js";
 
 /** Hard cap on exported rows (the response says when it was hit). */
@@ -9,6 +10,14 @@ export type CsvValue = string | number | boolean | Date | null | undefined;
 /** "YYYY-MM-DD" of a stored date-only value (UTC midnight), "" when unset. */
 export function csvDate(value: Date | null | undefined): string {
   return value ? value.toISOString().slice(0, 10) : "";
+}
+
+/** "YYYY-MM-DD HH:mm" of an instant in the app timezone, "" when unset. */
+export function csvDateTime(value: Date | null | undefined): string {
+  if (!value) return "";
+  const p = zonedParts(value);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
 /** Minutes → decimal hours with 2 decimals ("" when null). */

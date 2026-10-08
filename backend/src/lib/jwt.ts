@@ -10,6 +10,11 @@ const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN ?? "7d") as unknown as jwt.Si
 export interface AccessTokenPayload {
   sub: string;
   role: "admin" | "employee" | "head";
+  /**
+   * The user's `tokenVersion` when the token was signed. Tokens issued before
+   * this claim existed carry none and count as version 0 (the user default).
+   */
+  tv: number;
 }
 
 let secretKey: KeyObject | undefined;
@@ -27,8 +32,14 @@ function requireSecret(): KeyObject {
 }
 
 /** Signs an access token for the given user. */
-export function signAccessToken(user: { id: string; role: "admin" | "employee" | "head" }): string {
-  return jwt.sign({ sub: user.id, role: user.role }, requireSecret(), { expiresIn: JWT_EXPIRES_IN });
+export function signAccessToken(user: {
+  id: string;
+  role: "admin" | "employee" | "head";
+  tokenVersion?: number | null;
+}): string {
+  return jwt.sign({ sub: user.id, role: user.role, tv: user.tokenVersion ?? 0 }, requireSecret(), {
+    expiresIn: JWT_EXPIRES_IN,
+  });
 }
 
 /** Verifies a token and returns its payload. Throws on invalid or expired tokens. */
@@ -37,7 +48,8 @@ export function verifyAccessToken(token: string): AccessTokenPayload {
   if (typeof payload === "string" || typeof payload.sub !== "string") {
     throw new jwt.JsonWebTokenError("Invalid token payload");
   }
-  return { sub: payload.sub, role: payload.role as AccessTokenPayload["role"] };
+  const tv = typeof payload.tv === "number" && Number.isInteger(payload.tv) ? payload.tv : 0;
+  return { sub: payload.sub, role: payload.role as AccessTokenPayload["role"], tv };
 }
 
 const UNIT_MS: Record<string, number> = {

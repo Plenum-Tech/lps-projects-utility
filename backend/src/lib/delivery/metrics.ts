@@ -61,12 +61,31 @@ export interface Acc {
   completedWithDue: number;
   onTime: number;
   cycleDaysSum: number;
+  /** Completed in range with an actual start: start → done days. */
+  startedCompleted: number;
+  startDoneDaysSum: number;
+  /** Actual start in range with a planned start; late = actual start date after the planned one. */
+  startsWithPlan: number;
+  lateStarts: number;
   open: number;
   overdue: number;
 }
 
 export function emptyAcc(): Acc {
-  return { created: 0, rework: 0, completed: 0, completedWithDue: 0, onTime: 0, cycleDaysSum: 0, open: 0, overdue: 0 };
+  return {
+    created: 0,
+    rework: 0,
+    completed: 0,
+    completedWithDue: 0,
+    onTime: 0,
+    cycleDaysSum: 0,
+    startedCompleted: 0,
+    startDoneDaysSum: 0,
+    startsWithPlan: 0,
+    lateStarts: 0,
+    open: 0,
+    overdue: 0,
+  };
 }
 
 const inRange = (day: number | null, r: Range) => day !== null && day >= r.start && day <= r.end;
@@ -84,6 +103,14 @@ export function addFact(acc: Acc, f: TaskFact, range: Range, asOf: number): void
       acc.completedWithDue += 1;
       if (f.completedDay <= f.dueDay) acc.onTime += 1;
     }
+    if (f.actualStartDay !== null) {
+      acc.startedCompleted += 1;
+      acc.startDoneDaysSum += Math.max(0, (f.actualEndDay ?? f.completedDay) - f.actualStartDay);
+    }
+  }
+  if (f.actualStartDay !== null && f.startDay !== null && inRange(f.actualStartDay, range)) {
+    acc.startsWithPlan += 1;
+    if (f.actualStartDay > f.startDay) acc.lateStarts += 1;
   }
   if (openAt(f, asOf)) {
     acc.open += 1;
@@ -108,6 +135,14 @@ export interface Stats {
   /** Completed in range without a due date (excluded from on-time %). */
   completedNoDue: number;
   meanDays: number | null;
+  /** Mean days from the actual start to done (completed in range with an actual start). */
+  startToDoneDays: number | null;
+  /** Completed in range with an actual start (start → done denominator). */
+  startedCompleted: number;
+  /** Actual starts in range with a planned start, and those that started after the planned day. */
+  startsWithPlan: number;
+  lateStarts: number;
+  lateStartPct: number | null;
   /** Open / overdue at the end of the as-of day. */
   open: number;
   overdue: number;
@@ -124,6 +159,11 @@ export function finalize(acc: Acc): Stats {
     onTimePct: pct(acc.onTime, acc.completedWithDue),
     completedNoDue: acc.completed - acc.completedWithDue,
     meanDays: acc.completed > 0 ? round1(acc.cycleDaysSum / acc.completed) : null,
+    startToDoneDays: acc.startedCompleted > 0 ? round1(acc.startDoneDaysSum / acc.startedCompleted) : null,
+    startedCompleted: acc.startedCompleted,
+    startsWithPlan: acc.startsWithPlan,
+    lateStarts: acc.lateStarts,
+    lateStartPct: pct(acc.lateStarts, acc.startsWithPlan),
     open: acc.open,
     overdue: acc.overdue,
   };
@@ -194,6 +234,8 @@ export interface SummaryKpis {
     completed: Delta;
     onTimePct: Delta;
     meanDays: Delta;
+    startToDoneDays: Delta;
+    lateStartPct: Delta;
     reworkPct: Delta;
     open: Delta;
     overdue: Delta;
@@ -218,6 +260,8 @@ export function summarize(facts: TaskFact[], period: PeriodInfo): SummaryKpis {
       completed: delta(current.completed, prev(previous?.completed ?? null), "higher"),
       onTimePct: delta(current.onTimePct, prev(previous?.onTimePct ?? null), "higher"),
       meanDays: delta(current.meanDays, prev(previous?.meanDays ?? null), "lower"),
+      startToDoneDays: delta(current.startToDoneDays, prev(previous?.startToDoneDays ?? null), "lower"),
+      lateStartPct: delta(current.lateStartPct, prev(previous?.lateStartPct ?? null), "lower"),
       reworkPct: delta(current.reworkPct, prev(previous?.reworkPct ?? null), "lower"),
       open: delta(current.open, prev(previous?.open ?? null), "neutral"),
       overdue: delta(current.overdue, prev(previous?.overdue ?? null), "lower"),
@@ -235,6 +279,8 @@ export interface WeekRow {
   completed: number;
   onTimePct: number | null;
   meanDays: number | null;
+  /** Mean days actual start → done (tasks completed that week with an actual start). */
+  startToDoneDays: number | null;
   /** Open / overdue at the end of the week. */
   open: number;
   overdue: number;
@@ -267,6 +313,7 @@ export function weeklySeries(facts: TaskFact[], weeks: Range[]): WeekRow[] {
       completed: s.completed,
       onTimePct: s.onTimePct,
       meanDays: s.meanDays,
+      startToDoneDays: s.startToDoneDays,
       open: s.open,
       overdue: s.overdue,
       overduePct: pct(s.overdue, s.open),

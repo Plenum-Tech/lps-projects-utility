@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   LuCalendar,
@@ -84,6 +85,9 @@ interface FormState {
   milestone: string;
   estimateHours: string;
   estimateMinutes: string;
+  /** Edit only: <input type="datetime-local"> values ("" = automatic). */
+  actualStart: string;
+  actualEnd: string;
 }
 
 function initialState(task?: Task | null, defaultProjectId?: string): FormState {
@@ -91,6 +95,8 @@ function initialState(task?: Task | null, defaultProjectId?: string): FormState 
   return {
     estimateHours: estimate.hours,
     estimateMinutes: estimate.minutes,
+    actualStart: task?.actualStartAt ? toDateTimeInput(task.actualStartAt) : "",
+    actualEnd: task?.actualEndAt ? toDateTimeInput(task.actualEndAt) : "",
     project: task ? (task.project?._id ?? NO_PROJECT) : (defaultProjectId ?? NO_PROJECT),
     milestone: task?.milestone?._id ?? NO_MILESTONE,
     title: task?.title ?? "",
@@ -110,6 +116,15 @@ function initialState(task?: Task | null, defaultProjectId?: string): FormState 
         }
       : null,
   };
+}
+
+/** Actual start / end (datetime-local values): not in the future, end ≥ start. */
+function actualDatesError(start: string, end: string): string | null {
+  const limit = Date.now() + 2 * 60_000;
+  if (start && new Date(start).getTime() > limit) return "The actual start can't be in the future.";
+  if (end && new Date(end).getTime() > limit) return "The actual end can't be in the future.";
+  if (start && end && end < start) return "The actual end can't be before the actual start.";
+  return null;
 }
 
 function sameIds(a: string[], b: string[]) {
@@ -292,6 +307,8 @@ export function TaskFormDialog({
   const projectInvalid = submitted && !isHeadOrAdmin && !projectId;
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
   const estimateInvalid = submitted && estimate === "invalid";
+  const actualError = actualDatesError(form.actualStart, form.actualEnd);
+  const actualInvalid = submitted && Boolean(actualError);
 
   function set<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -309,7 +326,8 @@ export function TaskFormDialog({
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
       recurrenceInvalid ||
       (!isHeadOrAdmin && !projectId) ||
-      estimate === "invalid"
+      estimate === "invalid" ||
+      (isEdit && actualError)
     ) {
       return;
     }
@@ -379,6 +397,13 @@ export function TaskFormDialog({
     if (estimate !== (task.estimateMinutes ?? null)) input.estimateMinutes = estimate;
     if (form.project !== original.project) input.project = projectId;
     if (form.milestone !== original.milestone) input.milestone = projectId ? milestone : null;
+    // Emptying an actual date returns it to automatic.
+    if (form.actualStart !== original.actualStart) {
+      input.actualStartAt = form.actualStart ? fromDateTimeInput(form.actualStart) : null;
+    }
+    if (form.actualEnd !== original.actualEnd) {
+      input.actualEndAt = form.actualEnd ? fromDateTimeInput(form.actualEnd) : null;
+    }
 
     if (Object.keys(input).length === 0) {
       onOpenChange(false);
@@ -614,6 +639,51 @@ export function TaskFormDialog({
             }
             invalid={estimateInvalid}
           />
+
+          {isEdit && (
+            <fieldset className="space-y-1.5">
+              <legend className="mb-1.5 text-sm leading-none font-medium">Actual dates</legend>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-actual-start" className="text-xs text-muted-foreground">
+                    Actual start
+                  </Label>
+                  <Input
+                    id="task-actual-start"
+                    type="datetime-local"
+                    value={form.actualStart}
+                    max={toDateTimeInput(new Date())}
+                    onChange={(event) => set("actualStart", event.target.value)}
+                    aria-invalid={actualInvalid || undefined}
+                    aria-describedby="task-actual-hint"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-actual-end" className="text-xs text-muted-foreground">
+                    Actual end
+                  </Label>
+                  <Input
+                    id="task-actual-end"
+                    type="datetime-local"
+                    value={form.actualEnd}
+                    min={form.actualStart || undefined}
+                    max={toDateTimeInput(new Date())}
+                    onChange={(event) => set("actualEnd", event.target.value)}
+                    aria-invalid={actualInvalid || undefined}
+                    aria-describedby="task-actual-hint"
+                  />
+                </div>
+              </div>
+              <p
+                id="task-actual-hint"
+                className={actualInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+              >
+                {actualInvalid
+                  ? actualError
+                  : "Optional — filled automatically. Edited values aren't changed automatically; clear a field to return it to automatic."}
+              </p>
+            </fieldset>
+          )}
 
           <div className="space-y-1.5">
             <Label htmlFor="task-labels">Labels</Label>

@@ -4,7 +4,7 @@ import { Department } from "../../models/Department.js";
 import { Project } from "../../models/Project.js";
 import { Task } from "../../models/Task.js";
 import { User } from "../../models/User.js";
-import { appTimeZone } from "../appTime.js";
+import { appTimeZone, zonedParts } from "../appTime.js";
 import { deliveryCached } from "./cache.js";
 import { dayFromKey, keyFromDay } from "./days.js";
 import type { DeliverySettingsSnapshot } from "./settings.js";
@@ -63,6 +63,11 @@ export interface TaskFact {
   /** Day the task stopped being open (completedAt, else updatedAt for legacy completed tasks); null while open. */
   closedDay: number | null;
   dueDay: number | null;
+  /** Planned start (date-only). */
+  startDay: number | null;
+  /** Actual start / end in app-timezone days (null when unset). */
+  actualStartDay: number | null;
+  actualEndDay: number | null;
   rework: boolean;
 }
 
@@ -96,7 +101,47 @@ interface RawFact {
   completedKey: string | null;
   updatedKey: string | null;
   dueKey: string | null;
+  startDate?: Date | null;
+  actualStartAt?: Date | null;
+  actualEndAt?: Date | null;
   rework: boolean;
+}
+
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+
+/** App-timezone offset (ms) at the start of UTC hour `hour`. */
+function offsetAtHour(hour: number): number {
+  const probe = new Date(hour * HOUR_MS);
+  const p = zonedParts(probe);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - probe.getTime();
+}
+
+/**
+ * App-timezone day number of an instant, without a $dateToString per row. The
+ * zone offset is memoised per UTC day (two Intl calls); on the rare day whose
+ * offset changes (DST) it is resolved per hour, where offsets change.
+ */
+function makeAppDay(): (date: Date | null | undefined) => number | null {
+  const byDay = new Map<number, number | null>();
+  const byHour = new Map<number, number>();
+  return (date) => {
+    if (!date) return null;
+    const t = date.getTime();
+    const utcDay = Math.floor(t / DAY_MS);
+    let offset = byDay.get(utcDay);
+    if (offset === undefined) {
+      const first = offsetAtHour(utcDay * 24);
+      offset = first === offsetAtHour(utcDay * 24 + 24) ? first : null;
+      byDay.set(utcDay, offset);
+    }
+    if (offset === null) {
+      const hour = Math.floor(t / HOUR_MS);
+      offset = byHour.get(hour) ?? offsetAtHour(hour);
+      byHour.set(hour, offset);
+    }
+    return Math.floor((t + offset) / DAY_MS);
+  };
 }
 
 /**
@@ -191,6 +236,10 @@ async function queryFacts(
             null,
           ],
         },
+        // Raw instants: day numbers are derived in JS (see makeAppDay).
+        startDate: 1,
+        actualStartAt: 1,
+        actualEndAt: 1,
         rework: { $or: reworkConditions },
       },
     },
@@ -201,6 +250,7 @@ async function queryFacts(
   // --- joins (brand through the project, team through the doers' departments) and exact filters ---
   let minCreatedDay: number | null = null;
   const facts: TaskFact[] = [];
+  const appDay = makeAppDay();
   for (const r of rows) {
     const doers = [...new Set((r.assignees ?? []).map(String))].filter((id) => !trafficManagers.has(id));
     const departments = doers.map((d) => ref.users.get(d)?.department ?? null);
@@ -232,6 +282,10 @@ async function queryFacts(
       completedDay,
       closedDay: r.status === "completed" ? (completedDay ?? (r.updatedKey ? dayFromKey(r.updatedKey) : createdDay)) : null,
       dueDay: r.dueKey ? dayFromKey(r.dueKey) : null,
+      // Planned start is date-only (UTC midnight).
+      startDay: r.startDate ? Math.floor(r.startDate.getTime() / DAY_MS) : null,
+      actualStartDay: appDay(r.actualStartAt),
+      actualEndDay: appDay(r.actualEndAt),
       rework: Boolean(r.rework),
     });
   }

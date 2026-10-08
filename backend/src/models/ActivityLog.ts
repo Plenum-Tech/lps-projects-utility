@@ -62,6 +62,7 @@ export const ACTIVITY_ACTIONS = [
   "settings_updated",
   "import_completed",
   "import_undone",
+  "password_reset",
 ] as const;
 
 export type ActivityAction = (typeof ACTIVITY_ACTIONS)[number];

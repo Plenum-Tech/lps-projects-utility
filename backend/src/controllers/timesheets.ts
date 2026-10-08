@@ -24,6 +24,7 @@ import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import type { IWeeklyTimesheet } from "../models/WeeklyTimesheet.js";
+import { markActualStartFromLogs } from "../lib/actualDates.js";
 
 const TIMESHEET_LINK = "/timesheet";
 const REPORT_LINK = "/reports/timesheets";
@@ -316,6 +317,7 @@ export async function submitTimesheet(req: Request, res: Response): Promise<void
     });
   }
   await TimeLog.insertMany(docs);
+  await markActualStartFromLogs(docs.map((d) => ({ task: d.task, start: d.startTime })));
   for (const id of projectIds) scheduleProgressRecalc(id);
 
   // Department head(s); admins when the department has no head.

@@ -8,6 +8,7 @@ import type { TaskStatus } from "../../models/Task.js";
 import { TaskCategory } from "../../models/TaskCategory.js";
 import { TaskLabel } from "../../models/TaskLabel.js";
 import type { IUser } from "../../models/User.js";
+import { importActualDatesProblem } from "../actualDates.js";
 import { isDuplicateKeyError } from "../errors.js";
 import { exactNameRegex } from "../pagination.js";
 import { canCreateProjectTasks, canManageProject, isProjectMember } from "../projectAccess.js";
@@ -35,6 +36,9 @@ import * as V from "./values.js";
 export interface TaskPlan {
   body: CreateTaskBody;
   status: TaskStatus;
+  /** Actual start / end (ISO), stored with source "import". */
+  actualStartAt: string | null;
+  actualEndAt: string | null;
   createCategory: string | null;
   createLabels: string[];
 }
@@ -196,6 +200,14 @@ function validateRow(ctx: TaskContext, r: RowReader, row: number): RowPlan<TaskP
   if (V.isValueError(start)) issues.error(`Start date: ${start.error}`);
   if (V.isValueError(due)) issues.error(`Due date: ${due.error}`);
   if (typeof start === "string" && typeof due === "string" && due < start) issues.error("Due date must be on or after the start date");
+  const actualStart = V.dateTime(r.get("actualStart"), ctx.dateFormat);
+  const actualEnd = V.dateTime(r.get("actualEnd"), ctx.dateFormat);
+  if (V.isValueError(actualStart)) issues.error(`Actual start: ${actualStart.error}`);
+  if (V.isValueError(actualEnd)) issues.error(`Actual end: ${actualEnd.error}`);
+  const startAt = actualStart instanceof Date ? actualStart : null;
+  const endAt = actualEnd instanceof Date ? actualEnd : null;
+  const actualProblem = importActualDatesProblem(startAt, endAt);
+  if (actualProblem) issues.error(actualProblem);
   const estimate = V.estimateMinutes(r.get("estimate"), TASK_LIMITS.maxEstimateMinutes);
   if (V.isValueError(estimate)) issues.error(estimate.error);
 
@@ -244,7 +256,14 @@ function validateRow(ctx: TaskContext, r: RowReader, row: number): RowPlan<TaskP
     ...(labels.length ? { labels } : {}),
     ...(subtasks.length ? { subtasks } : {}),
   };
-  return issues.result(row, "create", { body, status, createCategory, createLabels });
+  return issues.result(row, "create", {
+    body,
+    status,
+    actualStartAt: startAt ? startAt.toISOString() : null,
+    actualEndAt: endAt ? endAt.toISOString() : null,
+    createCategory,
+    createLabels,
+  });
 }
 
 /** Validates every row (no writes). */
@@ -293,6 +312,10 @@ export async function runTaskRow(
   const result = await createTaskCore(actor, body, ip, { importJob: jobId }, {
     status: plan.status,
     sendEmail: options.sendEmails,
+    actual: {
+      start: plan.actualStartAt ? new Date(plan.actualStartAt) : null,
+      end: plan.actualEndAt ? new Date(plan.actualEndAt) : null,
+    },
   });
   if (isInvalid(result)) return { status: "error", messages: [result.error] };
   const task = await Task.findById(result.taskId).select("shortCode number").lean();

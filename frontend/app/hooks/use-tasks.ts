@@ -86,6 +86,8 @@ export type TaskSortField =
   | "title"
   | "startDate"
   | "dueDate"
+  | "actualStartAt"
+  | "actualEndAt"
   | "estimate"
   | "loggedMinutes"
   | "status"

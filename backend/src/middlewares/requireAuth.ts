@@ -53,6 +53,13 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  // A password reset bumps tokenVersion: sessions signed before it are rejected.
+  // Users and tokens from before the field existed both count as version 0.
+  if (payload.tv !== (user.tokenVersion ?? 0)) {
+    res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
   req.user = user;
   next();
 }

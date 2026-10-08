@@ -21,6 +21,11 @@ export const RECURRENCE_UNITS = ["day", "week", "month"] as const;
 
 export type RecurrenceUnit = (typeof RECURRENCE_UNITS)[number];
 
+/** Where a task's Actual start / Actual end came from (manual values are never overwritten automatically). */
+export const ACTUAL_DATE_SOURCES = ["auto", "manual", "import"] as const;
+
+export type ActualDateSource = (typeof ACTUAL_DATE_SOURCES)[number];
+
 /** Hard limits shared by the model and the controllers. */
 export const TASK_LIMITS = {
   maxAssignees: 20,
@@ -118,6 +123,11 @@ export interface ITask extends mongoose.Document {
   reviewedAt?: Date | null;
   reviewedBy?: mongoose.Types.ObjectId | null;
   completedAt?: Date | null;
+  /** When work actually started / finished (UTC instants; see lib/actualDates.ts). */
+  actualStartAt?: Date | null;
+  actualEndAt?: Date | null;
+  actualStartSource?: ActualDateSource | null;
+  actualEndSource?: ActualDateSource | null;
   /** Set when the task was created from a meeting action item; unset when the meeting is deleted. */
   sourceMeeting?: ITaskSourceMeeting | null;
   createdAt: Date;
@@ -229,6 +239,10 @@ const taskSchema = new Schema<ITask>(
     reviewedAt: { type: Date, default: null },
     reviewedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     completedAt: { type: Date, default: null },
+    actualStartAt: { type: Date, default: null },
+    actualEndAt: { type: Date, default: null },
+    actualStartSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
+    actualEndSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
     sourceMeeting: { type: sourceMeetingSchema, default: null },
   },
   { timestamps: true }

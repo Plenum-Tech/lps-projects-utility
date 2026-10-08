@@ -12,6 +12,7 @@ import { scheduleProgressRecalc } from "./projectProgress.js";
 import { pushTaskUpdate, recordTaskHistory } from "./taskAccess.js";
 import { nextShortCode, nextTaskNumber } from "./taskNumbers.js";
 import { settingsTimeZone } from "./companySettings.js";
+import { initialActualDates } from "./actualDates.js";
 
 // ---------------------------------------------------------------------------
 // Date-only helpers — due/start dates are stored as UTC midnight of a calendar
@@ -253,6 +254,8 @@ async function generateOccurrence(parent: ITask, now: Date): Promise<ITask | nul
     })),
     recurrence: null,
     recurringParent: parent._id,
+    // Copies start in "todo": the shared automatic rules leave the actual dates empty.
+    ...initialActualDates("todo", new Date()),
   });
 
   recordTaskHistory(copy._id, null, "created", { recurringParent: parent._id.toString() });

@@ -876,6 +876,8 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
   const subtaskLookup = new Map<number, { task: Id; sub: Id; title: string }>();
   const taskAssignedBy = new Map<number, Id>();
   const taskStatusByLegacy = new Map<number, TaskStatus>();
+  /** Actual end per legacy task: completed_on of completed tasks (see step 9b). */
+  const actualEndByLegacy = new Map<number, Date>();
   const newTaskOrder: Array<{ doc: PlannedDoc; createdAt: Date; projectKey: string | null; wanted: number | null }> = [];
 
   for (const row of [...taskRows].sort((a, b) => idOf(a) - idOf(b))) {
@@ -910,6 +912,7 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
 
     const status = statusOfColumn(row.board_column_id, str(row.status) === "completed");
     taskStatusByLegacy.set(legacyId, status);
+    if (status === "completed") actualEndByLegacy.set(legacyId, utcDateTime(row.completed_on) ?? updatedAt);
     const manager = pidLegacy === null ? null : (projectManager.get(pidLegacy) ?? null);
     let assignedBy = user(row.created_by) ?? user(row.added_by) ?? manager;
     if (!assignedBy) {
@@ -1002,6 +1005,7 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
         recurringParent: recurringParentLegacy === null ? null : (taskIdByLegacy.get(recurringParentLegacy) ?? null),
         completedAt: status === "completed" ? (utcDateTime(row.completed_on) ?? updatedAt) : null,
         submittedAt: status === "in_review" ? updatedAt : null,
+        // actualStartAt / actualEndAt are written by step 9b (never in this $set, so re-runs keep manual values).
         createdAt,
         updatedAt,
       },
@@ -1463,6 +1467,67 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
   }
   await writePlanned(TimeLog, "timeLogs", plannedLogs, report, dryRun);
   log(`time logs planned: ${plannedLogs.length}`);
+
+  // ---- 9b. Actual start / end ---------------------------------------------------------------------
+  // End = completed_on of completed tasks. Start = the first history entry that moved
+  // the task to the Doing / In Process column, else its earliest time log. Source
+  // "import"; written only where the value is empty or still import-sourced, so a
+  // re-run never overwrites a manual (or app-set) value.
+  const firstDoing = new Map<number, Date>();
+  for (const row of historyRows) {
+    // Only entries that moved the task (status change) or created it in that column.
+    const moved = HISTORY_ACTIONS[str(row.details).trim()];
+    if (moved !== "status_changed" && moved !== "created") continue;
+    if (row.board_column_id === null || statusOfColumn(row.board_column_id, false) !== "in_progress") continue;
+    const legacyTask = num(row.task_id);
+    if (legacyTask === null) continue;
+    const at = createdAtOf(row, now);
+    const known = firstDoing.get(legacyTask);
+    if (!known || at.getTime() < known.getTime()) firstDoing.set(legacyTask, at);
+  }
+  const firstLog = new Map<number, Date>();
+  for (const row of T("project_time_logs")) {
+    const legacyTask = num(row.task_id);
+    const start = utcDateTime(row.start_time);
+    if (legacyTask === null || !start || !utcDateTime(row.end_time)) continue;
+    const known = firstLog.get(legacyTask);
+    if (!known || start.getTime() < known.getTime()) firstLog.set(legacyTask, start);
+  }
+  const actualOps: Array<{ updateOne: { filter: Record<string, unknown>; update: Record<string, unknown> } }> = [];
+  let plannedStarts = 0;
+  let plannedEnds = 0;
+  for (const [legacyTask, tid] of taskIds) {
+    const start = firstDoing.get(legacyTask) ?? firstLog.get(legacyTask) ?? null;
+    const end = actualEndByLegacy.get(legacyTask) ?? null;
+    if (start) plannedStarts++;
+    if (end) plannedEnds++;
+    for (const [field, source, value] of [
+      ["actualStartAt", "actualStartSource", start],
+      ["actualEndAt", "actualEndSource", end],
+    ] as const) {
+      actualOps.push(
+        value
+          ? {
+              updateOne: {
+                filter: { _id: tid, $or: [{ [field]: null }, { [source]: "import" }] },
+                update: { $set: { [field]: value, [source]: "import" } },
+              },
+            }
+          : { updateOne: { filter: { _id: tid, [source]: "import" }, update: { $set: { [field]: null, [source]: null } } } }
+      );
+    }
+  }
+  report.count("actualStartsFromWorksuite", plannedStarts);
+  report.count("actualEndsFromWorksuite", plannedEnds);
+  if (!dryRun) {
+    let modified = 0;
+    for (const batch of chunks(actualOps)) {
+      const result = await Task.collection.bulkWrite(batch as any, { ordered: false });
+      modified += result.modifiedCount;
+    }
+    report.count("actualDatesWritten", modified);
+  }
+  log(`actual dates: ${plannedStarts} starts, ${plannedEnds} ends`);
 
   // ---- 10. Pins -----------------------------------------------------------------------------------
   const pinsByUser = new Map<string, { projects: Id[]; tasks: Id[] }>();

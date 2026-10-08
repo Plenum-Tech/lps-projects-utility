@@ -1,17 +1,25 @@
 import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts";
 
 import { DASH, shortDay } from "@/components/delivery/delivery-format";
-import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { formatDateOnly } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import type { DeliveryWeekRow } from "@/types";
 
-type WeekKey = "completed" | "meanDays" | "overduePct" | "reworkPct" | "created" | "onTimePct";
+type WeekKey = "completed" | "meanDays" | "startToDoneDays" | "overduePct" | "reworkPct" | "created" | "onTimePct";
 
 const LABELS: Record<WeekKey, string> = {
   completed: "Completed",
   created: "Created",
   meanDays: "Mean days",
+  startToDoneDays: "Start → done",
   overduePct: "Overdue %",
   reworkPct: "Rework %",
   onTimePct: "On time %",
@@ -89,6 +97,48 @@ export function WeeklyLine({
           dot={weeks.length <= 16 ? { r: 3, fill: "var(--color-value)" } : false}
           connectNulls={false}
         />
+      </LineChart>
+    </ChartContainer>
+  );
+}
+
+/** Several weekly lines on one axis (e.g. brief → done and start → done); null weeks leave gaps. */
+export function WeeklyLines({
+  weeks,
+  series,
+  unit = "",
+  className = "h-56",
+}: {
+  weeks: DeliveryWeekRow[];
+  series: { key: WeekKey; label: string; color: string }[];
+  unit?: string;
+  className?: string;
+}) {
+  const config = Object.fromEntries(series.map((s) => [s.key, { label: s.label, color: s.color }])) satisfies ChartConfig;
+  const data = weeks.map((week) => ({
+    week: week.weekStart,
+    label: shortDay(week.weekStart),
+    ...Object.fromEntries(series.map((s) => [s.key, week[s.key]])),
+  }));
+  return (
+    <ChartContainer config={config} className={cn("aspect-auto w-full", className)}>
+      <LineChart data={data} accessibilityLayer margin={{ left: 0, right: 8, top: 8 }}>
+        <CartesianGrid vertical={false} />
+        <XAxis dataKey="label" tickLine={false} axisLine={false} tickMargin={8} minTickGap={16} />
+        <YAxis tickLine={false} axisLine={false} width={36} tickFormatter={(value: number) => `${value}${unit}`} domain={[0, "auto"]} />
+        <ChartTooltip cursor={false} content={<ChartTooltipContent labelFormatter={(_, payload) => weekLabel(payload)} />} />
+        <ChartLegend content={<ChartLegendContent />} />
+        {series.map((s) => (
+          <Line
+            key={s.key}
+            dataKey={s.key}
+            type="monotone"
+            stroke={`var(--color-${s.key})`}
+            strokeWidth={2}
+            dot={weeks.length <= 16 ? { r: 3, fill: `var(--color-${s.key})` } : false}
+            connectNulls={false}
+          />
+        ))}
       </LineChart>
     </ChartContainer>
   );

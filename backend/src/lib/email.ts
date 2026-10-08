@@ -805,6 +805,34 @@ export function invitationTemplate(params: {
  * Set-password link for an existing account without a usable password (e.g.
  * migrated from Worksuite). `setupUrl` carries the one-time token.
  */
+/** Forgot password: the 6-digit code in large type (the code is digits only, still escaped). */
+export function passwordResetCodeTemplate(params: { firstName: string; code: string }): string {
+  const body = `
+    <p>Hi ${escapeHtml(params.firstName)},</p>
+    <p>Use this code to reset your ${escapeHtml(companyName())} password:</p>
+    <p style="margin: 24px 0; text-align: center;">
+      <span style="display: inline-block; padding: 12px 20px; font-size: 32px; font-weight: 700; letter-spacing: 8px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; background-color: #f3f4f6; border-radius: 8px; color: #111827;">${escapeHtml(params.code)}</span>
+    </p>
+    <p style="color: #6b7280; font-size: 13px;">This code expires in <strong>10 minutes</strong> and can be used once.</p>
+    <p style="color: #6b7280; font-size: 13px;">If you didn't request this, ignore this email — your password stays the same.</p>
+  `;
+  return wrapTemplate("Your password reset code", body);
+}
+
+/** Confirmation after a password reset, with when and from where. */
+export function passwordChangedTemplate(params: { firstName: string; when: string; ip?: string }): string {
+  const body = `
+    <p>Hi ${escapeHtml(params.firstName)},</p>
+    <p>The password for your ${escapeHtml(companyName())} account was just changed, and every other session was signed out.</p>
+    <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+      <tr><td style="padding: 8px 0; color: #6b7280;">When</td><td style="padding: 8px 0; font-weight: 600;">${escapeHtml(params.when)}</td></tr>
+      <tr><td style="padding: 8px 0; color: #6b7280;">IP address</td><td style="padding: 8px 0; font-weight: 600;">${escapeHtml(params.ip ?? "Unknown")}</td></tr>
+    </table>
+    <p style="color: #6b7280; font-size: 13px;">If this wasn't you, reset your password right away from the sign-in page and contact your administrator.</p>
+  `;
+  return wrapTemplate("Your password was changed", body);
+}
+
 export function passwordSetupTemplate(params: { firstName: string; setupUrl: string; expiresAt: Date }): string {
   const expires = params.expiresAt.toLocaleDateString("en-US", {
     weekday: "short",

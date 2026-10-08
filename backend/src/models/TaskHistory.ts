@@ -22,6 +22,7 @@ export const TASK_HISTORY_ACTIONS = [
   "submitted",
   "reviewed",
   "reminder_sent",
+  "actual_dates_updated",
 ] as const;
 
 export type TaskHistoryAction = (typeof TASK_HISTORY_ACTIONS)[number];

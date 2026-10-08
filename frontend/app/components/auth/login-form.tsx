@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { AlertCircle, Eye, EyeOff, LoaderCircle, LogIn } from "lucide-react";
 import { LuKeyRound } from "react-icons/lu";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -96,6 +96,16 @@ export function LoginForm() {
             Password is required.
           </p>
         )}
+        <div className="flex justify-end">
+          <Link
+            to="/forgot-password"
+            // Pre-fill the reset form with the typed email (router state, never the URL).
+            state={email.trim() ? { email: email.trim() } : undefined}
+            className="rounded-sm text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:ring-3 focus-visible:ring-ring/50 focus-visible:outline-none"
+          >
+            Forgot password?
+          </Link>
+        </div>
       </div>
 
       {login.isError && isPasswordSetupRequiredError(login.error) ? (

@@ -63,6 +63,8 @@ const SORT_FIELDS: TaskSortField[] = [
   "title",
   "startDate",
   "dueDate",
+  "actualStartAt",
+  "actualEndAt",
   "estimate",
   "loggedMinutes",
   "status",

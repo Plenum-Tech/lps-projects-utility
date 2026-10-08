@@ -113,6 +113,7 @@ const ACTION_META: Record<
   settings_updated: { label: "Updated company settings", badge: "secondary" },
   import_completed: { label: "Imported records", badge: "default" },
   import_undone: { label: "Undid import", badge: "destructive" },
+  password_reset: { label: "Reset password", badge: "secondary" },
 };
 
 function detailsSummary(log: ActivityLog): string | null {

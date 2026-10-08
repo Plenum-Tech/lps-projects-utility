@@ -20,7 +20,7 @@ import {
   type SortColumn,
 } from "@/components/delivery/delivery-ui";
 import { CsvButton } from "@/components/delivery/csv-button";
-import { WeeklyBars, WeeklyLine, WeeklyTable } from "@/components/delivery/weekly-charts";
+import { WeeklyBars, WeeklyLines, WeeklyTable } from "@/components/delivery/weekly-charts";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDeliveryBrands, useDeliveryTeams, useDeliveryWeekly } from "@/hooks/use-delivery";
 import { cn } from "@/lib/utils";
@@ -61,12 +61,29 @@ export function AnalysisSection({ filters }: { filters: DeliveryFilters }) {
               table={() => <WeeklyTable weeks={weeks} columns={[{ key: "completed", format: fmtNum }]} />}
             />
             <ChartPanel
-              title="Mean days brief → done"
-              description="Average calendar days from creation to completion, by completion week."
-              isEmpty={weeks.every((week) => week.meanDays === null)}
+              title="Mean days to done"
+              description="Average calendar days to completion, by completion week: from the brief (created) and from the actual start."
+              isEmpty={weeks.every((week) => week.meanDays === null && week.startToDoneDays === null)}
               emptyText="No completed tasks to measure."
-              chart={() => <WeeklyLine weeks={weeks} dataKey="meanDays" unit="d" color="var(--chart-2)" />}
-              table={() => <WeeklyTable weeks={weeks} columns={[{ key: "meanDays", format: fmtDays }]} />}
+              chart={() => (
+                <WeeklyLines
+                  weeks={weeks}
+                  unit="d"
+                  series={[
+                    { key: "meanDays", label: "Brief → done", color: "var(--chart-2)" },
+                    { key: "startToDoneDays", label: "Start → done", color: "var(--chart-4)" },
+                  ]}
+                />
+              )}
+              table={() => (
+                <WeeklyTable
+                  weeks={weeks}
+                  columns={[
+                    { key: "meanDays", format: fmtDays },
+                    { key: "startToDoneDays", format: fmtDays },
+                  ]}
+                />
+              )}
             />
           </>
         )}
@@ -140,6 +157,7 @@ function TeamsTable({ rows }: { rows: DeliveryTeamRow[] }) {
     { id: "completed", header: "Completed", align: "right", cell: (row) => fmtNum(row.completed), sortValue: (row) => row.completed },
     { id: "onTime", header: "On time", align: "right", cell: (row) => pctCell(row.onTimePct, (v) => rateTone(v)), sortValue: (row) => row.onTimePct },
     { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
+    { id: "startToDone", header: "Mean start → done", hint: "Days from the actual start to done, for tasks completed in the period that have an actual start", align: "right", cell: (row) => fmtDays(row.startToDoneDays), sortValue: (row) => row.startToDoneDays },
     { id: "rework", header: "Rework share", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => pctCell(row.reworkPct, (v) => lowRateTone(v)), sortValue: (row) => row.reworkPct },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
     { id: "open", header: "Open", align: "right", cell: (row) => fmtNum(row.open), sortValue: (row) => row.open },

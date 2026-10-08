@@ -21,6 +21,7 @@ import {
 import { Link } from "react-router";
 
 import { ShortCode } from "@/components/projects/project-badges";
+import { ActualDatesBlock } from "@/components/tasks/actual-dates";
 import { EstimateEditor } from "@/components/tasks/estimate-field";
 import { LabelChip } from "@/components/tasks/label-chip";
 import { TimeLogPanel } from "@/components/timelogs/time-log-panel";
@@ -351,7 +352,7 @@ function TaskDetail({
                 </Link>
               </Fact>
             )}
-            <Fact label="Start date">
+            <Fact label="Planned start">
               <span className="inline-flex items-center gap-1.5">
                 <LuCalendarDays aria-hidden className="size-3.5 text-muted-foreground" />
                 {formatDateOnly(task.startDate, true)}
@@ -406,6 +407,8 @@ function TaskDetail({
               )}
             </Fact>
           </dl>
+
+          <ActualDatesBlock task={task} permissions={permissions} />
 
           {task.description && (
             <section aria-labelledby="task-description-heading" className="space-y-1.5">

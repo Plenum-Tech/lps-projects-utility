@@ -4,6 +4,7 @@ import type { IconType } from "react-icons";
 import {
   LuArrowRight,
   LuBellRing,
+  LuCalendarClock,
   LuCircleAlert,
   LuCircleCheck,
   LuCirclePlus,
@@ -54,6 +55,7 @@ const ACTION_ICONS: Record<TaskHistoryAction, { icon: IconType; tone: string }> 
   reviewed: { icon: LuCircleCheck, tone: "bg-primary/10 text-primary" },
   reminder_sent: { icon: LuBellRing, tone: "bg-chart-4/15 text-foreground" },
   created_from_meeting: { icon: LuMessagesSquare, tone: "bg-primary/10 text-primary" },
+  actual_dates_updated: { icon: LuCalendarClock, tone: "bg-chart-3/15 text-foreground" },
 };
 
 function str(value: unknown): string {
@@ -129,6 +131,18 @@ function describe(entry: TaskHistoryEntry): string {
       if (kind === "after") return "sent an overdue reminder";
       if (kind === "on") return "sent a due-today reminder";
       return "sent an upcoming due-date reminder";
+    }
+    case "actual_dates_updated": {
+      const changes = Array.isArray(d.changes) ? (d.changes as Array<Record<string, unknown>>) : [];
+      const parts = changes.map((change) => {
+        const label = change.field === "actualEndAt" ? "actual end" : "actual start";
+        const to = str(change.to);
+        if (!to) return `cleared the ${label}`;
+        if (change.source !== "manual") return `reset the ${label} to automatic (${formatDateTime(to)})`;
+        const from = str(change.from);
+        return `set the ${label} to ${formatDateTime(to)}${from ? ` (was ${formatDateTime(from)})` : ""}`;
+      });
+      return parts.length ? parts.join(" and ") : "updated the actual dates";
     }
     default:
       return "made a change";

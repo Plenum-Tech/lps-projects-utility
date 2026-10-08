@@ -46,6 +46,7 @@ import { TimeLog, TIMELOG_STATUSES } from "../models/TimeLog.js";
 import type { ITimeLog, TimeLogStatus } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
+import { markActualStartFromLogs } from "../lib/actualDates.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -424,6 +425,8 @@ export async function startTimer(req: Request, res: Response): Promise<void> {
     throw error;
   }
 
+  // A timer on a task fills its empty Actual start.
+  if (log.task) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
   const timer = await timerJson(actor, log._id as mongoose.Types.ObjectId);
   pushTimerUpdate(actor._id, "started", timer);
   pushTimeLogUpdate(log, "started");
@@ -594,6 +597,8 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     addedBy: actor._id,
   });
 
+  // A manual log on a task fills its empty Actual start with the log's start.
+  if (log.task) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
   if (status === "pending") notifyTimeLogPending(log, actor);
   pushTimeLogUpdate(log, "created");
   scheduleProgressRecalc(log.project ?? null);
@@ -685,6 +690,7 @@ export async function updateTimeLog(req: Request, res: Response): Promise<void> 
   if (memo !== undefined) log.memo = memo;
   if (!log.user.equals(actor._id)) log.editedBy = actor._id;
   await log.save();
+  if (log.task && (changesWindow || changesTarget)) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
 
   pushTimeLogUpdate(log, "updated");
   if (!log.endTime) pushTimerUpdate(log.user, "resumed", await timerJson(owner, log._id as mongoose.Types.ObjectId));

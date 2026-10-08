@@ -7,7 +7,16 @@ import cors from "cors";
 import helmet from "helmet";
 import mongoose from "mongoose";
 import morgan from "morgan";
-import { inviteAcceptRateLimit, passwordSetupRateLimit, strictRateLimit, moderateRateLimit, standardRateLimit } from "./middlewares/rateLimit.js";
+import {
+  inviteAcceptRateLimit,
+  passwordResetCompleteRateLimit,
+  passwordResetRequestRateLimit,
+  passwordResetVerifyRateLimit,
+  passwordSetupRateLimit,
+  strictRateLimit,
+  moderateRateLimit,
+  standardRateLimit,
+} from "./middlewares/rateLimit.js";
 import { serve } from "inngest/express";
 import { connectDB, disconnectDB, pingDB } from "./db/index.js";
 import { inngest, functions } from "./inngest/index.js";
@@ -194,6 +203,10 @@ app.use("/api/auth/login", strictRateLimit);
 // Strict: public invitation preview/accept (token guessing + password set).
 app.use("/api/invitations/accept", inviteAcceptRateLimit);
 app.use("/api/password-setup", passwordSetupRateLimit);
+// Strict: public forgot-password steps (code requests, code guessing, password set).
+app.use("/api/auth/password-reset/request", passwordResetRequestRateLimit);
+app.use("/api/auth/password-reset/verify", passwordResetVerifyRateLimit);
+app.use("/api/auth/password-reset/complete", passwordResetCompleteRateLimit);
 // Moderate: expensive compute operations
 app.use("/api/ai-insights", moderateRateLimit);
 // Work reports (tasks/time/timesheets) are plain aggregates the report pages call
