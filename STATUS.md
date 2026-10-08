@@ -49,6 +49,8 @@ Check `/api/health`: it shows the version and `db: up`. Data is in Cosmos, so it
    `az containerapp secret set -n lps-projects-utility -g lps-projects-utility-rg --secrets smtp-pass=<password>`
    `az containerapp update -n lps-projects-utility -g lps-projects-utility-rg --set-env-vars SMTP_PASS=secretref:smtp-pass`
    Remove `EMAIL_REDIRECT_TO` when real users should receive their own emails.
+   **All email is currently switched off** on Azure (`EMAIL_ENABLED=false`). Turn it on with `--set-env-vars EMAIL_ENABLED=true`. First decide about task reminders: with `JOBS_MODE=in-process` they will email about the imported overdue tasks.
+   Locally, scheduled jobs run only if `JOBS_MODE` is set in `backend/.env`. Add `EMAIL_ENABLED=false` there to block all local email.
 2. **Change the `admin@hoistra.ai` mailbox password** (it was shared in chat), and the cPanel/server credentials of the compromised projectsutility.com host.
 3. **Pearity**: enable it in Settings → Integrations, set the real production engine URL, create an API key, and send `docs/pearity-integration.md` to the Pearity team.
 4. **Timezone**: Settings → App Settings (currently Asia/Kolkata; Worksuite used Asia/Dubai).
