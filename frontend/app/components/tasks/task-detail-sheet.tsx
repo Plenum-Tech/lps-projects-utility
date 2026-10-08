@@ -194,7 +194,7 @@ function TaskDetail({
 
   return (
     <>
-      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-12 sm:p-6 lg:pt-6">
+      <div className="show-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-12 sm:p-6 lg:pt-6">
         <SheetHeader className="gap-3 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
           <div className="flex flex-wrap items-center gap-2">
             {task.shortCode && <ShortCode code={task.shortCode} />}

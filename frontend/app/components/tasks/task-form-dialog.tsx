@@ -501,7 +501,7 @@ export function TaskFormDialog({
   return (
     <Sheet open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <PageDrawerContent>
-        <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-12 sm:p-6 lg:pt-6">
+        <div className="show-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-12 sm:p-6 lg:pt-6">
           <SheetHeader className="p-0">
             <SheetTitle className="text-2xl font-semibold">
               {isEdit ? "Update Task" : "Add Task"}
