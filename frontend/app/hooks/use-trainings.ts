@@ -160,7 +160,7 @@ export function useCreateTraining() {
       const { data } = await api.post<{
         training: TrainingSummary;
         notified: number;
-      }>("/trainings", toFormData(input), { timeout: UPLOAD_TIMEOUT_MS });
+      }>("/trainings", toFormData(input), { headers: { "Content-Type": "multipart/form-data" }, timeout: UPLOAD_TIMEOUT_MS });
       return data;
     },
     onSuccess: (data) => {
@@ -186,7 +186,8 @@ export function useUpdateTraining() {
         `/trainings/${id}`,
         toFormData(input),
         {
-          timeout: UPLOAD_TIMEOUT_MS,
+          headers: { "Content-Type": "multipart/form-data" },
+        timeout: UPLOAD_TIMEOUT_MS,
         },
       );
       return data.training;
