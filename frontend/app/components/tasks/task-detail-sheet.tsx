@@ -102,7 +102,7 @@ export function TaskDetailSheet({
         side="right"
         className={
           full
-            ? "w-full gap-0 p-0 data-[side=right]:w-full sm:data-[side=right]:max-w-none"
+            ? "w-full! max-w-none! gap-0 p-0"
             : "w-full gap-0 p-0 data-[side=right]:w-full sm:data-[side=right]:max-w-2xl"
         }
       >
