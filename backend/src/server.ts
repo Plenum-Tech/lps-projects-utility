@@ -309,15 +309,21 @@ if (import.meta.main) {
   validateEnvironment();
   let server: Server | undefined;
 
-  /** JOBS_MODE=in-process → lease-locked scheduler; unset in dev → legacy loop below. */
+  /**
+   * JOBS_MODE=in-process → lease-locked scheduler; JOBS_MODE=dev-loop → the legacy
+   * loop below. Unset → no jobs. (Dev used to start the loop automatically, which
+   * sent reminder emails for every imported task as soon as SMTP was configured.)
+   */
   const startJobs = () => {
     const mode = jobsMode();
     if (mode === "in-process") {
       startScheduler();
       return;
     }
-    if (mode !== null || isProduction()) {
-      console.log(`[jobs] in-process scheduler disabled (JOBS_MODE=${mode ?? "unset"}; use Inngest crons)`);
+    if (process.env.JOBS_MODE?.trim() !== "dev-loop" || isProduction()) {
+      console.log(
+        `[jobs] scheduled jobs disabled (JOBS_MODE=${process.env.JOBS_MODE?.trim() || "unset"}; set JOBS_MODE=in-process to enable)`
+      );
       return;
     }
 

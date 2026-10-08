@@ -10,7 +10,7 @@
 const MIN_SECRET_LENGTH = 32;
 const REQUIRED = ["MONGO_URI", "JWT_SECRET", "COOKIE_SECRET"] as const;
 const SECRETS = ["JWT_SECRET", "COOKIE_SECRET"] as const;
-const JOBS_MODES = ["in-process", "inngest", "off"] as const;
+const JOBS_MODES = ["in-process", "inngest", "off", "dev-loop"] as const;
 
 export type JobsMode = (typeof JOBS_MODES)[number];
 
@@ -23,7 +23,8 @@ export function isProduction(): boolean {
  *   in-process → built-in scheduler with a Mongo lease lock (the container default)
  *   inngest    → Inngest crons call /api/inngest (Inngest Cloud / dev server)
  *   off        → no scheduled jobs in this process
- * Unset: the legacy behaviour (dev-only hourly/15-min loop; Inngest in production).
+ *   dev-loop   → the legacy dev-only hourly/15-min loop (no lease lock)
+ * Unset: no scheduled jobs (reminder emails only run when explicitly enabled).
  */
 export function jobsMode(): JobsMode | null {
   const raw = process.env.JOBS_MODE?.trim().toLowerCase();

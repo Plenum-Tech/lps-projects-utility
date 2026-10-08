@@ -20,7 +20,13 @@ interface SmtpConfig {
   pass: string;
 }
 
+/** Master switch: EMAIL_ENABLED=false blocks every outgoing email, even with SMTP configured. */
+export function emailDisabledBySwitch(): boolean {
+  return process.env.EMAIL_ENABLED?.trim().toLowerCase() === "false";
+}
+
 function readSmtpConfig(): SmtpConfig | null {
+  if (emailDisabledBySwitch()) return null;
   const host = process.env.SMTP_HOST?.trim();
   const user = process.env.SMTP_USER?.trim();
   const pass = process.env.SMTP_PASS;
@@ -43,7 +49,11 @@ function getTransporter(): Transporter | null {
   const config = readSmtpConfig();
   if (!config) {
     if (!warnedMissingConfig) {
-      console.warn("[email] SMTP_HOST / SMTP_USER / SMTP_PASS not set — emails will not be sent");
+      console.warn(
+        emailDisabledBySwitch()
+          ? "[email] EMAIL_ENABLED=false — all outgoing email is switched off"
+          : "[email] SMTP_HOST / SMTP_USER / SMTP_PASS not set — emails will not be sent"
+      );
       warnedMissingConfig = true;
     }
     return null;
