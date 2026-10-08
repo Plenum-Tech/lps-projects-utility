@@ -11,6 +11,8 @@ import {
   LuFlag,
   LuLoaderCircle,
   LuLock,
+  LuMaximize2,
+  LuMinimize2,
   LuMessagesSquare,
   LuPencil,
   LuRefreshCw,
@@ -92,13 +94,28 @@ export function TaskDetailSheet({
   tab?: string | null;
 }) {
   const query = useTask(taskId);
+  const [full, setFull] = useFullView();
 
   return (
     <Sheet open={Boolean(taskId)} onOpenChange={(open) => !open && onClose()}>
       <SheetContent
         side="right"
-        className="w-full gap-0 p-0 data-[side=right]:w-full sm:data-[side=right]:max-w-2xl"
+        className={
+          full
+            ? "w-full gap-0 p-0 data-[side=right]:w-full sm:data-[side=right]:max-w-none"
+            : "w-full gap-0 p-0 data-[side=right]:w-full sm:data-[side=right]:max-w-2xl"
+        }
       >
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="absolute top-3 right-12 z-10 hidden sm:inline-flex"
+          onClick={() => setFull(!full)}
+          aria-label={full ? "Show as side panel" : "Show full view"}
+          title={full ? "Show as side panel" : "Show full view"}
+        >
+          {full ? <LuMinimize2 aria-hidden /> : <LuMaximize2 aria-hidden />}
+        </Button>
         {query.isPending ? (
           <DetailSkeleton />
         ) : query.isError || !query.data ? (
@@ -128,6 +145,7 @@ export function TaskDetailSheet({
             permissions={query.data.permissions}
             me={me}
             onClose={onClose}
+            full={full}
             subtaskId={subtaskId ?? null}
             initialTab={
               subtaskId
@@ -148,6 +166,7 @@ function TaskDetail({
   permissions,
   me,
   onClose,
+  full,
   subtaskId,
   initialTab,
 }: {
@@ -155,6 +174,7 @@ function TaskDetail({
   permissions: TaskPermissions;
   me: { _id: string; role: Role };
   onClose: () => void;
+  full: boolean;
   subtaskId: string | null;
   initialTab: TabValue;
 }) {
@@ -174,7 +194,7 @@ function TaskDetail({
   return (
     <>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <SheetHeader className="gap-3 border-b p-4 pr-12 sm:p-6 sm:pr-14">
+        <SheetHeader className="gap-3 border-b p-4 pr-12 sm:p-6 sm:pr-24">
           <div className="flex flex-wrap items-center gap-2">
             {task.shortCode && <ShortCode code={task.shortCode} />}
             <StatusBadge status={task.status} />
@@ -290,10 +310,12 @@ function TaskDetail({
           )}
         </SheetHeader>
 
-        <div className="space-y-5 p-4 sm:p-6">
+        <div className={`space-y-5 p-4 sm:p-6 ${full ? "mx-auto w-full max-w-7xl" : ""}`}>
           {/* Facts */}
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-2">
-            <Fact label="Assignees" className="sm:col-span-2">
+          <dl
+            className={`grid grid-cols-1 gap-x-6 gap-y-4 text-sm sm:grid-cols-2 ${full ? "lg:grid-cols-4" : ""}`}
+          >
+            <Fact label="Assignees" className={full ? "sm:col-span-2 lg:col-span-4" : "sm:col-span-2"}>
               <ul className="flex flex-wrap gap-2">
                 {task.assignees.map((user) => (
                   <li
@@ -338,7 +360,7 @@ function TaskDetail({
               </Fact>
             )}
             {task.sourceMeeting && typeof task.sourceMeeting.meeting === "object" && (
-              <Fact label="Source" className="sm:col-span-2">
+              <Fact label="Source" className={full ? "sm:col-span-2 lg:col-span-4" : "sm:col-span-2"}>
                 <Link
                   to={`/meetings/${task.sourceMeeting.meeting._id}${
                     task.sourceMeeting.segmentIdx !== null ? `?seg=${task.sourceMeeting.segmentIdx}` : ""
@@ -604,4 +626,26 @@ function DetailSkeleton() {
       <Skeleton className="h-32 w-full" />
     </div>
   );
+}
+
+const VIEW_KEY = "task-detail-view";
+
+/** Full view (default) or side panel; remembered per browser. */
+function useFullView(): [boolean, (full: boolean) => void] {
+  const [full, setFullState] = useState(() => {
+    try {
+      return typeof window === "undefined" || window.localStorage.getItem(VIEW_KEY) !== "panel";
+    } catch {
+      return true;
+    }
+  });
+  const setFull = (next: boolean) => {
+    setFullState(next);
+    try {
+      window.localStorage.setItem(VIEW_KEY, next ? "full" : "panel");
+    } catch {
+      // storage unavailable: keep the in-memory choice
+    }
+  };
+  return [full, setFull];
 }
