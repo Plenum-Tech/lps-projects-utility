@@ -73,10 +73,11 @@ export async function getTaskPearity(req: Request, res: Response): Promise<void>
   const taskId = task._id as mongoose.Types.ObjectId;
   const [tag, contexts] = await Promise.all([PearityTag.findOne({ task: taskId }), taskContexts([task])]);
   const context = contexts.get(taskId.toString())!;
-  const ref = tag ? (await tagRefs([tag])).get(taskId.toString()) ?? null : null;
+  const ref = tag ? (await tagRefs([tag], { contexts })).get(taskId.toString()) ?? null : null;
   res.json({
     enabled: pearityActive(settings),
     tag: ref,
+    tagUrl: ref?.tagUrl ?? null,
     proposedTagName: tag ? tag.tagName : buildTagName(context),
     generateUrl: tag ? pearityGenerateUrl(settings, tag, taskId, context) : null,
     usageCount: tag?.usageCount ?? 0,
@@ -115,10 +116,11 @@ export async function generateTaskPearity(req: Request, res: Response): Promise<
       ip: req.ip,
     });
   }
-  const ref = (await tagRefs([tag])).get(taskId.toString())!;
+  const ref = (await tagRefs([tag], { contexts: new Map([[taskId.toString(), context]]) })).get(taskId.toString())!;
   res.status(created ? 201 : 200).json({
     created,
     tag: ref,
+    tagUrl: ref.tagUrl,
     generateUrl: pearityGenerateUrl(settings, tag, taskId, context),
   });
 }
@@ -133,6 +135,7 @@ async function settingsJson() {
     settings: {
       enabled: settings.enabled,
       engineUrlTemplate: settings.engineUrlTemplate,
+      tagUrlTemplate: settings.tagUrlTemplate,
       allowedIps: settings.allowedIps,
       updatedAt: settings.updatedAt,
     },
@@ -168,6 +171,17 @@ export async function updatePearitySettings(req: Request, res: Response): Promis
     const problem = template ? templateError(template) : null;
     if (problem) return fieldError(res, "engineUrlTemplate", problem);
     update.engineUrlTemplate = template;
+  }
+  if (body.tagUrlTemplate !== undefined) {
+    if (typeof body.tagUrlTemplate !== "string") {
+      return fieldError(res, "tagUrlTemplate", "tagUrlTemplate must be a string");
+    }
+    const template = body.tagUrlTemplate.trim();
+    const problem = template ? templateError(template) : null;
+    if (problem) {
+      return fieldError(res, "tagUrlTemplate", problem.replace("production engine URL template", "tag link URL"));
+    }
+    update.tagUrlTemplate = template;
   }
   if (body.allowedIps !== undefined) {
     if (!Array.isArray(body.allowedIps) || body.allowedIps.some((ip) => typeof ip !== "string")) {

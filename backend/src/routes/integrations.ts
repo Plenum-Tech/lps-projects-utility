@@ -9,8 +9,11 @@ import {
 } from "../controllers/pearity.js";
 import {
   apiCreateTag,
+  apiCreateTagByNo,
   apiGetTag,
+  apiGetTagByNo,
   apiGetTask,
+  apiGetTaskByNo,
   apiListTags,
   apiListTasks,
   apiNotFound,
@@ -28,9 +31,13 @@ export const pearityApiRouter = Router();
 pearityApiRouter.use(pearityAudit, pearityApiAuth);
 
 pearityApiRouter.get("/tasks", requireScope("pearity:read"), apiListTasks);
+// Lookup by the human task number ("GenAI Hub-65", "#56") — registered before /tasks/:taskId.
+pearityApiRouter.get("/tasks/by-no", requireScope("pearity:read"), apiGetTaskByNo);
+pearityApiRouter.post("/tasks/by-no/tag", requireScope("pearity:tags"), apiCreateTagByNo);
 pearityApiRouter.get("/tasks/:taskId", requireScope("pearity:read"), apiGetTask);
 pearityApiRouter.post("/tasks/:taskId/tag", requireScope("pearity:tags"), apiCreateTag);
 pearityApiRouter.get("/tags", requireScope("pearity:read"), apiListTags);
+pearityApiRouter.get("/tags/by-no/:tagNo", requireScope("pearity:read"), apiGetTagByNo);
 pearityApiRouter.get("/tags/:tagId", requireScope("pearity:read"), apiGetTag);
 pearityApiRouter.use(apiNotFound);
 

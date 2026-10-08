@@ -19,3 +19,5 @@ export const Counter = mongoose.model<ICounter>("Counter", counterSchema, "count
 export const TASK_NUMBER_COUNTER = "task";
 /** Employee ID sequence ("EMP-0001"), see lib/employeeIds.ts. */
 export const EMPLOYEE_ID_COUNTER = "employee";
+/** Pearity tag number sequence (tagNo 1, 2, 3, …), see lib/pearity.ts. */
+export const PEARITY_TAG_COUNTER = "pearityTag";

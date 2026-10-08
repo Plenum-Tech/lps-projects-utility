@@ -2,10 +2,12 @@ import crypto from "node:crypto";
 import { BlockList, isIP } from "node:net";
 import mongoose from "mongoose";
 import { Brand } from "../models/Brand.js";
+import { Counter, PEARITY_TAG_COUNTER } from "../models/Counter.js";
 import { IntegrationSettings } from "../models/IntegrationSettings.js";
 import { PearityTag, PearityTagUsage } from "../models/PearityTag.js";
 import type { IPearityTag, PearityUsageSource } from "../models/PearityTag.js";
 import { Project } from "../models/Project.js";
+import { Task } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
 import { User } from "../models/User.js";
 import { settingsAppUrl } from "./companySettings.js";
@@ -19,7 +21,17 @@ import { cached, invalidate } from "./refCache.js";
 // ---------------------------------------------------------------------------
 
 /** Placeholders the production-engine URL template may use (values are URL-encoded). */
-export const PEARITY_PLACEHOLDERS = ["tagId", "tagName", "taskId", "taskCode", "brand", "category", "project"] as const;
+export const PEARITY_PLACEHOLDERS = [
+  "tagNo",
+  "tagId",
+  "tagName",
+  "taskId",
+  "taskCode",
+  "taskNo",
+  "brand",
+  "category",
+  "project",
+] as const;
 export type PearityPlaceholder = (typeof PEARITY_PLACEHOLDERS)[number];
 
 export const TAG_FALLBACKS = { brand: "NoBrand", category: "General" } as const;
@@ -29,6 +41,8 @@ export const TAG_FALLBACKS = { brand: "NoBrand", category: "General" } as const;
 export interface PearitySettingsSnapshot {
   enabled: boolean;
   engineUrlTemplate: string;
+  /** Optional link for a tag in Pearity; empty → the engine URL is used. */
+  tagUrlTemplate: string;
   allowedIps: string[];
   updatedAt: Date | null;
 }
@@ -42,6 +56,7 @@ export async function pearitySettings(): Promise<PearitySettingsSnapshot> {
     return {
       enabled: Boolean(doc?.enabled),
       engineUrlTemplate: doc?.engineUrlTemplate ?? "",
+      tagUrlTemplate: doc?.tagUrlTemplate ?? "",
       allowedIps: doc?.allowedIps ?? [],
       updatedAt: doc?.updatedAt ?? null,
     };
@@ -140,6 +155,8 @@ export interface TaskLike {
 
 export interface TaskContext {
   taskCode: string;
+  /** The task number users see: shortCode ("GenAI Hub-65") or "#<number>"; null when neither exists. */
+  taskNo: string | null;
   project: { id: string; name: string; code: string; archived: boolean } | null;
   brand: { id: string; name: string } | null;
   category: { id: string; name: string } | null;
@@ -150,6 +167,32 @@ export function pearityTaskCode(task: Pick<TaskLike, "_id" | "shortCode" | "numb
   if (task.shortCode) return task.shortCode;
   if (task.number) return `Task-${task.number}`;
   return `Task-${task._id.toString().slice(-6)}`;
+}
+
+/** The human task number: shortCode when present ("GenAI Hub-65", "PEAR-12"), else "#56". */
+export function taskNoOf(task: Pick<TaskLike, "shortCode" | "number">): string | null {
+  if (task.shortCode) return task.shortCode;
+  if (task.number) return `#${task.number}`;
+  return null;
+}
+
+/**
+ * Parses a taskNo typed or pasted by a user. Trims and collapses repeated spaces;
+ * `codePattern` matches a shortCode case-insensitively (exact, anchored, regex
+ * metacharacters escaped — no collation, so it works on Cosmos DB vCore); `number`
+ * is set for "#56" / "56". Null when the input can't be a task number.
+ */
+export function parseTaskNo(input: unknown): { value: string; codePattern: RegExp | null; number: number | null } | null {
+  if (typeof input !== "string") return null;
+  const value = input.trim().replace(/\s+/g, " ");
+  if (!value || value.length > 60) return null;
+  const numeric = /^#\s?(\d{1,9})$|^(\d{1,9})$/.exec(value);
+  const number = numeric ? Number(numeric[1] ?? numeric[2]) : null;
+  const codePattern = value.startsWith("#")
+    ? null
+    : new RegExp(`^${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, " +")}$`, "i");
+  if (!codePattern && !number) return null;
+  return { value, codePattern, number: number && number > 0 ? number : null };
 }
 
 function refId(value: unknown): mongoose.Types.ObjectId | null {
@@ -182,6 +225,7 @@ export async function taskContexts(tasks: TaskLike[]): Promise<Map<string, TaskC
     const category = categoryById.get(refId(task.category)?.toString() ?? "");
     out.set(task._id.toString(), {
       taskCode: pearityTaskCode(task),
+      taskNo: taskNoOf(task),
       project: project
         ? { id: project._id.toString(), name: project.name, code: project.code, archived: Boolean(project.archivedAt) }
         : null,
@@ -227,12 +271,121 @@ export function generateTagId(): string {
 
 export const TAG_ID_REGEX = /^pt_[0-9a-z]{8}$/;
 
+// --- Tag numbers ------------------------------------------------------------------
+
+/** Creates the tag counter at the highest tagNo in use (a concurrent creator may win — fine). */
+async function ensureTagCounter(): Promise<void> {
+  if (await Counter.exists({ _id: PEARITY_TAG_COUNTER })) return;
+  const highest = await PearityTag.findOne({ tagNo: { $gte: 1 } }).sort({ tagNo: -1 }).select("tagNo").lean();
+  try {
+    await Counter.create({ _id: PEARITY_TAG_COUNTER, seq: highest?.tagNo ?? 0 });
+  } catch (err) {
+    if (!isDuplicateKeyError(err)) throw err;
+  }
+}
+
+/** Atomically claims the next tag number (1, 2, 3, …). */
+export async function nextTagNo(): Promise<number> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const claimed = await Counter.findOneAndUpdate(
+      { _id: PEARITY_TAG_COUNTER },
+      { $inc: { seq: 1 } },
+      { returnDocument: "after" }
+    ).lean();
+    if (claimed) return claimed.seq;
+    await ensureTagCounter();
+  }
+  throw new Error("Could not claim a Pearity tag number");
+}
+
+/**
+ * Startup backfill (idempotent): numbers tags created before tagNo existed, in
+ * createdAt order, through the counter (so numbers never collide with live creates),
+ * then raises the counter to at least the highest tagNo in use.
+ */
+export async function backfillPearityTagNumbers(): Promise<number> {
+  const missing = await PearityTag.find({ $or: [{ tagNo: { $exists: false } }, { tagNo: null }] })
+    .select("_id")
+    .sort({ createdAt: 1, _id: 1 })
+    .lean();
+  let numbered = 0;
+  for (const row of missing) {
+    const tagNo = await nextTagNo();
+    const result = await PearityTag.updateOne(
+      { _id: row._id, $or: [{ tagNo: { $exists: false } }, { tagNo: null }] },
+      // updatedAt moves on, so Pearity's GET /tags?updatedSince= sync picks up the number.
+      { $set: { tagNo } }
+    );
+    numbered += result.modifiedCount;
+  }
+  const highest = await PearityTag.findOne({ tagNo: { $gte: 1 } }).sort({ tagNo: -1 }).select("tagNo").lean();
+  if (highest?.tagNo) {
+    await Counter.updateOne({ _id: PEARITY_TAG_COUNTER }, { $max: { seq: highest.tagNo } }, { upsert: true });
+  }
+  return numbered;
+}
+
+function duplicateKeyField(err: unknown): string {
+  const pattern = (err as { keyPattern?: Record<string, unknown> }).keyPattern;
+  if (pattern) return Object.keys(pattern)[0] ?? "";
+  return /index: (\w+?)_/.exec(String((err as Error).message ?? ""))?.[1] ?? "";
+}
+
 // --- Create / usage --------------------------------------------------------------
+
+const TAG_NO_WAIT_MS = 1500;
+const TAG_NO_POLL_MS = 40;
+const TAG_NO_FRESH_MS = 10_000;
+
+/**
+ * Gives `tag` its tagNo when it has none: claims the next number and sets it only
+ * if still unset (so a tag never gets two numbers, and numbers never repeat).
+ */
+async function assignTagNo(tag: IPearityTag): Promise<IPearityTag> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const tagNo = await nextTagNo();
+    try {
+      const updated = await PearityTag.findOneAndUpdate(
+        { _id: tag._id, $or: [{ tagNo: { $exists: false } }, { tagNo: null }] },
+        { $set: { tagNo } },
+        { returnDocument: "after" }
+      );
+      if (updated) return updated;
+      // Numbered meanwhile by another request — use theirs (this number is skipped).
+      const current = await PearityTag.findById(tag._id);
+      if (current?.tagNo) return current;
+    } catch (err) {
+      // tagNo clash: the counter fell behind (e.g. restored data) — claim another.
+      if (!isDuplicateKeyError(err) || duplicateKeyField(err) !== "tagNo") throw err;
+    }
+  }
+  throw new Error("Could not assign a Pearity tag number");
+}
+
+/**
+ * The tag with its number. A tag that was just created by a concurrent request is
+ * numbered by that request, so wait briefly for it instead of claiming a second
+ * number (keeps the sequence gapless); older or stuck tags are numbered here.
+ */
+async function withTagNo(tag: IPearityTag): Promise<IPearityTag> {
+  if (tag.tagNo) return tag;
+  const createdAt = tag.createdAt ? new Date(tag.createdAt).getTime() : 0;
+  if (Date.now() - createdAt < TAG_NO_FRESH_MS) {
+    const deadline = Date.now() + TAG_NO_WAIT_MS;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, TAG_NO_POLL_MS));
+      const current = await PearityTag.findById(tag._id);
+      if (current?.tagNo) return current;
+    }
+  }
+  return assignTagNo(tag);
+}
 
 /**
  * Returns the task's tag, creating it on first use. Atomic and idempotent: an
  * upsert on the unique `task` index, and a concurrent create that loses the
- * race (duplicate key) re-reads the winner's tag.
+ * race (duplicate key) re-reads the winner's tag. Only the request that actually
+ * inserts the tag claims its tagNo, so reuse and lost races never use a number.
  */
 export async function ensurePearityTag(
   task: TaskLike,
@@ -241,7 +394,7 @@ export async function ensurePearityTag(
   source: PearityUsageSource
 ): Promise<{ tag: IPearityTag; created: boolean }> {
   const existing = await PearityTag.findOne({ task: task._id });
-  if (existing) return { tag: existing, created: false };
+  if (existing) return { tag: await withTagNo(existing), created: false };
 
   const baseName = buildTagName(context);
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -275,14 +428,15 @@ export async function ensurePearityTag(
         { upsert: true, returnDocument: "after", includeResultMetadata: true, runValidators: true }
       );
       if (result.value) {
-        return { tag: result.value, created: !result.lastErrorObject?.updatedExisting };
+        const created = !result.lastErrorObject?.updatedExisting;
+        return { tag: created ? await assignTagNo(result.value) : await withTagNo(result.value), created };
       }
     } catch (err) {
       if (!isDuplicateKeyError(err)) throw err;
     }
     // Lost the race on `task` (re-read the winner), or a tagId collision (retry).
     const raced = await PearityTag.findOne({ task: task._id });
-    if (raced) return { tag: raced, created: false };
+    if (raced) return { tag: await withTagNo(raced), created: false };
   }
   throw new Error("Could not allocate a Pearity tag id");
 }
@@ -309,16 +463,41 @@ export function utilityTaskUrl(taskId: mongoose.Types.ObjectId | string): string
 /** The engine URL for a task's tag, or null when no template is configured. */
 export function pearityGenerateUrl(
   settings: PearitySettingsSnapshot,
-  tag: Pick<IPearityTag, "tagId" | "tagName">,
+  tag: Pick<IPearityTag, "tagId" | "tagName" | "tagNo">,
   taskId: mongoose.Types.ObjectId | string,
   context: TaskContext
 ): string | null {
-  if (!settings.engineUrlTemplate) return null;
-  return fillTemplate(settings.engineUrlTemplate, {
+  return fillPearityUrl(settings.engineUrlTemplate, tag, taskId, context);
+}
+
+/**
+ * Where a tag opens in Pearity: the tag link template, falling back to the engine
+ * URL template. Null when the integration is off or no template is configured.
+ */
+export function pearityTagUrl(
+  settings: PearitySettingsSnapshot,
+  tag: Pick<IPearityTag, "tagId" | "tagName" | "tagNo">,
+  taskId: mongoose.Types.ObjectId | string,
+  context: TaskContext
+): string | null {
+  if (!pearityActive(settings)) return null;
+  return fillPearityUrl(settings.tagUrlTemplate || settings.engineUrlTemplate, tag, taskId, context);
+}
+
+function fillPearityUrl(
+  template: string,
+  tag: Pick<IPearityTag, "tagId" | "tagName" | "tagNo">,
+  taskId: mongoose.Types.ObjectId | string,
+  context: TaskContext
+): string | null {
+  if (!template) return null;
+  return fillTemplate(template, {
+    tagNo: tag.tagNo ? String(tag.tagNo) : "",
     tagId: tag.tagId,
     tagName: tag.tagName,
     taskId: taskId.toString(),
     taskCode: context.taskCode,
+    taskNo: context.taskNo ?? "",
     brand: context.brand?.name ?? "",
     category: context.category?.name ?? "",
     project: context.project?.name ?? "",
@@ -326,33 +505,69 @@ export function pearityGenerateUrl(
 }
 
 export interface PearityTagRefJson {
+  /** Sequential tag number — the primary identifier (null only before the startup backfill). */
+  tagNo: number | null;
   tagId: string;
   tagName: string;
   createdAt: string;
   createdBy: { id: string; name: string } | null;
+  /** Opens the tag in Pearity (tag link template, else engine URL); null when off / unset. */
+  tagUrl: string | null;
 }
 
-/** `{ tagId, tagName, createdAt, createdBy: { id, name } }` for many tags (one user query). */
-export async function tagRefs(tags: IPearityTag[] | Array<Record<string, any>>): Promise<Map<string, PearityTagRefJson>> {
+/**
+ * `{ tagNo, tagId, tagName, createdAt, createdBy: { id, name }, tagUrl }` for many tags.
+ * Pass the tags' tasks (or their contexts) when at hand; otherwise they're loaded for `tagUrl`.
+ */
+export async function tagRefs(
+  tags: IPearityTag[] | Array<Record<string, any>>,
+  known?: { tasks?: TaskLike[]; contexts?: Map<string, TaskContext> }
+): Promise<Map<string, PearityTagRefJson>> {
   const userIds = [...new Set(tags.map((t) => (t.createdBy ? String(t.createdBy) : "")).filter(Boolean))];
-  const users = userIds.length ? await User.find({ _id: { $in: userIds } }).select("name").lean() : [];
+  const settings = await pearitySettings();
+  const linkable = tags.length > 0 && pearityActive(settings);
+  const [users, contexts] = await Promise.all([
+    userIds.length ? User.find({ _id: { $in: userIds } }).select("name").lean() : Promise.resolve([]),
+    linkable ? tagContexts(tags, known) : Promise.resolve(new Map<string, TaskContext>()),
+  ]);
   const nameById = new Map(users.map((u) => [u._id.toString(), u.name]));
   const out = new Map<string, PearityTagRefJson>();
   for (const tag of tags) {
     const createdBy = tag.createdBy ? String(tag.createdBy) : null;
+    const context = contexts.get(String(tag.task));
     out.set(String(tag.task), {
+      tagNo: typeof tag.tagNo === "number" ? tag.tagNo : null,
       tagId: tag.tagId,
       tagName: tag.tagName,
       createdAt: new Date(tag.createdAt).toISOString(),
       createdBy: createdBy ? { id: createdBy, name: nameById.get(createdBy) ?? "Former user" } : null,
+      tagUrl: context ? pearityTagUrl(settings, tag as IPearityTag, String(tag.task), context) : null,
     });
   }
   return out;
 }
 
-/** Tags for a page of tasks, keyed by task id (one query + one user query). */
-export async function pearityTagsByTask(taskIds: mongoose.Types.ObjectId[]): Promise<Map<string, PearityTagRefJson>> {
-  if (taskIds.length === 0) return new Map();
-  const tags = await PearityTag.find({ task: { $in: taskIds } }).lean();
-  return tagRefs(tags);
+/** Contexts for the tags' tasks: given contexts first, then the supplied tasks, then a lookup. */
+async function tagContexts(
+  tags: Array<Record<string, any>>,
+  known?: { tasks?: TaskLike[]; contexts?: Map<string, TaskContext> }
+): Promise<Map<string, TaskContext>> {
+  const out = new Map(known?.contexts ?? []);
+  const missing = new Set(tags.map((t) => String(t.task)).filter((id) => !out.has(id)));
+  if (missing.size === 0) return out;
+  const given = (known?.tasks ?? []).filter((t) => missing.has(t._id.toString()));
+  const givenIds = new Set(given.map((t) => t._id.toString()));
+  const lookup = [...missing].filter((id) => !givenIds.has(id));
+  const loaded = lookup.length
+    ? await Task.find({ _id: { $in: lookup } }).select("shortCode number project category").lean<TaskLike[]>()
+    : [];
+  for (const [id, context] of await taskContexts([...given, ...loaded])) out.set(id, context);
+  return out;
+}
+
+/** Tags for a page of tasks, keyed by task id (tag + user + context lookups, never N+1). */
+export async function pearityTagsByTask(tasks: TaskLike[]): Promise<Map<string, PearityTagRefJson>> {
+  if (tasks.length === 0) return new Map();
+  const tags = await PearityTag.find({ task: { $in: tasks.map((t) => t._id) } }).lean();
+  return tagRefs(tags, { tasks });
 }

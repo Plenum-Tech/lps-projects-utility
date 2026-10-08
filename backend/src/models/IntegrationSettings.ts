@@ -17,8 +17,10 @@ export const INTEGRATION_LIMITS = {
 export interface IIntegrationSettings extends mongoose.Document {
   key: IntegrationKey;
   enabled: boolean;
-  /** https:// URL with {tagId},{tagName},{taskId},{taskCode},{brand},{category},{project}. */
+  /** https:// URL with {tagNo},{tagId},{tagName},{taskId},{taskCode},{taskNo},{brand},{category},{project}. */
   engineUrlTemplate: string;
+  /** Optional https:// URL a tag opens in Pearity (same placeholders). Empty = use engineUrlTemplate. */
+  tagUrlTemplate: string;
   /** Optional allowlist for the server-to-server API (IPs or IPv4/IPv6 CIDR). Empty = any. */
   allowedIps: string[];
   updatedBy?: mongoose.Types.ObjectId | null;
@@ -31,6 +33,7 @@ const integrationSettingsSchema = new Schema<IIntegrationSettings>(
     key: { type: String, enum: INTEGRATION_KEYS, required: true },
     enabled: { type: Boolean, default: false },
     engineUrlTemplate: { type: String, trim: true, maxlength: INTEGRATION_LIMITS.templateMax, default: "" },
+    tagUrlTemplate: { type: String, trim: true, maxlength: INTEGRATION_LIMITS.templateMax, default: "" },
     allowedIps: {
       type: [{ type: String, trim: true, maxlength: INTEGRATION_LIMITS.allowedIpMax }],
       default: [],

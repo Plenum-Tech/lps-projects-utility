@@ -38,23 +38,37 @@ import { getErrorMessage } from "@/lib/api";
 import { formatDateTime } from "@/lib/format";
 import type { PearityApiKey, PearityApiScope, PearityPlaceholder } from "@/types";
 
-type PearityForm = { enabled: string; engineUrlTemplate: string; allowedIps: string };
+type PearityForm = { enabled: string; engineUrlTemplate: string; tagUrlTemplate: string; allowedIps: string };
 
-const PLACEHOLDERS: PearityPlaceholder[] = ["tagId", "tagName", "taskId", "taskCode", "brand", "category", "project"];
+const PLACEHOLDERS: PearityPlaceholder[] = [
+  "tagNo",
+  "tagId",
+  "tagName",
+  "taskId",
+  "taskCode",
+  "taskNo",
+  "brand",
+  "category",
+  "project",
+];
 
 /** Sample values for the live preview. */
 const EXAMPLE: Record<PearityPlaceholder, string> = {
+  tagNo: "12",
   tagId: "pt_7k3m9q2x",
-  tagName: "Ajmal_Design_GenAIHub-65",
+  tagName: "Ajmal_Design_GenAI-Hub-65",
   taskId: "66f1c0ffee0000000000abcd",
-  taskCode: "GenAIHub-65",
+  taskCode: "GenAI Hub-65",
+  taskNo: "GenAI Hub-65",
   brand: "Ajmal",
   category: "Design",
   project: "Ajmal | Retainer | Oct 2026 | GenAI Hub",
 };
 
 const SUGGESTED_TEMPLATE =
-  "https://app.pearity.ai/production/new?tagId={tagId}&tag={tagName}&taskId={taskId}&taskCode={taskCode}&brand={brand}&category={category}&project={project}";
+  "https://app.pearity.ai/production/new?tagNo={tagNo}&tag={tagName}&taskNo={taskNo}&taskId={taskId}&brand={brand}&category={category}&project={project}";
+
+const SUGGESTED_TAG_URL_TEMPLATE = "https://app.pearity.ai/tags/{tagNo}";
 
 /** Mirrors the server's validation (https only, known placeholders). */
 function templateProblem(template: string): string | null {
@@ -98,6 +112,7 @@ function PearitySettingsCard() {
       query.data && {
         enabled: query.data.settings.enabled ? "on" : "off",
         engineUrlTemplate: query.data.settings.engineUrlTemplate,
+        tagUrlTemplate: query.data.settings.tagUrlTemplate ?? "",
         allowedIps: query.data.settings.allowedIps.join("\n"),
       },
     [query.data]
@@ -118,16 +133,24 @@ function PearitySettingsCard() {
   const values = form.values;
   const enabled = values.enabled === "on";
   const template = values.engineUrlTemplate.trim();
+  const tagTemplate = values.tagUrlTemplate.trim();
 
   const errors: Partial<Record<keyof PearityForm, string>> = {};
   const problem = templateProblem(template);
   if (problem) errors.engineUrlTemplate = problem;
   else if (enabled && !template) errors.engineUrlTemplate = "Set the URL template before turning the integration on.";
+  const tagProblem = templateProblem(tagTemplate);
+  if (tagProblem) errors.tagUrlTemplate = tagProblem;
   const serverField = update.isError ? errorField(update.error) : null;
   const fieldError = (key: keyof PearityForm) =>
     errors[key] ?? (serverField === key ? errorMessage(update.error) : null);
 
   const preview = template && !problem ? fillPearityTemplate(template, EXAMPLE) : null;
+  const tagLinkSource = tagTemplate || template;
+  const tagPreview =
+    tagLinkSource && !tagProblem && !(tagTemplate ? null : problem)
+      ? fillPearityTemplate(tagLinkSource, EXAMPLE)
+      : null;
 
   function save() {
     if (Object.keys(errors).length > 0) return;
@@ -135,6 +158,7 @@ function PearitySettingsCard() {
     for (const key of form.changed) {
       if (key === "enabled") input.enabled = enabled;
       if (key === "engineUrlTemplate") input.engineUrlTemplate = template;
+      if (key === "tagUrlTemplate") input.tagUrlTemplate = tagTemplate;
       if (key === "allowedIps") input.allowedIps = parseIps(values.allowedIps);
     }
     update.mutate(input);
@@ -193,6 +217,10 @@ function PearitySettingsCard() {
                   {`{${p}}`}
                 </button>
               ))}
+              <span className="block">
+                {"{tagNo}"} is the tag number (1, 2, 3, …) — use it to identify tags. {"{taskNo}"} is the task number
+                users see, e.g. GenAI Hub-65 (or #56 for tasks without a code). {"{tagId}"} still works for older links.
+              </span>
             </>
           }
         />
@@ -209,8 +237,52 @@ function PearitySettingsCard() {
         )}
         {preview && (
           <div className="space-y-1 rounded-lg border bg-muted/30 p-3">
-            <p className="text-xs font-medium text-muted-foreground">Example for task GenAIHub-65</p>
+            <p className="text-xs font-medium text-muted-foreground">Example for tag #12 on task GenAI Hub-65</p>
             <p className="font-mono text-xs break-all text-foreground">{preview}</p>
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="pearity-tag-url">Tag link URL (optional)</Label>
+        <Textarea
+          id="pearity-tag-url"
+          value={values.tagUrlTemplate}
+          onChange={(event) => form.set("tagUrlTemplate", event.target.value)}
+          placeholder={SUGGESTED_TAG_URL_TEMPLATE}
+          rows={2}
+          spellCheck={false}
+          className="font-mono text-xs"
+          aria-invalid={Boolean(fieldError("tagUrlTemplate"))}
+          aria-describedby="pearity-tag-url-message"
+        />
+        <FieldMessage
+          id="pearity-tag-url-message"
+          error={fieldError("tagUrlTemplate")}
+          hint={
+            <>
+              Where a tag opens in Pearity. If empty, tags open the production engine URL. Same placeholders, e.g.{" "}
+              <span className="font-mono">{SUGGESTED_TAG_URL_TEMPLATE}</span>
+            </>
+          }
+        />
+        {!values.tagUrlTemplate && (
+          <Button
+            type="button"
+            variant="link"
+            size="sm"
+            className="h-auto px-0"
+            onClick={() => form.set("tagUrlTemplate", SUGGESTED_TAG_URL_TEMPLATE)}
+          >
+            Use the suggested tag link
+          </Button>
+        )}
+        {tagPreview && (
+          <div className="space-y-1 rounded-lg border bg-muted/30 p-3">
+            <p className="text-xs font-medium text-muted-foreground">
+              Tag #12 opens{tagTemplate ? "" : " (production engine URL)"}
+            </p>
+            <p className="font-mono text-xs break-all text-foreground">{tagPreview}</p>
           </div>
         )}
       </div>

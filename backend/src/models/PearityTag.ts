@@ -12,7 +12,9 @@ export type PearityUsageSource = (typeof PEARITY_USAGE_SOURCES)[number];
 
 export interface IPearityTag extends mongoose.Document {
   task: mongoose.Types.ObjectId;
-  /** "pt_" + 8 random [0-9a-z] characters — stable, URL-safe. */
+  /** Sequential tag number (1, 2, 3, …) — the identifier users see. Claimed only on create. */
+  tagNo: number;
+  /** "pt_" + 8 random [0-9a-z] characters — stable, URL-safe (legacy identifier). */
   tagId: string;
   /** Brand_Category_TaskCode, sanitized (see lib/pearity.ts). Immutable. */
   tagName: string;
@@ -40,6 +42,7 @@ const snapshotSchema = new Schema(
 const pearityTagSchema = new Schema<IPearityTag>(
   {
     task: { type: Schema.Types.ObjectId, ref: "Task", required: true },
+    tagNo: { type: Number, min: 1 },
     tagId: { type: String, required: true, match: /^pt_[0-9a-z]{8}$/ },
     tagName: { type: String, required: true, trim: true, maxlength: 200 },
     taskCodeSnapshot: { type: String, trim: true, maxlength: 60, default: "" },
@@ -56,6 +59,11 @@ const pearityTagSchema = new Schema<IPearityTag>(
 // One tag per task — the atomic guard for concurrent Generate clicks.
 pearityTagSchema.index({ task: 1 }, { unique: true, name: "task_unique" });
 pearityTagSchema.index({ tagId: 1 }, { unique: true, name: "tagId_unique" });
+// Sequential tag number — unique once assigned (partial, so un-backfilled tags don't collide).
+pearityTagSchema.index(
+  { tagNo: 1 },
+  { unique: true, partialFilterExpression: { tagNo: { $type: "number" } }, name: "tagNo_unique" }
+);
 pearityTagSchema.index({ tagName: 1 });
 // Bulk sync (GET /tags?updatedSince=) — cursor on (updatedAt, _id).
 pearityTagSchema.index({ updatedAt: 1, _id: 1 });

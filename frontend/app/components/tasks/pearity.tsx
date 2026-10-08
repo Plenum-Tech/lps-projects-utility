@@ -11,7 +11,7 @@ import { startPearityGenerate, usePearityGenerate, usePearityStatus, useTaskPear
 import { useToast } from "@/hooks/use-toast";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { Task } from "@/types";
+import type { PearityTagRef, Task } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Pearity tag UI: the Generate action (detail header + table ⋮ menu), the tag
@@ -100,6 +100,39 @@ export function PearityGenerateButton({ task }: { task: Pick<Task, "_id" | "pear
   );
 }
 
+/** "Tag #12 · Ajmal_Design_GenAIHub-65" — "Tag #12" part omitted until numbered. */
+export function pearityTagLabel(tag: Pick<PearityTagRef, "tagNo" | "tagName">): string {
+  return tag.tagNo ? `Tag #${tag.tagNo} · ${tag.tagName}` : tag.tagName;
+}
+
+/** The tag label, linked into Pearity (new tab) when a tag URL is available. */
+function PearityTagLink({ tag, className }: { tag: PearityTagRef; className?: string }) {
+  const label = pearityTagLabel(tag);
+  if (!tag.tagUrl) {
+    return (
+      <span className={cn("truncate font-mono text-xs", className)} title={label}>
+        {label}
+      </span>
+    );
+  }
+  return (
+    <a
+      href={tag.tagUrl}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label={`Open tag ${tag.tagName} in Pearity`}
+      title={`${label} — open in Pearity`}
+      onClick={(event) => event.stopPropagation()}
+      className={cn(
+        "truncate rounded-sm font-mono text-xs text-primary underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+        className
+      )}
+    >
+      {label}
+    </a>
+  );
+}
+
 /** Copy-to-clipboard icon button for a tag name. */
 function CopyTagButton({ value }: { value: string }) {
   const toast = useToast();
@@ -146,9 +179,7 @@ export function PearityTagSection({ task }: { task: Pick<Task, "_id" | "pearityT
         <div className="flex flex-wrap items-center gap-2">
           <span className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background py-0.5 pr-1 pl-2.5">
             <LuTag aria-hidden className="size-3.5 shrink-0 text-primary" />
-            <span className="truncate font-mono text-xs font-medium" title={tag.tagName}>
-              {tag.tagName}
-            </span>
+            <PearityTagLink tag={{ ...tag, tagUrl: info.data?.tagUrl ?? tag.tagUrl ?? null }} className="font-medium" />
             <CopyTagButton value={tag.tagName} />
             {info.data?.generateUrl && (
               <a
@@ -201,14 +232,12 @@ export function PearityTagSection({ task }: { task: Pick<Task, "_id" | "pearityT
   );
 }
 
-/** Tasks table cell: the tag name (copyable) or "—". */
+/** Tasks table cell: "Tag #12 · name" linked into Pearity (copyable) or "—". */
 export function PearityTagCell({ task, className }: { task: Pick<Task, "pearityTag">; className?: string }) {
   if (!task.pearityTag) return <span className="text-muted-foreground">--</span>;
   return (
-    <span className={cn("inline-flex max-w-56 items-center gap-0.5", className)}>
-      <span className="truncate font-mono text-xs" title={task.pearityTag.tagName}>
-        {task.pearityTag.tagName}
-      </span>
+    <span className={cn("inline-flex max-w-72 items-center gap-0.5", className)}>
+      <PearityTagLink tag={task.pearityTag} />
       <CopyTagButton value={task.pearityTag.tagName} />
     </span>
   );

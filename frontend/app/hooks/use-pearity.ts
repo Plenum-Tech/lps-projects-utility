@@ -82,8 +82,8 @@ export function usePearityGenerate() {
     },
     onSuccess: (data, { taskId, navigate }) => {
       navigate(data.generateUrl);
-      if (data.created) toast.success(`Created Pearity tag ${data.tag.tagName}`);
-      else toast.info(`Using existing tag ${data.tag.tagName}`);
+      if (data.created) toast.success(`Created Pearity tag ${data.tag.tagNo ? `#${data.tag.tagNo} · ` : ""}${data.tag.tagName}`);
+      else toast.info(`Using existing tag ${data.tag.tagNo ? `#${data.tag.tagNo} · ` : ""}${data.tag.tagName}`);
       void queryClient.invalidateQueries({ queryKey: pearityKeys.task(taskId) });
       void queryClient.invalidateQueries({ queryKey: taskKeys.historyAll(taskId) });
       if (data.created) {
@@ -128,7 +128,7 @@ export function useUpdatePearitySettings() {
   const queryClient = useQueryClient();
   const toast = useToast();
   return useMutation({
-    mutationFn: async (input: Partial<Pick<PearitySettings, "enabled" | "engineUrlTemplate" | "allowedIps">>) => {
+    mutationFn: async (input: Partial<Pick<PearitySettings, "enabled" | "engineUrlTemplate" | "tagUrlTemplate" | "allowedIps">>) => {
       try {
         const { data } = await api.patch<PearitySettingsResponse>("/integrations/pearity/settings", input);
         return data;

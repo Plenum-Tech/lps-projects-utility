@@ -14,6 +14,7 @@ import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { canCreateProjectTasks, canManageProject, canViewProject, departmentUserIds } from "./projectAccess.js";
 import { pearityTagsByTask } from "./pearity.js";
+import type { TaskLike } from "./pearity.js";
 import { createEvent, pushToUsers } from "./sse.js";
 
 // ---------------------------------------------------------------------------
@@ -416,7 +417,7 @@ export async function serializeTasks(
     countByTask(TaskComment, ids),
     countByTask(TaskFile, ids),
     loggedMinutesByTask(ids),
-    pearityTagsByTask(ids),
+    pearityTagsByTask(tasks as unknown as TaskLike[]),
   ]);
   const pinned = new Set((viewer?.pinnedTasks ?? []).map((id) => id.toString()));
   return tasks.map((t) => {

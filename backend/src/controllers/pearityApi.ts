@@ -6,12 +6,14 @@ import {
   TAG_ID_REGEX,
   ensurePearityTag,
   ipAllowed,
+  parseTaskNo,
   pearityActive,
   pearityGenerateUrl,
   pearitySettings,
   recordPearityUsage,
   tagRefs,
   taskContexts,
+  taskNoOf,
   utilityTaskUrl,
 } from "../lib/pearity.js";
 import type { PearityTagRefJson, TaskContext } from "../lib/pearity.js";
@@ -196,6 +198,7 @@ function taskJson(
   return {
     taskId: task._id.toString(),
     taskCode: context.taskCode,
+    taskNo: context.taskNo,
     title: task.title,
     status: task.status,
     dueDate: iso(task.dueDate),
@@ -207,6 +210,7 @@ function taskJson(
     category: context.category,
     utilityUrl: utilityTaskUrl(task._id),
     pearityTag: tag,
+    tagUrl: tag?.tagUrl ?? null,
     generateUrl,
   };
 }
@@ -219,7 +223,7 @@ async function tasksJson(tasks: TaskRow[]) {
     taskContexts(tasks),
     ids.length ? PearityTag.find({ task: { $in: ids } }).lean<IPearityTag[]>() : Promise.resolve([] as IPearityTag[]),
   ]);
-  const refs = await tagRefs(tagDocs);
+  const refs = await tagRefs(tagDocs, { contexts });
   const tagByTask = new Map(tagDocs.map((t) => [t.task.toString(), t]));
   return tasks.map((task) => {
     const id = task._id.toString();
@@ -337,6 +341,11 @@ export async function apiCreateTag(req: Request, res: Response): Promise<void> {
   if (!user) return;
   const task = await visibleTask(req, res, user);
   if (!task) return;
+  await respondWithTag(req, res, user, task, false);
+}
+
+/** Shared get-or-create for both POST endpoints (atomic, records a "pearity" usage). */
+async function respondWithTag(req: Request, res: Response, user: IUser, task: ITask, includeTask: boolean): Promise<void> {
   const taskId = task._id as mongoose.Types.ObjectId;
   const context = (await taskContexts([task])).get(taskId.toString())!;
   if (context.project?.archived) {
@@ -363,19 +372,93 @@ export async function apiCreateTag(req: Request, res: Response): Promise<void> {
       ip: req.ip,
     });
   }
-  const ref = (await tagRefs([tag])).get(taskId.toString())!;
+  const ref = (await tagRefs([tag], { contexts: new Map([[taskId.toString(), context]]) })).get(taskId.toString())!;
+  const generateUrl = pearityGenerateUrl(settings, tag, taskId, context);
+  if (!includeTask) {
+    res.status(created ? 201 : 200).json({ created, tag: ref, tagUrl: ref.tagUrl, generateUrl });
+    return;
+  }
+  const row = task.toObject() as unknown as TaskRow;
   res.status(created ? 201 : 200).json({
     created,
     tag: ref,
-    generateUrl: pearityGenerateUrl(settings, tag, taskId, context),
+    task: taskJson(row, context, ref, generateUrl),
+    tagUrl: ref.tagUrl,
+    generateUrl,
   });
 }
 
-function tagJson(tag: IPearityTag, ref: PearityTagRefJson) {
+// --- Task number (taskNo) lookup ---------------------------------------------------
+
+const TASK_NO_LOOKUP_LIMIT = 20;
+
+/**
+ * Resolves a human task number ("GenAI Hub-65", "pear-12", "#56", "56") to one task
+ * the user can view. An exact (case-insensitive) shortCode match wins over a task
+ * number; archived-project tasks are only used when no active task matches.
+ * Responds 400 / 404 / 409 and returns undefined on failure.
+ */
+export async function resolveTaskNo(res: Response, input: unknown, user: IUser): Promise<ITask | undefined> {
+  const parsed = parseTaskNo(input);
+  if (!parsed) {
+    fail(res, 400, "invalid_task_no", "Pass the task number (taskNo=...), e.g. GenAI Hub-65 or #56.");
+    return undefined;
+  }
+  const archived = new Set((await archivedProjectIds()).map((id) => id.toString()));
+  const isArchived = (t: ITask) => Boolean(t.project && archived.has(t.project.toString()));
+
+  if (parsed.codePattern) {
+    const matches = await Task.find({ shortCode: { $regex: parsed.codePattern } }).limit(TASK_NO_LOOKUP_LIMIT);
+    const visible: ITask[] = [];
+    for (const task of matches) if (await canViewTaskAsync(user, task)) visible.push(task);
+    const active = visible.filter((t) => !isArchived(t));
+    const pool = active.length > 0 ? active : visible;
+    if (pool.length > 1) {
+      fail(
+        res,
+        409,
+        "ambiguous_task_no",
+        `More than one task has the number "${parsed.value}". Use the task id (GET /tasks/:taskId) instead.`
+      );
+      return undefined;
+    }
+    if (pool.length === 1) return pool[0];
+  }
+  if (parsed.number) {
+    const task = await Task.findOne({ number: parsed.number });
+    if (task && (await canViewTaskAsync(user, task))) return task;
+  }
+  fail(res, 404, "task_not_found", "Task not found (or this user can't view it).");
+  return undefined;
+}
+
+/** GET /tasks/by-no?taskNo=&email= — { task, pearityTag | null, generateUrl | null }, always fresh. */
+export async function apiGetTaskByNo(req: Request, res: Response): Promise<void> {
+  const user = await userForEmail(req, res, req.query.email);
+  if (!user) return;
+  const task = await resolveTaskNo(res, req.query.taskNo, user);
+  if (!task) return;
+  const [json] = await tasksJson([task.toObject() as unknown as TaskRow]);
+  res.json({ task: json, pearityTag: json!.pearityTag, tagUrl: json!.tagUrl, generateUrl: json!.generateUrl });
+}
+
+/** POST /tasks/by-no/tag { taskNo, email } — idempotent: { created, tag, task, generateUrl }. */
+export async function apiCreateTagByNo(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = await userForEmail(req, res, body.email);
+  if (!user) return;
+  const task = await resolveTaskNo(res, body.taskNo, user);
+  if (!task) return;
+  await respondWithTag(req, res, user, task, true);
+}
+
+function tagJson(tag: IPearityTag, ref: PearityTagRefJson, taskNo: string | null) {
   return {
+    tagNo: typeof tag.tagNo === "number" ? tag.tagNo : null,
     tagId: tag.tagId,
     tagName: tag.tagName,
     taskId: tag.task.toString(),
+    taskNo,
     taskCode: tag.taskCodeSnapshot,
     brand: tag.brandSnapshot?.id ? { id: tag.brandSnapshot.id.toString(), name: tag.brandSnapshot.name } : null,
     category: tag.categorySnapshot?.id
@@ -383,16 +466,32 @@ function tagJson(tag: IPearityTag, ref: PearityTagRefJson) {
       : null,
     createdAt: ref.createdAt,
     createdBy: ref.createdBy,
+    tagUrl: ref.tagUrl,
     usageCount: tag.usageCount ?? 0,
     lastUsedAt: iso(tag.lastUsedAt),
     updatedAt: iso(tag.updatedAt),
   };
 }
 
-/** GET /tags/:tagId — resolves a tag back to its Utility task. */
+/** GET /tags/:tagId — resolves a tag (legacy random id) back to its Utility task. */
 export async function apiGetTag(req: Request, res: Response): Promise<void> {
   const tagId = param(req, "tagId") ?? "";
   const tag = TAG_ID_REGEX.test(tagId) ? await PearityTag.findOne({ tagId }).lean<IPearityTag>() : null;
+  await respondWithTagLookup(res, tag);
+}
+
+/** GET /tags/by-no/:tagNo — resolves a tag number (1, 2, 3, …) back to its Utility task. */
+export async function apiGetTagByNo(req: Request, res: Response): Promise<void> {
+  const raw = (param(req, "tagNo") ?? "").trim().replace(/^#/, "");
+  if (!/^\d{1,9}$/.test(raw) || Number(raw) < 1) {
+    fail(res, 400, "invalid_tag_no", "tagNo must be a positive whole number, e.g. 12.");
+    return;
+  }
+  const tag = await PearityTag.findOne({ tagNo: Number(raw) }).lean<IPearityTag>();
+  await respondWithTagLookup(res, tag);
+}
+
+async function respondWithTagLookup(res: Response, tag: IPearityTag | null): Promise<void> {
   if (!tag) {
     fail(res, 404, "tag_not_found", "Tag not found.");
     return;
@@ -401,7 +500,7 @@ export async function apiGetTag(req: Request, res: Response): Promise<void> {
     .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt")
     .lean<TaskRow>();
   const ref = (await tagRefs([tag])).get(tag.task.toString())!;
-  res.json({ tag: tagJson(tag, ref), task: task ? (await tasksJson([task]))[0] : null });
+  res.json({ tag: tagJson(tag, ref, task ? taskNoOf(task) : null), task: task ? (await tasksJson([task]))[0] : null });
 }
 
 /** GET /tags?updatedSince=&limit=&cursor= — bulk sync, oldest-updated first. */
@@ -433,10 +532,20 @@ export async function apiListTags(req: Request, res: Response): Promise<void> {
     .limit(limit + 1)
     .lean<IPearityTag[]>();
   const page = rows.slice(0, limit);
-  const refs = await tagRefs(page);
+  const [refs, taskRows] = await Promise.all([
+    tagRefs(page),
+    page.length
+      ? Task.find({ _id: { $in: page.map((t) => t.task) } })
+          .select("shortCode number")
+          .lean<Array<{ _id: mongoose.Types.ObjectId; shortCode?: string | null; number?: number | null }>>()
+      : Promise.resolve([]),
+  ]);
+  const taskNoById = new Map(taskRows.map((t) => [t._id.toString(), taskNoOf(t)]));
   const last = page[page.length - 1];
   res.json({
-    tags: page.map((tag) => tagJson(tag, refs.get(tag.task.toString())!)),
+    tags: page.map((tag) =>
+      tagJson(tag, refs.get(tag.task.toString())!, taskNoById.get(tag.task.toString()) ?? null)
+    ),
     nextCursor: rows.length > limit && last ? encodeCursor(last.updatedAt, last._id as mongoose.Types.ObjectId) : null,
   });
 }

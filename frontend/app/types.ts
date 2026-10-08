@@ -958,10 +958,14 @@ export interface Task {
 // --- Pearity integration ------------------------------------------------------
 
 export interface PearityTagRef {
+  /** Sequential tag number (1, 2, 3, …) — the identifier users see. */
+  tagNo: number | null;
   tagId: string;
   tagName: string;
   createdAt: string;
   createdBy: { id: string; name: string } | null;
+  /** Opens the tag in Pearity (tag link template, else the engine URL); null when off. */
+  tagUrl: string | null;
 }
 
 export type PearityUsageSource = "utility" | "pearity";
@@ -972,6 +976,7 @@ export interface TaskPearityInfo {
   tag: PearityTagRef | null;
   /** The name the tag gets on first Generate (or the existing name). */
   proposedTagName: string;
+  tagUrl: string | null;
   generateUrl: string | null;
   usageCount: number;
   generatedBy: Array<{
@@ -986,14 +991,26 @@ export interface TaskPearityInfo {
 export interface PearityGenerateResponse {
   created: boolean;
   tag: PearityTagRef;
+  tagUrl: string | null;
   generateUrl: string | null;
 }
 
-export type PearityPlaceholder = "tagId" | "tagName" | "taskId" | "taskCode" | "brand" | "category" | "project";
+export type PearityPlaceholder =
+  | "tagNo"
+  | "tagId"
+  | "tagName"
+  | "taskId"
+  | "taskCode"
+  | "taskNo"
+  | "brand"
+  | "category"
+  | "project";
 
 export interface PearitySettings {
   enabled: boolean;
   engineUrlTemplate: string;
+  /** Optional: where a tag opens in Pearity (empty → the engine URL). */
+  tagUrlTemplate: string;
   allowedIps: string[];
   updatedAt: string | null;
 }

@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { Brand, brandNameKey } from "../models/Brand.js";
+import { backfillPearityTagNumbers } from "./pearity.js";
 
 // ---------------------------------------------------------------------------
 // Idempotent startup migrations (run by connectDB after connecting). Each step
@@ -42,7 +43,18 @@ async function migrateBrandNameKey(): Promise<void> {
   }
 }
 
+/** Pearity tags: give tags created before `tagNo` existed a sequential number. */
+async function migratePearityTagNumbers(): Promise<void> {
+  try {
+    const numbered = await backfillPearityTagNumbers();
+    if (numbered) console.log(`[db] numbered ${numbered} Pearity tag(s)`);
+  } catch (err) {
+    console.warn(`[db] Pearity tag number backfill failed: ${(err as Error).message}`);
+  }
+}
+
 export async function runDbMaintenance(): Promise<void> {
   if (mongoose.connection.readyState !== 1) return;
   await migrateBrandNameKey();
+  await migratePearityTagNumbers();
 }
