@@ -6,6 +6,7 @@ import {
   getPeople,
   getPerson,
   getSummary,
+  getBrandStructure,
   getTeamMap,
   getTeams,
   getWeekly,
@@ -27,5 +28,6 @@ router.get("/delivery/briefs", getBriefs);
 router.get("/delivery/people", getPeople);
 router.get("/delivery/people/:id", getPerson);
 router.get("/delivery/team-map", getTeamMap);
+router.get("/delivery/brand-structure", getBrandStructure);
 
 export default router;

@@ -1,11 +1,19 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
-import { LuMap, LuUsers } from "react-icons/lu";
+import { LuChevronDown, LuChevronRight, LuMap, LuUsers } from "react-icons/lu";
 
 import { BrandName } from "@/components/delivery/brand-dot";
 import { CsvButton } from "@/components/delivery/csv-button";
 import { CappedNote } from "@/components/delivery/analysis-section";
-import { fmtDays, fmtNum, fmtPct, lowRateTone, rateTone, TONE_TEXT, userName } from "@/components/delivery/delivery-format";
+import {
+  fmtDays,
+  fmtNum,
+  fmtPct,
+  lowRateTone,
+  rateTone,
+  TONE_TEXT,
+  userName,
+} from "@/components/delivery/delivery-format";
 import {
   ChartPanel,
   DeliverySection,
@@ -15,13 +23,29 @@ import {
   type SortColumn,
 } from "@/components/delivery/delivery-ui";
 import { PersonDrawer } from "@/components/delivery/person-drawer";
-import { WeeklyBars, WeeklyLine, WeeklyTable } from "@/components/delivery/weekly-charts";
+import {
+  WeeklyBars,
+  WeeklyLine,
+  WeeklyTable,
+} from "@/components/delivery/weekly-charts";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useDeliveryPeople, useDeliveryTeamMap, useDeliveryWeekly } from "@/hooks/use-delivery";
+import {
+  useDeliveryBrandStructure,
+  useDeliveryPeople,
+  useDeliveryTeamMap,
+  useDeliveryWeekly,
+} from "@/hooks/use-delivery";
 import { formatDateOnly } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import type { DeliveryFilters, DeliveryPeopleResponse, DeliveryTeamMapResponse } from "@/types";
+import type {
+  DeliveryFilters,
+  DeliveryPeopleResponse,
+  DeliveryBrandStructureResponse,
+  DeliveryStructureBrand,
+  DeliveryStructureProject,
+  DeliveryTeamMapResponse,
+} from "@/types";
 
 type PersonRow = DeliveryPeopleResponse["rows"][number];
 
@@ -38,11 +62,19 @@ export function PeopleSection({
   const people = useDeliveryPeople(filters);
   const weekly = useDeliveryWeekly(filters);
   const teamMap = useDeliveryTeamMap(filters);
-  const [person, setPerson] = useState<{ id: string; name: string } | null>(null);
+  const structure = useDeliveryBrandStructure(filters);
+  const [person, setPerson] = useState<{ id: string; name: string } | null>(
+    null,
+  );
   const weeks = weekly.data?.weeks ?? [];
 
   return (
-    <DeliverySection id="people" index={4} title="People" description="Doers only — traffic managers are left out.">
+    <DeliverySection
+      id="people"
+      index={4}
+      title="People"
+      description="Doers only — traffic managers are left out."
+    >
       <Panel
         title="Individuals"
         description={
@@ -50,7 +82,13 @@ export function PeopleSection({
             ? `People with fewer than ${people.data.minCompletedToRank} completed tasks are not ranked (greyed). Rework share = rework ÷ tasks created in the period. Click a person for details.`
             : "Click a person for their brands, weekly trend and open work."
         }
-        action={<CsvButton table="people" filters={filters} disabled={!people.data?.rows.length} />}
+        action={
+          <CsvButton
+            table="people"
+            filters={filters}
+            disabled={!people.data?.rows.length}
+          />
+        }
       >
         <PanelState
           query={people}
@@ -63,7 +101,10 @@ export function PeopleSection({
           {() => (
             <PeopleTable
               rows={people.data!.rows}
-              onSelect={(row) => row.person.id && setPerson({ id: row.person.id, name: userName(row.person) })}
+              onSelect={(row) =>
+                row.person.id &&
+                setPerson({ id: row.person.id, name: userName(row.person) })
+              }
             />
           )}
         </PanelState>
@@ -71,7 +112,9 @@ export function PeopleSection({
 
       <div className="grid gap-4 lg:grid-cols-3">
         {weekly.isPending ? (
-          Array.from({ length: 3 }).map((_, index) => <Skeleton key={index} className="h-72 rounded-xl" />)
+          Array.from({ length: 3 }).map((_, index) => (
+            <Skeleton key={index} className="h-72 rounded-xl" />
+          ))
         ) : weekly.isError ? (
           <Panel title="Week by week" className="lg:col-span-3">
             <PanelState query={weekly} errorTitle="Couldn't load weekly data">
@@ -85,21 +128,39 @@ export function PeopleSection({
               description={<CappedNote weekly={weekly.data} />}
               isEmpty={weeks.every((week) => week.completed === 0)}
               emptyText="Nothing completed."
-              chart={() => <WeeklyBars weeks={weeks} dataKey="completed" className="h-48" color="var(--chart-1)" />}
-              table={() => <WeeklyTable weeks={weeks} columns={[{ key: "completed", format: fmtNum }]} />}
+              chart={() => (
+                <WeeklyBars
+                  weeks={weeks}
+                  dataKey="completed"
+                  className="h-48"
+                  color="var(--chart-1)"
+                />
+              )}
+              table={() => (
+                <WeeklyTable
+                  weeks={weeks}
+                  columns={[{ key: "completed", format: fmtNum }]}
+                />
+              )}
             />
             <ChartPanel
               title="Overdue % by week"
               description="Open and late ÷ open, at each week's end."
               isEmpty={weeks.every((week) => week.overduePct === null)}
               emptyText="No open work to measure."
-              chart={() => <WeeklyLine weeks={weeks} dataKey="overduePct" unit="%" className="h-48" color="var(--critical)" />}
+              chart={() => (
+                <WeeklyLine
+                  weeks={weeks}
+                  dataKey="overduePct"
+                  unit="%"
+                  className="h-48"
+                  color="var(--critical)"
+                />
+              )}
               table={() => (
                 <WeeklyTable
                   weeks={weeks}
-                  columns={[
-                    { key: "overduePct", format: fmtPct },
-                  ]}
+                  columns={[{ key: "overduePct", format: fmtPct }]}
                 />
               )}
             />
@@ -108,12 +169,42 @@ export function PeopleSection({
               description="Rework ÷ tasks created that week."
               isEmpty={weeks.every((week) => week.reworkPct === null)}
               emptyText="No tasks created."
-              chart={() => <WeeklyLine weeks={weeks} dataKey="reworkPct" unit="%" className="h-48" color="var(--warn)" />}
-              table={() => <WeeklyTable weeks={weeks} columns={[{ key: "reworkPct", format: fmtPct }]} />}
+              chart={() => (
+                <WeeklyLine
+                  weeks={weeks}
+                  dataKey="reworkPct"
+                  unit="%"
+                  className="h-48"
+                  color="var(--warn)"
+                />
+              )}
+              table={() => (
+                <WeeklyTable
+                  weeks={weeks}
+                  columns={[{ key: "reworkPct", format: fmtPct }]}
+                />
+              )}
             />
           </>
         )}
       </div>
+
+      <Panel
+        title="Brands › projects › people"
+        description={
+          structure.data
+            ? `${structure.data.totals.brands} brands · ${structure.data.totals.projects} projects · ${structure.data.totals.tasks} tasks active in the period (${structure.data.totals.open} open). Expand a brand, then a project, to see its tasks and who is assigned.`
+            : "Each brand's projects, their tasks and the people assigned."
+        }
+      >
+        <PanelState
+          query={structure}
+          errorTitle="Couldn't load the brand structure"
+          skeletonHeight="h-40"
+        >
+          {() => <BrandStructure data={structure.data!} />}
+        </PanelState>
+      </Panel>
 
       <Panel
         title="Team map coverage"
@@ -124,13 +215,20 @@ export function PeopleSection({
         }
         action={
           isAdmin && (
-            <Link to="/settings/delivery" className="text-xs font-medium text-primary underline-offset-4 hover:underline">
+            <Link
+              to="/settings/delivery"
+              className="text-xs font-medium text-primary underline-offset-4 hover:underline"
+            >
               Edit team maps
             </Link>
           )
         }
       >
-        <PanelState query={teamMap} errorTitle="Couldn't load team map coverage" skeletonHeight="h-40">
+        <PanelState
+          query={teamMap}
+          errorTitle="Couldn't load team map coverage"
+          skeletonHeight="h-40"
+        >
           {() => <TeamMapCoverage data={teamMap.data!} />}
         </PanelState>
       </Panel>
@@ -146,7 +244,13 @@ export function PeopleSection({
   );
 }
 
-function PeopleTable({ rows, onSelect }: { rows: PersonRow[]; onSelect: (row: PersonRow) => void }) {
+function PeopleTable({
+  rows,
+  onSelect,
+}: {
+  rows: PersonRow[];
+  onSelect: (row: PersonRow) => void;
+}) {
   const columns: SortColumn<PersonRow>[] = [
     {
       id: "person",
@@ -156,24 +260,104 @@ function PeopleTable({ rows, onSelect }: { rows: PersonRow[]; onSelect: (row: Pe
           <span className="flex items-center gap-2 font-medium">
             {userName(row.person)}
             {!row.ranked && (
-              <Badge variant="outline" className="h-4 px-1.5 text-[0.65rem] font-normal">
+              <Badge
+                variant="outline"
+                className="h-4 px-1.5 text-[0.65rem] font-normal"
+              >
                 not ranked
               </Badge>
             )}
           </span>
-          <span className="text-xs text-muted-foreground">{row.person.team.name}</span>
+          <span className="text-xs text-muted-foreground">
+            {row.person.team.name}
+          </span>
         </span>
       ),
       sortValue: (row) => userName(row.person),
     },
-    { id: "completed", header: "Completed", align: "right", cell: (row) => fmtNum(row.completed), sortValue: (row) => row.completed },
-    { id: "onTime", header: "On time", align: "right", cell: (row) => <span className={cn(row.ranked && row.onTimePct !== null && TONE_TEXT[rateTone(row.onTimePct)])}>{fmtPct(row.onTimePct)}</span>, sortValue: (row) => row.onTimePct },
-    { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
-    { id: "startToDone", header: "Mean start → done", hint: "Days from the actual start to done, for tasks completed in the period that have an actual start", align: "right", cell: (row) => fmtDays(row.startToDoneDays), sortValue: (row) => row.startToDoneDays },
-    { id: "rework", header: "Rework share", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => <span className={cn(row.ranked && row.reworkPct !== null && TONE_TEXT[lowRateTone(row.reworkPct)])}>{fmtPct(row.reworkPct)}</span>, sortValue: (row) => row.reworkPct },
-    { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.ranked && row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
-    { id: "open", header: "Open now", align: "right", cell: (row) => fmtNum(row.open), sortValue: (row) => row.open },
-    { id: "brands", header: "Brands", hint: "Distinct brands worked on", align: "right", cell: (row) => fmtNum(row.brandCount), sortValue: (row) => row.brandCount },
+    {
+      id: "completed",
+      header: "Completed",
+      align: "right",
+      cell: (row) => fmtNum(row.completed),
+      sortValue: (row) => row.completed,
+    },
+    {
+      id: "onTime",
+      header: "On time",
+      align: "right",
+      cell: (row) => (
+        <span
+          className={cn(
+            row.ranked &&
+              row.onTimePct !== null &&
+              TONE_TEXT[rateTone(row.onTimePct)],
+          )}
+        >
+          {fmtPct(row.onTimePct)}
+        </span>
+      ),
+      sortValue: (row) => row.onTimePct,
+    },
+    {
+      id: "meanDays",
+      header: "Mean days",
+      align: "right",
+      cell: (row) => fmtDays(row.meanDays),
+      sortValue: (row) => row.meanDays,
+    },
+    {
+      id: "startToDone",
+      header: "Mean start → done",
+      hint: "Days from the actual start to done, for tasks completed in the period that have an actual start",
+      align: "right",
+      cell: (row) => fmtDays(row.startToDoneDays),
+      sortValue: (row) => row.startToDoneDays,
+    },
+    {
+      id: "rework",
+      header: "Rework share",
+      hint: "Rework tasks ÷ tasks created in the period",
+      align: "right",
+      cell: (row) => (
+        <span
+          className={cn(
+            row.ranked &&
+              row.reworkPct !== null &&
+              TONE_TEXT[lowRateTone(row.reworkPct)],
+          )}
+        >
+          {fmtPct(row.reworkPct)}
+        </span>
+      ),
+      sortValue: (row) => row.reworkPct,
+    },
+    {
+      id: "overdue",
+      header: "Overdue now",
+      align: "right",
+      cell: (row) => (
+        <span className={cn(row.ranked && row.overdue > 0 && "text-critical")}>
+          {fmtNum(row.overdue)}
+        </span>
+      ),
+      sortValue: (row) => row.overdue,
+    },
+    {
+      id: "open",
+      header: "Open now",
+      align: "right",
+      cell: (row) => fmtNum(row.open),
+      sortValue: (row) => row.open,
+    },
+    {
+      id: "brands",
+      header: "Brands",
+      hint: "Distinct brands worked on",
+      align: "right",
+      cell: (row) => fmtNum(row.brandCount),
+      sortValue: (row) => row.brandCount,
+    },
   ];
   return (
     <SortTable
@@ -183,7 +367,9 @@ function PeopleTable({ rows, onSelect }: { rows: PersonRow[]; onSelect: (row: Pe
       getRowId={(row) => row.person.id ?? `former-${row.person.name}`}
       onRowClick={onSelect}
       rowLabel={(row) => `Open details for ${userName(row.person)}`}
-      rowClassName={(row) => (row.ranked ? undefined : "text-muted-foreground opacity-75")}
+      rowClassName={(row) =>
+        row.ranked ? undefined : "text-muted-foreground opacity-75"
+      }
     />
   );
 }
@@ -194,15 +380,26 @@ function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
       <CoverageList
         title="Off-map"
         hint="Completed tasks done by people who aren't on that brand's map."
-        empty={data.mappedBrands === 0 ? "No brand has a team map yet." : "All completed work was done by mapped people."}
+        empty={
+          data.mappedBrands === 0
+            ? "No brand has a team map yet."
+            : "All completed work was done by mapped people."
+        }
         count={data.offMap.reduce((sum, item) => sum + item.total, 0)}
         tone="critical"
       >
         {data.offMap.map((item) => (
           <li key={item.brand.id} className="space-y-1.5 py-2">
             <div className="flex items-center justify-between gap-2">
-              <BrandName name={item.brand.name} color={item.brand.color} noBrand={item.brand.noBrand} className="text-sm font-medium" />
-              <span className="text-xs tabular-nums text-muted-foreground">{item.total} tasks</span>
+              <BrandName
+                name={item.brand.name}
+                color={item.brand.color}
+                noBrand={item.brand.noBrand}
+                className="text-sm font-medium"
+              />
+              <span className="text-xs tabular-nums text-muted-foreground">
+                {item.total} tasks
+              </span>
             </div>
             <ul className="flex flex-wrap gap-1">
               {item.people.map((entry) => (
@@ -211,7 +408,9 @@ function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
                   className="inline-flex h-6 items-center gap-1 rounded-full border bg-muted/40 px-2 text-xs"
                 >
                   {userName(entry.person)}
-                  <span className="font-medium tabular-nums text-critical">×{entry.count}</span>
+                  <span className="font-medium tabular-nums text-critical">
+                    ×{entry.count}
+                  </span>
                 </li>
               ))}
             </ul>
@@ -223,13 +422,22 @@ function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
         title="Mapped but unused"
         hint="People on a brand's map with no tasks on that brand."
         empty="Everyone on a map has worked on their brand."
-        count={data.mappedUnused.reduce((sum, item) => sum + item.people.length, 0)}
+        count={data.mappedUnused.reduce(
+          (sum, item) => sum + item.people.length,
+          0,
+        )}
         tone="warn"
       >
         {data.mappedUnused.map((item) => (
           <li key={item.brand.id} className="space-y-1.5 py-2">
-            <BrandName name={item.brand.name} color={item.brand.color} className="text-sm font-medium" />
-            <p className="text-xs text-muted-foreground">{item.people.map(userName).join(", ")}</p>
+            <BrandName
+              name={item.brand.name}
+              color={item.brand.color}
+              className="text-sm font-medium"
+            />
+            <p className="text-xs text-muted-foreground">
+              {item.people.map(userName).join(", ")}
+            </p>
           </li>
         ))}
       </CoverageList>
@@ -242,9 +450,18 @@ function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
         tone="neutral"
       >
         {data.unmappedBrands.map((item) => (
-          <li key={item.brand.id} className="flex items-center justify-between gap-2 py-2">
-            <BrandName name={item.brand.name} color={item.brand.color} className="text-sm" />
-            <span className="text-xs tabular-nums text-muted-foreground">{item.tasks} tasks</span>
+          <li
+            key={item.brand.id}
+            className="flex items-center justify-between gap-2 py-2"
+          >
+            <BrandName
+              name={item.brand.name}
+              color={item.brand.color}
+              className="text-sm"
+            />
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {item.tasks} tasks
+            </span>
           </li>
         ))}
       </CoverageList>
@@ -274,7 +491,13 @@ function CoverageList({
         <span
           className={cn(
             "rounded-full px-2 py-0.5 text-xs tabular-nums",
-            count === 0 ? "bg-muted text-muted-foreground" : tone === "critical" ? "bg-critical/10 text-critical" : tone === "warn" ? "bg-warn/10 text-warn" : "bg-muted text-foreground"
+            count === 0
+              ? "bg-muted text-muted-foreground"
+              : tone === "critical"
+                ? "bg-critical/10 text-critical"
+                : tone === "warn"
+                  ? "bg-warn/10 text-warn"
+                  : "bg-muted text-foreground",
           )}
         >
           {count}
@@ -290,5 +513,237 @@ function CoverageList({
         <ul className="mt-1 max-h-72 divide-y overflow-auto">{children}</ul>
       )}
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Brands › projects › people                                           */
+/* ------------------------------------------------------------------ */
+
+function CountChips({
+  total,
+  open,
+  completed,
+  overdue,
+}: {
+  total: number;
+  open: number;
+  completed: number;
+  overdue: number;
+}) {
+  return (
+    <span className="flex flex-wrap items-center gap-1 text-xs tabular-nums">
+      <span className="rounded-full border bg-muted/40 px-2 py-0.5">
+        {total} tasks
+      </span>
+      <span className="rounded-full border bg-muted/40 px-2 py-0.5">
+        {open} open
+      </span>
+      {overdue > 0 && (
+        <span className="rounded-full border border-critical/30 bg-critical/10 px-2 py-0.5 text-critical">
+          {overdue} overdue
+        </span>
+      )}
+      <span className="rounded-full border bg-muted/40 px-2 py-0.5">
+        {completed} done
+      </span>
+    </span>
+  );
+}
+
+function PeopleChips({
+  people,
+  max = 8,
+}: {
+  people: DeliveryStructureBrand["people"];
+  max?: number;
+}) {
+  if (people.length === 0)
+    return (
+      <span className="text-xs text-muted-foreground">Nobody assigned</span>
+    );
+  const shown = people.slice(0, max);
+  return (
+    <ul className="flex flex-wrap gap-1">
+      {shown.map((entry) => (
+        <li
+          key={entry.person.id ?? entry.person.name}
+          className="inline-flex h-6 items-center gap-1 rounded-full border bg-background px-2 text-xs"
+          title={`${entry.open} open · ${entry.completed} done`}
+        >
+          {userName(entry.person)}
+          <span className="font-medium tabular-nums text-muted-foreground">
+            ×{entry.total}
+          </span>
+        </li>
+      ))}
+      {people.length > shown.length && (
+        <li className="inline-flex h-6 items-center rounded-full px-2 text-xs text-muted-foreground">
+          +{people.length - shown.length} more
+        </li>
+      )}
+    </ul>
+  );
+}
+
+function ProjectRow({ project }: { project: DeliveryStructureProject }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="rounded-lg border bg-background">
+      <button
+        type="button"
+        className="flex w-full flex-wrap items-center justify-between gap-2 px-3 py-2 text-left"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="flex min-w-0 items-center gap-2">
+          {open ? (
+            <LuChevronDown aria-hidden className="size-3.5 shrink-0" />
+          ) : (
+            <LuChevronRight aria-hidden className="size-3.5 shrink-0" />
+          )}
+          <span className="truncate text-sm font-medium">
+            {project.project.name}
+          </span>
+          {project.project.code && (
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {project.project.code}
+            </span>
+          )}
+        </span>
+        <CountChips
+          total={project.total}
+          open={project.open}
+          completed={project.completed}
+          overdue={project.overdue}
+        />
+      </button>
+      <div className="px-3 pb-2 pl-9">
+        <PeopleChips people={project.people} />
+      </div>
+      {open && (
+        <div className="border-t px-3 py-2 pl-9">
+          <ul className="divide-y">
+            {project.tasks.map((task) => (
+              <li
+                key={task.id}
+                className="flex flex-wrap items-center justify-between gap-2 py-1.5 text-sm"
+              >
+                <Link
+                  to={`/tasks?task=${task.id}`}
+                  className="flex min-w-0 items-center gap-2 underline-offset-4 hover:underline"
+                >
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">
+                    {task.code}
+                  </span>
+                  <span className="truncate">{task.title}</span>
+                </Link>
+                <span className="flex flex-wrap items-center gap-1 text-xs">
+                  <span
+                    className={
+                      task.overdue
+                        ? "font-medium text-critical"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {task.dueDate
+                      ? `due ${formatDateOnly(task.dueDate)}`
+                      : "no due date"}
+                  </span>
+                  <span className="rounded-full border bg-muted/40 px-2 py-0.5">
+                    {task.status.replace(/_/g, " ")}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {task.assignees.length
+                      ? task.assignees.map(userName).join(", ")
+                      : "unassigned"}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
+          {project.moreTasks > 0 && (
+            <p className="pt-2 text-xs text-muted-foreground">
+              +{project.moreTasks} more —{" "}
+              <Link
+                to={
+                  project.project.id
+                    ? `/tasks?project=${project.project.id}`
+                    : "/tasks"
+                }
+                className="text-primary underline-offset-4 hover:underline"
+              >
+                open in Tasks
+              </Link>
+            </p>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function BrandRow({ brand }: { brand: DeliveryStructureBrand }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="py-2">
+      <button
+        type="button"
+        className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="flex items-center gap-2">
+          {open ? (
+            <LuChevronDown aria-hidden className="size-4 shrink-0" />
+          ) : (
+            <LuChevronRight aria-hidden className="size-4 shrink-0" />
+          )}
+          <BrandName
+            name={brand.brand.name}
+            color={brand.brand.color}
+            noBrand={brand.brand.noBrand}
+            className="text-sm font-semibold"
+          />
+          <span className="text-xs text-muted-foreground">
+            {brand.projects.length} project
+            {brand.projects.length === 1 ? "" : "s"}
+          </span>
+        </span>
+        <CountChips
+          total={brand.total}
+          open={brand.open}
+          completed={brand.completed}
+          overdue={brand.overdue}
+        />
+      </button>
+      <div className="mt-1.5 pl-6">
+        <PeopleChips people={brand.people} />
+      </div>
+      {open && (
+        <ul className="mt-2 space-y-2 pl-6">
+          {brand.projects.map((project) => (
+            <ProjectRow key={project.project.id ?? "none"} project={project} />
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+function BrandStructure({ data }: { data: DeliveryBrandStructureResponse }) {
+  if (data.brands.length === 0) {
+    return (
+      <p className="py-6 text-center text-sm text-muted-foreground">
+        No tasks in this period.
+      </p>
+    );
+  }
+  return (
+    <ul className="divide-y">
+      {data.brands.map((brand) => (
+        <BrandRow key={brand.brand.id} brand={brand} />
+      ))}
+    </ul>
   );
 }

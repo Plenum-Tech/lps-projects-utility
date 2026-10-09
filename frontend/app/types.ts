@@ -3208,6 +3208,42 @@ export interface DeliveryPersonResponse {
   openWork: DeliveryTaskRow[];
 }
 
+export interface DeliveryStructureCounts {
+  total: number;
+  open: number;
+  completed: number;
+  overdue: number;
+}
+export interface DeliveryStructurePerson extends DeliveryStructureCounts {
+  person: DeliveryUserRef;
+}
+export interface DeliveryStructureTask {
+  id: string;
+  code: string;
+  title: string;
+  status: string;
+  dueDate: string | null;
+  overdue: boolean;
+  assignees: DeliveryUserRef[];
+}
+export interface DeliveryStructureProject extends DeliveryStructureCounts {
+  project: { id: string | null; code: string; name: string };
+  people: DeliveryStructurePerson[];
+  tasks: DeliveryStructureTask[];
+  moreTasks: number;
+}
+export interface DeliveryStructureBrand extends DeliveryStructureCounts {
+  brand: DeliveryBrandRef;
+  people: DeliveryStructurePerson[];
+  projects: DeliveryStructureProject[];
+}
+/** GET /analytics/delivery/brand-structure — brand › project › tasks + assignees, active in the period. */
+export interface DeliveryBrandStructureResponse {
+  meta: DeliveryMeta;
+  totals: { brands: number; projects: number; tasks: number; open: number };
+  brands: DeliveryStructureBrand[];
+}
+
 export interface DeliveryTeamMapResponse {
   meta: DeliveryMeta;
   startDate: string;

@@ -560,6 +560,101 @@ export async function getPerson(req: Request, res: Response): Promise<void> {
   );
 }
 
+const STRUCTURE_TASKS_PER_PROJECT = 25;
+
+/**
+ * GET /brand-structure — brand › project › tasks and the people assigned, for
+ * tasks active in the period (created or completed in it, or still open).
+ */
+export async function getBrandStructure(req: Request, res: Response): Promise<void> {
+  await respond(req, res, "brand-structure", (ctx) => {
+    const { start, end } = ctx.period.current;
+    type Counts = { total: number; open: number; completed: number; overdue: number };
+    const counts = (): Counts => ({ total: 0, open: 0, completed: 0, overdue: 0 });
+    const bump = (c: Counts, f: TaskFact) => {
+      c.total++;
+      if (f.closedDay === null) {
+        c.open++;
+        if (f.dueDay !== null && f.dueDay < ctx.today) c.overdue++;
+      } else if (f.completedDay !== null) c.completed++;
+    };
+    type People = Map<string, Counts>;
+    type ProjectAgg = { counts: Counts; people: People; tasks: TaskFact[] };
+    type BrandAgg = { counts: Counts; people: People; projects: Map<string, ProjectAgg> };
+    const brands = new Map<string, BrandAgg>();
+
+    for (const f of ctx.facts) {
+      const createdIn = f.createdDay >= start && f.createdDay <= end;
+      const completedIn = f.completedDay !== null && f.completedDay >= start && f.completedDay <= end;
+      const stillOpen = f.closedDay === null && f.createdDay <= end;
+      if (!createdIn && !completedIn && !stillOpen) continue;
+      const brandId = brandKey(ctx, f);
+      const brand = brands.get(brandId) ?? { counts: counts(), people: new Map(), projects: new Map() };
+      brands.set(brandId, brand);
+      const projectId = f.project ?? "none";
+      const project = brand.projects.get(projectId) ?? { counts: counts(), people: new Map(), tasks: [] };
+      brand.projects.set(projectId, project);
+      bump(brand.counts, f);
+      bump(project.counts, f);
+      project.tasks.push(f);
+      for (const d of f.doers) {
+        const bp = brand.people.get(d) ?? counts();
+        bump(bp, f);
+        brand.people.set(d, bp);
+        const pp = project.people.get(d) ?? counts();
+        bump(pp, f);
+        project.people.set(d, pp);
+      }
+    }
+
+    const peopleList = (people: People) =>
+      [...people]
+        .map(([id, c]) => ({ person: userRef(ctx, id), ...c }))
+        .sort((a, b) => b.total - a.total || a.person.name.localeCompare(b.person.name));
+    const taskOrder = (a: TaskFact, b: TaskFact) => {
+      const ao = a.closedDay === null ? 0 : 1;
+      const bo = b.closedDay === null ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+      return (a.dueDay ?? Number.MAX_SAFE_INTEGER) - (b.dueDay ?? Number.MAX_SAFE_INTEGER) || b.createdDay - a.createdDay;
+    };
+
+    const result = [...brands]
+      .map(([brandId, b]) => ({
+        brand: brandRef(ctx, brandId),
+        ...b.counts,
+        people: peopleList(b.people),
+        projects: [...b.projects]
+          .map(([projectId, p]) => {
+            const ref = projectId === "none" ? null : (ctx.ref.projects.get(projectId) ?? null);
+            const sorted = p.tasks.sort(taskOrder);
+            return {
+              project: { id: projectId === "none" ? null : projectId, code: ref?.code ?? "", name: ref?.name ?? (projectId === "none" ? "No project" : "(deleted project)") },
+              ...p.counts,
+              people: peopleList(p.people),
+              tasks: sorted.slice(0, STRUCTURE_TASKS_PER_PROJECT).map((f) => ({
+                id: f.id,
+                code: f.code,
+                title: f.title,
+                status: f.status,
+                dueDate: f.dueDay === null ? null : keyFromDay(f.dueDay),
+                overdue: f.closedDay === null && f.dueDay !== null && f.dueDay < ctx.today,
+                assignees: f.doers.map((d) => userRef(ctx, d)),
+              })),
+              moreTasks: Math.max(0, sorted.length - STRUCTURE_TASKS_PER_PROJECT),
+            };
+          })
+          .sort((a, b) => b.total - a.total || a.project.name.localeCompare(b.project.name)),
+      }))
+      .sort((a, b) => b.total - a.total || a.brand.name.localeCompare(b.brand.name));
+
+    const totals = result.reduce(
+      (acc, b) => ({ brands: acc.brands + 1, projects: acc.projects + b.projects.length, tasks: acc.tasks + b.total, open: acc.open + b.open }),
+      { brands: 0, projects: 0, tasks: 0, open: 0 }
+    );
+    return { totals, brands: result };
+  });
+}
+
 /** GET /team-map — brand team map coverage since the tracking start date. */
 export async function getTeamMap(req: Request, res: Response): Promise<void> {
   await respond(req, res, "team-map", (ctx) => {
