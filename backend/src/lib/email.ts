@@ -118,6 +118,29 @@ function resolveRecipient(params: SendEmailParams): { to: string; subject: strin
   return { to: redirect, subject: `[to: ${params.to}] ${params.subject}` };
 }
 
+/** Rough plain-text rendering of an email's HTML (links kept as "label: url"). */
+export function plainTextOf(html: string): string {
+  return html
+    .replace(/<style[\s\S]*?<\/style>/gi, "")
+    .replace(/<head[\s\S]*?<\/head>/gi, "")
+    .replace(/<a\s+[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const text = label.replace(/<[^>]+>/g, "").trim();
+      return text && text !== href ? `${text}: ${href}` : href;
+    })
+    .replace(/<(br|\/p|\/div|\/tr|\/h[1-6]|\/li)[^>]*>/gi, "\n")
+    .replace(/<\/td>/gi, " ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** Sends one email and throws on failure — used by the admin test endpoint. */
 export async function sendEmailOrThrow(params: SendEmailParams): Promise<void> {
   const client = getTransporter();
@@ -128,8 +151,10 @@ export async function sendEmailOrThrow(params: SendEmailParams): Promise<void> {
     from: getFromAddress(),
     to,
     subject,
-    html: params.html,
-    text: params.text,
+    html: params.html.trim(),
+    // Always include a plain-text part: some clients (notably Outlook desktop)
+    // show an empty body for HTML-only messages they cannot render.
+    text: params.text ?? plainTextOf(params.html),
   });
 }
 

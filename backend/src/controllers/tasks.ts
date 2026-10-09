@@ -816,8 +816,19 @@ async function normalizeColumnIfNeeded(task: ITask): Promise<void> {
 }
 
 /** Task fields every task email needs. */
+/** The task fields the notification emails show (code, project, dates, status). */
 function emailTask(task: ITask) {
-  return { _id: task._id as mongoose.Types.ObjectId, title: task.title, dueDate: task.dueDate, priority: task.priority };
+  return {
+    _id: task._id as mongoose.Types.ObjectId,
+    title: task.title,
+    dueDate: task.dueDate,
+    startDate: task.startDate,
+    priority: task.priority,
+    status: task.status,
+    shortCode: task.shortCode,
+    number: task.number,
+    project: task.project,
+  };
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {
