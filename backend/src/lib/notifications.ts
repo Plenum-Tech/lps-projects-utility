@@ -6,6 +6,7 @@ import {
   type NotificationType,
 } from "../models/Notification.js";
 import type { EmailPreferences, IUser } from "../models/User.js";
+import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 import {
   sendEmail,
@@ -217,7 +218,30 @@ export interface TaskNotificationTarget {
   _id: mongoose.Types.ObjectId;
   title: string;
   dueDate?: Date | null;
+  startDate?: Date | null;
   priority?: string;
+  status?: string;
+  shortCode?: string | null;
+  number?: number | null;
+  /** Project id, or a populated project with a name. */
+  project?: mongoose.Types.ObjectId | { _id?: unknown; name?: string } | null;
+}
+
+/** "In progress" from "in_progress". */
+function statusLabel(status: string | undefined): string | null {
+  if (!status) return null;
+  const text = status.replace(/_/g, " ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Project name for an email: populated doc or a lookup by id. */
+async function projectNameOf(project: TaskNotificationTarget["project"]): Promise<string | null> {
+  if (!project) return null;
+  if (typeof project === "object" && "name" in project && typeof project.name === "string") return project.name;
+  const id = typeof (project as { toHexString?: unknown }).toHexString === "function" ? (project as mongoose.Types.ObjectId) : null;
+  if (!id) return null;
+  const doc = await Project.findById(id).select("name").lean();
+  return doc?.name ?? null;
 }
 
 export interface TaskNotifyParams {
@@ -282,18 +306,25 @@ export async function notifyTaskAsync(params: TaskNotifyParams): Promise<number>
 
   if (params.skipEmail) return users.length;
   const dueDate = formatDueDate(params.task.dueDate);
+  const startDate = formatDueDate(params.task.startDate);
+  const taskCode = params.task.shortCode ?? (params.task.number ? `#${params.task.number}` : null);
+  const projectName = await projectNameOf(params.task.project);
   const emails = users
     .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))
     .map((user) => ({
       to: user.email,
-      subject: params.email.subject,
+      subject: taskCode && !params.email.subject.includes(taskCode) ? `${params.email.subject} · ${taskCode}` : params.email.subject,
       html: params.email.render ? params.email.render(firstNameOf(user.name)) : taskEmailTemplate({
-        firstName: firstNameOf(user.name),
+        firstName: user.name,
         heading: params.email.heading,
         intro: params.email.intro,
         taskId: params.task._id.toString(),
         taskTitle: params.task.title,
+        taskCode,
+        projectName,
+        startDate,
         dueDate,
+        status: statusLabel(params.task.status),
         priority: params.task.priority ?? null,
         quote: params.email.quote ?? null,
         quoteAuthor: params.email.quoteAuthor ?? null,

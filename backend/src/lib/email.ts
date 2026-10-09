@@ -245,6 +245,9 @@ export function appUrl(): string {
   return settingsAppUrl();
 }
 
+/** Product name shown in every email header, footer and subject suffix. */
+export const PRODUCT_NAME = "LPS Projects Utility";
+
 /** Company name for email copy (plain text — escape before putting it in HTML). */
 export function companyName(): string {
   return companySettings().name || DEFAULT_COMPANY_NAME;
@@ -263,19 +266,15 @@ const BASE_STYLE = `
 `;
 
 const HEADER_STYLE = `
-  background-color: #3b82f6;
-  color: white;
-  padding: 24px;
+  padding: 8px 0 20px;
   text-align: center;
-  border-radius: 8px 8px 0 0;
 `;
 
 const BODY_STYLE = `
   background-color: #ffffff;
-  padding: 24px;
+  padding: 32px 36px;
   border: 1px solid #e5e7eb;
-  border-top: none;
-  border-radius: 0 0 8px 8px;
+  border-radius: 10px;
 `;
 
 const FOOTER_STYLE = `
@@ -296,7 +295,7 @@ const BADGE_STYLE = `
 
 const BUTTON_STYLE = `
   display: inline-block;
-  background-color: #3b82f6;
+  background-color: #16a34a;
   color: #ffffff !important;
   text-decoration: none;
   padding: 12px 24px;
@@ -327,30 +326,30 @@ function companyAddressHtml(): string {
 
 /** `headerTitle` must already be safe (static text or escaped). */
 function wrapTemplate(headerTitle: string, bodyHtml: string): string {
-  const name = escapeHtml(companyName());
+  const brand = escapeHtml(PRODUCT_NAME);
+  const company = escapeHtml(companyName());
   const logoUrl = emailLogoUrl();
   const logo = logoUrl
-    ? `<img src="${escapeHtml(logoUrl)}" alt="${name}" height="40" style="display: block; margin: 0 auto 8px; max-height: 40px; max-width: 200px; border: 0;">`
-    : "";
+    ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" height="44" style="display: block; margin: 0 auto 6px; max-height: 44px; max-width: 220px; border: 0;">`
+    : `<div style="font-size: 22px; font-weight: 700; color: #111827; letter-spacing: -0.01em;">${brand}</div>`;
   const address = companyAddressHtml();
   return `
 <!DOCTYPE html>
 <html>
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"></head>
-<body style="margin: 0; padding: 20px; background-color: #f3f4f6;">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>${headerTitle}</title></head>
+<body style="margin: 0; padding: 28px 16px; background-color: #f3f4f6;">
   <div style="${BASE_STYLE}">
     <div style="${HEADER_STYLE}">
       ${logo}
-      <h1 style="margin: 0; font-size: 20px;">${logo ? "" : "🏢 "}${name}</h1>
-      <p style="margin: 8px 0 0; opacity: 0.9; font-size: 14px;">${headerTitle}</p>
+      <p style="margin: 6px 0 0; color: #6b7280; font-size: 13px;">${headerTitle}</p>
     </div>
     <div style="${BODY_STYLE}">
       ${bodyHtml}
     </div>
     <div style="${FOOTER_STYLE}">
-      This is an automated notification from ${name}.
+      This is an automated notification from ${brand}${company && company !== brand ? ` for ${company}` : ""}.
       You can turn task, project and time-log emails off in your notification settings.
-      ${address ? `<div style="margin-top: 8px;">${name}<br>${address}</div>` : ""}
+      ${address ? `<div style="margin-top: 8px;">${company}<br>${address}</div>` : ""}
     </div>
   </div>
 </body>
@@ -514,6 +513,7 @@ const PRIORITY_COLORS: Record<string, string> = {
  * and a button that opens the task detail sheet.
  */
 export function taskEmailTemplate(params: {
+  /** Greeting name (full name preferred). */
   firstName: string;
   /** Header line (static text, escaped anyway). */
   heading: string;
@@ -521,23 +521,36 @@ export function taskEmailTemplate(params: {
   intro: string;
   taskId: string;
   taskTitle: string;
+  /** "HRUHSC-21" or "#13655". */
+  taskCode?: string | null;
+  projectName?: string | null;
+  startDate?: string | null;
   dueDate?: string | null;
   priority?: string | null;
+  status?: string | null;
   /** Optional quoted text (comment body, review notes…) — escaped. */
   quote?: string | null;
   quoteAuthor?: string | null;
   buttonLabel?: string;
 }): string {
-  const color = PRIORITY_COLORS[params.priority ?? ""] || "#3b82f6";
+  const color = PRIORITY_COLORS[params.priority ?? ""] || "#16a34a";
   const link = `${appUrl()}/tasks?task=${encodeURIComponent(params.taskId)}`;
+  const row = (label: string, valueHtml: string) =>
+    `<tr><td style="padding: 6px 12px 6px 0; color: #6b7280; font-size: 13px; white-space: nowrap; vertical-align: top;">${escapeHtml(label)}</td><td style="padding: 6px 0; font-weight: 600; font-size: 14px; color: #111827;">${valueHtml}</td></tr>`;
+  const titleLine = params.taskCode
+    ? `${escapeHtml(params.taskTitle)} <span style="color: #6b7280; font-weight: 500;">· ${escapeHtml(params.taskCode)}</span>`
+    : escapeHtml(params.taskTitle);
   const body = `
-    <p>Hi <strong>${escapeHtml(params.firstName)}</strong>,</p>
-    <p>${escapeHtml(params.intro)}</p>
-    <div style="background-color: #f9fafb; border-left: 4px solid ${color}; padding: 16px; margin: 16px 0; border-radius: 0 6px 6px 0;">
-      <h3 style="margin: 0 0 8px; color: #1f2937;">${escapeHtml(params.taskTitle)}</h3>
+    <h2 style="margin: 0 0 12px; font-size: 22px; color: #111827;">Hello ${escapeHtml(params.firstName)}!</h2>
+    <p style="margin: 0 0 16px; color: #374151; font-size: 15px;">${escapeHtml(params.intro)}</p>
+    <div style="background-color: #f9fafb; border-left: 4px solid ${color}; padding: 16px 18px; margin: 16px 0; border-radius: 0 8px 8px 0;">
+      <h3 style="margin: 0 0 10px; font-size: 17px; color: #111827;">${titleLine}</h3>
       <table style="width: 100%; border-collapse: collapse;">
-        ${params.priority ? `<tr><td style="padding: 4px 0; color: #6b7280; font-size: 13px;">Priority</td><td style="padding: 4px 0; font-weight: 600; font-size: 13px;"><span style="${BADGE_STYLE} background-color: ${color}; color: white; font-size: 12px;">${escapeHtml(params.priority.toUpperCase())}</span></td></tr>` : ""}
-        <tr><td style="padding: 4px 0; color: #6b7280; font-size: 13px;">Due Date</td><td style="padding: 4px 0; font-weight: 600; font-size: 13px;">${params.dueDate ? escapeHtml(params.dueDate) : "No due date"}</td></tr>
+        ${params.projectName ? row("Project", escapeHtml(params.projectName)) : ""}
+        ${row("Start date", params.startDate ? escapeHtml(params.startDate) : "Not set")}
+        ${row("Due date", params.dueDate ? escapeHtml(params.dueDate) : "No due date")}
+        ${params.status ? row("Status", escapeHtml(params.status)) : ""}
+        ${params.priority ? row("Priority", `<span style="${BADGE_STYLE} background-color: ${color}; color: white; font-size: 12px; margin: 0;">${escapeHtml(params.priority.toUpperCase())}</span>`) : ""}
       </table>
       ${
         params.quote
@@ -548,7 +561,10 @@ export function taskEmailTemplate(params: {
           : ""
       }
     </div>
-    <a href="${link}" style="${BUTTON_STYLE}">${escapeHtml(params.buttonLabel ?? "View Task")}</a>
+    <div style="text-align: center; margin: 24px 0 8px;">
+      <a href="${link}" style="${BUTTON_STYLE}">${escapeHtml(params.buttonLabel ?? "View Task")}</a>
+    </div>
+    <p style="margin: 0; text-align: center; color: #6b7280; font-size: 12px;">Or open this link: <a href="${link}" style="color: #16a34a;">${escapeHtml(link)}</a></p>
   `;
   return wrapTemplate(escapeHtml(params.heading), body);
 }
