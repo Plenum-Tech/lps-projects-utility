@@ -327,7 +327,10 @@ function companyAddressHtml(): string {
 /** `headerTitle` must already be safe (static text or escaped). */
 function wrapTemplate(headerTitle: string, bodyHtml: string): string {
   const brand = escapeHtml(PRODUCT_NAME);
-  const company = escapeHtml(companyName());
+  const companyRaw = companyName();
+  // "LPS – Projects Utility" and "LPS Projects Utility" are the same brand: no "for …" suffix.
+  const sameAsBrand = companyRaw.replace(/[^a-z0-9]/gi, "").toLowerCase() === PRODUCT_NAME.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const company = escapeHtml(companyRaw);
   const logoUrl = emailLogoUrl();
   const logo = logoUrl
     ? `<img src="${escapeHtml(logoUrl)}" alt="${brand}" height="44" style="display: block; margin: 0 auto 6px; max-height: 44px; max-width: 220px; border: 0;">`
@@ -347,7 +350,7 @@ function wrapTemplate(headerTitle: string, bodyHtml: string): string {
       ${bodyHtml}
     </div>
     <div style="${FOOTER_STYLE}">
-      This is an automated notification from ${brand}${company && company !== brand ? ` for ${company}` : ""}.
+      This is an automated notification from ${brand}${company && !sameAsBrand ? ` for ${company}` : ""}.
       You can turn task, project and time-log emails off in your notification settings.
       ${address ? `<div style="margin-top: 8px;">${company}<br>${address}</div>` : ""}
     </div>
