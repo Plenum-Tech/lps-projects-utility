@@ -50,10 +50,11 @@ lps-me.com (source `Documents\Websites\LPS-Brands`, Azure Container App `lps-web
 
 ## Open items for you
 
-1. **Email** (SMTP2GO: `mail-eu.smtp2go.com:2525`, STARTTLS, user `projectsutility.com`, from `info@projectsutility.com`; all set on Azure and in the local `.env`). Two steps left for you:
+1. **Email** (SMTP2GO: `mail-eu.smtp2go.com:2525`, STARTTLS, user `projectsutility.com`, from `support@lps-me.com`; all set on Azure and in the local `.env`). Two steps left for you:
    - set the password: `az containerapp secret set -n lps-projects-utility -g lps-projects-utility-rg --secrets smtp-pass=<password>` (the app's `SMTP_PASS` already reads this secret; a new revision picks it up)
    - switch email on: `az containerapp update -n lps-projects-utility -g lps-projects-utility-rg --set-env-vars EMAIL_ENABLED=true`
-   Check it in Settings → Notifications (SMTP status). `EMAIL_REDIRECT_TO=bala.r@plenum-tech.com` still routes every email to you; remove it when real users should receive their own. With `JOBS_MODE=in-process`, task reminders will email about the imported overdue tasks once email is on.
+   Check it in Settings → Notifications (SMTP status; the result shows the mail server's acceptance line, and every send is logged as `[email] sent …`).
+   **Delivery to lps-me.com (Microsoft 365) needs the sender domain authenticated**: verify `lps-me.com` as a sender domain in SMTP2GO (its 3 CNAMEs at GoDaddy) and add `include:spf.smtp2go.com` to the lps-me.com SPF record — otherwise M365 quarantines the mail as spoofed. `EMAIL_REDIRECT_TO=bala.r@plenum-tech.com` still routes every email to you; remove it when real users should receive their own. With `JOBS_MODE=in-process`, task reminders will email about the imported overdue tasks once email is on.
    Locally, `SMTP_PASS` is blank (emails are skipped); add `EMAIL_ENABLED=false` to `backend/.env` to be sure nothing goes out.
 2. **Change the `admin@hoistra.ai` mailbox password** (it was shared in chat), and the cPanel/server credentials of the compromised projectsutility.com host.
 3. **Pearity**: enable it in Settings → Integrations, set the real production engine URL, create an API key, and send `docs/pearity-integration.md` to the Pearity team.
