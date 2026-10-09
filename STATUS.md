@@ -43,6 +43,10 @@ az containerapp update -n lps-projects-utility -g lps-projects-utility-rg --cont
 
 Check `/api/health`: it shows the version and `db: up`. The ACR build takes longer now (LibreOffice install, ~5 min). Data is in Cosmos, so it survives updates and restarts.
 
+## Public website link
+
+lps-me.com (source `Documents\Websites\LPS-Brands`, Azure Container App `lps-website` in *LPS-Subscription*) links to this app from **Menu → Projects Utility** and the footer's **Team login**. The URL is `PROJECTS_UTILITY_URL` in `src/data/navData.ts`. Pre-change image kept as `lpswebsite.azurecr.io/lpswebsite:rollback-2026-10-09`.
+
 ## Open items for you
 
 1. **Email**: set the SMTP password secret. Until then no emails are sent (OTP codes, invitations, notifications):
