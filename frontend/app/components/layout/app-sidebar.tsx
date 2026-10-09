@@ -12,7 +12,6 @@ import {
   History,
   ListChecks,
   MailPlus,
-  Sheet,
   Timer,
   LayoutDashboard,
   LoaderCircle,
@@ -179,7 +178,8 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Delivery Pulse", to: "/reports/delivery", icon: Activity, roles: MANAGERS },
       { title: "Task Report", to: "/reports/tasks", icon: ListChecks, roles: MANAGERS },
       { title: "Time Log Report", to: "/reports/time", icon: BarChart3, roles: MANAGERS },
-      { title: "Weekly Timesheet", to: "/reports/timesheets", icon: Sheet, roles: MANAGERS },
+      // Weekly Timesheet (submit/approve workflow) is hidden: hours are covered by the
+      // Time Log Report. The page still exists at /reports/timesheets.
       { title: "HR Reports", to: "/admin/reports", icon: BarChart3, roles: ADMIN },
       { title: "Activity Log", to: "/admin/activity-log", icon: History, roles: ADMIN },
       {
