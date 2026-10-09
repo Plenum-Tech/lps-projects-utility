@@ -45,6 +45,8 @@ import type {
   DeliveryStructureBrand,
   DeliveryStructureProject,
   DeliveryTeamMapResponse,
+  DeliveryTeamMapWorker,
+  DeliveryUserRef,
 } from "@/types";
 
 type PersonRow = DeliveryPeopleResponse["rows"][number];
@@ -210,7 +212,7 @@ export function PeopleSection({
         title="Team map coverage"
         description={
           teamMap.data
-            ? `Since ${formatDateOnly(teamMap.data.startDate)} (the period filter doesn't apply) · ${teamMap.data.mappedBrands} mapped ${teamMap.data.mappedBrands === 1 ? "brand" : "brands"}.`
+            ? `From each brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = a task on this brand done only by people not listed for it; counted from ${formatDateOnly(teamMap.data.startDate)} since the map reflects the current roster — the period filter doesn't apply. "Mapped but unused" = listed for the brand but with no task on it in the window.`
             : "Who works on which brand, against each brand's team map."
         }
         action={
@@ -375,150 +377,94 @@ function PeopleTable({
 }
 
 function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
+  const rows = data.rows.filter((r) => r.tasks > 0 || r.mapped.length > 0);
+  if (rows.length === 0) {
+    return (
+      <p className="py-6 text-center text-sm text-muted-foreground">
+        No brands with tasks or team maps since {formatDateOnly(data.startDate)}
+        .
+      </p>
+    );
+  }
+  const names = (list: DeliveryUserRef[]) => list.map(userName).join(", ");
+  const counted = (list: DeliveryTeamMapWorker[]) =>
+    list.map((w) => `${userName(w.person)} (${w.count})`).join(", ");
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <CoverageList
-        title="Off-map"
-        hint="Completed tasks done by people who aren't on that brand's map."
-        empty={
-          data.mappedBrands === 0
-            ? "No brand has a team map yet."
-            : "All completed work was done by mapped people."
-        }
-        count={data.offMap.reduce((sum, item) => sum + item.total, 0)}
-        tone="critical"
-      >
-        {data.offMap.map((item) => (
-          <li key={item.brand.id} className="space-y-1.5 py-2">
-            <div className="flex items-center justify-between gap-2">
-              <BrandName
-                name={item.brand.name}
-                color={item.brand.color}
-                noBrand={item.brand.noBrand}
-                className="text-sm font-medium"
-              />
-              <span className="text-xs tabular-nums text-muted-foreground">
-                {item.total} tasks
-              </span>
-            </div>
-            <ul className="flex flex-wrap gap-1">
-              {item.people.map((entry) => (
-                <li
-                  key={entry.person.id ?? entry.person.name}
-                  className="inline-flex h-6 items-center gap-1 rounded-full border bg-muted/40 px-2 text-xs"
-                >
-                  {userName(entry.person)}
-                  <span className="font-medium tabular-nums text-critical">
-                    ×{entry.count}
+    <div className="overflow-x-auto rounded-lg border">
+      <table className="w-full min-w-[1100px] text-sm">
+        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th className="px-3 py-2">Brand</th>
+            <th className="px-3 py-2 text-right">
+              Tasks since {formatDateOnly(data.startDate)}
+            </th>
+            <th className="px-3 py-2">Off-map tasks</th>
+            <th className="px-3 py-2">On map and working it</th>
+            <th className="px-3 py-2">Off map but working it</th>
+            <th className="px-3 py-2">Mapped but unused</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y align-top">
+          {rows.map((row) => (
+            <tr key={row.brand.id}>
+              <td className="px-3 py-2">
+                <BrandName
+                  name={row.brand.name}
+                  color={row.brand.color}
+                  noBrand={row.brand.noBrand}
+                  className="font-medium"
+                />
+                <p className="mt-0.5 max-w-56 text-xs text-muted-foreground">
+                  {row.mapped.length ? names(row.mapped) : "No team map"}
+                  {row.derived && row.mapped.length > 0 && (
+                    <span title="Derived from the brand's project members">
+                      {" "}
+                      · from projects
+                    </span>
+                  )}
+                </p>
+              </td>
+              <td className="px-3 py-2 text-right tabular-nums">{row.tasks}</td>
+              <td className="px-3 py-2">
+                {row.offMapTasks === null ? (
+                  <span className="text-muted-foreground">—</span>
+                ) : (
+                  <span
+                    className={cn(
+                      "inline-flex rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
+                      row.offMapTasks === 0
+                        ? "bg-muted text-muted-foreground"
+                        : "bg-critical/10 text-critical",
+                    )}
+                  >
+                    {row.offMapTasks} · {row.offMapPct}%
                   </span>
-                </li>
-              ))}
-            </ul>
-          </li>
-        ))}
-      </CoverageList>
-
-      <CoverageList
-        title="Mapped but unused"
-        hint="People on a brand's map with no tasks on that brand."
-        empty="Everyone on a map has worked on their brand."
-        count={data.mappedUnused.reduce(
-          (sum, item) => sum + item.people.length,
-          0,
-        )}
-        tone="warn"
-      >
-        {data.mappedUnused.map((item) => (
-          <li key={item.brand.id} className="space-y-1.5 py-2">
-            <BrandName
-              name={item.brand.name}
-              color={item.brand.color}
-              className="text-sm font-medium"
-            />
-            <p className="text-xs text-muted-foreground">
-              {item.people.map(userName).join(", ")}
-            </p>
-          </li>
-        ))}
-      </CoverageList>
-
-      <CoverageList
-        title="Unmapped brands"
-        hint="Active brands with no team map."
-        empty="Every active brand has a team map."
-        count={data.unmappedBrands.length}
-        tone="neutral"
-      >
-        {data.unmappedBrands.map((item) => (
-          <li
-            key={item.brand.id}
-            className="flex items-center justify-between gap-2 py-2"
-          >
-            <BrandName
-              name={item.brand.name}
-              color={item.brand.color}
-              className="text-sm"
-            />
-            <span className="text-xs tabular-nums text-muted-foreground">
-              {item.tasks} tasks
-            </span>
-          </li>
-        ))}
-      </CoverageList>
+                )}
+              </td>
+              <td className="px-3 py-2 text-foreground">
+                {row.onMapWorking.length ? (
+                  names(row.onMapWorking.map((w) => w.person))
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-foreground">
+                {row.offMapWorking.length ? (
+                  counted(row.offMapWorking)
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">
+                {row.mappedUnused.length ? names(row.mappedUnused) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
-
-function CoverageList({
-  title,
-  hint,
-  empty,
-  count,
-  tone,
-  children,
-}: {
-  title: string;
-  hint: string;
-  empty: string;
-  count: number;
-  tone: "critical" | "warn" | "neutral";
-  children: ReactNode[];
-}) {
-  return (
-    <section aria-label={title} className="min-w-0 rounded-lg border p-3">
-      <h3 className="flex items-center justify-between gap-2 text-sm font-medium">
-        {title}
-        <span
-          className={cn(
-            "rounded-full px-2 py-0.5 text-xs tabular-nums",
-            count === 0
-              ? "bg-muted text-muted-foreground"
-              : tone === "critical"
-                ? "bg-critical/10 text-critical"
-                : tone === "warn"
-                  ? "bg-warn/10 text-warn"
-                  : "bg-muted text-foreground",
-          )}
-        >
-          {count}
-        </span>
-      </h3>
-      <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>
-      {children.length === 0 ? (
-        <p className="mt-3 flex items-center gap-2 rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">
-          <LuMap aria-hidden className="size-4 shrink-0" />
-          {empty}
-        </p>
-      ) : (
-        <ul className="mt-1 max-h-72 divide-y overflow-auto">{children}</ul>
-      )}
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/* Brands › projects › people                                           */
-/* ------------------------------------------------------------------ */
 
 function CountChips({
   total,

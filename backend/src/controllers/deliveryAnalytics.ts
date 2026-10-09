@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { Project } from "../models/Project.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
 import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
 import { BRIEF_RULES, loadBriefInputs, scoreBrief } from "../lib/delivery/briefs.js";
@@ -655,59 +656,79 @@ export async function getBrandStructure(req: Request, res: Response): Promise<vo
   });
 }
 
-/** GET /team-map — brand team map coverage since the tracking start date. */
+/**
+ * GET /team-map — brand team map coverage since the tracking start date.
+ * A brand without a configured map gets one derived from its projects'
+ * members and managers (traffic managers excluded), flagged `derived`.
+ */
 export async function getTeamMap(req: Request, res: Response): Promise<void> {
+  const projects = await Project.find({ brand: { $ne: null } })
+    .select("brand members.user manager")
+    .lean<Array<{ brand: mongoose.Types.ObjectId; members?: Array<{ user?: mongoose.Types.ObjectId | null }>; manager?: mongoose.Types.ObjectId | null }>>();
   await respond(req, res, "team-map", (ctx) => {
     const start = dayFromKey(ctx.settings.teamMapStartDate);
-    const maps = new Map(ctx.settings.brandTeamMap.filter((e) => e.users.length > 0).map((e) => [e.brand, new Set(e.users)]));
+    const traffic = new Set(ctx.settings.trafficManagers);
+    const configured = new Map(ctx.settings.brandTeamMap.filter((e) => e.users.length > 0).map((e) => [e.brand, new Set(e.users)]));
+    const derived = new Map<string, Set<string>>();
+    for (const p of projects) {
+      const brand = String(p.brand);
+      if (configured.has(brand)) continue;
+      const set = derived.get(brand) ?? new Set<string>();
+      for (const m of p.members ?? []) if (m.user && !traffic.has(String(m.user))) set.add(String(m.user));
+      if (p.manager && !traffic.has(String(p.manager))) set.add(String(p.manager));
+      if (set.size) derived.set(brand, set);
+    }
+    const mapOf = (brand: string) => configured.get(brand) ?? derived.get(brand) ?? null;
 
-    const offMap = new Map<string, Map<string, number>>();
-    const usedOnBrand = new Map<string, Set<string>>();
-    const tasksPerBrand = new Map<string, number>();
+    type Agg = { tasks: number; offMap: number; working: Map<string, number> };
+    const perBrand = new Map<string, Agg>();
     for (const f of ctx.facts) {
       const created = f.createdDay >= start && f.createdDay <= ctx.today;
       const completed = f.completedDay !== null && f.completedDay >= start && f.completedDay <= ctx.today;
       if (!created && !completed) continue;
       const brand = brandKey(ctx, f);
-      tasksPerBrand.set(brand, (tasksPerBrand.get(brand) ?? 0) + 1);
-      const used = usedOnBrand.get(brand) ?? new Set<string>();
-      for (const d of f.doers) used.add(d);
-      usedOnBrand.set(brand, used);
-      const map = maps.get(brand);
-      if (!map || !completed) continue;
-      for (const d of f.doers) {
-        if (map.has(d)) continue;
-        const people = offMap.get(brand) ?? new Map<string, number>();
-        people.set(d, (people.get(d) ?? 0) + 1);
-        offMap.set(brand, people);
-      }
+      const agg = perBrand.get(brand) ?? { tasks: 0, offMap: 0, working: new Map() };
+      perBrand.set(brand, agg);
+      agg.tasks++;
+      for (const d of f.doers) agg.working.set(d, (agg.working.get(d) ?? 0) + 1);
+      const map = mapOf(brand);
+      if (map && f.doers.length > 0 && f.doers.every((d) => !map.has(d))) agg.offMap++;
     }
+
+    const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    const rows = [...ctx.ref.brands]
+      .filter(([id, b]) => b.active || perBrand.has(id))
+      .map(([id]) => {
+        const map = mapOf(id);
+        const agg = perBrand.get(id) ?? { tasks: 0, offMap: 0, working: new Map<string, number>() };
+        const workers = [...agg.working];
+        return {
+          brand: brandRef(ctx, id),
+          mapped: map ? [...map].map((u) => userRef(ctx, u)).sort(byName) : [],
+          derived: !configured.has(id) && derived.has(id),
+          tasks: agg.tasks,
+          offMapTasks: map ? agg.offMap : null,
+          offMapPct: map && agg.tasks > 0 ? Math.round((agg.offMap / agg.tasks) * 100) : null,
+          onMapWorking: map
+            ? workers.filter(([u]) => map.has(u)).map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person))
+            : [],
+          offMapWorking: map
+            ? workers.filter(([u]) => !map.has(u)).map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person))
+            : workers.map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person)),
+          mappedUnused: map ? [...map].filter((u) => !agg.working.has(u)).map((u) => userRef(ctx, u)).sort(byName) : [],
+        };
+      })
+      .sort((a, b) => (b.offMapTasks ?? -1) - (a.offMapTasks ?? -1) || b.tasks - a.tasks || a.brand.name.localeCompare(b.brand.name));
 
     return {
       startDate: ctx.settings.teamMapStartDate,
-      mappedBrands: maps.size,
-      offMap: [...offMap]
-        .map(([brand, people]) => ({
-          brand: brandRef(ctx, brand),
-          total: [...people.values()].reduce((a, b) => a + b, 0),
-          people: [...people]
-            .map(([id, count]) => ({ person: userRef(ctx, id), count }))
-            .sort((a, b) => b.count - a.count || a.person.name.localeCompare(b.person.name)),
-        }))
-        .sort((a, b) => b.total - a.total),
-      mappedUnused: [...maps]
-        .map(([brand, users]) => ({
-          brand: brandRef(ctx, brand),
-          people: [...users]
-            .filter((u) => !usedOnBrand.get(brand)?.has(u))
-            .map((u) => userRef(ctx, u))
-            .sort((a, b) => a.name.localeCompare(b.name)),
-        }))
-        .filter((r) => r.people.length > 0 && !r.brand.noBrand),
-      unmappedBrands: [...ctx.ref.brands]
-        .filter(([id, b]) => b.active && !maps.has(id))
-        .map(([id]) => ({ brand: brandRef(ctx, id), tasks: tasksPerBrand.get(id) ?? 0 }))
-        .sort((a, b) => b.tasks - a.tasks || a.brand.name.localeCompare(b.brand.name)),
+      mappedBrands: configured.size,
+      derivedBrands: derived.size,
+      totals: {
+        tasks: rows.reduce((n, r) => n + r.tasks, 0),
+        offMapTasks: rows.reduce((n, r) => n + (r.offMapTasks ?? 0), 0),
+      },
+      rows,
     };
   });
 }

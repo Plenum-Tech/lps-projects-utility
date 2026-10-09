@@ -335,7 +335,10 @@ export interface LeaveBalanceResponse {
 
 /** GET /api/leaves/balances response (admin). */
 export interface LeaveBalancesResponse {
-  balances: { user: Pick<User, "_id" | "name" | "email">; balance: LeaveBalance }[];
+  balances: {
+    user: Pick<User, "_id" | "name" | "email">;
+    balance: LeaveBalance;
+  }[];
   /** Total rows matching the filter (before pagination). */
   total: number;
   /** Applied page size — null when the endpoint returned all rows (no limit sent). */
@@ -539,7 +542,8 @@ export interface NotificationReadResponse {
 /* ------------------------------------------------------------------ */
 
 /** Fixed attendance statuses — mirrors the backend `ATTENDANCE_STATUSES` enum. */
-export type AttendanceStatus = "present" | "absent" | "late" | "half_day" | "on_leave";
+export type AttendanceStatus =
+  "present" | "absent" | "late" | "half_day" | "on_leave";
 
 /** Mirrors the backend Attendance model as returned by the API (user + markedBy populated). */
 export interface Attendance {
@@ -669,9 +673,24 @@ export interface LeaveStatisticsReport {
     rejected: number;
     cancelled: number;
   };
-  byType: Array<{ type: string; count: number; approved: number; rejected: number }>;
-  byDepartment: Array<{ department: string; total: number; approved: number; rejected: number }>;
-  monthlyTrend: Array<{ month: string; total: number; approved: number; rejected: number }>;
+  byType: Array<{
+    type: string;
+    count: number;
+    approved: number;
+    rejected: number;
+  }>;
+  byDepartment: Array<{
+    department: string;
+    total: number;
+    approved: number;
+    rejected: number;
+  }>;
+  monthlyTrend: Array<{
+    month: string;
+    total: number;
+    approved: number;
+    rejected: number;
+  }>;
 }
 
 export interface DepartmentActivitiesReport {
@@ -692,10 +711,7 @@ export interface DepartmentActivitiesReport {
 
 /** Fixed review statuses — mirrors the backend `REVIEW_STATUSES` enum. */
 export type ReviewStatus =
-  | "draft"
-  | "pending_acknowledgment"
-  | "acknowledged"
-  | "completed";
+  "draft" | "pending_acknowledgment" | "acknowledged" | "completed";
 
 /** Status filter used by review lists. */
 export type ReviewStatusFilter = ReviewStatus | "all";
@@ -816,7 +832,8 @@ export interface ReviewListResponse {
 /* ------------------------------------------------------------------ */
 
 /** Fixed task statuses — mirrors the backend `TASK_STATUSES` enum. */
-export type TaskStatus = "todo" | "in_progress" | "in_review" | "completed" | "rejected";
+export type TaskStatus =
+  "todo" | "in_progress" | "in_review" | "completed" | "rejected";
 
 /** Status filter used by task lists. */
 export type TaskStatusFilter = TaskStatus | "all";
@@ -1413,7 +1430,10 @@ export interface TaskSettings {
 }
 
 export type TaskSettingsInput = Partial<
-  Pick<TaskSettings, "reminderBeforeDays" | "reminderOnDeadline" | "reminderAfterDays">
+  Pick<
+    TaskSettings,
+    "reminderBeforeDays" | "reminderOnDeadline" | "reminderAfterDays"
+  >
 >;
 
 /** Payload of the `task-updated` SSE event. */
@@ -1719,7 +1739,8 @@ export interface ProjectMember {
   addedAt: string;
 }
 
-export type ProgressMode = "manual" | "task_completion" | "total_time" | "deadline";
+export type ProgressMode =
+  "manual" | "task_completion" | "total_time" | "deadline";
 
 /** Structured project name parts: `Brand_Type_MonYYYY_Name`. */
 export interface ProjectNaming {
@@ -1868,7 +1889,9 @@ export interface ProjectInput {
   requireTaskApproval?: boolean;
 }
 
-export type ProjectUpdateInput = Partial<Omit<ProjectInput, "status" | "members">>;
+export type ProjectUpdateInput = Partial<
+  Omit<ProjectInput, "status" | "members">
+>;
 
 export interface ProjectDuplicateInput {
   name?: string;
@@ -2018,7 +2041,12 @@ export interface TimeLog {
   startTime: string;
   /** null = timer still running. */
   endTime: string | null;
-  breaks: { _id: string; startTime: string; endTime: string | null; reason?: string }[];
+  breaks: {
+    _id: string;
+    startTime: string;
+    endTime: string | null;
+    reason?: string;
+  }[];
   durationMinutes: number;
   breakMinutes: number;
   memo: string;
@@ -2037,7 +2065,12 @@ export interface TimeLog {
   updatedAt: string;
   isRunning: boolean;
   isPaused: boolean;
-  permissions: { canEdit: boolean; canDelete: boolean; canApprove: boolean; canStop: boolean };
+  permissions: {
+    canEdit: boolean;
+    canDelete: boolean;
+    canApprove: boolean;
+    canStop: boolean;
+  };
 }
 
 export interface TimeLogListResponse {
@@ -2118,7 +2151,11 @@ export interface TimesheetView {
   tasks: TimesheetTask[];
   /** 7 × "YYYY-MM-DD", Mon..Sun. */
   days: string[];
-  totals: { byDay: Record<string, number>; byTask: Record<string, number>; total: number };
+  totals: {
+    byDay: Record<string, number>;
+    byTask: Record<string, number>;
+    total: number;
+  };
   permissions: { canEdit: boolean; canSubmit: boolean; canReview: boolean };
 }
 
@@ -2130,7 +2167,8 @@ export interface PendingTimesheet extends Timesheet {
 /* Work reports                                                        */
 /* ------------------------------------------------------------------ */
 
-export type TimeReportGroupBy = "user" | "project" | "task" | "day" | "breakdown";
+export type TimeReportGroupBy =
+  "user" | "project" | "task" | "day" | "breakdown";
 
 export interface TimeBreakdownRow {
   key: string | null;
@@ -2161,7 +2199,13 @@ export interface TimeBreakdownResponse {
   from: string | null;
   to: string | null;
   employees: TimeBreakdownEmployee[];
-  totals: { minutes: number; hours: number; earnings: number; count: number; employees: number };
+  totals: {
+    minutes: number;
+    hours: number;
+    earnings: number;
+    count: number;
+    employees: number;
+  };
 }
 
 export interface TimeReportRow {
@@ -2227,7 +2271,10 @@ export interface TaskReportSummary {
   }[];
 }
 
-export interface TimesheetReportRow extends Omit<Timesheet, "entries" | "user"> {
+export interface TimesheetReportRow extends Omit<
+  Timesheet,
+  "entries" | "user"
+> {
   user: {
     _id: string;
     name: string;
@@ -2266,7 +2313,12 @@ export interface Invitation {
   email: string;
   role: Role;
   department: Pick<Department, "_id" | "name"> | null;
-  projects: Array<{ _id: string; name: string; code: string; archivedAt?: string | null }>;
+  projects: Array<{
+    _id: string;
+    name: string;
+    code: string;
+    archivedAt?: string | null;
+  }>;
   message?: string;
   status: "pending" | "accepted" | "revoked";
   state: InvitationState;
@@ -2297,7 +2349,8 @@ export interface CreateInvitationsInput {
   message?: string;
 }
 
-export type InviteResultStatus = "invited" | "resent" | "already_user" | "invalid";
+export type InviteResultStatus =
+  "invited" | "resent" | "already_user" | "invalid";
 
 export interface InviteResult {
   email: string;
@@ -2405,7 +2458,11 @@ export interface MyDashboard {
     projectsOverdue: number;
   };
   /** Completed by me in the period; `previous` = the previous equal period (null for "all"). */
-  completedTasks: { count: number; onTimePct: number | null; previous: number | null };
+  completedTasks: {
+    count: number;
+    onTimePct: number | null;
+    previous: number | null;
+  };
   /** My projects moved to a completed status in the period. */
   completedProjects: { count: number; previous: number | null };
   /** Minutes of finished time logs started in the period. */
@@ -2442,7 +2499,8 @@ export interface MyDashboard {
   weekTimelogs: WeekTimelogs;
 }
 
-export type MyCalendarItemKind = "task" | "subtask" | "leave" | "project_deadline";
+export type MyCalendarItemKind =
+  "task" | "subtask" | "leave" | "project_deadline";
 
 export interface MyCalendarItem {
   /** "<kind>:<id>", unique. */
@@ -2652,7 +2710,12 @@ export interface MeetingListItem {
   aiExtractedAt: string | null;
   createdAt: string;
   updatedAt: string;
-  counts: { segments: number; suggested: number; tasksCreated: number; dismissed: number };
+  counts: {
+    segments: number;
+    suggested: number;
+    tasksCreated: number;
+    dismissed: number;
+  };
 }
 
 export interface MeetingListResponse {
@@ -2676,7 +2739,8 @@ export interface MeetingPreviewResponse {
 }
 
 /** Transcript input shared by preview and create. */
-export type TranscriptInput = { file: File; text?: never } | { text: string; file?: never };
+export type TranscriptInput =
+  { file: File; text?: never } | { text: string; file?: never };
 
 export interface MeetingCreateInput {
   transcript: TranscriptInput;
@@ -2805,9 +2869,11 @@ export type CompanySettingsInput = Partial<{
 /* ------------------------------------------------------------------ */
 
 export type ImportType = "projects" | "tasks";
-export type ImportJobStatus = "previewed" | "running" | "completed" | "failed" | "undone";
+export type ImportJobStatus =
+  "previewed" | "running" | "completed" | "failed" | "undone";
 /** validate: ready | warning | error; run: created | updated | skipped | error. */
-export type ImportRowStatus = "ready" | "warning" | "error" | "created" | "updated" | "skipped";
+export type ImportRowStatus =
+  "ready" | "warning" | "error" | "created" | "updated" | "skipped";
 
 export interface ImportField {
   key: string;
@@ -2968,7 +3034,9 @@ export interface DeliverySettings {
   updatedAt: string | null;
 }
 
-export type DeliverySettingsInput = Partial<Omit<DeliverySettings, "updatedAt">>;
+export type DeliverySettingsInput = Partial<
+  Omit<DeliverySettings, "updatedAt">
+>;
 
 export interface DeliverySettingsResponse {
   settings: DeliverySettings;
@@ -3056,7 +3124,8 @@ export interface DeliveryBrandRef {
   noBrand: boolean;
 }
 
-export type DeliveryTaskStatus = "todo" | "in_progress" | "in_review" | "completed" | "rejected";
+export type DeliveryTaskStatus =
+  "todo" | "in_progress" | "in_review" | "completed" | "rejected";
 
 export interface DeliveryTaskRow {
   id: string;
@@ -3121,7 +3190,8 @@ export interface DeliveryTeamsResponse {
   rows: DeliveryTeamRow[];
 }
 
-export type DeliveryBrandDeltaKey = "created" | "completed" | "onTimePct" | "meanDays" | "reworkPct" | "overdue";
+export type DeliveryBrandDeltaKey =
+  "created" | "completed" | "onTimePct" | "meanDays" | "reworkPct" | "overdue";
 
 export type DeliveryBrandRow = DeliveryStats & {
   brand: DeliveryBrandRef;
@@ -3134,7 +3204,10 @@ export interface DeliveryBrandsResponse {
   rows: DeliveryBrandRow[];
 }
 
-export type DeliveryDelayedRow = DeliveryTaskRow & { stale: boolean; rejected: boolean };
+export type DeliveryDelayedRow = DeliveryTaskRow & {
+  stale: boolean;
+  rejected: boolean;
+};
 
 export interface DeliveryDelayedResponse {
   meta: DeliveryMeta;
@@ -3155,7 +3228,14 @@ export interface DeliveryRuleRate {
 
 export interface DeliveryRuleDef {
   id: number;
-  key: "attached" | "written" | "weekday" | "leadTime" | "noSameDay" | "teamMap" | "finalAsset";
+  key:
+    | "attached"
+    | "written"
+    | "weekday"
+    | "leadTime"
+    | "noSameDay"
+    | "teamMap"
+    | "finalAsset";
   label: string;
 }
 
@@ -3170,8 +3250,16 @@ export type DeliveryWeakBrief = DeliveryTaskRow & {
 export interface DeliveryBriefsResponse {
   meta: DeliveryMeta;
   rules: DeliveryRuleDef[];
-  settings: { briefingWeekday: number; minLeadDays: number; briefMinLength: number };
-  totals: { briefs: number; avgScore: number | null; rules: DeliveryRuleRate[] };
+  settings: {
+    briefingWeekday: number;
+    minLeadDays: number;
+    briefMinLength: number;
+  };
+  totals: {
+    briefs: number;
+    avgScore: number | null;
+    rules: DeliveryRuleRate[];
+  };
   byBriefer: {
     briefer: DeliveryUserRef;
     briefs: number;
@@ -3190,7 +3278,10 @@ export interface DeliveryPerson extends DeliveryUserRef {
   isTrafficManager: boolean;
 }
 
-export type DeliveryPersonStats = DeliveryStats & { brandCount: number; ranked: boolean };
+export type DeliveryPersonStats = DeliveryStats & {
+  brandCount: number;
+  ranked: boolean;
+};
 
 export interface DeliveryPeopleResponse {
   meta: DeliveryMeta;
@@ -3244,13 +3335,32 @@ export interface DeliveryBrandStructureResponse {
   brands: DeliveryStructureBrand[];
 }
 
+export interface DeliveryTeamMapWorker {
+  person: DeliveryUserRef;
+  count: number;
+}
+export interface DeliveryTeamMapRow {
+  brand: DeliveryBrandRef;
+  /** People on the brand's map (configured, or derived from its projects' members). */
+  mapped: DeliveryUserRef[];
+  derived: boolean;
+  /** Tasks created or completed since the start date. */
+  tasks: number;
+  /** Tasks done entirely by people off the map; null when the brand has no map. */
+  offMapTasks: number | null;
+  offMapPct: number | null;
+  onMapWorking: DeliveryTeamMapWorker[];
+  offMapWorking: DeliveryTeamMapWorker[];
+  mappedUnused: DeliveryUserRef[];
+}
+/** GET /analytics/delivery/team-map — per-brand coverage table since the tracking start date. */
 export interface DeliveryTeamMapResponse {
   meta: DeliveryMeta;
   startDate: string;
   mappedBrands: number;
-  offMap: { brand: DeliveryBrandRef; total: number; people: { person: DeliveryUserRef; count: number }[] }[];
-  mappedUnused: { brand: DeliveryBrandRef; people: DeliveryUserRef[] }[];
-  unmappedBrands: { brand: DeliveryBrandRef; tasks: number }[];
+  derivedBrands: number;
+  totals: { tasks: number; offMapTasks: number };
+  rows: DeliveryTeamMapRow[];
 }
 
 /* ------------------------------------------------------------------ */
