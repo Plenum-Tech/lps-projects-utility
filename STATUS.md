@@ -26,11 +26,12 @@ _Last updated: 8 Oct 2026_
 
 ## Data
 
-- LPS Brands (Worksuite company 18) imported into **both** local `ems` and Azure Cosmos: 60 users, 20 departments, 497 projects (479 branded, 94 brands), 9,617 tasks, comments, history, time logs.
+- LPS Brands (Worksuite company 18) imported into **both** local `ems` and Azure Cosmos from the 9 Oct 2026 dump (`projectsutility_new (2).sql`): 59 users, 20 departments, 498 projects (94 brands), 9,642 tasks, 168 subtasks, comments, history, 2,206 time logs.
+- **Task numbers = Worksuite task ids.** An imported task's `#number` is its Worksuite `tasks.id` (e.g. #13655), shown in the task header and used by Pearity's `taskNo`. New tasks auto-increment from the highest number (counter at 13,699 → next is #13,700). The importer keeps this rule on re-imports; `bun run renumber:worksuite [--dry-run]` applies it to data imported before 9 Oct 2026. Pre-change backups: `Documents\projectutility\*pre-renumber.gz` (local) and `lps-cosmos-backup-*-pre-renumber.gz` (Azure).
 - **Re-import a newer dump** (safe and idempotent; keeps passwords, brands and app-side edits), from `backend/`:
   `bun run import:worksuite -- --sql "<dump.sql>" --backup "<backup.tar.gz>" --company 18 --skip-files --dry-run --confirm`, then the same without `--dry-run`.
 - **Attachments**: not imported. The server backup didn't contain the files.
-- **Local backups**: `Documents\projectutility\ems-backup-*.gz`. Restore with `docker exec ems-mongo mongorestore --drop --gzip --archive=/data/db/<file>`. Run the command from PowerShell, not Git Bash, or set `MSYS_NO_PATHCONV=1` first.
+- **Local backups**: `Documents\projectutility\ems-backup-*.gz` (and `lps-cosmos-backup-*.gz` for Azure). Restore with `docker exec ems-mongo mongorestore --drop --gzip --archive=/data/db/<file>`. Run the command from PowerShell, not Git Bash, or set `MSYS_NO_PATHCONV=1` first.
 
 ## Deploy a new version
 
