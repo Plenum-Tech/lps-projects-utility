@@ -1063,7 +1063,12 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
       .select("_id number")
       .lean();
     if (clashing.length) {
-      if (!dryRun) await ensureTaskCounter();
+      if (!dryRun) {
+        await ensureTaskCounter();
+        // Renumbered app tasks must land above every incoming Worksuite id, or they
+        // would collide with a task written later in this same run.
+        await Counter.updateOne({ _id: TASK_NUMBER_COUNTER }, { $max: { seq: Math.max(...wanted) } });
+      }
       for (const t of clashing) {
         report.note("appTasksRenumbered", t.number as number);
         if (!dryRun) {
