@@ -1513,6 +1513,9 @@ export interface SendTestEmailResponse {
   to: string;
   deliveredTo: string;
   status: SmtpStatus;
+  /** SMTP server acceptance line (e.g. "250 OK id=…"), when available. */
+  smtpResponse?: string | null;
+  messageId?: string | null;
 }
 
 /* ------------------------------------------------------------------ */

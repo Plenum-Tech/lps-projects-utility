@@ -142,12 +142,12 @@ export function plainTextOf(html: string): string {
 }
 
 /** Sends one email and throws on failure — used by the admin test endpoint. */
-export async function sendEmailOrThrow(params: SendEmailParams): Promise<void> {
+export async function sendEmailOrThrow(params: SendEmailParams): Promise<{ messageId?: string; response?: string; accepted?: unknown[] }> {
   const client = getTransporter();
   if (!client) throw new Error("SMTP is not configured (SMTP_HOST, SMTP_USER, SMTP_PASS)");
 
   const { to, subject } = resolveRecipient(params);
-  await client.sendMail({
+  const info = await client.sendMail({
     from: getFromAddress(),
     to,
     subject,
@@ -156,6 +156,9 @@ export async function sendEmailOrThrow(params: SendEmailParams): Promise<void> {
     // show an empty body for HTML-only messages they cannot render.
     text: params.text ?? plainTextOf(params.html),
   });
+  // One line per accepted message, so delivery questions can start from the server log.
+  console.log(`[email] sent to=${to} subject="${subject}" response="${info.response ?? ""}"`);
+  return info;
 }
 
 /**

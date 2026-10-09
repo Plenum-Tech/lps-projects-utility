@@ -34,8 +34,9 @@ export function SmtpStatusCard({ adminEmail }: { adminEmail: string }) {
   const [to, setTo] = useState("");
   const toInvalid = to.trim() !== "" && !EMAIL_PATTERN.test(to.trim());
 
-  const failure = (sendTest.error as { response?: { data?: { hint?: string } } } | null)
-    ?.response?.data?.hint;
+  const failure = (
+    sendTest.error as { response?: { data?: { hint?: string } } } | null
+  )?.response?.data?.hint;
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -51,8 +52,8 @@ export function SmtpStatusCard({ adminEmail }: { adminEmail: string }) {
           Email delivery (SMTP)
         </CardTitle>
         <CardDescription>
-          Credentials live in the server&apos;s <code className="text-xs">.env</code> — never in
-          the database.
+          Credentials live in the server&apos;s{" "}
+          <code className="text-xs">.env</code> — never in the database.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -91,7 +92,11 @@ export function SmtpStatusCard({ adminEmail }: { adminEmail: string }) {
           </Button>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate className="space-y-2 border-t pt-4">
+        <form
+          onSubmit={handleSubmit}
+          noValidate
+          className="space-y-2 border-t pt-4"
+        >
           <Label htmlFor="test-email-to">Send a test email</Label>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input
@@ -128,6 +133,16 @@ export function SmtpStatusCard({ adminEmail }: { adminEmail: string }) {
                 {sendTest.data.deliveredTo !== sendTest.data.to &&
                   ` (redirected to ${sendTest.data.deliveredTo})`}
                 . Check the inbox — and spam — in a minute.
+                {sendTest.data.smtpResponse && (
+                  <span className="mt-1 block font-mono text-xs text-muted-foreground">
+                    Mail server accepted it: {sendTest.data.smtpResponse}
+                  </span>
+                )}
+                <span className="mt-1 block text-xs text-muted-foreground">
+                  Accepted but not delivered usually means the recipient&apos;s
+                  mail system filtered it: check Junk/Quarantine and the sender
+                  domain&apos;s SPF/DKIM records.
+                </span>
               </AlertDescription>
             </Alert>
           )}
@@ -149,16 +164,30 @@ export function SmtpStatusCard({ adminEmail }: { adminEmail: string }) {
 
 function StatusSummary({ status }: { status: SmtpStatus }) {
   const tone = status.ok
-    ? { icon: LuCircleCheck, box: "bg-primary/10 text-primary", title: "Connected" }
+    ? {
+        icon: LuCircleCheck,
+        box: "bg-primary/10 text-primary",
+        title: "Connected",
+      }
     : !status.configured
-      ? { icon: LuTriangleAlert, box: "bg-chart-4/15 text-foreground", title: "Not configured" }
-      : { icon: LuCircleAlert, box: "bg-destructive/10 text-destructive", title: "Connection failed" };
+      ? {
+          icon: LuTriangleAlert,
+          box: "bg-chart-4/15 text-foreground",
+          title: "Not configured",
+        }
+      : {
+          icon: LuCircleAlert,
+          box: "bg-destructive/10 text-destructive",
+          title: "Connection failed",
+        };
   const Icon = tone.icon;
 
   return (
     <div className="space-y-3">
       <div className="flex items-start gap-3">
-        <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${tone.box}`}>
+        <span
+          className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${tone.box}`}
+        >
           <Icon aria-hidden className="size-4" />
         </span>
         <div className="min-w-0">
@@ -172,7 +201,8 @@ function StatusSummary({ status }: { status: SmtpStatus }) {
       </div>
       {status.redirectTo && (
         <p className="rounded-md bg-chart-4/15 px-3 py-2 text-xs text-foreground">
-          Dev redirect active: every email is delivered to <strong>{status.redirectTo}</strong>.
+          Dev redirect active: every email is delivered to{" "}
+          <strong>{status.redirectTo}</strong>.
         </p>
       )}
       {(status.error || status.hint) && !status.ok && (

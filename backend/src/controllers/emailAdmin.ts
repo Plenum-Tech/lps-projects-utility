@@ -34,8 +34,9 @@ export async function sendTestEmail(req: Request, res: Response): Promise<void> 
     return;
   }
 
+  let info: { messageId?: string; response?: string } = {};
   try {
-    await sendEmailOrThrow({
+    info = await sendEmailOrThrow({
       to: recipient,
       subject: `${companyName()} SMTP test email`,
       html: testEmailTemplate({ firstName: firstNameOf(user.name), host: status.host }),
@@ -50,5 +51,5 @@ export async function sendTestEmail(req: Request, res: Response): Promise<void> 
     return;
   }
 
-  res.json({ success: true, to: recipient, deliveredTo: status.redirectTo ?? recipient, status });
+  res.json({ success: true, to: recipient, deliveredTo: status.redirectTo ?? recipient, smtpResponse: info.response ?? null, messageId: info.messageId ?? null, status });
 }
