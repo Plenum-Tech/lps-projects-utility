@@ -9,7 +9,7 @@ import {
   updateMe,
   updateUser,
 } from "../controllers/users.js";
-import { createPasswordLink, createPasswordLinks } from "../controllers/passwordSetup.js";
+import { createPasswordLink, createPasswordLinks, setDefaultPassword } from "../controllers/passwordSetup.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
@@ -27,6 +27,7 @@ router.get("/", requireAuth, requireRole("admin"), listUsers);
 router.post("/", requireAuth, requireRole("admin"), createUser);
 // Set-password links (imported users without a usable password; also works as an admin reset).
 router.post("/password-links", requireAuth, requireRole("admin"), createPasswordLinks);
+router.post("/default-password", requireAuth, requireRole("admin"), setDefaultPassword);
 router.post("/:id/password-link", requireAuth, requireRole("admin"), createPasswordLink);
 router.patch("/:id", requireAuth, requireRole("admin"), updateUser);
 router.delete("/:id", requireAuth, requireRole("admin"), deleteUser);

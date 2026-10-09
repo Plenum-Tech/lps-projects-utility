@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type FormEvent,
+} from "react";
 import {
   AlertCircle,
   Building2,
@@ -74,6 +80,7 @@ import {
 import { InviteDialog } from "@/components/users/invite-dialog";
 import {
   BulkPasswordLinksButton,
+  DefaultPasswordButton,
   NeedsPasswordBadge,
   NeedsPasswordFilterChip,
   PasswordLinkRowActions,
@@ -126,7 +133,8 @@ const ROLE_FILTER_OPTIONS = [
  */
 export default function AdminUsers() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: UsersPageTab = searchParams.get("tab") === "invitations" ? "invitations" : "users";
+  const tab: UsersPageTab =
+    searchParams.get("tab") === "invitations" ? "invitations" : "users";
   const [formUser, setFormUser] = useState<User | "new" | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
 
@@ -139,10 +147,10 @@ export default function AdminUsers() {
           else updated.set("tab", next);
           return updated;
         },
-        { preventScrollReset: true }
+        { preventScrollReset: true },
       );
     },
-    [setSearchParams]
+    [setSearchParams],
   );
 
   return (
@@ -153,7 +161,8 @@ export default function AdminUsers() {
             Manage Users
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Invite people by email or create accounts directly, and manage roles and access.
+            Invite people by email or create accounts directly, and manage roles
+            and access.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -170,10 +179,15 @@ export default function AdminUsers() {
 
       <Tabs
         value={tab}
-        onValueChange={(value) => changeTab(value === "invitations" ? "invitations" : "users")}
+        onValueChange={(value) =>
+          changeTab(value === "invitations" ? "invitations" : "users")
+        }
         className="mt-6 gap-5"
       >
-        <TabsList variant="line" className="w-full justify-start border-b pb-0.5">
+        <TabsList
+          variant="line"
+          className="w-full justify-start border-b pb-0.5"
+        >
           <TabsTrigger value="users" className="flex-none px-2.5">
             <LuUsers aria-hidden />
             Users
@@ -187,7 +201,9 @@ export default function AdminUsers() {
           {tab === "users" && <UsersTab onEdit={setFormUser} />}
         </TabsContent>
         <TabsContent value="invitations">
-          {tab === "invitations" && <InvitationsTable onInvite={() => setInviteOpen(true)} />}
+          {tab === "invitations" && (
+            <InvitationsTable onInvite={() => setInviteOpen(true)} />
+          )}
         </TabsContent>
       </Tabs>
 
@@ -216,19 +232,16 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   const [roleFilter, setRoleFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
-  const filtered = search !== "" || roleFilter !== "" || departmentFilter !== "" || needsPassword;
+  const filtered =
+    search !== "" ||
+    roleFilter !== "" ||
+    departmentFilter !== "" ||
+    needsPassword;
   const { page, setPage, offset, total, setTotal } = usePagination({
     limit: PAGE_SIZE,
     resetKey: `${search}|${roleFilter}|${departmentFilter}|${needsPassword}`,
   });
-  const {
-    data,
-    isPending,
-    isError,
-    error,
-    refetch,
-    isRefetching,
-  } = useUsers({
+  const { data, isPending, isError, error, refetch, isRefetching } = useUsers({
     search: search || undefined,
     role: roleFilter || undefined,
     department: departmentFilter || undefined,
@@ -238,7 +251,10 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   });
   const users = data?.users;
   // Total only (limit 1): drives the "Needs password (N)" chip and the bulk action.
-  const { data: pendingData } = useUsers({ passwordSetup: "required", limit: 1 });
+  const { data: pendingData } = useUsers({
+    passwordSetup: "required",
+    limit: 1,
+  });
   const pendingCount = pendingData?.total ?? 0;
   const { data: departmentsData } = useDepartments();
 
@@ -249,7 +265,8 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   const [deleting, setDeleting] = useState<User | null>(null);
 
   const departmentName = (id?: string | null) =>
-    departmentsData?.departments.find((department) => department._id === id)?.name;
+    departmentsData?.departments.find((department) => department._id === id)
+      ?.name;
   const departmentFilterOptions = useMemo(
     () => [
       { value: "none", label: "Unassigned" },
@@ -258,7 +275,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
         label: department.name,
       })),
     ],
-    [departmentsData]
+    [departmentsData],
   );
   const clearFilters = () => {
     setSearch("");
@@ -284,7 +301,11 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                 onClick={() => void refetch()}
                 disabled={isRefetching}
               >
-                {isRefetching ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                {isRefetching ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <RefreshCw />
+                )}
                 Retry
               </Button>
             </AlertDescription>
@@ -320,11 +341,12 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                     />
                   )}
                 </div>
-                {pendingCount > 0 && (
-                  <div className="sm:ml-auto">
+                <div className="flex flex-wrap gap-2 sm:ml-auto">
+                  <DefaultPasswordButton pendingCount={pendingCount} />
+                  {pendingCount > 0 && (
                     <BulkPasswordLinksButton count={pendingCount} />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
             )}
             {total > 0 ? (
@@ -339,7 +361,9 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                             <TableHead>Role</TableHead>
                             <TableHead>Department</TableHead>
                             <TableHead>Joined</TableHead>
-                            <TableHead className="text-right">Actions</TableHead>
+                            <TableHead className="text-right">
+                              Actions
+                            </TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -354,23 +378,35 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                     </span>
                                     <div className="min-w-0">
                                       <p className="flex items-center gap-2 font-medium">
-                                        <span className="truncate">{user.name}</span>
+                                        <span className="truncate">
+                                          {user.name}
+                                        </span>
                                         {isSelf && (
-                                          <Badge variant="outline" className="shrink-0">
+                                          <Badge
+                                            variant="outline"
+                                            className="shrink-0"
+                                          >
                                             You
                                           </Badge>
                                         )}
-                                        {user.passwordSetupRequired && <NeedsPasswordBadge />}
+                                        {user.passwordSetupRequired && (
+                                          <NeedsPasswordBadge />
+                                        )}
                                       </p>
                                       <p className="truncate text-xs text-muted-foreground">
                                         {user.email}
                                       </p>
-                                      {(user.employeeId || user.designation) && (
+                                      {(user.employeeId ||
+                                        user.designation) && (
                                         <p className="truncate text-xs text-muted-foreground">
                                           {user.employeeId && (
-                                            <span className="font-mono">{user.employeeId}</span>
+                                            <span className="font-mono">
+                                              {user.employeeId}
+                                            </span>
                                           )}
-                                          {user.employeeId && user.designation ? " · " : ""}
+                                          {user.employeeId && user.designation
+                                            ? " · "
+                                            : ""}
                                           {user.designation}
                                         </p>
                                       )}
@@ -388,13 +424,16 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                     }
                                     className="capitalize"
                                   >
-                                    {user.role === "head" ? "Head of Dept" : user.role}
+                                    {user.role === "head"
+                                      ? "Head of Dept"
+                                      : user.role}
                                   </Badge>
                                 </TableCell>
                                 <TableCell>
                                   <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
                                     <Building2 className="size-3.5" />
-                                    {departmentName(user.department) ?? "Unassigned"}
+                                    {departmentName(user.department) ??
+                                      "Unassigned"}
                                   </span>
                                 </TableCell>
                                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
@@ -402,7 +441,9 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex justify-end gap-1">
-                                    {!isSelf && <PasswordLinkRowActions user={user} />}
+                                    {!isSelf && (
+                                      <PasswordLinkRowActions user={user} />
+                                    )}
                                     <Button
                                       variant="ghost"
                                       size="icon-sm"
@@ -450,7 +491,10 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                   <EmptyTitle>No matching users</EmptyTitle>
                   <EmptyDescription>
                     {search !== "" ? (
-                      <>No users match &ldquo;{search}&rdquo; with these filters.</>
+                      <>
+                        No users match &ldquo;{search}&rdquo; with these
+                        filters.
+                      </>
                     ) : needsPassword && !roleFilter && !departmentFilter ? (
                       "Everyone has set a password."
                     ) : (
@@ -541,7 +585,9 @@ function UserFormDialog({
   const [department, setDepartment] = useState<string>(NO_DEPARTMENT);
   const [password, setPassword] = useState("");
   const [hourlyRate, setHourlyRate] = useState("0");
-  const [employment, setEmployment] = useState<EmploymentForm>(() => employmentFormFrom(null));
+  const [employment, setEmployment] = useState<EmploymentForm>(() =>
+    employmentFormFrom(null),
+  );
   const [submitted, setSubmitted] = useState(false);
 
   const departmentOptions = useMemo(
@@ -550,12 +596,13 @@ function UserFormDialog({
         value: item._id,
         label: item.name,
       })),
-    [departmentsData]
+    [departmentsData],
   );
   const selectedDepartment =
     department === NO_DEPARTMENT
       ? null
-      : (departmentOptions.find((option) => option.value === department) ?? null);
+      : (departmentOptions.find((option) => option.value === department) ??
+        null);
 
   useEffect(() => {
     if (open) {
@@ -575,20 +622,26 @@ function UserFormDialog({
   const nameInvalid = submitted && name.trim() === "";
   const emailInvalid = submitted && !/^\S+@\S+\.\S+$/.test(email.trim());
   const passwordInvalid =
-    submitted && (isEdit ? password !== "" && password.length < 8 : password.length < 8);
+    submitted &&
+    (isEdit ? password !== "" && password.length < 8 : password.length < 8);
   // A head of department must have a department — the backend enforces this too.
-  const headDepartmentInvalid = submitted && role === "head" && department === NO_DEPARTMENT;
+  const headDepartmentInvalid =
+    submitted && role === "head" && department === NO_DEPARTMENT;
   const rateValue = hourlyRate.trim() === "" ? 0 : Number(hourlyRate);
-  const rateValid = Number.isFinite(rateValue) && rateValue >= 0 && rateValue <= 100000;
+  const rateValid =
+    Number.isFinite(rateValue) && rateValue >= 0 && rateValue <= 100000;
   const rateInvalid = submitted && !rateValid;
   const employmentErrors = validateEmployment(employment, isEdit);
   const errorMessage = error ? getErrorMessage(error) : null;
   // 409 duplicate employee ID → show it on the field instead of the generic alert.
-  const duplicateEmployeeId = errorMessage !== null && /employee id/i.test(errorMessage);
+  const duplicateEmployeeId =
+    errorMessage !== null && /employee id/i.test(errorMessage);
   const shownEmploymentErrors = submitted
     ? {
         ...employmentErrors,
-        employeeId: employmentErrors.employeeId ?? (duplicateEmployeeId ? errorMessage : undefined),
+        employeeId:
+          employmentErrors.employeeId ??
+          (duplicateEmployeeId ? errorMessage : undefined),
       }
     : {};
 
@@ -597,7 +650,8 @@ function UserFormDialog({
     setSubmitted(true);
 
     if (!name.trim() || !/^\S+@\S+\.\S+$/.test(email.trim())) return;
-    if (isEdit ? password !== "" && password.length < 8 : password.length < 8) return;
+    if (isEdit ? password !== "" && password.length < 8 : password.length < 8)
+      return;
     if (role === "head" && department === NO_DEPARTMENT) return;
     if (!rateValid) return;
     if (Object.keys(employmentErrors).length > 0) return;
@@ -615,7 +669,10 @@ function UserFormDialog({
       if (password) input.password = password;
       if (rateValue !== (user.hourlyRate ?? 0)) input.hourlyRate = rateValue;
       Object.assign(input, employmentPayload(employment, user));
-      update.mutate({ id: user._id, input }, { onSuccess: () => onOpenChange(false) });
+      update.mutate(
+        { id: user._id, input },
+        { onSuccess: () => onOpenChange(false) },
+      );
     } else {
       const input: CreateUserInput = {
         name: name.trim(),
@@ -686,7 +743,11 @@ function UserFormDialog({
                 value={role}
                 onValueChange={(value) => setRole(value as Role)}
                 disabled={isSelf}
-                items={{ employee: "Employee", head: "Head of Department", admin: "Admin" }}
+                items={{
+                  employee: "Employee",
+                  head: "Head of Department",
+                  admin: "Admin",
+                }}
               >
                 <SelectTrigger id="user-role" className="w-full">
                   <SelectValue />
@@ -714,7 +775,9 @@ function UserFormDialog({
               <Combobox
                 items={departmentOptions}
                 value={selectedDepartment}
-                onValueChange={(item) => setDepartment(item?.value ?? NO_DEPARTMENT)}
+                onValueChange={(item) =>
+                  setDepartment(item?.value ?? NO_DEPARTMENT)
+                }
                 autoHighlight
               >
                 <ComboboxInput
@@ -735,7 +798,10 @@ function UserFormDialog({
                 </ComboboxContent>
               </Combobox>
               {headDepartmentInvalid && (
-                <p id="user-department-error" className="text-xs text-destructive">
+                <p
+                  id="user-department-error"
+                  className="text-xs text-destructive"
+                >
                   A head of department must be assigned to a department.
                 </p>
               )}
@@ -758,7 +824,11 @@ function UserFormDialog({
             />
             <p
               id="user-hourly-rate-hint"
-              className={rateInvalid ? "text-xs text-destructive" : "text-xs text-muted-foreground"}
+              className={
+                rateInvalid
+                  ? "text-xs text-destructive"
+                  : "text-xs text-muted-foreground"
+              }
             >
               {rateInvalid
                 ? "Enter a rate between 0 and 100,000."
@@ -774,11 +844,15 @@ function UserFormDialog({
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder={
-                isEdit ? "Leave blank to keep the current password" : "At least 8 characters"
+                isEdit
+                  ? "Leave blank to keep the current password"
+                  : "At least 8 characters"
               }
               autoComplete="new-password"
               aria-invalid={passwordInvalid}
-              aria-describedby={passwordInvalid ? "user-password-error" : undefined}
+              aria-describedby={
+                passwordInvalid ? "user-password-error" : undefined
+              }
             />
             {passwordInvalid && (
               <p id="user-password-error" className="text-xs text-destructive">
@@ -803,7 +877,9 @@ function UserFormDialog({
           {Boolean(error) && !duplicateEmployeeId && (
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
-              <AlertTitle>{isEdit ? "Update failed" : "Creation failed"}</AlertTitle>
+              <AlertTitle>
+                {isEdit ? "Update failed" : "Creation failed"}
+              </AlertTitle>
               <AlertDescription>{getErrorMessage(error)}</AlertDescription>
             </Alert>
           )}
@@ -866,7 +942,8 @@ function DeleteUserDialog({
           <DialogTitle>Delete user?</DialogTitle>
           <DialogDescription>
             <span className="font-medium text-foreground">{user?.name}</span> (
-            {user?.email}) will be permanently removed. This can&apos;t be undone.
+            {user?.email}) will be permanently removed. This can&apos;t be
+            undone.
           </DialogDescription>
         </DialogHeader>
 
@@ -886,8 +963,16 @@ function DeleteUserDialog({
           >
             Cancel
           </Button>
-          <Button variant="destructive" onClick={handleDelete} disabled={del.isPending}>
-            {del.isPending ? <LoaderCircle className="animate-spin" /> : <Trash2 />}
+          <Button
+            variant="destructive"
+            onClick={handleDelete}
+            disabled={del.isPending}
+          >
+            {del.isPending ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <Trash2 />
+            )}
             {del.isPending ? "Deleting…" : "Delete user"}
           </Button>
         </DialogFooter>

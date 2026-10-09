@@ -30,6 +30,8 @@ export interface User {
   noticePeriodEnd?: string | null;
   /** True for imported accounts that must set a password via a link before signing in. */
   passwordSetupRequired?: boolean;
+  /** An admin set a default password: ask for a new one at sign-in. */
+  mustChangePassword?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -3400,6 +3402,7 @@ export interface PasswordLinkResponse {
   /** False when SMTP isn't configured or `sendEmail` was false — share the link manually. */
   emailed: boolean;
   passwordSetupRequired: boolean;
+  mustChangePassword?: boolean;
 }
 
 export type PasswordLinkResultStatus = "created" | "not_found" | "invalid";

@@ -59,6 +59,8 @@ export interface IUser extends mongoose.Document {
    * set-password link (POST /api/users/:id/password-link).
    */
   passwordSetupRequired: boolean;
+  /** Set by an admin default password: the app asks for a new password at the next sign-in. */
+  mustChangePassword: boolean;
   /**
    * Session generation: JWTs carry it as `tv` and requireAuth rejects older
    * ones. Bumped by a password reset to sign out every other session.
@@ -105,6 +107,7 @@ const userSchema = new Schema<IUser>(
     password: { type: String, required: true, minlength: 8, select: false },
     role: { type: String, enum: ["admin", "employee", "head"], default: "employee" },
     passwordSetupRequired: { type: Boolean, default: false },
+    mustChangePassword: { type: Boolean, default: false },
     tokenVersion: { type: Number, default: 0 },
     department: { type: Schema.Types.ObjectId, ref: "Department", default: null },
     leaveBalance: {

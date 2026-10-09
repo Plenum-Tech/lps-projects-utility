@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
-import { Navigate } from "react-router";
+import { Navigate, useLocation } from "react-router";
 
 import { useCurrentUser } from "@/hooks/use-auth";
 
@@ -18,6 +18,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
  */
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { isPending, data: user } = useCurrentUser();
+  const location = useLocation();
 
   if (isPending) {
     return (
@@ -33,6 +34,14 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 
   if (!user) {
     return <Navigate to="/" replace />;
+  }
+
+  // An admin-set default password: choose your own before using the app.
+  if (
+    user.mustChangePassword &&
+    !location.pathname.startsWith("/settings/security")
+  ) {
+    return <Navigate to="/settings/security" replace />;
   }
 
   return children;

@@ -21,7 +21,7 @@ _Last updated: 8 Oct 2026_
 - **HR**: employees and invitations, departments, leaves (heads approve their department), attendance, documents, performance reviews (manual; AI optional), feedback, announcements, **training** (admins upload a .pptx/.pdf deck and assign it; employees must read every slide, then tick the acknowledgement and complete; admins track and export progress, send reminders).
 - **Dashboard**: My dashboard with a period filter (7d–1y/all); Organisation view.
 - **Settings**: company, address, app (timezone, date format), profile, notifications, security, task/project/time-log/leave/meeting/delivery/brands, integrations (Pearity).
-- **Auth**: set-password links, forgot password with an emailed 6-digit code.
+- **Auth**: set-password links, forgot password with an emailed 6-digit code, and an admin **Set default password** action (Employees page) that gives pending or all employees one password and asks them to choose their own at the next sign-in.
 - **Pearity**: a Generate button (one shared tag per task) and a server-to-server API (`docs/pearity-integration.md`).
 
 ## Data

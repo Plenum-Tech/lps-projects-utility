@@ -85,7 +85,10 @@ export function PersonalInfoCard() {
               disabled
               aria-describedby="profile-email-note"
             />
-            <p id="profile-email-note" className="text-xs text-muted-foreground">
+            <p
+              id="profile-email-note"
+              className="text-xs text-muted-foreground"
+            >
               Your email is managed by your administrator.
             </p>
           </div>
@@ -94,13 +97,19 @@ export function PersonalInfoCard() {
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
               <AlertTitle>Couldn&apos;t update your profile</AlertTitle>
-              <AlertDescription>{getErrorMessage(update.error)}</AlertDescription>
+              <AlertDescription>
+                {getErrorMessage(update.error)}
+              </AlertDescription>
             </Alert>
           )}
 
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={update.isPending}>
-              {update.isPending ? <LoaderCircle className="animate-spin" /> : <UserRound />}
+              {update.isPending ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <UserRound />
+              )}
               {update.isPending ? "Saving…" : "Save changes"}
             </Button>
             {update.isSuccess && (
@@ -118,6 +127,8 @@ export function PersonalInfoCard() {
 /** Security → change password (current + new + confirm). */
 export function ChangePasswordCard() {
   const update = useUpdateProfile();
+  const { data: me } = useCurrentUser();
+  const mustChange = Boolean(me?.mustChangePassword);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -131,7 +142,11 @@ export function ChangePasswordCard() {
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (!currentPassword || newPassword.length < 8 || confirmPassword !== newPassword) {
+    if (
+      !currentPassword ||
+      newPassword.length < 8 ||
+      confirmPassword !== newPassword
+    ) {
       return;
     }
     update.mutate(
@@ -143,7 +158,7 @@ export function ChangePasswordCard() {
           setConfirmPassword("");
           setSubmitted(false);
         },
-      }
+      },
     );
   }
 
@@ -154,9 +169,21 @@ export function ChangePasswordCard() {
           <KeyRound className="size-4 text-muted-foreground" />
           Change password
         </CardTitle>
-        <CardDescription>Keep your account secure with a strong password.</CardDescription>
+        <CardDescription>
+          Keep your account secure with a strong password.
+        </CardDescription>
       </CardHeader>
       <CardContent>
+        {mustChange && (
+          <Alert className="mb-4">
+            <KeyRound className="size-4" />
+            <AlertTitle>Choose your own password</AlertTitle>
+            <AlertDescription>
+              Your administrator gave you a temporary password. Enter it as the
+              current password and pick a new one to continue using the app.
+            </AlertDescription>
+          </Alert>
+        )}
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="current-password">Current password</Label>
@@ -168,10 +195,15 @@ export function ChangePasswordCard() {
               disabled={update.isPending}
               autoComplete="current-password"
               aria-invalid={currentInvalid}
-              aria-describedby={currentInvalid ? "current-password-error" : undefined}
+              aria-describedby={
+                currentInvalid ? "current-password-error" : undefined
+              }
             />
             {currentInvalid && (
-              <p id="current-password-error" className="text-xs text-destructive">
+              <p
+                id="current-password-error"
+                className="text-xs text-destructive"
+              >
                 Enter your current password.
               </p>
             )}
@@ -188,7 +220,9 @@ export function ChangePasswordCard() {
                 disabled={update.isPending}
                 autoComplete="new-password"
                 aria-invalid={newPasswordInvalid}
-                aria-describedby={newPasswordInvalid ? "new-password-error" : undefined}
+                aria-describedby={
+                  newPasswordInvalid ? "new-password-error" : undefined
+                }
               />
               {newPasswordInvalid && (
                 <p id="new-password-error" className="text-xs text-destructive">
@@ -207,10 +241,15 @@ export function ChangePasswordCard() {
                 disabled={update.isPending}
                 autoComplete="new-password"
                 aria-invalid={confirmInvalid}
-                aria-describedby={confirmInvalid ? "confirm-password-error" : undefined}
+                aria-describedby={
+                  confirmInvalid ? "confirm-password-error" : undefined
+                }
               />
               {confirmInvalid && (
-                <p id="confirm-password-error" className="text-xs text-destructive">
+                <p
+                  id="confirm-password-error"
+                  className="text-xs text-destructive"
+                >
                   Passwords don&apos;t match.
                 </p>
               )}
@@ -221,13 +260,19 @@ export function ChangePasswordCard() {
             <Alert variant="destructive">
               <AlertCircle className="size-4" />
               <AlertTitle>Couldn&apos;t change your password</AlertTitle>
-              <AlertDescription>{getErrorMessage(update.error)}</AlertDescription>
+              <AlertDescription>
+                {getErrorMessage(update.error)}
+              </AlertDescription>
             </Alert>
           )}
 
           <div className="flex items-center gap-3">
             <Button type="submit" disabled={update.isPending}>
-              {update.isPending ? <LoaderCircle className="animate-spin" /> : <KeyRound />}
+              {update.isPending ? (
+                <LoaderCircle className="animate-spin" />
+              ) : (
+                <KeyRound />
+              )}
               {update.isPending ? "Updating…" : "Update password"}
             </Button>
             {update.isSuccess && (
@@ -260,11 +305,17 @@ export function DepartmentCard() {
           <Building2 className="size-4 text-muted-foreground" />
           My department
         </CardTitle>
-        <CardDescription>Information about the department you belong to.</CardDescription>
+        <CardDescription>
+          Information about the department you belong to.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         {isPending ? (
-          <div className="space-y-2" aria-busy="true" aria-label="Loading department">
+          <div
+            className="space-y-2"
+            aria-busy="true"
+            aria-label="Loading department"
+          >
             <Skeleton className="h-5 w-1/2" />
             <Skeleton className="h-4 w-2/3" />
           </div>
@@ -280,7 +331,11 @@ export function DepartmentCard() {
                 onClick={() => void refetch()}
                 disabled={isRefetching}
               >
-                {isRefetching ? <LoaderCircle className="animate-spin" /> : <RefreshCw />}
+                {isRefetching ? (
+                  <LoaderCircle className="animate-spin" />
+                ) : (
+                  <RefreshCw />
+                )}
                 Retry
               </Button>
             </AlertDescription>
@@ -291,7 +346,9 @@ export function DepartmentCard() {
               {department.name}
             </p>
             {department.description && (
-              <p className="mt-1 text-sm text-muted-foreground">{department.description}</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {department.description}
+              </p>
             )}
           </div>
         ) : (
@@ -299,7 +356,8 @@ export function DepartmentCard() {
             <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted">
               <Building2 className="size-4" />
             </span>
-            You&apos;re not assigned to a department yet. Contact your administrator.
+            You&apos;re not assigned to a department yet. Contact your
+            administrator.
           </div>
         )}
       </CardContent>

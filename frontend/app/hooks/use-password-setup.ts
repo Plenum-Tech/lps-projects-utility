@@ -4,7 +4,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/components/ui/toast";
 import { meKeys } from "@/hooks/use-auth";
 import { usersKeys } from "@/hooks/use-users";
-import { api, getErrorCode, getErrorMessage, PASSWORD_SETUP_REQUIRED_CODE } from "@/lib/api";
+import {
+  api,
+  getErrorCode,
+  getErrorMessage,
+  PASSWORD_SETUP_REQUIRED_CODE,
+} from "@/lib/api";
 import type {
   PasswordLinkResponse,
   PasswordLinksResponse,
@@ -28,9 +33,16 @@ export function isPasswordSetupRequiredError(error: unknown): boolean {
 }
 
 /** Status + 410 reason of a failed preview / submit, for picking the right state card. */
-export function passwordSetupFailure(error: unknown): { status?: number; reason?: PasswordSetupGoneReason } {
-  if (!axios.isAxiosError<{ reason?: PasswordSetupGoneReason }>(error)) return {};
-  return { status: error.response?.status, reason: error.response?.data?.reason };
+export function passwordSetupFailure(error: unknown): {
+  status?: number;
+  reason?: PasswordSetupGoneReason;
+} {
+  if (!axios.isAxiosError<{ reason?: PasswordSetupGoneReason }>(error))
+    return {};
+  return {
+    status: error.response?.status,
+    reason: error.response?.data?.reason,
+  };
 }
 
 /** Writes text to the clipboard; resolves false when the browser blocks it. */
@@ -48,7 +60,9 @@ export async function writeClipboard(text: string): Promise<boolean> {
 function legacyCopy(text: string): boolean {
   if (typeof document === "undefined") return false;
   // Inside a modal, append to the dialog so its focus trap doesn't fight the selection.
-  const host = document.activeElement?.closest("[role=dialog],[role=alertdialog]") ?? document.body;
+  const host =
+    document.activeElement?.closest("[role=dialog],[role=alertdialog]") ??
+    document.body;
   const area = document.createElement("textarea");
   area.value = text;
   area.setAttribute("readonly", "");
@@ -76,7 +90,9 @@ export async function copySetupLink(url: string, name?: string): Promise<void> {
     toast.add({
       type: "success",
       title: "Set-password link copied",
-      description: name ? `Share it with ${name}. It works once and expires in 7 days.` : undefined,
+      description: name
+        ? `Share it with ${name}. It works once and expires in 7 days.`
+        : undefined,
     });
     return;
   }
@@ -84,7 +100,10 @@ export async function copySetupLink(url: string, name?: string): Promise<void> {
     type: "warning",
     title: "Link ready — click Copy",
     description: "Your browser blocked automatic clipboard access.",
-    actionProps: { children: "Copy link", onClick: () => void copySetupLink(url, name) },
+    actionProps: {
+      children: "Copy link",
+      onClick: () => void copySetupLink(url, name),
+    },
     timeout: 20_000,
   });
 }
@@ -102,8 +121,17 @@ export function useCreatePasswordLink() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: async ({ user, sendEmail }: { user: Pick<User, "_id" | "name" | "email">; sendEmail: boolean }) => {
-      const { data } = await api.post<PasswordLinkResponse>(`/users/${user._id}/password-link`, { sendEmail });
+    mutationFn: async ({
+      user,
+      sendEmail,
+    }: {
+      user: Pick<User, "_id" | "name" | "email">;
+      sendEmail: boolean;
+    }) => {
+      const { data } = await api.post<PasswordLinkResponse>(
+        `/users/${user._id}/password-link`,
+        { sendEmail },
+      );
       return data;
     },
     onSuccess: (data, { user, sendEmail }) => {
@@ -114,16 +142,25 @@ export function useCreatePasswordLink() {
       }
       toast.add({
         type: data.emailed ? "success" : "info",
-        title: data.emailed ? `Set-password link emailed to ${user.name}` : "Link ready — email isn't configured",
+        title: data.emailed
+          ? `Set-password link emailed to ${user.name}`
+          : "Link ready — email isn't configured",
         description: data.emailed
           ? `Sent to ${user.email}. You can also copy the link and share it yourself.`
           : `Copy the link and share it with ${user.name} yourself. It works once and expires in 7 days.`,
-        actionProps: { children: "Copy link", onClick: () => void copySetupLink(data.setupUrl, user.name) },
+        actionProps: {
+          children: "Copy link",
+          onClick: () => void copySetupLink(data.setupUrl, user.name),
+        },
         timeout: 15_000,
       });
     },
     onError: (error: unknown) => {
-      toast.add({ type: "error", title: "Couldn't create the link", description: getErrorMessage(error) });
+      toast.add({
+        type: "error",
+        title: "Couldn't create the link",
+        description: getErrorMessage(error),
+      });
     },
   });
 }
@@ -149,6 +186,50 @@ export interface BulkPasswordLinksResult {
  * Admin: "Send links to all needing a password". Loads the pending users first
  * so the results can show names, then sends their ids to the bulk endpoint.
  */
+export interface DefaultPasswordInput {
+  password: string;
+  scope: "pending" | "all";
+  requireChange: boolean;
+}
+
+/** Admin: one default password for every pending (or every) employee. */
+export function useSetDefaultPassword() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: DefaultPasswordInput) => {
+      const { data } = await api.post<{
+        updated: number;
+        scope: string;
+        requireChange: boolean;
+      }>("/users/default-password", input);
+      return data;
+    },
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: usersKeys.all });
+      toast.add({
+        type: "success",
+        title:
+          data.updated === 0
+            ? "No accounts needed a password"
+            : `Default password set for ${data.updated} ${data.updated === 1 ? "employee" : "employees"}`,
+        description:
+          data.updated === 0
+            ? undefined
+            : data.requireChange
+              ? "They can sign in now and will be asked to choose their own password."
+              : "They can sign in now.",
+      });
+    },
+    onError: (error: unknown) => {
+      toast.add({
+        type: "error",
+        title: "Couldn't set the default password",
+        description: getErrorMessage(error),
+      });
+    },
+  });
+}
+
 export function useBulkPasswordLinks() {
   const queryClient = useQueryClient();
 
@@ -159,15 +240,22 @@ export function useBulkPasswordLinks() {
         params: { passwordSetup: "required" },
       });
       const users = list.users.slice(0, MAX_BULK_PASSWORD_LINKS);
-      if (users.length === 0) return { rows: [], emailConfigured: false, remaining: 0 };
-      const { data } = await api.post<PasswordLinksResponse>("/users/password-links", {
-        userIds: users.map((user) => user._id),
-        sendEmail: true,
-      });
-      const byId = new Map(data.results.map((result) => [result.userId, result]));
+      if (users.length === 0)
+        return { rows: [], emailConfigured: false, remaining: 0 };
+      const { data } = await api.post<PasswordLinksResponse>(
+        "/users/password-links",
+        {
+          userIds: users.map((user) => user._id),
+          sendEmail: true,
+        },
+      );
+      const byId = new Map(
+        data.results.map((result) => [result.userId, result]),
+      );
       const rows = users.map((user): BulkPasswordLinkRow => {
         const result = byId.get(user._id);
-        const created = result?.status === "created" && Boolean(result.setupUrl);
+        const created =
+          result?.status === "created" && Boolean(result.setupUrl);
         return {
           userId: user._id,
           name: user.name,
@@ -177,13 +265,21 @@ export function useBulkPasswordLinks() {
           failed: !created,
         };
       });
-      return { rows, emailConfigured: data.emailConfigured, remaining: list.users.length - users.length };
+      return {
+        rows,
+        emailConfigured: data.emailConfigured,
+        remaining: list.users.length - users.length,
+      };
     },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: usersKeys.all });
     },
     onError: (error: unknown) => {
-      toast.add({ type: "error", title: "Couldn't create the links", description: getErrorMessage(error) });
+      toast.add({
+        type: "error",
+        title: "Couldn't create the links",
+        description: getErrorMessage(error),
+      });
     },
   });
 }
@@ -193,7 +289,9 @@ export function setupLinksCsv(rows: BulkPasswordLinkRow[]): string {
   const cell = (value: string) => `"${value.replace(/"/g, '""')}"`;
   const lines = rows
     .filter((row) => row.setupUrl)
-    .map((row) => [row.name, row.email, row.setupUrl ?? ""].map(cell).join(","));
+    .map((row) =>
+      [row.name, row.email, row.setupUrl ?? ""].map(cell).join(","),
+    );
   return ["name,email,link", ...lines].join("\r\n");
 }
 
@@ -206,7 +304,9 @@ export function usePasswordSetupPreview(token: string) {
   return useQuery({
     queryKey: passwordSetupKeys.preview(token),
     queryFn: async () => {
-      const { data } = await api.get<PasswordSetupPreview>(`/password-setup/${encodeURIComponent(token)}`);
+      const { data } = await api.get<PasswordSetupPreview>(
+        `/password-setup/${encodeURIComponent(token)}`,
+      );
       return data;
     },
     retry: false,
@@ -221,12 +321,17 @@ export function useCompletePasswordSetup(token: string) {
 
   return useMutation({
     mutationFn: async (password: string) => {
-      const { data } = await api.post<UserResponse>(`/password-setup/${encodeURIComponent(token)}`, { password });
+      const { data } = await api.post<UserResponse>(
+        `/password-setup/${encodeURIComponent(token)}`,
+        { password },
+      );
       return data.user;
     },
     onSuccess: (user) => {
       // Drop anything cached for a previous session in this tab, as login does.
-      queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== meKeys.all[0] });
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== meKeys.all[0],
+      });
       queryClient.setQueryData(meKeys.all, user);
     },
   });

@@ -379,6 +379,7 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
       return;
     }
     user.password = password;
+    user.mustChangePassword = false;
     changed.push("password");
   }
 
