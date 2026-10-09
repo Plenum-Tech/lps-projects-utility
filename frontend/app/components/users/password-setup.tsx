@@ -332,14 +332,24 @@ function ResultRow({ row }: { row: BulkPasswordLinkRow }) {
 /** Admin: give every pending (or every) employee the same password; they change it at sign-in. */
 export function DefaultPasswordButton({
   pendingCount,
+  selectedIds = [],
+  onDone,
+  size,
 }: {
   pendingCount: number;
+  /** Ids ticked in the table: offers a "Selected employees" scope (and makes it the default). */
+  selectedIds?: string[];
+  onDone?: () => void;
+  size?: "sm";
 }) {
   const setDefault = useSetDefaultPassword();
+  const hasSelection = selectedIds.length > 0;
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [scope, setScope] = useState<"pending" | "all">("pending");
+  const [scope, setScope] = useState<"pending" | "all" | "selected">(
+    hasSelection ? "selected" : "pending",
+  );
   const [requireChange, setRequireChange] = useState(true);
   const [show, setShow] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -350,7 +360,7 @@ export function DefaultPasswordButton({
   function reset() {
     setPassword("");
     setConfirm("");
-    setScope("pending");
+    setScope(hasSelection ? "selected" : "pending");
     setRequireChange(true);
     setShow(false);
     setSubmitted(false);
@@ -358,7 +368,14 @@ export function DefaultPasswordButton({
 
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)}>
+      <Button
+        variant="outline"
+        size={size}
+        onClick={() => {
+          setScope(hasSelection ? "selected" : "pending");
+          setOpen(true);
+        }}
+      >
         <LuLockKeyhole aria-hidden />
         Set default password
       </Button>
@@ -386,11 +403,17 @@ export function DefaultPasswordButton({
               setSubmitted(true);
               if (tooShort || mismatch) return;
               setDefault.mutate(
-                { password, scope, requireChange },
+                {
+                  password,
+                  scope,
+                  requireChange,
+                  ...(scope === "selected" ? { userIds: selectedIds } : {}),
+                },
                 {
                   onSuccess: () => {
                     setOpen(false);
                     reset();
+                    onDone?.();
                   },
                 },
               );
@@ -440,9 +463,23 @@ export function DefaultPasswordButton({
               <legend className="text-sm font-medium">Apply to</legend>
               <RadioGroup
                 value={scope}
-                onValueChange={(value) => setScope(value as "pending" | "all")}
+                onValueChange={(value) =>
+                  setScope(value as "pending" | "all" | "selected")
+                }
                 className="gap-2"
               >
+                {hasSelection && (
+                  <label className="flex cursor-pointer items-start gap-2.5">
+                    <RadioGroupItem value="selected" className="mt-0.5" />
+                    <span className="text-sm">
+                      Selected employees
+                      <span className="block text-xs text-muted-foreground">
+                        {selectedIds.length} ticked in the table (you are never
+                        included)
+                      </span>
+                    </span>
+                  </label>
+                )}
                 <label className="flex cursor-pointer items-start gap-2.5">
                   <RadioGroupItem value="pending" className="mt-0.5" />
                   <span className="text-sm">
@@ -502,7 +539,9 @@ export function DefaultPasswordButton({
                   ? "Setting…"
                   : scope === "all"
                     ? "Set for everyone"
-                    : `Set for ${pendingCount}`}
+                    : scope === "selected"
+                      ? `Set for ${selectedIds.length} selected`
+                      : `Set for ${pendingCount}`}
               </Button>
             </DialogFooter>
           </form>

@@ -25,7 +25,9 @@ import { DataTableSearch } from "@/components/globals/data-table-search";
 import { FilterSelect } from "@/components/globals/filter-select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { BulkBar } from "@/components/globals/data-table/bulk-bar";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   Combobox,
@@ -85,6 +87,7 @@ import {
   NeedsPasswordFilterChip,
   PasswordLinkRowActions,
 } from "@/components/users/password-setup";
+import { useRowSelection } from "@/hooks/use-table-state";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useDepartments } from "@/hooks/use-departments";
 import { usePagination } from "@/hooks/use-pagination";
@@ -232,6 +235,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
   const [roleFilter, setRoleFilter] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [needsPassword, setNeedsPassword] = useState(false);
+  const selection = useRowSelection();
   const filtered =
     search !== "" ||
     roleFilter !== "" ||
@@ -262,6 +266,18 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
     setTotal(data?.total ?? 0);
   }, [data?.total, setTotal]);
   const { data: currentUser } = useCurrentUser();
+  const pageIds = (users ?? [])
+    .filter((u) => u._id !== currentUser?._id)
+    .map((u) => u._id);
+
+  const pageSelectedCount = pageIds.filter((id) =>
+    selection.selected.has(id),
+  ).length;
+
+  const pageAllSelected =
+    pageIds.length > 0 && pageSelectedCount === pageIds.length;
+
+  const pageSomeSelected = pageSelectedCount > 0 && !pageAllSelected;
   const [deleting, setDeleting] = useState<User | null>(null);
 
   const departmentName = (id?: string | null) =>
@@ -354,9 +370,30 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                 <Card>
                   <CardContent className="p-0">
                     <div className="overflow-x-auto">
+                      <BulkBar
+                        count={selection.count}
+                        onClear={selection.clear}
+                      >
+                        <DefaultPasswordButton
+                          size="sm"
+                          pendingCount={pendingCount}
+                          selectedIds={selection.ids}
+                          onDone={selection.clear}
+                        />
+                      </BulkBar>
                       <Table>
                         <TableHeader>
                           <TableRow>
+                            <TableHead className="w-8">
+                              <Checkbox
+                                aria-label="Select all on this page"
+                                checked={pageAllSelected}
+                                indeterminate={pageSomeSelected}
+                                onCheckedChange={(checked) =>
+                                  selection.setMany(pageIds, checked === true)
+                                }
+                              />
+                            </TableHead>
                             <TableHead>Employee</TableHead>
                             <TableHead>Role</TableHead>
                             <TableHead>Department</TableHead>
@@ -370,7 +407,27 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                           {users?.map((user) => {
                             const isSelf = user._id === currentUser?._id;
                             return (
-                              <TableRow key={user._id}>
+                              <TableRow
+                                key={user._id}
+                                data-state={
+                                  selection.selected.has(user._id)
+                                    ? "selected"
+                                    : undefined
+                                }
+                              >
+                                <TableCell>
+                                  <Checkbox
+                                    aria-label={`Select ${user.name}`}
+                                    checked={selection.selected.has(user._id)}
+                                    disabled={isSelf}
+                                    onCheckedChange={(checked) =>
+                                      selection.toggle(
+                                        user._id,
+                                        checked === true,
+                                      )
+                                    }
+                                  />
+                                </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-3">
                                     <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-semibold text-muted-foreground">

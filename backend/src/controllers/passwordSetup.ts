@@ -158,7 +158,7 @@ export async function createPasswordLinks(req: Request, res: Response): Promise<
 
 /**
  * Admin: POST /api/users/default-password
- * `{ password, scope: "pending" | "all", requireChange?: boolean }`
+ * `{ password, scope: "pending" | "all" | "selected", userIds?, requireChange?: boolean }`
  * Gives every targeted employee the same password so they can sign in now.
  * "pending" = accounts that still have no usable password (imported); "all" =
  * everyone except the acting admin. With `requireChange` (default true) the
@@ -167,20 +167,31 @@ export async function createPasswordLinks(req: Request, res: Response): Promise<
  */
 export async function setDefaultPassword(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
-  const body = (req.body ?? {}) as { password?: unknown; scope?: unknown; requireChange?: unknown };
+  const body = (req.body ?? {}) as { password?: unknown; scope?: unknown; userIds?: unknown; requireChange?: unknown };
   const password = typeof body.password === "string" ? body.password : "";
   if (password.length < 8 || password.length > 128) {
     res.status(400).json({ error: "password must be 8–128 characters" });
     return;
   }
-  const scope = body.scope === "all" ? "all" : body.scope === "pending" ? "pending" : null;
+  const scope = body.scope === "all" ? "all" : body.scope === "pending" ? "pending" : body.scope === "selected" ? "selected" : null;
   if (!scope) {
-    res.status(400).json({ error: 'scope must be "pending" or "all"' });
+    res.status(400).json({ error: 'scope must be "pending", "all" or "selected"' });
     return;
   }
   const requireChange = body.requireChange !== false;
 
-  const filter = scope === "pending" ? { passwordSetupRequired: true } : { _id: { $ne: actor._id } };
+  let filter: Record<string, unknown>;
+  if (scope === "selected") {
+    const ids = Array.isArray(body.userIds) ? [...new Set(body.userIds.map((v) => String(v)))] : [];
+    if (ids.length === 0 || ids.length > PASSWORD_SETUP_LIMITS.maxBulk || !ids.every((id) => mongoose.isValidObjectId(id))) {
+      res.status(400).json({ error: `userIds must be 1–${PASSWORD_SETUP_LIMITS.maxBulk} valid ids` });
+      return;
+    }
+    // Never the acting admin: that would silently replace their own password.
+    filter = { _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)), $ne: actor._id } };
+  } else {
+    filter = scope === "pending" ? { passwordSetupRequired: true } : { _id: { $ne: actor._id } };
+  }
   const users = await User.find(filter).select("_id");
   let updated = 0;
   for (const user of users) {

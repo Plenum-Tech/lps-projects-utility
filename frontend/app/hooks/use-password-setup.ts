@@ -188,7 +188,9 @@ export interface BulkPasswordLinksResult {
  */
 export interface DefaultPasswordInput {
   password: string;
-  scope: "pending" | "all";
+  scope: "pending" | "all" | "selected";
+  /** Required when scope is "selected". */
+  userIds?: string[];
   requireChange: boolean;
 }
 
