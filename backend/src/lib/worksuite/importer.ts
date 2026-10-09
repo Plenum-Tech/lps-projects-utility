@@ -26,7 +26,7 @@ import { User } from "../../models/User.js";
 import { nextEmployeeId } from "../employeeIds.js";
 import { uploadToGridFs } from "../gridfs.js";
 import { computeProgress } from "../projectProgress.js";
-import { ensureTaskCounter } from "../taskNumbers.js";
+import { ensureTaskCounter, nextTaskNumber } from "../taskNumbers.js";
 import { checkAttachment } from "./files.js";
 import { htmlToText, truncate } from "./html.js";
 import { ImportReport } from "./report.js";
@@ -1052,26 +1052,30 @@ export async function runWorksuiteImport(opts: ImportOptions): Promise<ImportRep
     }
   }
 
-  // Numbers (global, by createdAt) and short codes (per project) for new tasks only.
+  // Numbers: an imported task keeps its Worksuite id as our task number, so the
+  // numbers people know (and Pearity's taskNo) stay the same. A task created in the
+  // app that already holds such a number is moved to the next free number first.
+  // Short codes (per project) are assigned for new tasks only.
   newTaskOrder.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.doc.legacyId - b.doc.legacyId);
-  let nextNumber = 1;
   if (newTaskOrder.length) {
-    if (dryRun) {
-      nextNumber = ((await Counter.findById(TASK_NUMBER_COUNTER).lean())?.seq ?? 0) + 1;
-    } else {
-      // Reserve the whole block atomically so tasks created in the app meanwhile never collide.
-      await ensureTaskCounter();
-      const reserved = await Counter.findOneAndUpdate(
-        { _id: TASK_NUMBER_COUNTER },
-        { $inc: { seq: newTaskOrder.length } },
-        { returnDocument: "after" }
-      ).lean();
-      nextNumber = reserved!.seq - newTaskOrder.length + 1;
+    const wanted = newTaskOrder.map((e) => e.doc.legacyId);
+    const clashing = await Task.find({ number: { $in: wanted }, "legacy.table": { $ne: "tasks" } })
+      .select("_id number")
+      .lean();
+    if (clashing.length) {
+      if (!dryRun) await ensureTaskCounter();
+      for (const t of clashing) {
+        report.note("appTasksRenumbered", t.number as number);
+        if (!dryRun) {
+          await Task.updateOne({ _id: t._id, number: t.number }, { $set: { number: await nextTaskNumber() } });
+        }
+      }
+      log(`tasks: ${clashing.length} app-created task(s) renumbered to free their Worksuite numbers`);
     }
   }
   const needsCode: typeof newTaskOrder = [];
   for (const entry of newTaskOrder) {
-    entry.doc.insertOnly = { number: nextNumber++, position: entry.createdAt.getTime(), shortCode: null };
+    entry.doc.insertOnly = { number: entry.doc.legacyId, position: entry.createdAt.getTime(), shortCode: null };
     if (!entry.projectKey) continue;
     const used = usedShortCodes.get(entry.projectKey)!;
     const code = projectCode.get(entry.projectKey)!;

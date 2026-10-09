@@ -198,6 +198,14 @@ function TaskDetail({
         <SheetHeader className="gap-3 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
           <div className="flex flex-wrap items-center gap-2">
             {task.shortCode && <ShortCode code={task.shortCode} />}
+            {typeof task.number === "number" && (
+              <span
+                className="font-mono text-xs text-muted-foreground"
+                title="Task number (same as the Worksuite task id for imported tasks)"
+              >
+                #{task.number}
+              </span>
+            )}
             <StatusBadge status={task.status} />
             <PriorityIndicator priority={task.priority} />
             {task.recurrence && (
