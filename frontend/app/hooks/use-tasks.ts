@@ -120,14 +120,16 @@ export const taskKeys = {
   detail: (id: string) => ["tasks", "detail", id] as const,
   comments: (id: string) => ["tasks", "comments", id] as const,
   files: (id: string) => ["tasks", "files", id] as const,
-  history: (id: string, limit: number) => ["tasks", "history", id, limit] as const,
+  history: (id: string, limit: number) =>
+    ["tasks", "history", id, limit] as const,
   historyAll: (id: string) => ["tasks", "history", id] as const,
   mentionable: (id: string) => ["tasks", "mentionable", id] as const,
   notes: (id: string) => ["tasks", "notes", id] as const,
   subtaskAssignees: (id: string) => ["tasks", "subtask-assignees", id] as const,
   mySubtasks: ["tasks", "subtasks", "mine"] as const,
   calendars: ["tasks", "calendar"] as const,
-  calendar: (params: Record<string, unknown>) => ["tasks", "calendar", params] as const,
+  calendar: (params: Record<string, unknown>) =>
+    ["tasks", "calendar", params] as const,
   approvalsCount: ["tasks", "approvals-count"] as const,
 };
 
@@ -150,7 +152,8 @@ function filterParams(filters: TaskFilters): Record<string, string> {
   if (filters.recurringParent) params.recurringParent = filters.recurringParent;
   if (filters.overdue) params.overdue = "true";
   if (filters.statusIn) params.statusIn = filters.statusIn;
-  if (filters.createdOrDueFrom) params.createdOrDueFrom = filters.createdOrDueFrom;
+  if (filters.createdOrDueFrom)
+    params.createdOrDueFrom = filters.createdOrDueFrom;
   if (filters.createdOrDueTo) params.createdOrDueTo = filters.createdOrDueTo;
   if (filters.completedFrom) params.completedFrom = filters.completedFrom;
   if (filters.completedTo) params.completedTo = filters.completedTo;
@@ -160,7 +163,11 @@ function filterParams(filters: TaskFilters): Record<string, string> {
 
 /** Filters + status + sort as GET /api/tasks query params (also used by the export). */
 export function taskQueryParams(
-  params: TaskFilters & { status?: TaskStatusFilter; sort?: TaskSortField | ""; dir?: SortDir }
+  params: TaskFilters & {
+    status?: TaskStatusFilter;
+    sort?: TaskSortField | "";
+    dir?: SortDir;
+  },
 ): Record<string, string> {
   const out = filterParams(params);
   if (params.status && params.status !== "all") out.status = params.status;
@@ -201,7 +208,9 @@ export function toastExportResult(result: ExportResult, noun: string) {
 function applyDetail(queryClient: QueryClient, data: TaskDetailResponse) {
   queryClient.setQueryData(taskKeys.detail(data.task._id), data);
   invalidateTaskCollections(queryClient);
-  void queryClient.invalidateQueries({ queryKey: taskKeys.historyAll(data.task._id) });
+  void queryClient.invalidateQueries({
+    queryKey: taskKeys.historyAll(data.task._id),
+  });
   void queryClient.invalidateQueries({ queryKey: taskKeys.mySubtasks });
 }
 
@@ -235,7 +244,7 @@ export function useTaskRealtime() {
     () => () => {
       if (trailing.current) clearTimeout(trailing.current);
     },
-    []
+    [],
   );
 
   // Leading refresh right away, then one trailing refresh per window.
@@ -258,9 +267,16 @@ export function useTaskRealtime() {
     event: "task-updated",
     onEvent: (event) => {
       const payload = event.data as TaskUpdatedEvent | undefined;
-      if (payload?.action === "moved" && payload.actorId && payload.actorId === me?._id) return;
+      if (
+        payload?.action === "moved" &&
+        payload.actorId &&
+        payload.actorId === me?._id
+      )
+        return;
       if (payload?.action === "deleted" && payload.taskId) {
-        queryClient.removeQueries({ queryKey: taskKeys.detail(payload.taskId) });
+        queryClient.removeQueries({
+          queryKey: taskKeys.detail(payload.taskId),
+        });
       }
       refresh();
     },
@@ -312,7 +328,7 @@ export function useTaskBoard(filters: TaskFilters, enabled = true) {
 export function useTaskCalendar(
   filters: TaskFilters & { status?: TaskStatusFilter },
   range: { from: string; to: string },
-  enabled = true
+  enabled = true,
 ) {
   const params = {
     ...taskQueryParams({ ...filters, from: undefined, to: undefined }),
@@ -322,7 +338,9 @@ export function useTaskCalendar(
   return useQuery({
     queryKey: taskKeys.calendar(params),
     queryFn: async () => {
-      const { data } = await api.get<TaskCalendarResponse>("/tasks/calendar", { params });
+      const { data } = await api.get<TaskCalendarResponse>("/tasks/calendar", {
+        params,
+      });
       return data;
     },
     placeholderData: keepPreviousData,
@@ -335,7 +353,9 @@ export function useTaskApprovalsCount(enabled = true) {
   return useQuery({
     queryKey: taskKeys.approvalsCount,
     queryFn: async () => {
-      const { data } = await api.get<TaskApprovalsCount>("/tasks/approvals/count");
+      const { data } = await api.get<TaskApprovalsCount>(
+        "/tasks/approvals/count",
+      );
       return data;
     },
     enabled,
@@ -353,7 +373,8 @@ export function useTask(id: string | null, enabled = true) {
     },
     enabled: Boolean(id) && enabled,
     retry: (count, error) => {
-      const status = (error as { response?: { status?: number } }).response?.status;
+      const status = (error as { response?: { status?: number } }).response
+        ?.status;
       return status !== 403 && status !== 404 && count < 2;
     },
   });
@@ -363,7 +384,9 @@ export function useTaskComments(id: string | null) {
   return useQuery({
     queryKey: taskKeys.comments(id ?? ""),
     queryFn: async () => {
-      const { data } = await api.get<TaskCommentListResponse>(`/tasks/${id}/comments`);
+      const { data } = await api.get<TaskCommentListResponse>(
+        `/tasks/${id}/comments`,
+      );
       return data;
     },
     enabled: Boolean(id),
@@ -374,7 +397,9 @@ export function useTaskFiles(id: string | null) {
   return useQuery({
     queryKey: taskKeys.files(id ?? ""),
     queryFn: async () => {
-      const { data } = await api.get<TaskFileListResponse>(`/tasks/${id}/files`);
+      const { data } = await api.get<TaskFileListResponse>(
+        `/tasks/${id}/files`,
+      );
       return data;
     },
     enabled: Boolean(id),
@@ -385,9 +410,12 @@ export function useTaskHistory(id: string | null, limit = 30) {
   return useQuery({
     queryKey: taskKeys.history(id ?? "", limit),
     queryFn: async () => {
-      const { data } = await api.get<TaskHistoryResponse>(`/tasks/${id}/history`, {
-        params: { limit, offset: 0 },
-      });
+      const { data } = await api.get<TaskHistoryResponse>(
+        `/tasks/${id}/history`,
+        {
+          params: { limit, offset: 0 },
+        },
+      );
       return data;
     },
     enabled: Boolean(id),
@@ -401,7 +429,7 @@ export function useMentionableUsers(id: string | null) {
     queryKey: taskKeys.mentionable(id ?? ""),
     queryFn: async () => {
       const { data } = await api.get<MentionableUsersResponse>(
-        `/tasks/${id}/mentionable-users`
+        `/tasks/${id}/mentionable-users`,
       );
       return data.users;
     },
@@ -415,7 +443,9 @@ export function useSubtaskAssignees(id: string | null, enabled = true) {
   return useQuery({
     queryKey: taskKeys.subtaskAssignees(id ?? ""),
     queryFn: async () => {
-      const { data } = await api.get<MentionableUsersResponse>(`/tasks/${id}/subtask-assignees`);
+      const { data } = await api.get<MentionableUsersResponse>(
+        `/tasks/${id}/subtask-assignees`,
+      );
       return data.users;
     },
     enabled: Boolean(id) && enabled,
@@ -428,7 +458,9 @@ export function useMySubtasks(enabled = true) {
   return useQuery({
     queryKey: taskKeys.mySubtasks,
     queryFn: async () => {
-      const { data } = await api.get<MySubtasksResponse>("/tasks/subtasks/mine");
+      const { data } = await api.get<MySubtasksResponse>(
+        "/tasks/subtasks/mine",
+      );
       return data.subtasks;
     },
     enabled,
@@ -439,7 +471,9 @@ export function useTaskNotes(id: string | null) {
   return useQuery({
     queryKey: taskKeys.notes(id ?? ""),
     queryFn: async () => {
-      const { data } = await api.get<TaskNoteListResponse>(`/tasks/${id}/notes`);
+      const { data } = await api.get<TaskNoteListResponse>(
+        `/tasks/${id}/notes`,
+      );
       return data.notes;
     },
     enabled: Boolean(id),
@@ -465,7 +499,11 @@ export function useCreateTask() {
       if (data.task.project) {
         void queryClient.invalidateQueries({ queryKey: ["projects"] });
       }
-      toast.success(data.task.shortCode ? `Task ${data.task.shortCode} created` : "Task created");
+      toast.success(
+        data.task.shortCode
+          ? `Task ${data.task.shortCode} created`
+          : "Task created",
+      );
       data.warnings?.forEach((warning) => toast.warning(warning));
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
@@ -478,8 +516,17 @@ export function useUpdateTask() {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ id, input }: { id: string; input: TaskUpdateInput }) => {
-      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${id}`, input);
+    mutationFn: async ({
+      id,
+      input,
+    }: {
+      id: string;
+      input: TaskUpdateInput;
+    }) => {
+      const { data } = await api.patch<TaskDetailResponse>(
+        `/tasks/${id}`,
+        input,
+      );
       return data;
     },
     onSuccess: (data) => {
@@ -498,7 +545,10 @@ export function useUpdateTaskStatus() {
 
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: TaskStatus }) => {
-      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${id}/status`, { status });
+      const { data } = await api.patch<TaskDetailResponse>(
+        `/tasks/${id}/status`,
+        { status },
+      );
       return data;
     },
     onSuccess: (data) => {
@@ -527,10 +577,13 @@ export function useMoveTask() {
 
   return useMutation({
     mutationFn: async ({ task, status, position }: MoveTaskVariables) => {
-      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${task._id}/move`, {
-        status,
-        ...(position !== undefined ? { position } : {}),
-      });
+      const { data } = await api.patch<TaskDetailResponse>(
+        `/tasks/${task._id}/move`,
+        {
+          status,
+          ...(position !== undefined ? { position } : {}),
+        },
+      );
       return data;
     },
     onMutate: async ({ task, status, index, position }) => {
@@ -539,34 +592,41 @@ export function useMoveTask() {
         queryKey: taskKeys.boards,
       });
 
-      queryClient.setQueriesData<TaskBoardResponse>({ queryKey: taskKeys.boards }, (board) => {
-        if (!board) return board;
-        const columns = { ...board.columns };
-        const totals = { ...board.totals };
-        const from = task.status;
-        const inSource = columns[from].some((item) => item._id === task._id);
-        if (!inSource) return board;
+      queryClient.setQueriesData<TaskBoardResponse>(
+        { queryKey: taskKeys.boards },
+        (board) => {
+          if (!board) return board;
+          const columns = { ...board.columns };
+          const totals = { ...board.totals };
+          const from = task.status;
+          const inSource = columns[from].some((item) => item._id === task._id);
+          if (!inSource) return board;
 
-        columns[from] = columns[from].filter((item) => item._id !== task._id);
-        const moved: Task = {
-          ...task,
-          status,
-          position: position ?? task.position,
-        };
-        const target = [...(from === status ? columns[from] : columns[status])];
-        target.splice(Math.min(index, target.length), 0, moved);
-        columns[status] = target;
-        if (from !== status) {
-          totals[from] = Math.max(0, totals[from] - 1);
-          totals[status] = totals[status] + 1;
-        }
-        return { ...board, columns, totals };
-      });
+          columns[from] = columns[from].filter((item) => item._id !== task._id);
+          const moved: Task = {
+            ...task,
+            status,
+            position: position ?? task.position,
+          };
+          const target = [
+            ...(from === status ? columns[from] : columns[status]),
+          ];
+          target.splice(Math.min(index, target.length), 0, moved);
+          columns[status] = target;
+          if (from !== status) {
+            totals[from] = Math.max(0, totals[from] - 1);
+            totals[status] = totals[status] + 1;
+          }
+          return { ...board, columns, totals };
+        },
+      );
 
       return { snapshots };
     },
     onError: (error: unknown, _variables, context) => {
-      context?.snapshots.forEach(([key, data]) => queryClient.setQueryData(key, data));
+      context?.snapshots.forEach(([key, data]) =>
+        queryClient.setQueryData(key, data),
+      );
       toast.error(getErrorMessage(error));
     },
     onSuccess: (data) => {
@@ -576,7 +636,9 @@ export function useMoveTask() {
       // The server may re-normalise positions — always refetch.
       void queryClient.invalidateQueries({ queryKey: taskKeys.boards });
       void queryClient.invalidateQueries({ queryKey: taskKeys.lists });
-      void queryClient.invalidateQueries({ queryKey: taskKeys.historyAll(variables.task._id) });
+      void queryClient.invalidateQueries({
+        queryKey: taskKeys.historyAll(variables.task._id),
+      });
     },
   });
 }
@@ -587,14 +649,25 @@ export function useSubmitTask() {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ id, input }: { id: string; input: TaskSubmitInput }) => {
-      const { data } = await api.post<TaskDetailResponse>(`/tasks/${id}/submit`, input);
+    mutationFn: async ({
+      id,
+      input,
+    }: {
+      id: string;
+      input: TaskSubmitInput;
+    }) => {
+      const { data } = await api.post<TaskDetailResponse>(
+        `/tasks/${id}/submit`,
+        input,
+      );
       return data;
     },
     onSuccess: (data) => {
       applyDetail(queryClient, data);
       toast.success(
-        data.task.status === "completed" ? "Task completed" : "Task submitted for review"
+        data.task.status === "completed"
+          ? "Task completed"
+          : "Task submitted for review",
       );
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
@@ -607,13 +680,24 @@ export function useReviewTask() {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ id, input }: { id: string; input: TaskReviewInput }) => {
-      const { data } = await api.post<TaskDetailResponse>(`/tasks/${id}/review`, input);
+    mutationFn: async ({
+      id,
+      input,
+    }: {
+      id: string;
+      input: TaskReviewInput;
+    }) => {
+      const { data } = await api.post<TaskDetailResponse>(
+        `/tasks/${id}/review`,
+        input,
+      );
       return data;
     },
     onSuccess: (data, { input }) => {
       applyDetail(queryClient, data);
-      toast.success(input.decision === "approved" ? "Task approved" : "Task sent back");
+      toast.success(
+        input.decision === "approved" ? "Task approved" : "Task sent back",
+      );
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });
@@ -627,7 +711,7 @@ export function useRemindTask() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { data } = await api.post<{ success: true; remindedAt: string }>(
-        `/tasks/${id}/remind`
+        `/tasks/${id}/remind`,
       );
       return data;
     },
@@ -671,13 +755,17 @@ export function useSetTaskRecurrence() {
       id: string;
       recurrence: TaskUpdateInput["recurrence"];
     }) => {
-      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${id}`, { recurrence });
+      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${id}`, {
+        recurrence,
+      });
       return data;
     },
     onSuccess: (data, { recurrence }) => {
       applyDetail(queryClient, data);
       toast.success(
-        recurrence ? "Schedule updated" : "Stopped repeating — existing copies are kept"
+        recurrence
+          ? "Schedule updated"
+          : "Stopped repeating — existing copies are kept",
       );
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
@@ -691,13 +779,17 @@ export function useDuplicateTask() {
 
   return useMutation({
     mutationFn: async (id: string) => {
-      const { data } = await api.post<TaskDetailResponse>(`/tasks/${id}/duplicate`);
+      const { data } = await api.post<TaskDetailResponse>(
+        `/tasks/${id}/duplicate`,
+      );
       return data;
     },
     onSuccess: (data) => {
       applyDetail(queryClient, data);
-      if (data.task.project) void queryClient.invalidateQueries({ queryKey: ["projects"] });
-      const code = data.task.shortCode ?? (data.task.number ? `#${data.task.number}` : "");
+      if (data.task.project)
+        void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      const code =
+        data.task.shortCode ?? (data.task.number ? `#${data.task.number}` : "");
       toast.success(code ? `Duplicated as ${code}` : "Task duplicated");
       data.warnings?.forEach((warning) => toast.warning(warning));
     },
@@ -718,16 +810,24 @@ export function useToggleTaskPin() {
     },
     onMutate: async ({ id, pinned }) => {
       await queryClient.cancelQueries({ queryKey: taskKeys.lists });
-      const lists = queryClient.getQueriesData<TaskListResponse>({ queryKey: taskKeys.lists });
-      queryClient.setQueriesData<TaskListResponse>({ queryKey: taskKeys.lists }, (data) =>
-        data?.tasks
-          ? {
-              ...data,
-              tasks: data.tasks.map((task) => (task._id === id ? { ...task, pinned } : task)),
-            }
-          : data
+      const lists = queryClient.getQueriesData<TaskListResponse>({
+        queryKey: taskKeys.lists,
+      });
+      queryClient.setQueriesData<TaskListResponse>(
+        { queryKey: taskKeys.lists },
+        (data) =>
+          data?.tasks
+            ? {
+                ...data,
+                tasks: data.tasks.map((task) =>
+                  task._id === id ? { ...task, pinned } : task,
+                ),
+              }
+            : data,
       );
-      const detail = queryClient.getQueryData<TaskDetailResponse>(taskKeys.detail(id));
+      const detail = queryClient.getQueryData<TaskDetailResponse>(
+        taskKeys.detail(id),
+      );
       if (detail) {
         queryClient.setQueryData<TaskDetailResponse>(taskKeys.detail(id), {
           ...detail,
@@ -737,12 +837,17 @@ export function useToggleTaskPin() {
       return { lists, detail };
     },
     onError: (error: unknown, { id }, context) => {
-      context?.lists.forEach(([key, data]) => queryClient.setQueryData(key, data));
-      if (context?.detail) queryClient.setQueryData(taskKeys.detail(id), context.detail);
+      context?.lists.forEach(([key, data]) =>
+        queryClient.setQueryData(key, data),
+      );
+      if (context?.detail)
+        queryClient.setQueryData(taskKeys.detail(id), context.detail);
       toast.error(getErrorMessage(error));
     },
-    onSuccess: (pinned) => toast.success(pinned ? "Task pinned" : "Task unpinned"),
-    onSettled: () => void queryClient.invalidateQueries({ queryKey: taskKeys.lists }),
+    onSuccess: (pinned) =>
+      toast.success(pinned ? "Task pinned" : "Task unpinned"),
+    onSettled: () =>
+      void queryClient.invalidateQueries({ queryKey: taskKeys.lists }),
   });
 }
 
@@ -765,8 +870,10 @@ export function useBulkTasks() {
     },
     onSuccess: (result, input) => {
       for (const id of result.updatedIds) {
-        if (input.action === "delete") queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
-        else void queryClient.invalidateQueries({ queryKey: taskKeys.detail(id) });
+        if (input.action === "delete")
+          queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
+        else
+          void queryClient.invalidateQueries({ queryKey: taskKeys.detail(id) });
       }
       invalidateTaskCollections(queryClient);
       void queryClient.invalidateQueries({ queryKey: ["projects"] });
@@ -782,7 +889,8 @@ export function useExportTasks() {
   return useMutation({
     mutationFn: (params: Record<string, string>) =>
       downloadCsvExport("/tasks/export", params, "tasks.csv"),
-    onSuccess: (result) => toastExportResult(result, result.rows === 1 ? "task" : "tasks"),
+    onSuccess: (result) =>
+      toastExportResult(result, result.rows === 1 ? "task" : "tasks"),
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });
 }
@@ -797,7 +905,10 @@ export function useAddSubtask(taskId: string) {
 
   return useMutation({
     mutationFn: async (input: SubtaskInput) => {
-      const { data } = await api.post<TaskDetailResponse>(`/tasks/${taskId}/subtasks`, input);
+      const { data } = await api.post<TaskDetailResponse>(
+        `/tasks/${taskId}/subtasks`,
+        input,
+      );
       return data;
     },
     onSuccess: (data) => applyDetail(queryClient, data),
@@ -811,24 +922,32 @@ export function useUpdateSubtask(taskId: string) {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ subId, input }: { subId: string; input: SubtaskUpdateInput }) => {
+    mutationFn: async ({
+      subId,
+      input,
+    }: {
+      subId: string;
+      input: SubtaskUpdateInput;
+    }) => {
       const { data } = await api.patch<TaskDetailResponse>(
         `/tasks/${taskId}/subtasks/${subId}`,
-        input
+        input,
       );
       return data;
     },
     onMutate: async ({ subId, input }) => {
       if (input.done === undefined) return {};
       await queryClient.cancelQueries({ queryKey: taskKeys.detail(taskId) });
-      const previous = queryClient.getQueryData<TaskDetailResponse>(taskKeys.detail(taskId));
+      const previous = queryClient.getQueryData<TaskDetailResponse>(
+        taskKeys.detail(taskId),
+      );
       if (previous) {
         queryClient.setQueryData<TaskDetailResponse>(taskKeys.detail(taskId), {
           ...previous,
           task: {
             ...previous.task,
             subtasks: previous.task.subtasks.map((sub) =>
-              sub._id === subId ? { ...sub, done: Boolean(input.done) } : sub
+              sub._id === subId ? { ...sub, done: Boolean(input.done) } : sub,
             ),
           },
         });
@@ -852,7 +971,7 @@ export function useDeleteSubtask(taskId: string) {
   return useMutation({
     mutationFn: async (subId: string) => {
       const { data } = await api.delete<TaskDetailResponse>(
-        `/tasks/${taskId}/subtasks/${subId}`
+        `/tasks/${taskId}/subtasks/${subId}`,
       );
       return data;
     },
@@ -875,7 +994,10 @@ export function useUploadSubtaskFiles(taskId: string) {
       const { data } = await api.post<{ files: TaskFile[] }>(
         `/tasks/${taskId}/subtasks/${subId}/files`,
         form,
-        { headers: { "Content-Type": "multipart/form-data" }, timeout: 120_000 }
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 120_000,
+        },
       );
       return data.files;
     },
@@ -884,7 +1006,10 @@ export function useUploadSubtaskFiles(taskId: string) {
 }
 
 /** Releases notifications held back with `deferNotifications` (best effort). */
-export async function sendDeferredSubtaskNotifications(taskId: string, subId: string) {
+export async function sendDeferredSubtaskNotifications(
+  taskId: string,
+  subId: string,
+) {
   try {
     await api.post(`/tasks/${taskId}/subtasks/${subId}/notify`);
   } catch {
@@ -910,7 +1035,7 @@ export async function createSubtasksFromDrafts(
     actualEndAt?: string;
     assignee: { _id: string } | null;
     files: File[];
-  }>
+  }>,
 ): Promise<{ failedSubtasks: string[]; failedFiles: string[] }> {
   const failedSubtasks: string[] = [];
   const failedFiles: string[] = [];
@@ -918,20 +1043,21 @@ export async function createSubtasksFromDrafts(
     const hasFiles = draft.files.length > 0;
     let subId: string | undefined;
     try {
-      const { data } = await api.post<TaskDetailResponse & { subtaskId?: string }>(
-        `/tasks/${taskId}/subtasks`,
-        {
-          title: draft.title,
-          description: draft.description || undefined,
-          startDate: draft.startDate || null,
-          dueDate: draft.dueDate || null,
-          ...(draft.actualStartAt ? { actualStartAt: draft.actualStartAt } : {}),
-          ...(draft.actualEndAt ? { actualEndAt: draft.actualEndAt } : {}),
-          assignee: draft.assignee?._id ?? null,
-          ...(hasFiles ? { deferNotifications: true } : {}),
-        } satisfies SubtaskInput
-      );
-      subId = data.subtaskId ?? data.task.subtasks[data.task.subtasks.length - 1]?._id;
+      const { data } = await api.post<
+        TaskDetailResponse & { subtaskId?: string }
+      >(`/tasks/${taskId}/subtasks`, {
+        title: draft.title,
+        description: draft.description || undefined,
+        startDate: draft.startDate || null,
+        dueDate: draft.dueDate || null,
+        ...(draft.actualStartAt ? { actualStartAt: draft.actualStartAt } : {}),
+        ...(draft.actualEndAt ? { actualEndAt: draft.actualEndAt } : {}),
+        assignee: draft.assignee?._id ?? null,
+        ...(hasFiles ? { deferNotifications: true } : {}),
+      } satisfies SubtaskInput);
+      subId =
+        data.subtaskId ??
+        data.task.subtasks[data.task.subtasks.length - 1]?._id;
     } catch {
       failedSubtasks.push(draft.title);
       continue;
@@ -969,7 +1095,10 @@ export function useAddTaskNote(taskId: string) {
 
   return useMutation({
     mutationFn: async (input: TaskNoteInput) => {
-      const { data } = await api.post<{ note: TaskNote }>(`/tasks/${taskId}/notes`, input);
+      const { data } = await api.post<{ note: TaskNote }>(
+        `/tasks/${taskId}/notes`,
+        input,
+      );
       return data.note;
     },
     onSuccess: () => {
@@ -985,10 +1114,16 @@ export function useUpdateTaskNote(taskId: string) {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ noteId, input }: { noteId: string; input: TaskNoteInput }) => {
+    mutationFn: async ({
+      noteId,
+      input,
+    }: {
+      noteId: string;
+      input: TaskNoteInput;
+    }) => {
       const { data } = await api.patch<{ note: TaskNote }>(
         `/tasks/${taskId}/notes/${noteId}`,
-        input
+        input,
       );
       return data.note;
     },
@@ -1033,7 +1168,7 @@ export function useAddComment(taskId: string) {
     mutationFn: async (body: string) => {
       const { data } = await api.post<{ comment: TaskComment }>(
         `/tasks/${taskId}/comments`,
-        { body }
+        { body },
       );
       return data.comment;
     },
@@ -1047,10 +1182,16 @@ export function useUpdateComment(taskId: string) {
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async ({ commentId, body }: { commentId: string; body: string }) => {
+    mutationFn: async ({
+      commentId,
+      body,
+    }: {
+      commentId: string;
+      body: string;
+    }) => {
       const { data } = await api.patch<{ comment: TaskComment }>(
         `/tasks/${taskId}/comments/${commentId}`,
-        { body }
+        { body },
       );
       return data.comment;
     },
@@ -1084,6 +1225,32 @@ function refreshAfterFile(queryClient: QueryClient, taskId: string) {
   void queryClient.invalidateQueries({ queryKey: taskKeys.boards });
 }
 
+/**
+ * Uploads files picked in the task form once the task exists (create/edit).
+ * One request per file so each failure can be named; returns the failed names.
+ */
+export async function uploadTaskFilesNow(
+  queryClient: QueryClient,
+  taskId: string,
+  files: File[],
+): Promise<string[]> {
+  const failed: string[] = [];
+  for (const file of files) {
+    const form = new FormData();
+    form.append("files", file);
+    try {
+      await api.post(`/tasks/${taskId}/files`, form, {
+        headers: { "Content-Type": "multipart/form-data" },
+        timeout: 120_000,
+      });
+    } catch {
+      failed.push(file.name);
+    }
+  }
+  if (files.length > failed.length) refreshAfterFile(queryClient, taskId);
+  return failed;
+}
+
 /** Multipart upload (field `files`, 1-10 per request). */
 export function useUploadTaskFiles(taskId: string) {
   const queryClient = useQueryClient();
@@ -1099,18 +1266,25 @@ export function useUploadTaskFiles(taskId: string) {
     }) => {
       const form = new FormData();
       files.forEach((file) => form.append("files", file));
-      const { data } = await api.post<{ files: TaskFile[] }>(`/tasks/${taskId}/files`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120_000,
-        onUploadProgress: (event) => {
-          if (event.total) onProgress?.(Math.round((event.loaded / event.total) * 100));
+      const { data } = await api.post<{ files: TaskFile[] }>(
+        `/tasks/${taskId}/files`,
+        form,
+        {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 120_000,
+          onUploadProgress: (event) => {
+            if (event.total)
+              onProgress?.(Math.round((event.loaded / event.total) * 100));
+          },
         },
-      });
+      );
       return data.files;
     },
     onSuccess: (files) => {
       refreshAfterFile(queryClient, taskId);
-      toast.success(files.length === 1 ? "File uploaded" : `${files.length} files uploaded`);
+      toast.success(
+        files.length === 1 ? "File uploaded" : `${files.length} files uploaded`,
+      );
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });
@@ -1133,7 +1307,10 @@ export function useDeleteTaskFile(taskId: string) {
 }
 
 /** Downloads an attachment through the authenticated API (cookie auth). */
-export async function downloadTaskFile(taskId: string, file: TaskFile): Promise<void> {
+export async function downloadTaskFile(
+  taskId: string,
+  file: TaskFile,
+): Promise<void> {
   const response = await api.get<Blob>(`/tasks/${taskId}/files/${file._id}`, {
     responseType: "blob",
     timeout: 120_000,

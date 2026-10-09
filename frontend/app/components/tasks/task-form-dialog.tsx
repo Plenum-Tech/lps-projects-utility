@@ -20,6 +20,7 @@ import {
   MultiSelect,
   type MultiSelectOption,
 } from "@/components/globals/multi-select";
+import { AttachmentsField } from "@/components/tasks/attachments-field";
 import { EstimateField } from "@/components/tasks/estimate-field";
 import { LabelColorDot } from "@/components/tasks/label-chip";
 import {
@@ -65,6 +66,7 @@ import {
 } from "@/hooks/use-task-meta";
 import {
   createSubtasksFromDrafts,
+  uploadTaskFilesNow,
   taskKeys,
   useCreateTask,
   useUpdateTask,
@@ -211,12 +213,19 @@ export function TaskFormDialog({
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
   const [savingSubtasks, setSavingSubtasks] = useState(false);
+  // Files picked in the form; uploaded after the task is saved.
+  const [attachments, setAttachments] = useState<File[]>([]);
+  const [savingFiles, setSavingFiles] = useState(false);
   const pending =
-    createTask.isPending || updateTask.isPending || savingSubtasks;
+    createTask.isPending ||
+    updateTask.isPending ||
+    savingSubtasks ||
+    savingFiles;
 
   useEffect(() => {
     if (open) {
       setForm(initialState(task, defaultProjectId));
+      setAttachments([]);
       setSubmitted(false);
     }
     // Reset only when the dialog opens or switches task.
@@ -444,6 +453,7 @@ export function TaskFormDialog({
               );
             }
           }
+          await uploadAttachments(taskId);
           onOpenChange(false);
           onCreated?.(taskId);
         },
@@ -489,13 +499,31 @@ export function TaskFormDialog({
     }
 
     if (Object.keys(input).length === 0) {
-      onOpenChange(false);
+      void uploadAttachments(task._id).then(() => onOpenChange(false));
       return;
     }
     updateTask.mutate(
       { id: task._id, input },
-      { onSuccess: () => onOpenChange(false) },
+      {
+        onSuccess: async () => {
+          await uploadAttachments(task._id);
+          onOpenChange(false);
+        },
+      },
     );
+  }
+
+  /** Uploads the picked files to the saved task; failures are named in a toast. */
+  async function uploadAttachments(taskId: string) {
+    if (attachments.length === 0) return;
+    setSavingFiles(true);
+    const failed = await uploadTaskFilesNow(queryClient, taskId, attachments);
+    setSavingFiles(false);
+    if (failed.length > 0) {
+      toast.warning(
+        `Some files didn't upload: ${failed.join(", ")}. Add them from the task's Files tab.`,
+      );
+    }
   }
 
   return (
@@ -881,6 +909,13 @@ export function TaskFormDialog({
                 </p>
               )}
 
+              <AttachmentsField
+                files={attachments}
+                onChange={setAttachments}
+                disabled={pending}
+                existingCount={task?.fileCount ?? 0}
+              />
+
               <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
                 <Button
                   type="button"
@@ -898,11 +933,13 @@ export function TaskFormDialog({
                   ) : (
                     <LuPlus aria-hidden />
                   )}
-                  {pending
-                    ? "Saving…"
-                    : isEdit
-                      ? "Save changes"
-                      : "Create task"}
+                  {savingFiles
+                    ? "Uploading files…"
+                    : pending
+                      ? "Saving…"
+                      : isEdit
+                        ? "Save changes"
+                        : "Create task"}
                 </Button>
               </div>
             </form>
