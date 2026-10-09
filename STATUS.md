@@ -17,7 +17,7 @@ _Last updated: 8 Oct 2026_
 ## Features (all deployed)
 
 - **Work**: projects (structured names `Brand_Type_MonYYYY_Name`, brands, milestones, members), tasks (Worksuite-style table, board, calendar, subtasks with full form, comments, notes, files, history, actual start/end, estimates), meetings (Teams transcripts → tasks), timesheets and time logs, Excel/CSV import, recurring tasks.
-- **Reports**: Delivery Pulse, task, time-log, weekly timesheet, HR reports, activity log.
+- **Reports**: Delivery Pulse, task, time-log (with an Employee › Project › Task breakdown, stacked chart, and a formatted Excel export: Summary, Breakdown, Tasks, By employee, By project, Time logs), weekly timesheet, HR reports, activity log.
 - **HR**: employees and invitations, departments, leaves (heads approve their department), attendance, documents, performance reviews (manual; AI optional), feedback, announcements, **training** (admins upload a .pptx/.pdf deck and assign it; employees must read every slide, then tick the acknowledgement and complete; admins track and export progress, send reminders).
 - **Dashboard**: My dashboard with a period filter (7d–1y/all); Organisation view.
 - **Settings**: company, address, app (timezone, date format), profile, notifications, security, task/project/time-log/leave/meeting/delivery/brands, integrations (Pearity).

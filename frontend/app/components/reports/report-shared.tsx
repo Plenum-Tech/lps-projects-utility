@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
-import { LuChartColumn, LuDownload, LuLoaderCircle } from "react-icons/lu";
+import {
+  LuChartColumn,
+  LuDownload,
+  LuFileSpreadsheet,
+  LuLoaderCircle,
+} from "react-icons/lu";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -11,13 +16,47 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useCsvExport } from "@/hooks/use-work-reports";
+import { useCsvExport, useTimeExcelExport } from "@/hooks/use-work-reports";
 import { todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 
-type ExportPath = "/reports/time/export" | "/reports/tasks/export" | "/reports/timesheets/export";
+type ExportPath =
+  | "/reports/time/export"
+  | "/reports/tasks/export"
+  | "/reports/timesheets/export";
 
 /** Downloads the server CSV for the current filters. */
+/** Downloads the formatted .xlsx time report for the current filters. */
+export function ExcelExportButton({
+  params,
+  filenamePrefix,
+  disabled,
+}: {
+  params: object;
+  filenamePrefix: string;
+  disabled?: boolean;
+}) {
+  const exporter = useTimeExcelExport();
+  return (
+    <Button
+      onClick={() =>
+        exporter.mutate({
+          params,
+          filename: `${filenamePrefix}-${todayKey()}.xlsx`,
+        })
+      }
+      disabled={disabled || exporter.isPending}
+    >
+      {exporter.isPending ? (
+        <LuLoaderCircle aria-hidden className="animate-spin" />
+      ) : (
+        <LuFileSpreadsheet aria-hidden />
+      )}
+      Export Excel
+    </Button>
+  );
+}
+
 export function CsvExportButton({
   path,
   params,
@@ -34,7 +73,11 @@ export function CsvExportButton({
     <Button
       variant="outline"
       onClick={() =>
-        exporter.mutate({ path, params, filename: `${filenamePrefix}-${todayKey()}.csv` })
+        exporter.mutate({
+          path,
+          params,
+          filename: `${filenamePrefix}-${todayKey()}.csv`,
+        })
       }
       disabled={disabled || exporter.isPending}
     >
@@ -76,7 +119,10 @@ export function ChartCard({
       <CardContent>
         {isEmpty ? (
           <div className="flex h-48 flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center">
-            <LuChartColumn aria-hidden className="size-5 text-muted-foreground" />
+            <LuChartColumn
+              aria-hidden
+              className="size-5 text-muted-foreground"
+            />
             <p className="text-sm text-muted-foreground">{emptyText}</p>
           </div>
         ) : (
@@ -88,7 +134,13 @@ export function ChartCard({
 }
 
 /** Skeleton block shaped like KPI cards + two charts. */
-export function ReportSkeleton({ kpis = 4, charts = 2 }: { kpis?: number; charts?: number }) {
+export function ReportSkeleton({
+  kpis = 4,
+  charts = 2,
+}: {
+  kpis?: number;
+  charts?: number;
+}) {
   return (
     <div className="space-y-6" aria-busy="true" aria-label="Loading report">
       {kpis > 0 && (

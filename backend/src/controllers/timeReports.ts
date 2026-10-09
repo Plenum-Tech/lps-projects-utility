@@ -1,10 +1,12 @@
 import type { Request, Response } from "express";
+import ExcelJS from "exceljs";
 import mongoose from "mongoose";
 import { addDays, appDayStart, appToday, zonedParts } from "../lib/appTime.js";
 import { parsePagination } from "../lib/pagination.js";
 import { departmentUserIds, isInvalidObjectId } from "../lib/projectAccess.js";
 import { parseDateOnly } from "../lib/taskAccess.js";
 import { appDateKey, appTimeZone } from "../lib/taskJobs.js";
+import { Department } from "../models/Department.js";
 import { Project } from "../models/Project.js";
 import { Task, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TimeLog, TIMELOG_STATUSES } from "../models/TimeLog.js";
@@ -252,6 +254,409 @@ export async function timeExport(req: Request, res: Response): Promise<void> {
     })
   );
   sendCsv(res, `time-report-${filter.from ? dateKey(filter.from) : "all"}-${filter.to ? dateKey(filter.to) : "all"}.csv`, csv);
+}
+
+// ---------------------------------------------------------------------------
+// Time log breakdown (employee › project › task) + Excel workbook
+// ---------------------------------------------------------------------------
+
+interface BreakdownRow {
+  key: string | null;
+  label: string;
+  sublabel: string | null;
+  minutes: number;
+  hours: number;
+  earnings: number;
+  count: number;
+}
+/** Task row: the task's own details next to the hours this employee logged on it. */
+interface BreakdownTask extends BreakdownRow {
+  status: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  completedAt: string | null;
+  estimateMinutes: number | null;
+  client: string | null;
+}
+interface BreakdownProject extends BreakdownRow {
+  client: string | null;
+  tasks: BreakdownTask[];
+}
+interface BreakdownEmployee extends BreakdownRow {
+  projects: BreakdownProject[];
+}
+
+function sumInto(target: { minutes: number; earnings: number; count: number }, row: { minutes: number; earnings: number; count: number }) {
+  target.minutes += row.minutes;
+  target.earnings += row.earnings;
+  target.count += row.count;
+}
+
+function dateOrNull(value: Date | null | undefined): string | null {
+  return value ? dateKey(value) : null;
+}
+
+/** Hours per employee › project › task for a time-log filter, biggest first at every level. */
+async function loadBreakdown(match: Record<string, unknown>): Promise<{ employees: BreakdownEmployee[]; totals: BreakdownRow }> {
+  const rows = await TimeLog.aggregate<{
+    _id: { user: mongoose.Types.ObjectId | null; project: mongoose.Types.ObjectId | null; task: mongoose.Types.ObjectId | null };
+    minutes: number;
+    earnings: number;
+    count: number;
+  }>([
+    { $match: match },
+    {
+      $group: {
+        _id: { user: "$user", project: "$project", task: "$task" },
+        minutes: { $sum: "$durationMinutes" },
+        earnings: { $sum: "$earnings" },
+        count: { $sum: 1 },
+      },
+    },
+  ]);
+  const ids = (pick: "user" | "project" | "task") =>
+    [...new Set(rows.map((r) => r._id[pick]).filter((id): id is mongoose.Types.ObjectId => id instanceof mongoose.Types.ObjectId).map(String))].map(
+      (id) => new mongoose.Types.ObjectId(id)
+    );
+  type ProjectLean = { _id: mongoose.Types.ObjectId; name: string; code?: string; brand?: { name?: string } | null };
+  type TaskLean = {
+    _id: mongoose.Types.ObjectId;
+    title: string;
+    shortCode?: string | null;
+    number?: number | null;
+    status?: string;
+    startDate?: Date | null;
+    dueDate?: Date | null;
+    completedAt?: Date | null;
+    estimateMinutes?: number | null;
+  };
+  const [users, projects, tasks] = await Promise.all([
+    User.find({ _id: { $in: ids("user") } }).select("name email").lean(),
+    Project.find({ _id: { $in: ids("project") } }).select("name code brand").populate("brand", "name").lean<ProjectLean[]>(),
+    Task.find({ _id: { $in: ids("task") } })
+      .select("title shortCode number status startDate dueDate completedAt estimateMinutes")
+      .lean<TaskLean[]>(),
+  ]);
+  const userLabel = new Map(users.map((u) => [u._id.toString(), { label: u.name, sublabel: u.email ?? null }]));
+  const projectInfo = new Map(projects.map((p) => [p._id.toString(), { label: p.name, sublabel: p.code ?? null, client: p.brand?.name ?? null }]));
+  const taskInfo = new Map(tasks.map((t) => [t._id.toString(), t]));
+
+  const employees = new Map<string, BreakdownEmployee>();
+  for (const r of rows) {
+    const uKey = r._id.user ? String(r._id.user) : null;
+    const pKey = r._id.project ? String(r._id.project) : null;
+    const tKey = r._id.task ? String(r._id.task) : null;
+    const uid = uKey ?? "none";
+    let emp = employees.get(uid);
+    if (!emp) {
+      const l = (uKey && userLabel.get(uKey)) || { label: uKey ? "(deleted user)" : "No employee", sublabel: null };
+      emp = { key: uKey, ...l, minutes: 0, hours: 0, earnings: 0, count: 0, projects: [] };
+      employees.set(uid, emp);
+    }
+    let proj = emp.projects.find((p) => p.key === pKey);
+    if (!proj) {
+      const info = (pKey && projectInfo.get(pKey)) || { label: pKey ? "(deleted project)" : "No project", sublabel: null, client: null };
+      proj = { key: pKey, label: info.label, sublabel: info.sublabel, client: info.client, minutes: 0, hours: 0, earnings: 0, count: 0, tasks: [] };
+      emp.projects.push(proj);
+    }
+    const t = tKey ? taskInfo.get(tKey) : undefined;
+    const task: BreakdownTask = {
+      key: tKey,
+      label: t ? t.title : tKey ? "(deleted task)" : "No task",
+      sublabel: t ? (t.shortCode ?? (t.number ? `#${t.number}` : null)) : null,
+      minutes: r.minutes,
+      hours: hours(r.minutes),
+      earnings: Math.round(r.earnings * 100) / 100,
+      count: r.count,
+      status: t?.status ?? null,
+      startDate: dateOrNull(t?.startDate),
+      dueDate: dateOrNull(t?.dueDate),
+      completedAt: t?.completedAt ? appDateKey(t.completedAt) : null,
+      estimateMinutes: t?.estimateMinutes ?? null,
+      client: proj.client,
+    };
+    proj.tasks.push(task);
+    sumInto(proj, task);
+    sumInto(emp, task);
+  }
+  const totals: BreakdownRow = { key: null, label: "Total", sublabel: null, minutes: 0, hours: 0, earnings: 0, count: 0 };
+  const finish = (row: BreakdownRow) => {
+    row.hours = hours(row.minutes);
+    row.earnings = Math.round(row.earnings * 100) / 100;
+  };
+  const list = [...employees.values()];
+  for (const emp of list) {
+    for (const proj of emp.projects) {
+      proj.tasks.sort((a, b) => b.minutes - a.minutes);
+      finish(proj);
+    }
+    emp.projects.sort((a, b) => b.minutes - a.minutes);
+    finish(emp);
+    sumInto(totals, emp);
+  }
+  list.sort((a, b) => b.minutes - a.minutes);
+  finish(totals);
+  return { employees: list, totals };
+}
+
+/** GET /api/reports/time/breakdown?from&to&project&user&department&status */
+export async function timeBreakdown(req: Request, res: Response): Promise<void> {
+  const filter = await timeFilter(req);
+  if (isInvalid(filter)) {
+    res.status(filter.status).json({ error: filter.error });
+    return;
+  }
+  const { employees, totals } = await loadBreakdown(filter.match);
+  res.json({
+    from: filter.from ? dateKey(filter.from) : null,
+    to: filter.to ? dateKey(filter.to) : null,
+    employees,
+    totals: { minutes: totals.minutes, hours: totals.hours, earnings: totals.earnings, count: totals.count, employees: employees.length },
+  });
+}
+
+const XLSX_GREEN = "FF16A34A";
+const XLSX_HEADER_FILL: ExcelJS.Fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6F4EA" } };
+
+function styleHeader(sheet: ExcelJS.Worksheet): void {
+  const header = sheet.getRow(1);
+  header.font = { bold: true };
+  header.fill = XLSX_HEADER_FILL;
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  if (sheet.columns.length > 0) {
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: sheet.columns.length } };
+  }
+}
+
+/** In-cell bar chart on a numeric column (rows 2..lastRow). */
+function dataBars(sheet: ExcelJS.Worksheet, column: string, lastRow: number): void {
+  if (lastRow < 2) return;
+  sheet.addConditionalFormatting({
+    ref: `${column}2:${column}${lastRow}`,
+    rules: [{ type: "dataBar", priority: 1, cfvo: [{ type: "min" }, { type: "max" }], color: { argb: XLSX_GREEN }, gradient: false } as ExcelJS.ConditionalFormattingRule],
+  });
+}
+
+function totalRow(sheet: ExcelJS.Worksheet, values: Array<string | number | null>): void {
+  const row = sheet.addRow(values);
+  row.font = { bold: true };
+  row.border = { top: { style: "thin" } };
+}
+
+function statusLabel(status: string | null): string {
+  if (!status) return "";
+  return status.replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+/** GET /api/reports/time/export.xlsx?… — Summary, Breakdown, Tasks, By employee/project, Time logs. */
+export async function timeExportXlsx(req: Request, res: Response): Promise<void> {
+  const filter = await timeFilter(req);
+  if (isInvalid(filter)) {
+    res.status(filter.status).json({ error: filter.error });
+    return;
+  }
+  const [{ employees, totals }, logs] = await Promise.all([
+    loadBreakdown(filter.match),
+    TimeLog.find(filter.match)
+      .populate("user", "name email")
+      .populate("project", "name code")
+      .populate("task", "title shortCode number")
+      .sort({ startTime: 1 })
+      .limit(EXPORT_LIMIT)
+      .lean(),
+  ]);
+
+  const q = (name: string) => (typeof req.query[name] === "string" ? (req.query[name] as string) : "");
+  const [projectDoc, departmentDoc, userDoc] = await Promise.all([
+    q("project") && !isInvalidObjectId(q("project")) ? Project.findById(q("project")).select("name code").lean() : null,
+    q("department") && !isInvalidObjectId(q("department")) ? Department.findById(q("department")).select("name").lean() : null,
+    q("user") && !isInvalidObjectId(q("user")) ? User.findById(q("user")).select("name").lean() : null,
+  ]);
+  const period = `${filter.from ? dateKey(filter.from) : "start"} to ${filter.to ? dateKey(filter.to) : "today"}`;
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = req.user!.name;
+  wb.created = new Date();
+
+  // --- Summary --------------------------------------------------------------
+  const summary = wb.addWorksheet("Summary");
+  summary.columns = [{ width: 22 }, { width: 48 }];
+  const put = (label: string, value: string | number) => {
+    const row = summary.addRow([label, value]);
+    row.getCell(1).font = { bold: true };
+    return row;
+  };
+  summary.addRow(["Time log report"]).font = { bold: true, size: 14 };
+  summary.addRow([]);
+  put("Period", period);
+  put("Project", projectDoc ? `${projectDoc.code ? `${projectDoc.code} - ` : ""}${projectDoc.name}` : "Any");
+  put("Department", departmentDoc ? departmentDoc.name : "Any");
+  put("Employee", userDoc ? userDoc.name : "Any");
+  put("Status", q("status") ? statusLabel(q("status")) : "Pending + approved");
+  put("Generated", `${localDateTime(new Date())} by ${req.user!.name}`);
+  summary.addRow([]);
+  put("Total hours", totals.hours).getCell(2).numFmt = "0.00";
+  put("Earnings", totals.earnings).getCell(2).numFmt = "#,##0.00";
+  put("Time logs", totals.count);
+  put("Employees", employees.length);
+  if (logs.length >= EXPORT_LIMIT) put("Note", `Time logs sheet capped at ${EXPORT_LIMIT} rows`);
+
+  // --- Breakdown (outline: employee › project › task) ------------------------
+  const bd = wb.addWorksheet("Breakdown", { properties: { outlineLevelRow: 2 } });
+  bd.columns = [
+    { header: "Employee", width: 26 },
+    { header: "Project", width: 34 },
+    { header: "Task", width: 48 },
+    { header: "Hours", width: 10, style: { numFmt: "0.00" } },
+    { header: "Earnings", width: 12, style: { numFmt: "#,##0.00" } },
+    { header: "Entries", width: 9 },
+  ];
+  for (const emp of employees) {
+    const er = bd.addRow([emp.label, "", "", emp.hours, emp.earnings, emp.count]);
+    er.font = { bold: true };
+    er.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F4F6" } };
+    for (const proj of emp.projects) {
+      const pr = bd.addRow(["", proj.sublabel ? `${proj.sublabel} - ${proj.label}` : proj.label, "", proj.hours, proj.earnings, proj.count]);
+      pr.font = { italic: true };
+      pr.outlineLevel = 1;
+      for (const task of proj.tasks) {
+        const tr = bd.addRow(["", "", task.sublabel ? `${task.sublabel} - ${task.label}` : task.label, task.hours, task.earnings, task.count]);
+        tr.outlineLevel = 2;
+      }
+    }
+  }
+  totalRow(bd, ["Total", "", "", totals.hours, totals.earnings, totals.count]);
+  styleHeader(bd);
+  dataBars(bd, "D", bd.rowCount - 1);
+
+  // --- Tasks: one row per employee x task, with the task's details ----------
+  const tasksSheet = wb.addWorksheet("Tasks");
+  tasksSheet.columns = [
+    { header: "Employee name", width: 24 },
+    { header: "Task", width: 48 },
+    { header: "Project", width: 34 },
+    { header: "Completed On", width: 13 },
+    { header: "Client", width: 22 },
+    { header: "Start Date", width: 12 },
+    { header: "Due Date", width: 12 },
+    { header: "Estimated Time (h)", width: 16, style: { numFmt: "0.00" } },
+    { header: "Hours Logged", width: 13, style: { numFmt: "0.00" } },
+    { header: "Task Status", width: 13 },
+  ];
+  for (const emp of employees) {
+    for (const proj of emp.projects) {
+      for (const task of proj.tasks) {
+        tasksSheet.addRow([
+          emp.label,
+          task.sublabel ? `${task.sublabel} - ${task.label}` : task.label,
+          proj.sublabel ? `${proj.sublabel} - ${proj.label}` : proj.label,
+          task.completedAt ?? "",
+          task.client ?? "",
+          task.startDate ?? "",
+          task.dueDate ?? "",
+          task.estimateMinutes === null ? null : hours(task.estimateMinutes),
+          task.hours,
+          statusLabel(task.status),
+        ]);
+      }
+    }
+  }
+  totalRow(tasksSheet, ["Total", "", "", "", "", "", "", null, totals.hours, ""]);
+  styleHeader(tasksSheet);
+  dataBars(tasksSheet, "I", tasksSheet.rowCount - 1);
+
+  // --- By employee / project --------------------------------------------------
+  const byProject = new Map<string, { label: string; sublabel: string | null; client: string | null; minutes: number; earnings: number; count: number; employees: Set<string> }>();
+  for (const emp of employees) {
+    for (const proj of emp.projects) {
+      const pk = proj.key ?? "none";
+      let p = byProject.get(pk);
+      if (!p) {
+        p = { label: proj.label, sublabel: proj.sublabel, client: proj.client, minutes: 0, earnings: 0, count: 0, employees: new Set() };
+        byProject.set(pk, p);
+      }
+      sumInto(p, proj);
+      p.employees.add(emp.label);
+    }
+  }
+
+  const byEmp = wb.addWorksheet("By employee");
+  byEmp.columns = [
+    { header: "Employee", width: 26 },
+    { header: "Email", width: 30 },
+    { header: "Hours", width: 10, style: { numFmt: "0.00" } },
+    { header: "Earnings", width: 12, style: { numFmt: "#,##0.00" } },
+    { header: "Entries", width: 9 },
+    { header: "% of hours", width: 11, style: { numFmt: "0.0%" } },
+  ];
+  for (const emp of employees) {
+    byEmp.addRow([emp.label, emp.sublabel ?? "", emp.hours, emp.earnings, emp.count, totals.minutes ? emp.minutes / totals.minutes : 0]);
+  }
+  totalRow(byEmp, ["Total", "", totals.hours, totals.earnings, totals.count, totals.minutes ? 1 : 0]);
+  styleHeader(byEmp);
+  dataBars(byEmp, "C", byEmp.rowCount - 1);
+
+  const byProj = wb.addWorksheet("By project");
+  byProj.columns = [
+    { header: "Code", width: 14 },
+    { header: "Project", width: 40 },
+    { header: "Client", width: 22 },
+    { header: "Hours", width: 10, style: { numFmt: "0.00" } },
+    { header: "Earnings", width: 12, style: { numFmt: "#,##0.00" } },
+    { header: "Entries", width: 9 },
+    { header: "Employees", width: 10 },
+    { header: "% of hours", width: 11, style: { numFmt: "0.0%" } },
+  ];
+  for (const p of [...byProject.values()].sort((a, b) => b.minutes - a.minutes)) {
+    byProj.addRow([p.sublabel ?? "", p.label, p.client ?? "", hours(p.minutes), Math.round(p.earnings * 100) / 100, p.count, p.employees.size, totals.minutes ? p.minutes / totals.minutes : 0]);
+  }
+  totalRow(byProj, ["", "Total", "", totals.hours, totals.earnings, totals.count, employees.length, totals.minutes ? 1 : 0]);
+  styleHeader(byProj);
+  dataBars(byProj, "D", byProj.rowCount - 1);
+
+  // --- Time logs (raw) --------------------------------------------------------
+  const raw = wb.addWorksheet("Time logs");
+  raw.columns = [
+    { header: "Date", width: 12 },
+    { header: "Employee", width: 24 },
+    { header: "Project", width: 30 },
+    { header: "Task", width: 40 },
+    { header: "Start", width: 17 },
+    { header: "End", width: 17 },
+    { header: "Hours", width: 9, style: { numFmt: "0.00" } },
+    { header: "Break (min)", width: 11 },
+    { header: "Earnings", width: 11, style: { numFmt: "#,##0.00" } },
+    { header: "Status", width: 10 },
+    { header: "Memo", width: 40 },
+  ];
+  type Ref = { name?: string; code?: string; title?: string; shortCode?: string | null; number?: number | null } | null;
+  for (const l of logs) {
+    const user = l.user as unknown as Ref;
+    const project = l.project as unknown as Ref;
+    const task = l.task as unknown as Ref;
+    const taskCode = task ? (task.shortCode ?? (task.number ? `#${task.number}` : "")) : "";
+    raw.addRow([
+      appDateKey(l.startTime),
+      user?.name ?? "",
+      project ? `${project.code ? `${project.code} - ` : ""}${project.name ?? ""}` : "",
+      task ? `${taskCode}${taskCode ? " - " : ""}${task.title ?? ""}` : "",
+      localDateTime(l.startTime),
+      localDateTime(l.endTime ?? null),
+      hours(l.durationMinutes),
+      l.breakMinutes,
+      l.earnings,
+      statusLabel(l.status),
+      l.memo ?? "",
+    ]);
+  }
+  styleHeader(raw);
+
+  const filename = `time-report-${filter.from ? dateKey(filter.from) : "all"}-${filter.to ? dateKey(filter.to) : "all"}.xlsx`;
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("X-Export-Rows", String(logs.length));
+  await wb.xlsx.write(res);
+  res.end();
 }
 
 // ---------------------------------------------------------------------------

@@ -2130,7 +2130,39 @@ export interface PendingTimesheet extends Timesheet {
 /* Work reports                                                        */
 /* ------------------------------------------------------------------ */
 
-export type TimeReportGroupBy = "user" | "project" | "task" | "day";
+export type TimeReportGroupBy = "user" | "project" | "task" | "day" | "breakdown";
+
+export interface TimeBreakdownRow {
+  key: string | null;
+  label: string;
+  sublabel: string | null;
+  minutes: number;
+  hours: number;
+  earnings: number;
+  count: number;
+}
+/** A task with the hours one employee logged on it, plus the task's own details. */
+export interface TimeBreakdownTask extends TimeBreakdownRow {
+  status: string | null;
+  startDate: string | null;
+  dueDate: string | null;
+  completedAt: string | null;
+  estimateMinutes: number | null;
+  client: string | null;
+}
+export interface TimeBreakdownProject extends TimeBreakdownRow {
+  client: string | null;
+  tasks: TimeBreakdownTask[];
+}
+export interface TimeBreakdownEmployee extends TimeBreakdownRow {
+  projects: TimeBreakdownProject[];
+}
+export interface TimeBreakdownResponse {
+  from: string | null;
+  to: string | null;
+  employees: TimeBreakdownEmployee[];
+  totals: { minutes: number; hours: number; earnings: number; count: number; employees: number };
+}
 
 export interface TimeReportRow {
   key: string | null;

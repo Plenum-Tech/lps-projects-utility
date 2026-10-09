@@ -2,7 +2,9 @@ import { Router } from "express";
 import {
   taskExport,
   taskSummary,
+  timeBreakdown,
   timeExport,
+  timeExportXlsx,
   timesheetExport,
   timesheetReport,
   timeSummary,
@@ -22,6 +24,8 @@ router.get("/tasks/summary", ...guard, taskSummary);
 router.get("/tasks/export", ...guard, taskExport);
 router.get("/time/summary", ...guard, timeSummary);
 router.get("/time/export", ...guard, timeExport);
+router.get("/time/export.xlsx", ...guard, timeExportXlsx);
+router.get("/time/breakdown", ...guard, timeBreakdown);
 router.get("/timesheets", ...guard, timesheetReport);
 router.get("/timesheets/export", ...guard, timesheetExport);
 

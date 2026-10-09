@@ -5,6 +5,7 @@ import {
   LuClock,
   LuHourglass,
   LuListChecks,
+  LuNetwork,
   LuUser,
   LuWallet,
 } from "react-icons/lu";
@@ -12,7 +13,12 @@ import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import type { IconType } from "react-icons";
 
 import { FilterSelect } from "@/components/globals/filter-select";
-import { EmptyState, PageHeader, QueryError, StatCard } from "@/components/globals/query-states";
+import {
+  EmptyState,
+  PageHeader,
+  QueryError,
+  StatCard,
+} from "@/components/globals/query-states";
 import {
   DateRangeInputs,
   DepartmentFilter,
@@ -24,10 +30,17 @@ import {
 import {
   ChartCard,
   CsvExportButton,
+  ExcelExportButton,
   ReportSkeleton,
   shortLabel,
 } from "@/components/reports/report-shared";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   ChartContainer,
   ChartTooltip,
@@ -44,7 +57,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { useTimeReport, type TimeReportParams } from "@/hooks/use-work-reports";
+import {
+  TimeBreakdownChart,
+  TimeBreakdownTable,
+} from "@/components/reports/time-breakdown";
+import {
+  useTimeBreakdown,
+  useTimeReport,
+  type TimeReportParams,
+} from "@/hooks/use-work-reports";
 import { todayKey } from "@/lib/tasks";
 import {
   TIMELOG_STATUS_META,
@@ -55,13 +76,29 @@ import {
   monthStartKey,
 } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import type { Role, TimeLogStatus, TimeReportGroupBy, TimeReportRow } from "@/types";
+import type {
+  Role,
+  TimeLogStatus,
+  TimeReportGroupBy,
+  TimeReportRow,
+} from "@/types";
 
-const GROUPS: { value: TimeReportGroupBy; label: string; icon: IconType; column: string }[] = [
+const GROUPS: {
+  value: TimeReportGroupBy;
+  label: string;
+  icon: IconType;
+  column: string;
+}[] = [
   { value: "user", label: "Employee", icon: LuUser, column: "Employee" },
   { value: "project", label: "Project", icon: LuBriefcase, column: "Project" },
   { value: "task", label: "Task", icon: LuListChecks, column: "Task" },
   { value: "day", label: "Day", icon: LuCalendarDays, column: "Date" },
+  {
+    value: "breakdown",
+    label: "Breakdown",
+    icon: LuNetwork,
+    column: "Employee",
+  },
 ];
 
 const STATUSES: TimeLogStatus[] = ["pending", "approved", "rejected"];
@@ -84,12 +121,18 @@ const MAX_CHART_ROWS = 20;
 export function TimeReport({ role }: { role: Role }) {
   const initial = useMemo(defaultFilters, []);
   const [filters, setFilters] = useState<TimeReportParams>(initial);
-  const report = useTimeReport(filters);
+  const isBreakdown = filters.groupBy === "breakdown";
+  // The summary (grouped by employee in breakdown mode) drives the stat cards.
+  const report = useTimeReport(
+    isBreakdown ? { ...filters, groupBy: "user" } : filters,
+  );
   const isAdmin = role === "admin";
 
-  const set = (patch: Partial<TimeReportParams>) => setFilters((prev) => ({ ...prev, ...patch }));
+  const set = (patch: Partial<TimeReportParams>) =>
+    setFilters((prev) => ({ ...prev, ...patch }));
   const { groupBy: _groupBy, ...filterPart } = filters;
   const { groupBy: _initialGroup, ...initialPart } = initial;
+  const breakdown = useTimeBreakdown(filterPart, isBreakdown);
   const dirty = JSON.stringify(filterPart) !== JSON.stringify(initialPart);
 
   const presets = useMemo(() => {
@@ -101,7 +144,8 @@ export function TimeReport({ role }: { role: Role }) {
     ];
   }, []);
 
-  const group = GROUPS.find((item) => item.value === filters.groupBy) ?? GROUPS[0];
+  const group =
+    GROUPS.find((item) => item.value === filters.groupBy) ?? GROUPS[0];
 
   return (
     <div className="mx-auto w-full max-w-7xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
@@ -113,17 +157,26 @@ export function TimeReport({ role }: { role: Role }) {
             : "Hours and earnings logged in your department."
         }
         actions={
-          <CsvExportButton
-            path="/reports/time/export"
-            params={filters}
-            filenamePrefix="time-report"
-            disabled={!report.data || report.data.totals.count === 0}
-          />
+          <div className="flex flex-wrap gap-2">
+            <ExcelExportButton
+              params={filters}
+              filenamePrefix="time-report"
+              disabled={!report.data || report.data.totals.count === 0}
+            />
+            <CsvExportButton
+              path="/reports/time/export"
+              params={filters}
+              filenamePrefix="time-report"
+              disabled={!report.data || report.data.totals.count === 0}
+            />
+          </div>
         }
       />
 
       <ReportFilterBar
-        onReset={() => setFilters((prev) => ({ ...defaultFilters(), groupBy: prev.groupBy }))}
+        onReset={() =>
+          setFilters((prev) => ({ ...defaultFilters(), groupBy: prev.groupBy }))
+        }
         canReset={dirty}
       >
         <DateRangeInputs
@@ -133,8 +186,16 @@ export function TimeReport({ role }: { role: Role }) {
           to={filters.to}
           onChange={set}
         />
-        <RangePresets presets={presets} from={filters.from} to={filters.to} onSelect={set} />
-        <ProjectFilter value={filters.project} onChange={(project) => set({ project })} />
+        <RangePresets
+          presets={presets}
+          from={filters.from}
+          to={filters.to}
+          onSelect={set}
+        />
+        <ProjectFilter
+          value={filters.project}
+          onChange={(project) => set({ project })}
+        />
         {isAdmin && (
           <DepartmentFilter
             value={filters.department}
@@ -160,7 +221,10 @@ export function TimeReport({ role }: { role: Role }) {
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span id="group-by-label" className="text-sm font-medium text-muted-foreground">
+          <span
+            id="group-by-label"
+            className="text-sm font-medium text-muted-foreground"
+          >
             Group by
           </span>
           <ToggleGroup
@@ -175,7 +239,11 @@ export function TimeReport({ role }: { role: Role }) {
             }}
           >
             {GROUPS.map(({ value, label, icon: Icon }) => (
-              <ToggleGroupItem key={value} value={value} aria-label={`Group by ${label}`}>
+              <ToggleGroupItem
+                key={value}
+                value={value}
+                aria-label={`Group by ${label}`}
+              >
                 <Icon aria-hidden />
                 {label}
               </ToggleGroupItem>
@@ -201,7 +269,10 @@ export function TimeReport({ role }: { role: Role }) {
         />
       ) : (
         <div
-          className={cn("space-y-6 transition-opacity duration-200", report.isFetching && "opacity-70")}
+          className={cn(
+            "space-y-6 transition-opacity duration-200",
+            report.isFetching && "opacity-70",
+          )}
           aria-busy={report.isFetching}
         >
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -220,22 +291,52 @@ export function TimeReport({ role }: { role: Role }) {
             <StatCard
               label="Time logs"
               value={report.data.totals.count}
-              hint={`${report.data.rows.length} ${group.label.toLowerCase()}${
-                report.data.rows.length === 1 ? "" : "s"
+              hint={`${report.data.rows.length} employee${report.data.rows.length === 1 ? "" : "s"}${
+                isBreakdown
+                  ? ""
+                  : group.value === "user"
+                    ? ""
+                    : ` · by ${group.label.toLowerCase()}`
               }`}
               icon={LuListChecks}
             />
           </div>
 
-          <HoursChart rows={report.data.rows} groupBy={report.data.groupBy as TimeReportGroupBy} />
-          <TimeTable
-            rows={report.data.rows}
-            totals={report.data.totals}
-            column={
-              (GROUPS.find((item) => item.value === report.data.groupBy) ?? group).column
-            }
-            groupBy={report.data.groupBy as TimeReportGroupBy}
-          />
+          {isBreakdown ? (
+            breakdown.data ? (
+              <>
+                <TimeBreakdownChart employees={breakdown.data.employees} />
+                <TimeBreakdownTable data={breakdown.data} />
+              </>
+            ) : breakdown.isError ? (
+              <QueryError
+                title="Couldn't load the breakdown"
+                error={breakdown.error}
+                onRetry={() => void breakdown.refetch()}
+                retrying={breakdown.isFetching}
+              />
+            ) : (
+              <ReportSkeleton kpis={0} charts={1} />
+            )
+          ) : (
+            <>
+              <HoursChart
+                rows={report.data.rows}
+                groupBy={report.data.groupBy as TimeReportGroupBy}
+              />
+              <TimeTable
+                rows={report.data.rows}
+                totals={report.data.totals}
+                column={
+                  (
+                    GROUPS.find((item) => item.value === report.data.groupBy) ??
+                    group
+                  ).column
+                }
+                groupBy={report.data.groupBy as TimeReportGroupBy}
+              />
+            </>
+          )}
         </div>
       )}
     </div>
@@ -244,14 +345,22 @@ export function TimeReport({ role }: { role: Role }) {
 
 /* ------------------------------------------------------------------ */
 
-const hoursConfig = { hours: { label: "Hours", color: "var(--chart-1)" } } satisfies ChartConfig;
+const hoursConfig = {
+  hours: { label: "Hours", color: "var(--chart-1)" },
+} satisfies ChartConfig;
 
 function dayLabel(key: string | null, fallback: string) {
   if (!key || !/^\d{4}-\d{2}-\d{2}/.test(key)) return fallback;
   return formatDayLabel(key).day;
 }
 
-function HoursChart({ rows, groupBy }: { rows: TimeReportRow[]; groupBy: TimeReportGroupBy }) {
+function HoursChart({
+  rows,
+  groupBy,
+}: {
+  rows: TimeReportRow[];
+  groupBy: TimeReportGroupBy;
+}) {
   const isDay = groupBy === "day";
   const shown = isDay ? rows : rows.slice(0, MAX_CHART_ROWS);
   const data = shown.map((row) => ({
@@ -278,7 +387,12 @@ function HoursChart({ rows, groupBy }: { rows: TimeReportRow[]; groupBy: TimeRep
           className="aspect-auto w-full"
           style={{ height: Math.max(240, data.length * 28 + 40) }}
         >
-          <BarChart data={data} layout="vertical" accessibilityLayer margin={{ left: 8 }}>
+          <BarChart
+            data={data}
+            layout="vertical"
+            accessibilityLayer
+            margin={{ left: 8 }}
+          >
             <CartesianGrid horizontal={false} />
             <XAxis type="number" tickLine={false} axisLine={false} />
             <YAxis
@@ -290,11 +404,18 @@ function HoursChart({ rows, groupBy }: { rows: TimeReportRow[]; groupBy: TimeRep
               tickFormatter={(value) => shortLabel(value, 18)}
             />
             <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-            <Bar dataKey="hours" fill="var(--color-hours)" radius={[0, 4, 4, 0]} />
+            <Bar
+              dataKey="hours"
+              fill="var(--color-hours)"
+              radius={[0, 4, 4, 0]}
+            />
           </BarChart>
         </ChartContainer>
       ) : (
-        <ChartContainer config={hoursConfig} className="aspect-auto h-72 w-full">
+        <ChartContainer
+          config={hoursConfig}
+          className="aspect-auto h-72 w-full"
+        >
           <BarChart data={data} accessibilityLayer>
             <CartesianGrid vertical={false} />
             <XAxis
@@ -307,7 +428,11 @@ function HoursChart({ rows, groupBy }: { rows: TimeReportRow[]; groupBy: TimeRep
             />
             <YAxis tickLine={false} axisLine={false} width={36} />
             <ChartTooltip cursor={false} content={<ChartTooltipContent />} />
-            <Bar dataKey="hours" fill="var(--color-hours)" radius={[4, 4, 0, 0]} />
+            <Bar
+              dataKey="hours"
+              fill="var(--color-hours)"
+              radius={[4, 4, 0, 0]}
+            />
           </BarChart>
         </ChartContainer>
       )}
@@ -331,8 +456,8 @@ function TimeTable({
       <CardHeader>
         <CardTitle>Breakdown</CardTitle>
         <CardDescription>
-          {groupBy === "day" ? "Chronological" : "Sorted by time logged"}. The CSV export lists
-          every individual log.
+          {groupBy === "day" ? "Chronological" : "Sorted by time logged"}. The
+          CSV export lists every individual log.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -356,14 +481,20 @@ function TimeTable({
                         : row.label}
                     </p>
                     {row.sublabel && (
-                      <p className="truncate text-xs text-muted-foreground">{row.sublabel}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {row.sublabel}
+                      </p>
                     )}
                   </TableCell>
                   <TableCell className="text-right whitespace-nowrap tabular-nums">
                     {formatMinutes(row.minutes)}
                   </TableCell>
-                  <TableCell className="text-right tabular-nums">{formatMoney(row.earnings)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{row.count}</TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {formatMoney(row.earnings)}
+                  </TableCell>
+                  <TableCell className="text-right tabular-nums">
+                    {row.count}
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -376,7 +507,9 @@ function TimeTable({
                 <TableCell className="text-right font-semibold tabular-nums">
                   {formatMoney(totals.earnings)}
                 </TableCell>
-                <TableCell className="text-right font-semibold tabular-nums">{totals.count}</TableCell>
+                <TableCell className="text-right font-semibold tabular-nums">
+                  {totals.count}
+                </TableCell>
               </TableRow>
             </TableFooter>
           </Table>
