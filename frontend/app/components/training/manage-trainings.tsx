@@ -6,6 +6,7 @@ import {
   ArchiveRestore,
   BellRing,
   Download,
+  Eye,
   GraduationCap,
   LoaderCircle,
   Pencil,
@@ -58,6 +59,7 @@ import {
   useCreateTraining,
   useDeleteTraining,
   useRemindTraining,
+  trainingSourceUrl,
   useTrainingProgress,
   useUpdateTraining,
 } from "@/hooks/use-trainings";
@@ -154,7 +156,7 @@ export function ManageTrainings() {
                   <TableCell>
                     <Link
                       to={`/training/${training._id}`}
-                      className="font-medium hover:underline"
+                      className="font-medium text-primary underline-offset-4 hover:underline"
                     >
                       {training.title}
                     </Link>
@@ -192,6 +194,26 @@ export function ManageTrainings() {
                   </TableCell>
                   <TableCell>
                     <div className="flex justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title="View slides"
+                        render={<Link to={`/training/${training._id}`} />}
+                        nativeButton={false}
+                      >
+                        <Eye />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        title={`Download ${training.sourceFile.filename}`}
+                        render={
+                          <a href={trainingSourceUrl(training._id)} download />
+                        }
+                        nativeButton={false}
+                      >
+                        <Download />
+                      </Button>
                       <Button
                         variant="ghost"
                         size="icon-sm"
