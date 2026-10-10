@@ -68,6 +68,8 @@ export interface BriefInput {
   fileCount: number;
   /** Bodies of comments and non-private notes (only those containing a link are needed). */
   linkTexts: string[];
+  /** Stored AI verdict on the description (null = not checked). */
+  ai: { verdict: "ok" | "weak" | "flagged"; reason: string } | null;
 }
 
 export interface BriefScore {
@@ -133,7 +135,7 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
   const linkFilter = { $regex: /https?:\/\/|www\./i };
 
   const [descriptions, files, comments, notes] = await Promise.all([
-    Task.find({ createdAt: { $gte: since } }).select("description").lean(),
+    Task.find({ createdAt: { $gte: since } }).select("description briefCheck").lean(),
     TaskFile.aggregate<{ _id: mongoose.Types.ObjectId; first: Date; count: number }>([
       { $match: { task: { $in: ids } } },
       { $group: { _id: "$task", first: { $min: "$createdAt" }, count: { $sum: 1 } } },
@@ -150,6 +152,13 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
 
   const description = new Map(
     descriptions.flatMap((d) => (wanted.has(String(d._id)) ? [[String(d._id), d.description ?? ""] as const] : []))
+  );
+  const verdicts = new Map(
+    descriptions.flatMap((d) =>
+      wanted.has(String(d._id)) && d.briefCheck
+        ? [[String(d._id), { verdict: d.briefCheck.verdict, reason: d.briefCheck.reason ?? "" }] as const]
+        : []
+    )
   );
   const fileStats = new Map(files.map((f) => [String(f._id), f]));
   const linkTexts = new Map<string, string[]>();
@@ -168,6 +177,7 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
       firstFileAt: fs?.first ?? null,
       fileCount: fs?.count ?? 0,
       linkTexts: linkTexts.get(fact.id) ?? [],
+      ai: verdicts.get(fact.id) ?? null,
     };
   });
 }

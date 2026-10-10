@@ -1,5 +1,6 @@
 import { AppShell } from "@/components/layout/app-shell";
 import { RequireAuth } from "@/components/auth/require-auth";
+import { MandatoryTrainingPrompt } from "@/components/training/mandatory-training-prompt";
 
 /**
  * Pathless layout wrapping every protected route. The auth guard runs before
@@ -9,6 +10,7 @@ export default function ProtectedLayout() {
   return (
     <RequireAuth>
       <AppShell />
+      <MandatoryTrainingPrompt />
     </RequireAuth>
   );
 }

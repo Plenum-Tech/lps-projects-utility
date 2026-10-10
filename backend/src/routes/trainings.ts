@@ -7,6 +7,7 @@ import {
   getSlide,
   getTraining,
   listMyTrainings,
+  listRequiredTrainings,
   listTrainings,
   recordProgress,
   remindTraining,
@@ -23,6 +24,7 @@ router.use(requireAuth);
 
 // Everyone: the trainings assigned to them, reading progress and completion.
 router.get("/mine", listMyTrainings);
+router.get("/required", listRequiredTrainings);
 router.get("/:id", getTraining);
 router.get("/:id/slides/:n", getSlide);
 router.get("/:id/source", downloadSource);

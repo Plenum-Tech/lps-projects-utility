@@ -26,6 +26,10 @@ export interface ITraining extends mongoose.Document {
   /** Bumped when the deck is replaced; progress from older versions is reset or carried over. */
   version: number;
   archived: boolean;
+  /** Pops up at sign-in until completed. */
+  mandatory: boolean;
+  /** Days to complete, counted from the person's first sign-in after assignment. */
+  completeWithinDays: number;
   createdBy: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -54,6 +58,8 @@ const trainingSchema = new Schema<ITraining>(
     },
     version: { type: Number, default: 1 },
     archived: { type: Boolean, default: false, index: true },
+    mandatory: { type: Boolean, default: false },
+    completeWithinDays: { type: Number, default: 3, min: 1, max: 60 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
   },
   { timestamps: true },
@@ -78,6 +84,8 @@ export interface ITrainingProgress extends mongoose.Document {
   /** 1-based slide numbers seen. */
   viewed: number[];
   startedAt?: Date | null;
+  /** When the mandatory-training pop-up first showed this training to the person. */
+  firstSeenAt?: Date | null;
   completedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -95,6 +103,7 @@ const trainingProgressSchema = new Schema<ITrainingProgress>(
     version: { type: Number, default: 1 },
     viewed: { type: [Number], default: [] },
     startedAt: { type: Date, default: null },
+    firstSeenAt: { type: Date, default: null },
     completedAt: { type: Date, default: null },
   },
   { timestamps: true },

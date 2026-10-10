@@ -50,6 +50,7 @@
     "migrate:tables": "bun src/scripts/migrateTables.ts",
     "renumber:worksuite": "bun src/scripts/renumberWorksuiteTasks.ts",
     "delivery:settings": "bun src/scripts/deliverySettingsSet.ts",
+    "brief:check": "bun src/scripts/briefCheck.ts",
     "jobs:time": "bun src/scripts/runJobs.ts time",
     "jobs:projects": "bun src/scripts/runJobs.ts projects",
     "jobs:hr": "bun src/scripts/runJobs.ts hr",

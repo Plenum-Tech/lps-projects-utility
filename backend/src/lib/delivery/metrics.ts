@@ -6,9 +6,9 @@ import type { TaskFact } from "./facts.js";
 // "Metric definitions"). All comparisons are on app-timezone day numbers.
 // ---------------------------------------------------------------------------
 
-export const PERIODS = ["7d", "30d", "90d", "12m", "all"] as const;
+export const PERIODS = ["7d", "30d", "90d", "12m", "all", "custom"] as const;
 export type PeriodKey = (typeof PERIODS)[number];
-const PERIOD_DAYS: Record<Exclude<PeriodKey, "all">, number> = { "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
+const PERIOD_DAYS: Record<Exclude<PeriodKey, "all" | "custom">, number> = { "7d": 7, "30d": 30, "90d": 90, "12m": 365 };
 
 export const MAX_WEEKS = 104;
 
@@ -27,20 +27,24 @@ export interface PeriodInfo {
   previous: Range | null;
 }
 
-export function resolvePeriod(key: PeriodKey, today: number, minCreatedDay: number | null): PeriodInfo {
+export function resolvePeriod(key: PeriodKey, today: number, minCreatedDay: number | null, custom?: Range | null): PeriodInfo {
+  if (key === "custom" && custom) {
+    const days = custom.end - custom.start + 1;
+    return { key, days, today, current: { ...custom }, previous: { start: custom.start - days, end: custom.start - 1 } };
+  }
   if (key === "all") {
     const start = Math.min(minCreatedDay ?? today, today);
     return { key, days: today - start + 1, today, current: { start, end: today }, previous: null };
   }
-  const days = PERIOD_DAYS[key];
+  const days = PERIOD_DAYS[key === "custom" ? "30d" : key];
   const start = today - days + 1;
   return { key, days, today, current: { start, end: today }, previous: { start: start - days, end: start - 1 } };
 }
 
 /** Earliest day any endpoint needs for a period (facts scan window); null = no limit ("all"). */
-export function factsWindowStart(key: PeriodKey, today: number, teamMapStartDay: number): number | null {
+export function factsWindowStart(key: PeriodKey, today: number, teamMapStartDay: number, custom?: Range | null): number | null {
   if (key === "all") return null;
-  const p = resolvePeriod(key, today, null);
+  const p = resolvePeriod(key, today, null, custom);
   return Math.min(p.previous!.start, mondayOfDay(p.current.start), today - 29, teamMapStartDay);
 }
 

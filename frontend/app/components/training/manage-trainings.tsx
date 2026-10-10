@@ -163,6 +163,7 @@ export function ManageTrainings() {
                     <p className="text-xs text-muted-foreground">
                       {training.slideCount} slides ·{" "}
                       {training.sourceFile.filename}
+                      {training.mandatory && ` · mandatory (${training.completeWithinDays} ${training.completeWithinDays === 1 ? "day" : "days"})`}
                       {training.archived && " · archived"}
                     </p>
                   </TableCell>
@@ -331,6 +332,8 @@ function TrainingFormDialog({
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [mandatory, setMandatory] = useState(false);
+  const [withinDays, setWithinDays] = useState("3");
   const [mode, setMode] = useState<AssignMode>("all");
   const [departments, setDepartments] = useState<string[]>([]);
   const [users, setUsers] = useState<string[]>([]);
@@ -346,6 +349,8 @@ function TrainingFormDialog({
     setTitle(training?.title ?? "");
     setDescription(training?.description ?? "");
     setDueDate(training?.dueDate ? training.dueDate.slice(0, 10) : "");
+    setMandatory(training?.mandatory ?? false);
+    setWithinDays(String(training?.completeWithinDays ?? 3));
     setMode(
       training
         ? training.assignAll
@@ -376,6 +381,8 @@ function TrainingFormDialog({
       title: title.trim(),
       description: description.trim(),
       dueDate,
+      mandatory,
+      completeWithinDays: Math.min(60, Math.max(1, Math.round(Number(withinDays) || 3))),
       assignAll: mode === "all",
       departments: mode === "departments" ? departments : [],
       users: mode === "users" ? users : [],
@@ -474,6 +481,36 @@ function TrainingFormDialog({
               value={dueDate}
               onChange={(event) => setDueDate(event.target.value)}
             />
+          </div>
+          <div className="space-y-2 rounded-lg border p-3">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <Checkbox
+                checked={mandatory}
+                onCheckedChange={(checked) => setMandatory(checked === true)}
+                className="mt-0.5"
+              />
+              <span className="text-sm">
+                Mandatory
+                <span className="block text-xs text-muted-foreground">
+                  Pops up at sign-in until completed. HR is emailed when each person completes it.
+                </span>
+              </span>
+            </label>
+            {mandatory && (
+              <div className="flex items-center gap-2 pl-6 text-sm">
+                <span>Complete within</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={60}
+                  value={withinDays}
+                  onChange={(event) => setWithinDays(event.target.value)}
+                  className="h-8 w-20"
+                  aria-label="Days to complete"
+                />
+                <span>days of first sign-in</span>
+              </div>
+            )}
           </div>
           <fieldset className="space-y-2">
             <legend className="text-sm font-medium">Assign to</legend>

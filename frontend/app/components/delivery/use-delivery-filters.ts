@@ -1,10 +1,13 @@
 import { useCallback, useMemo } from "react";
 import { useSearchParams } from "react-router";
 
-import { DEFAULT_PERIOD, isPeriod } from "@/components/delivery/delivery-format";
+import {
+  DEFAULT_PERIOD,
+  isPeriod,
+} from "@/components/delivery/delivery-format";
 import type { DeliveryFilters } from "@/types";
 
-const KEYS = ["period", "team", "brand", "person"] as const;
+const KEYS = ["period", "team", "brand", "person", "from", "to"] as const;
 
 /**
  * Dashboard filters kept in the URL query (?period=90d&brand=…), so they
@@ -21,6 +24,8 @@ export function useDeliveryFilters() {
       team: params.get("team") ?? "",
       brand: params.get("brand") ?? "",
       person: params.get("person") ?? "",
+      from: params.get("from") ?? "",
+      to: params.get("to") ?? "",
     };
   }, [params]);
 
@@ -32,15 +37,21 @@ export function useDeliveryFilters() {
           for (const key of KEYS) {
             if (!(key in patch)) continue;
             const value = patch[key];
-            if (!value || (key === "period" && value === DEFAULT_PERIOD)) next.delete(key);
+            if (!value || (key === "period" && value === DEFAULT_PERIOD))
+              next.delete(key);
             else next.set(key, value);
+          }
+          // The from/to dates only belong to the custom period.
+          if (next.get("period") !== "custom") {
+            next.delete("from");
+            next.delete("to");
           }
           return next;
         },
-        { replace: true, preventScrollReset: true }
+        { replace: true, preventScrollReset: true },
       );
     },
-    [setParams]
+    [setParams],
   );
 
   const taskId = params.get("task");
@@ -53,10 +64,10 @@ export function useDeliveryFilters() {
           else next.delete("task");
           return next;
         },
-        { preventScrollReset: true }
+        { preventScrollReset: true },
       );
     },
-    [setParams]
+    [setParams],
   );
 
   const filtered = Boolean(filters.team || filters.brand || filters.person);

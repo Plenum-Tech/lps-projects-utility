@@ -240,7 +240,14 @@ async function queryFacts(
         startDate: 1,
         actualStartAt: 1,
         actualEndAt: 1,
-        rework: { $or: reworkConditions },
+        // Rules-era tasks carry an explicit iteration marker; older ones use the keyword/category rule.
+        rework: {
+          $cond: [
+            { $ne: [{ $ifNull: ["$iteration", null] }, null] },
+            { $eq: ["$iteration", "rework"] },
+            { $or: reworkConditions },
+          ],
+        },
       },
     },
   ];

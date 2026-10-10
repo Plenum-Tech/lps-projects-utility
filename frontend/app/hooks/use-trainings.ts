@@ -5,6 +5,7 @@ import { API_BASE_URL, api, getErrorMessage } from "@/lib/api";
 import type {
   AdminTraining,
   MyTraining,
+  RequiredTraining,
   TrainingDetailResponse,
   TrainingInput,
   TrainingProgressRow,
@@ -30,6 +31,19 @@ export function trainingSlideUrl(
 
 export function trainingSourceUrl(id: string): string {
   return `${API_BASE_URL}/trainings/${id}/source`;
+}
+
+/** Mandatory trainings still to complete (drives the sign-in pop-up). */
+export function useRequiredTrainings(enabled = true) {
+  return useQuery({
+    queryKey: [...trainingKeys.all, "required"] as const,
+    queryFn: async () => {
+      const { data } = await api.get<{ trainings: RequiredTraining[] }>("/trainings/required");
+      return data.trainings;
+    },
+    enabled,
+    staleTime: 60_000,
+  });
 }
 
 export function useMyTrainings() {
@@ -145,6 +159,10 @@ function toFormData(input: Partial<TrainingInput>): FormData {
     form.append("resetProgress", String(input.resetProgress));
   if (input.archived !== undefined)
     form.append("archived", String(input.archived));
+  if (input.mandatory !== undefined)
+    form.append("mandatory", String(input.mandatory));
+  if (input.completeWithinDays !== undefined)
+    form.append("completeWithinDays", String(input.completeWithinDays));
   if (input.file) form.append("file", input.file);
   return form;
 }

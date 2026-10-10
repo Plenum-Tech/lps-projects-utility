@@ -65,6 +65,7 @@ import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPr
 import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
 import { TaskComment } from "../models/TaskComment.js";
+import { scheduleBriefCheck } from "../lib/briefCheck.js";
 import { TaskFile } from "../models/TaskFile.js";
 import { TaskHistory } from "../models/TaskHistory.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
@@ -1327,6 +1328,7 @@ export async function createTaskCore(
 
   // Real-time SSE push to assignees, creator and watchers
   pushTaskUpdate(task, "created", { actorId: actor._id.toString() });
+  scheduleBriefCheck(taskId);
   if (project) {
     scheduleProgressRecalc(project._id as mongoose.Types.ObjectId);
     pushProjectUpdate(project, "task-created", { taskId: taskId.toString(), shortCode });
@@ -1882,6 +1884,9 @@ async function applyTaskUpdate(
   }
 
   await task.save();
+  if (notable.includes("description") || notable.includes("title") || changed.includes("titleParts")) {
+    scheduleBriefCheck(task._id as mongoose.Types.ObjectId);
+  }
   const taskId = task._id as mongoose.Types.ObjectId;
   const warnings = milestoneWarnings(task.dueDate, milestoneDoc);
   if (projectChanged) {

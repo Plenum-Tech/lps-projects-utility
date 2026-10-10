@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import multer from "multer";
 import { logActivity } from "../lib/activityLog.js";
+import { genericEmailTemplate, sendBatchEmails } from "../lib/email.js";
 import {
   deleteFromGridFs,
   openGridFsDownload,
@@ -133,6 +134,8 @@ function summary(training: ITraining) {
     dueDate: training.dueDate ?? null,
     version: training.version,
     archived: training.archived,
+    mandatory: Boolean(training.mandatory),
+    completeWithinDays: training.completeWithinDays ?? 3,
     sourceFile: {
       filename: training.sourceFile.filename,
       size: training.sourceFile.size,
@@ -353,6 +356,102 @@ async function notifyAssigned(
 // --- Employee endpoints ----------------------------------------------------
 
 /** GET /api/trainings/mine — trainings assigned to me, with my progress. */
+/** completeWithinDays: whole number 1..60 (default 3 when absent). */
+function parseDays(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return 3;
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isInteger(n) && n >= 1 && n <= 60 ? n : null;
+}
+
+/** HR recipients: HR_EMAILS (comma-separated) or every admin. */
+async function hrRecipients(): Promise<string[]> {
+  const configured = (process.env.HR_EMAILS ?? "")
+    .split(",")
+    .map((e) => e.trim())
+    .filter(Boolean);
+  if (configured.length) return configured;
+  const admins = await User.find({ role: "admin" }).select("email").lean();
+  return admins.map((a) => a.email).filter(Boolean);
+}
+
+/** Emails HR that someone completed a training. Never throws. */
+async function notifyHrOfCompletion(user: IUser, training: ITraining, completedAt: Date): Promise<void> {
+  try {
+    const recipients = (await hrRecipients()).filter((e) => e.toLowerCase() !== user.email.toLowerCase());
+    if (recipients.length === 0) return;
+    const department = user.department ? await Department.findById(user.department).select("name").lean() : null;
+    const when = completedAt.toLocaleString("en-GB", { timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    await sendBatchEmails(
+      recipients.map((to) => ({
+        to,
+        subject: `Training completed: ${training.title} — ${user.name}`,
+        html: genericEmailTemplate({
+          firstName: "HR team",
+          heading: "Training completed",
+          intro: `${user.name} completed the training "${training.title}".`,
+          cardTitle: training.title,
+          rows: [
+            ["Employee", user.name],
+            ["Email", user.email],
+            ["Department", department?.name ?? "—"],
+            ["Completed on", when],
+            ["Slides read", String(training.slides.length)],
+          ],
+          path: `/training?tab=manage`,
+          buttonLabel: "Open training progress",
+        }),
+      }))
+    );
+  } catch (err) {
+    console.error("[training] HR completion email failed", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * GET /api/trainings/required — mandatory trainings this person hasn't completed,
+ * with their deadline (first time shown + completeWithinDays). Starts the clock
+ * the first time a training is returned here.
+ */
+export async function listRequiredTrainings(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  const trainings = await Training.find({ archived: false, mandatory: true, ...assignedFilter(user) }).sort({ createdAt: 1 });
+  if (trainings.length === 0) {
+    res.json({ trainings: [] });
+    return;
+  }
+  const now = new Date();
+  for (const t of trainings) {
+    await TrainingProgress.updateOne(
+      { training: t._id, user: user._id },
+      { $setOnInsert: { version: t.version, viewed: [], firstSeenAt: now } },
+      { upsert: true }
+    );
+  }
+  await TrainingProgress.updateMany(
+    { user: user._id, training: { $in: trainings.map((t) => t._id) }, firstSeenAt: null },
+    { $set: { firstSeenAt: now } }
+  );
+  const progress = await TrainingProgress.find({ user: user._id, training: { $in: trainings.map((t) => t._id) } });
+  const byTraining = new Map(progress.map((p) => [p.training.toString(), p]));
+  const rows = trainings.flatMap((t) => {
+    const p = byTraining.get(t._id.toString()) ?? null;
+    if (p?.completedAt) return [];
+    const firstSeen = p?.firstSeenAt ?? now;
+    const deadline = new Date(firstSeen.getTime() + (t.completeWithinDays ?? 3) * 86_400_000);
+    const view = progressView(t, p);
+    return [
+      {
+        ...summary(t),
+        firstSeenAt: firstSeen,
+        deadline,
+        overdue: now.getTime() > deadline.getTime(),
+        viewedCount: view.viewedCount,
+      },
+    ];
+  });
+  res.json({ trainings: rows });
+}
+
 export async function listMyTrainings(
   req: Request,
   res: Response,
@@ -487,6 +586,10 @@ export async function recordProgress(
     },
     { upsert: true, new: true },
   );
+  if (progress && !progress.startedAt) {
+    progress.startedAt = new Date();
+    await progress.save();
+  }
   res.json({ progress: progressView(training, progress) });
 }
 
@@ -526,6 +629,7 @@ export async function completeTraining(
   }
   progress.completedAt = new Date();
   await progress.save();
+  void notifyHrOfCompletion(user, training, progress.completedAt);
   logActivity({
     action: "training_completed",
     actor: user,
@@ -617,10 +721,17 @@ export async function createTraining(
     if (conversionErrorResponse(res, err)) return;
     throw err;
   }
+  const completeWithinDays = parseDays(body.completeWithinDays);
+  if (completeWithinDays === null) {
+    res.status(400).json({ error: "completeWithinDays must be a whole number from 1 to 60" });
+    return;
+  }
   const training = await Training.create({
     title,
     description,
     dueDate,
+    mandatory: boolField(body.mandatory) ?? false,
+    completeWithinDays,
     ...assignment,
     ...deck,
     createdBy: req.user!._id,
@@ -704,6 +815,16 @@ export async function updateTraining(
   }
   const archived = boolField(body.archived);
   if (archived !== undefined) training.archived = archived;
+  const mandatory = boolField(body.mandatory);
+  if (mandatory !== undefined) training.mandatory = mandatory;
+  if (body.completeWithinDays !== undefined) {
+    const days = parseDays(body.completeWithinDays);
+    if (days === null) {
+      res.status(400).json({ error: "completeWithinDays must be a whole number from 1 to 60" });
+      return;
+    }
+    training.completeWithinDays = days;
+  }
 
   let oldFiles: {
     slides: mongoose.Types.ObjectId[];

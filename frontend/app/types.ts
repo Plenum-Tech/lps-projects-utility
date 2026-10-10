@@ -3081,13 +3081,16 @@ export interface DeliverySettingsResponse {
   changed?: string[];
 }
 
-export type DeliveryPeriod = "7d" | "30d" | "90d" | "12m" | "all";
+export type DeliveryPeriod = "7d" | "30d" | "90d" | "12m" | "all" | "custom";
 
 export interface DeliveryFilters {
   period: DeliveryPeriod;
   team: string;
   brand: string;
   person: string;
+  /** Custom period only: "YYYY-MM-DD" (inclusive). */
+  from?: string;
+  to?: string;
 }
 
 export interface DeliveryMeta {
@@ -3275,29 +3278,31 @@ export type DeliveryWeakBrief = DeliveryTaskRow & {
   failed: number[];
 };
 
+export interface DeliveryBriefSummary {
+  briefs: number;
+  /** Tasks with a description or an attachment. */
+  covered: number;
+  coveragePct: number | null;
+  /** AI brief check verdicts among the briefs that have been checked. */
+  ai: { checked: number; ok: number; weak: number; flagged: number; okPct: number | null };
+  rework: number;
+  reworkPct: number | null;
+}
+
+export interface DeliveryBriefAttention extends DeliveryTaskRow {
+  issue: "flagged" | "missing" | "weak";
+  reason: string;
+}
+
+/** GET /analytics/delivery/briefs — coverage + AI quality by briefer. */
 export interface DeliveryBriefsResponse {
   meta: DeliveryMeta;
-  rules: DeliveryRuleDef[];
-  settings: {
-    briefingWeekday: number;
-    minLeadDays: number;
-    briefMinLength: number;
-  };
-  totals: {
-    briefs: number;
-    avgScore: number | null;
-    rules: DeliveryRuleRate[];
-  };
-  byBriefer: {
-    briefer: DeliveryUserRef;
-    briefs: number;
-    avgScore: number | null;
-    rules: DeliveryRuleRate[];
-    rework: number;
-    reworkPct: number | null;
-  }[];
-  weakestWindowDays: number;
-  weakest: DeliveryWeakBrief[];
+  aiConfigured: boolean;
+  aiModel: string | null;
+  totals: DeliveryBriefSummary;
+  byBriefer: ({ briefer: DeliveryUserRef } & DeliveryBriefSummary)[];
+  attentionWindowDays: number;
+  attention: DeliveryBriefAttention[];
 }
 
 export interface DeliveryPerson extends DeliveryUserRef {
@@ -3461,6 +3466,9 @@ export interface TrainingSummary {
   dueDate: string | null;
   version: number;
   archived: boolean;
+  /** Pops up at sign-in until completed. */
+  mandatory: boolean;
+  completeWithinDays: number;
   sourceFile: { filename: string; size: number };
   assignAll: boolean;
   departments: string[];
@@ -3510,4 +3518,14 @@ export interface TrainingInput {
   file?: File | null;
   resetProgress?: boolean;
   archived?: boolean;
+  mandatory?: boolean;
+  completeWithinDays?: number;
+}
+
+/** GET /trainings/required — mandatory trainings the person hasn't completed. */
+export interface RequiredTraining extends TrainingSummary {
+  firstSeenAt: string;
+  deadline: string;
+  overdue: boolean;
+  viewedCount: number;
 }

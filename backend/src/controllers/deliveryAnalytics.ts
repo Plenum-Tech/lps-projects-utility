@@ -3,7 +3,8 @@ import mongoose from "mongoose";
 import { Project } from "../models/Project.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
 import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
-import { BRIEF_RULES, loadBriefInputs, scoreBrief } from "../lib/delivery/briefs.js";
+import { briefCheckConfigured, briefCheckModel } from "../lib/briefCheck.js";
+import { loadBriefInputs } from "../lib/delivery/briefs.js";
 import { deliveryCached } from "../lib/delivery/cache.js";
 import { dayFromKey, keyFromDay } from "../lib/delivery/days.js";
 import {
@@ -17,6 +18,7 @@ import {
   type TaskFact,
 } from "../lib/delivery/facts.js";
 import {
+  type Range,
   delta,
   factsWindowStart,
   groupStats,
@@ -69,9 +71,21 @@ function queryString(req: Request, name: string): string | null {
   return raw.trim() || null;
 }
 
-function parseFilters(req: Request): { periodKey: PeriodKey; filters: DeliveryFilters } {
+function parseFilters(req: Request): { periodKey: PeriodKey; filters: DeliveryFilters; custom: Range | null } {
   const period = queryString(req, "period") ?? "30d";
   if (!(PERIODS as readonly string[]).includes(period)) throw new BadRequest(`period must be one of: ${PERIODS.join(", ")}`);
+  let custom: Range | null = null;
+  if (period === "custom") {
+    const from = queryString(req, "from");
+    const to = queryString(req, "to");
+    const valid = (v: string | null) => v !== null && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+    if (!valid(from) || !valid(to)) throw new BadRequest("A custom period needs from and to dates (YYYY-MM-DD)");
+    const start = dayFromKey(from!);
+    const end = Math.min(dayFromKey(to!), dayFromKey(appDateKey()));
+    if (start > end) throw new BadRequest("from must be on or before to (and not in the future)");
+    if (end - start > 3 * 366) throw new BadRequest("A custom period can cover at most 3 years");
+    custom = { start, end };
+  }
   const team = queryString(req, "team");
   if (team && team !== OTHER_TEAM && !isId(team)) throw new BadRequest('team must be a department id or "other"');
   const brand = queryString(req, "brand");
@@ -81,6 +95,7 @@ function parseFilters(req: Request): { periodKey: PeriodKey; filters: DeliveryFi
   return {
     periodKey: period as PeriodKey,
     filters: { team: team?.toLowerCase() ?? null, brand: brand?.toLowerCase() ?? null, person: person?.toLowerCase() ?? null },
+    custom,
   };
 }
 
@@ -91,14 +106,14 @@ function scopeOf(req: Request): DeliveryScope {
 }
 
 async function buildCtx(req: Request, overrides: Partial<DeliveryFilters> = {}): Promise<Ctx> {
-  const { periodKey, filters: parsed } = parseFilters(req);
+  const { periodKey, filters: parsed, custom } = parseFilters(req);
   const filters = { ...parsed, ...overrides };
   const scope = scopeOf(req);
   const [settings, ref] = await Promise.all([getDeliverySettings(), loadRefData()]);
   const today = dayFromKey(appDateKey());
-  const window = factsWindowStart(periodKey, today, dayFromKey(settings.teamMapStartDate));
+  const window = factsWindowStart(periodKey, today, dayFromKey(settings.teamMapStartDate), custom);
   const { facts, minCreatedDay } = await loadFacts(settings, ref, scope, filters, window);
-  return { period: resolvePeriod(periodKey, today, minCreatedDay), periodKey, filters, scope, settings, ref, facts, today };
+  return { period: resolvePeriod(periodKey, today, minCreatedDay, custom), periodKey, filters, scope, settings, ref, facts, today };
 }
 
 function meta(ctx: Ctx) {
@@ -131,8 +146,8 @@ async function respond<T>(
 ): Promise<void> {
   let key: string;
   try {
-    const { periodKey, filters } = parseFilters(req);
-    key = `resp:${endpoint}:${JSON.stringify([periodKey, { ...filters, ...options.overrides }, scopeOf(req), options.extra ?? null, appDateKey()])}`;
+    const { periodKey, filters, custom } = parseFilters(req);
+    key = `resp:${endpoint}:${JSON.stringify([periodKey, custom, { ...filters, ...options.overrides }, scopeOf(req), options.extra ?? null, appDateKey()])}`;
   } catch (err) {
     if (err instanceof BadRequest) {
       res.status(400).json({ error: err.message });
@@ -386,7 +401,11 @@ export async function getDelayed(req: Request, res: Response): Promise<void> {
   );
 }
 
-/** GET /briefs — brief coverage by briefer (period) and the weakest recent briefs (last 30 days). */
+/**
+ * GET /briefs — brief coverage (the task has a description or an attachment)
+ * by briefer for the period, the AI brief check per briefer, and recent briefs
+ * needing attention (missing, flagged or weak; last 30 days).
+ */
 export async function getBriefs(req: Request, res: Response): Promise<void> {
   await respond(req, res, "briefs", async (ctx) => {
     const { current } = ctx.period;
@@ -395,61 +414,58 @@ export async function getBriefs(req: Request, res: Response): Promise<void> {
       (f) => (f.createdDay >= current.start && f.createdDay <= current.end) || (f.createdDay >= recentStart && f.createdDay <= ctx.today)
     );
     const inputs = await loadBriefInputs(candidates);
-    const scored = inputs.map((input) => ({ fact: input.fact, ...scoreBrief(input, ctx.settings) }));
-
-    const inPeriod = scored.filter((s) => s.fact.createdDay >= current.start && s.fact.createdDay <= current.end);
-    const ruleRates = (list: typeof scored) =>
-      BRIEF_RULES.map((rule, i) => {
-        const applicable = list.filter((s) => s.results[i] !== "na").length;
-        const passed = list.filter((s) => s.results[i] === "pass").length;
-        return { id: rule.id, passed, applicable, pct: pct(passed, applicable) };
-      });
-    const avgScore = (list: typeof scored) => {
-      const scores = list.flatMap((s) => (s.score === null ? [] : [s.score]));
-      return scores.length ? round1((scores.reduce((a, b) => a + b, 0) / scores.length) * 100) : null;
+    const rows = inputs.map((input) => ({
+      fact: input.fact,
+      covered: input.description.trim().length > 0 || input.fileCount > 0,
+      hasDescription: input.description.trim().length > 0,
+      fileCount: input.fileCount,
+      ai: input.ai,
+    }));
+    type Row = (typeof rows)[number];
+    const summarize = (list: Row[]) => {
+      const covered = list.filter((r) => r.covered).length;
+      const checked = list.filter((r) => r.ai);
+      const count = (v: "ok" | "weak" | "flagged") => checked.filter((r) => r.ai!.verdict === v).length;
+      return {
+        briefs: list.length,
+        covered,
+        coveragePct: pct(covered, list.length),
+        ai: { checked: checked.length, ok: count("ok"), weak: count("weak"), flagged: count("flagged"), okPct: pct(count("ok"), checked.length) },
+        rework: list.filter((r) => r.fact.rework).length,
+        reworkPct: pct(list.filter((r) => r.fact.rework).length, list.length),
+      };
     };
 
-    const byBriefer = new Map<string, typeof scored>();
-    for (const s of inPeriod) {
-      const key = s.fact.briefer ?? "unknown";
+    const inPeriod = rows.filter((r) => r.fact.createdDay >= current.start && r.fact.createdDay <= current.end);
+    const byBriefer = new Map<string, Row[]>();
+    for (const r of inPeriod) {
+      const key = r.fact.briefer ?? "unknown";
       const list = byBriefer.get(key);
-      if (list) list.push(s);
-      else byBriefer.set(key, [s]);
+      if (list) list.push(r);
+      else byBriefer.set(key, [r]);
     }
-    const briefers = [...byBriefer].map(([id, list]) => ({
-      briefer: userRef(ctx, id === "unknown" ? null : id),
-      briefs: list.length,
-      avgScore: avgScore(list),
-      rules: ruleRates(list),
-      rework: list.filter((s) => s.fact.rework).length,
-      reworkPct: pct(list.filter((s) => s.fact.rework).length, list.length),
-    }));
-    briefers.sort((a, b) => b.briefs - a.briefs || a.briefer.name.localeCompare(b.briefer.name));
+    const briefers = [...byBriefer]
+      .map(([id, list]) => ({ briefer: userRef(ctx, id === "unknown" ? null : id), ...summarize(list) }))
+      .sort((a, b) => b.briefs - a.briefs || a.briefer.name.localeCompare(b.briefer.name));
 
-    const weakest = scored
-      .filter((s) => s.fact.createdDay >= recentStart && s.score !== null)
-      .sort((a, b) => a.score! - b.score! || b.fact.createdAt.getTime() - a.fact.createdAt.getTime())
+    const rank = (r: Row) => (r.ai?.verdict === "flagged" ? 0 : !r.covered ? 1 : r.ai?.verdict === "weak" ? 2 : 9);
+    const attention = rows
+      .filter((r) => r.fact.createdDay >= recentStart && rank(r) < 9)
+      .sort((a, b) => rank(a) - rank(b) || b.fact.createdAt.getTime() - a.fact.createdAt.getTime())
       .slice(0, WEAKEST_COUNT)
-      .map((s) => ({
-        ...taskRow(ctx, s.fact),
-        score: round1(s.score! * 100),
-        passed: s.passed,
-        applicable: s.applicable,
-        results: s.results,
-        failed: s.failed,
+      .map((r) => ({
+        ...taskRow(ctx, r.fact),
+        issue: r.ai?.verdict === "flagged" ? "flagged" : !r.covered ? "missing" : "weak",
+        reason: r.ai?.reason || (!r.covered ? "No description and no attachment" : ""),
       }));
 
     return {
-      rules: BRIEF_RULES.map((r) => ({ ...r })),
-      settings: {
-        briefingWeekday: ctx.settings.briefingWeekday,
-        minLeadDays: ctx.settings.minLeadDays,
-        briefMinLength: ctx.settings.briefMinLength,
-      },
-      totals: { briefs: inPeriod.length, avgScore: avgScore(inPeriod), rules: ruleRates(inPeriod) },
+      aiConfigured: briefCheckConfigured(),
+      aiModel: briefCheckConfigured() ? briefCheckModel() : null,
+      totals: summarize(inPeriod),
       byBriefer: briefers,
-      weakestWindowDays: WEAKEST_DAYS,
-      weakest,
+      attentionWindowDays: WEAKEST_DAYS,
+      attention,
     };
   });
 }

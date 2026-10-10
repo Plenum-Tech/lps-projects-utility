@@ -6,6 +6,7 @@ export const PERIODS: { value: DeliveryPeriod; label: string; title: string }[] 
   { value: "90d", label: "90d", title: "Last 90 days" },
   { value: "12m", label: "12m", title: "Last 12 months (365 days)" },
   { value: "all", label: "All", title: "All time (weekly charts show the latest 104 weeks)" },
+  { value: "custom", label: "Custom", title: "Custom date range" },
 ];
 
 export const DEFAULT_PERIOD: DeliveryPeriod = "30d";

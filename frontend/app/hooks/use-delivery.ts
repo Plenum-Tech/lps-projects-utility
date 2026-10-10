@@ -49,6 +49,10 @@ export function deliveryParams(
   extra: Record<string, string> = {},
 ) {
   const out: Record<string, string> = { period: filters.period };
+  if (filters.period === "custom") {
+    if (filters.from) out.from = filters.from;
+    if (filters.to) out.to = filters.to;
+  }
   if (filters.team) out.team = filters.team;
   if (filters.brand) out.brand = filters.brand;
   if (filters.person) out.person = filters.person;

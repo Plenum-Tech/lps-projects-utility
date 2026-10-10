@@ -143,6 +143,8 @@ export interface ITask extends mongoose.Document {
   iteration?: TaskIteration | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: ITaskTitleParts | null;
+  /** AI brief check (lib/briefCheck.ts): verdict on the description, refreshed when it changes. */
+  briefCheck?: { verdict: "ok" | "weak" | "flagged"; reason?: string; model?: string; checkedAt?: Date; hash?: string } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
   finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
   submittedAt?: Date | null;
@@ -273,6 +275,19 @@ const taskSchema = new Schema<ITask>(
           unit: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.unitMax, required: true },
           quantity: { type: Number, min: 1, max: TASK_TITLE_LIMITS.quantityMax, required: true },
           shortName: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.shortNameMax, required: true },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+    briefCheck: {
+      type: new Schema(
+        {
+          verdict: { type: String, enum: ["ok", "weak", "flagged"], required: true },
+          reason: { type: String, trim: true, maxlength: 200 },
+          model: { type: String, trim: true },
+          checkedAt: { type: Date },
+          hash: { type: String },
         },
         { _id: false }
       ),

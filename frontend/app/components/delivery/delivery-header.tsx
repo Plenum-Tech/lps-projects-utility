@@ -54,15 +54,25 @@ export function DeliveryHeader({
       })),
       { value: "none", label: "No brand" },
     ],
-    [brands.data]
+    [brands.data],
   );
   const personOptions = useMemo(
-    () => (people.data ?? []).map((user) => ({ value: user._id, label: user.name })),
-    [people.data]
+    () =>
+      (people.data ?? []).map((user) => ({
+        value: user._id,
+        label: user.name,
+      })),
+    [people.data],
   );
   // Keep a filter from the URL selectable even before/without its option.
-  const withCurrent = (options: { value: string; label: string }[], value: string, fallback: string) =>
-    value && !options.some((option) => option.value === value) ? [...options, { value, label: fallback }] : options;
+  const withCurrent = (
+    options: { value: string; label: string }[],
+    value: string,
+    fallback: string,
+  ) =>
+    value && !options.some((option) => option.value === value)
+      ? [...options, { value, label: fallback }]
+      : options;
 
   return (
     <header
@@ -98,13 +108,53 @@ export function DeliveryHeader({
         </Button>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
+      <div
+        className="mt-3 flex flex-wrap items-center gap-2"
+        role="group"
+        aria-label="Dashboard filters"
+      >
         <SegmentedControl
           label="Period"
           value={filters.period}
-          onChange={(period) => onChange({ period })}
+          onChange={(period) => {
+            if (period === "custom" && (!filters.from || !filters.to)) {
+              const today = new Date();
+              const key = (d: Date) =>
+                `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+              const start = new Date(today);
+              start.setDate(start.getDate() - 29);
+              onChange({ period, from: key(start), to: key(today) });
+            } else {
+              onChange({ period });
+            }
+          }}
           options={PERIODS}
         />
+        {filters.period === "custom" && (
+          <span className="inline-flex items-center gap-1.5 text-sm">
+            <input
+              type="date"
+              aria-label="From"
+              value={filters.from ?? ""}
+              max={filters.to || undefined}
+              onChange={(event) =>
+                event.target.value && onChange({ from: event.target.value })
+              }
+              className="h-8 rounded-md border bg-background px-2 text-sm"
+            />
+            <span className="text-muted-foreground">–</span>
+            <input
+              type="date"
+              aria-label="To"
+              value={filters.to ?? ""}
+              min={filters.from || undefined}
+              onChange={(event) =>
+                event.target.value && onChange({ to: event.target.value })
+              }
+              className="h-8 rounded-md border bg-background px-2 text-sm"
+            />
+          </span>
+        )}
         <FilterSelect
           label="Team"
           value={filters.team}
@@ -123,7 +173,11 @@ export function DeliveryHeader({
           label="Person"
           value={filters.person}
           onChange={(person) => onChange({ person })}
-          options={withCurrent(personOptions, filters.person, "Selected person")}
+          options={withCurrent(
+            personOptions,
+            filters.person,
+            "Selected person",
+          )}
           anyLabel="Everyone"
         />
         {filtered && (
@@ -138,7 +192,13 @@ export function DeliveryHeader({
 }
 
 /** Sticky "1 · Results … 4 · People" anchor nav with active-section highlighting. */
-export function SectionNav({ top, navRef }: { top: number; navRef: RefObject<HTMLElement | null> }) {
+export function SectionNav({
+  top,
+  navRef,
+}: {
+  top: number;
+  navRef: RefObject<HTMLElement | null>;
+}) {
   const [active, setActive] = useState<string>(PULSE_SECTIONS[0].id);
   const offsetRef = useRef(top);
   offsetRef.current = top;
@@ -150,10 +210,14 @@ export function SectionNav({ top, navRef }: { top: number; navRef: RefObject<HTM
       let current: string = PULSE_SECTIONS[0].id;
       for (const section of PULSE_SECTIONS) {
         const element = document.getElementById(section.id);
-        if (element && element.getBoundingClientRect().top <= line) current = section.id;
+        if (element && element.getBoundingClientRect().top <= line)
+          current = section.id;
       }
       // At the very bottom, the last section is active even if it's short.
-      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
+      if (
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 4
+      ) {
         current = PULSE_SECTIONS[PULSE_SECTIONS.length - 1].id;
       }
       setActive(current);
@@ -170,9 +234,18 @@ export function SectionNav({ top, navRef }: { top: number; navRef: RefObject<HTM
   function go(id: string) {
     const element = document.getElementById(id);
     if (!element) return;
-    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    element.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "start" });
-    window.history.replaceState(window.history.state, "", `${window.location.pathname}${window.location.search}#${id}`);
+    const reduce = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    element.scrollIntoView({
+      behavior: reduce ? "auto" : "smooth",
+      block: "start",
+    });
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${window.location.search}#${id}`,
+    );
     setActive(id);
   }
 
@@ -199,7 +272,7 @@ export function SectionNav({ top, navRef }: { top: number; navRef: RefObject<HTM
                   "inline-flex h-8 items-center gap-1.5 rounded-md px-3 text-sm outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring/50",
                   current
                     ? "bg-pulse-blue/10 font-medium text-pulse-blue"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 <span className="tabular-nums">{index + 1}</span>
