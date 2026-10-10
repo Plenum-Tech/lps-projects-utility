@@ -310,6 +310,7 @@ export async function runTaskRow(
     invalidate("taskLabel:");
   }
   const result = await createTaskCore(actor, body, ip, { importJob: jobId }, {
+    allowClosedProject: true,
     status: plan.status,
     sendEmail: options.sendEmails,
     actual: {

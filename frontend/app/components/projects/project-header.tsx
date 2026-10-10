@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
 import {
   LuArchive,
+  LuLock,
   LuArchiveRestore,
   LuArrowLeft,
   LuCalendar,
@@ -114,6 +115,16 @@ export function ProjectHeader({
               <ShortCode code={project.code} />
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
+              {project.expired && (
+                <Badge
+                  variant="outline"
+                  className="gap-1"
+                  title="The project's month has ended. Open tasks can still be closed; new work needs a project for the new month."
+                >
+                  <LuLock aria-hidden className="size-3" />
+                  Closed{project.closesOn ? ` ${formatDateOnly(project.closesOn, true)}` : ""}
+                </Badge>
+              )}
               {archived && (
                 <Badge variant="outline" className="gap-1">
                   <LuArchive aria-hidden className="size-3" />

@@ -1833,6 +1833,10 @@ export interface Project {
   isOverdue: boolean;
   taskCounts: TaskCounts;
   loggedMinutes: number;
+  /** Last day of the project's month (naming month, else deadline month); null = never closes. */
+  closesOn: string | null;
+  /** The month has ended: no new tasks (open ones can still be closed). */
+  expired: boolean;
 }
 
 export interface ProjectPermissions {

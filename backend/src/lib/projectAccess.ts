@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isProjectExpired, projectClosesOn } from "./projectExpiry.js";
 import { cached } from "./refCache.js";
 import { Project } from "../models/Project.js";
 import type { IProject } from "../models/Project.js";
@@ -368,6 +369,8 @@ export async function serializeProjects(
     json.isOverdue = Boolean(deadline !== null && deadline < today && !status?.isCompleted && !p.archivedAt);
     json.taskCounts = counts.get(id) ?? emptyTaskCounts();
     json.loggedMinutes = totals?.minutes ?? 0;
+    json.closesOn = projectClosesOn(p);
+    json.expired = isProjectExpired(p);
     return json;
   });
 }

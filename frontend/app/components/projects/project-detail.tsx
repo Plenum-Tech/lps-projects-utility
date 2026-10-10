@@ -159,7 +159,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 _id: project._id,
                 name: project.name,
                 code: project.code,
-                canCreateTasks: permissions.canCreateTasks && !archived,
+                canCreateTasks: permissions.canCreateTasks && !archived && !project.expired,
               }}
             />
           )}

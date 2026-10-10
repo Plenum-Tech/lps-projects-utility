@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { notifyTask } from "../lib/notifications.js";
@@ -1065,6 +1066,8 @@ interface ReviewTaskBody {
 export interface CreateTaskOptions {
   /** Tasks created in the app's task form: project, brief, estimate, iteration and the controlled name are required. */
   enforceRules?: boolean;
+  /** Imports may add tasks to projects whose month has ended; everything else may not. */
+  allowClosedProject?: boolean;
   /** History action for the "created" row (meetings use "created_from_meeting"). */
   historyAction?: TaskHistoryAction;
   /** Links the task back to a meeting transcript line. */
@@ -1132,6 +1135,9 @@ export async function createTaskCore(
     const resolved = await resolveTaskProject(actor, body.project);
     if (isInvalid(resolved)) {
       return resolved;
+    }
+    if (!options.allowClosedProject && isProjectExpired(resolved)) {
+      return { status: 400, error: PROJECT_CLOSED_MESSAGE };
     }
     project = resolved;
   } else if (actor.role === "employee") {
@@ -1822,6 +1828,9 @@ async function applyTaskUpdate(
       }
       projectDoc = resolved;
       if (!task.project || !task.project.equals(resolved._id as mongoose.Types.ObjectId)) {
+        if (isProjectExpired(resolved)) {
+          return { status: 400, error: "That project closed at the end of its month. Tasks can't be moved into it." };
+        }
         task.project = resolved._id as mongoose.Types.ObjectId;
         task.milestone = null;
         projectChanged = true;
