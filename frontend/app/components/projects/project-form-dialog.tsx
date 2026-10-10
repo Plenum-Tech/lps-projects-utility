@@ -2,8 +2,14 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { LuInfo, LuLoaderCircle, LuPlus, LuSave, LuX } from "react-icons/lu";
 
-import { ManageLink, useRefetchOnFocus } from "@/components/globals/manage-link";
-import { MultiSelect, type MultiSelectOption } from "@/components/globals/multi-select";
+import {
+  ManageLink,
+  useRefetchOnFocus,
+} from "@/components/globals/manage-link";
+import {
+  MultiSelect,
+  type MultiSelectOption,
+} from "@/components/globals/multi-select";
 import {
   FieldError,
   OptionSelect,
@@ -34,8 +40,16 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useBrands, useCreateBrand } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
-import { useProjectCategories, useProjectStatuses, useProjectTypes } from "@/hooks/use-project-meta";
-import { useCreateProject, useProjectNamingSuggestion, useUpdateProject } from "@/hooks/use-projects";
+import {
+  useProjectCategories,
+  useProjectStatuses,
+  useProjectTypes,
+} from "@/hooks/use-project-meta";
+import {
+  useCreateProject,
+  useProjectNamingSuggestion,
+  useUpdateProject,
+} from "@/hooks/use-projects";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import {
   composeProjectName,
@@ -52,7 +66,13 @@ import {
 import { currencySymbol } from "@/lib/format";
 import { LABEL_COLOR_META, toDateInput, todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { ProgressMode, Project, ProjectInput, ProjectNaming, ProjectUpdateInput } from "@/types";
+import type {
+  ProgressMode,
+  Project,
+  ProjectInput,
+  ProjectNaming,
+  ProjectUpdateInput,
+} from "@/types";
 
 const NONE = "none";
 const MAX_SUMMARY = 2000;
@@ -119,7 +139,13 @@ function parseOptionalNumber(text: string): number | null | "invalid" {
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
 function sameNaming(a: ProjectNaming | null | undefined, b: ProjectNaming) {
-  return Boolean(a) && a!.brand === b.brand && a!.type === b.type && a!.month === b.month && a!.title === b.title;
+  return (
+    Boolean(a) &&
+    a!.brand === b.brand &&
+    a!.type === b.type &&
+    a!.month === b.month &&
+    a!.title === b.title
+  );
 }
 
 function sameIds(a: string[], b: string[]) {
@@ -190,14 +216,17 @@ export function ProjectFormDialog({
       brand: suggested.brand ?? current.brand,
       type: suggested.type ?? current.type,
       month: suggested.month || current.month,
-      title: suggested.title.replaceAll(NAMING_SEPARATOR, " ").slice(0, NAMING_TITLE_MAX),
+      title: suggested.title
+        .replaceAll(NAMING_SEPARATOR, " ")
+        .slice(0, NAMING_TITLE_MAX),
     }));
   }, [open, legacy, suggested]);
 
   // Default status for new projects.
   useEffect(() => {
     if (!open || isEdit || form.status) return;
-    const fallback = statuses.data?.find((status) => status.isDefault) ?? statuses.data?.[0];
+    const fallback =
+      statuses.data?.find((status) => status.isDefault) ?? statuses.data?.[0];
     if (fallback) setForm((current) => ({ ...current, status: fallback._id }));
   }, [open, isEdit, form.status, statuses.data]);
 
@@ -211,7 +240,10 @@ export function ProjectFormDialog({
       const next = { ...current, ...patch };
       if (codeTouched) return next;
       const brand = brands.data?.find((item) => item._id === next.brand);
-      const code = brand && next.type ? suggestNamingCode(brand.shortName || brand.name, next.type) : current.code;
+      const code =
+        brand && next.type
+          ? suggestNamingCode(brand.shortName || brand.name, next.type)
+          : current.code;
       return { ...next, code };
     });
   }
@@ -226,7 +258,7 @@ export function ProjectFormDialog({
           setNewBrand(null);
           changeNamePart({ brand: brand._id });
         },
-      }
+      },
     );
   }
 
@@ -235,15 +267,18 @@ export function ProjectFormDialog({
       (assignable.data ?? []).map((person) => ({
         value: person._id,
         label: person.name,
-        description: [person.email, person.department?.name].filter(Boolean).join(" · "),
+        description: [person.email, person.department?.name]
+          .filter(Boolean)
+          .join(" · "),
       })),
-    [assignable.data]
+    [assignable.data],
   );
 
   const managerOptions = useMemo<OptionItem[]>(() => {
     const options = new Map<string, OptionItem>();
     options.set(NONE, { value: NONE, label: "No manager" });
-    if (user) options.set(user._id, { value: user._id, label: `${user.name} (you)` });
+    if (user)
+      options.set(user._id, { value: user._id, label: `${user.name} (you)` });
     for (const member of project?.members ?? []) {
       options.set(member.user._id, {
         value: member.user._id,
@@ -253,7 +288,11 @@ export function ProjectFormDialog({
     }
     for (const person of assignable.data ?? []) {
       if (!options.has(person._id)) {
-        options.set(person._id, { value: person._id, label: person.name, description: person.email });
+        options.set(person._id, {
+          value: person._id,
+          label: person.name,
+          description: person.email,
+        });
       }
     }
     if (project?.manager && !options.has(project.manager._id)) {
@@ -269,9 +308,12 @@ export function ProjectFormDialog({
   const categoryOptions = useMemo<OptionItem[]>(
     () => [
       { value: NONE, label: "No category" },
-      ...(categories.data ?? []).map((category) => ({ value: category._id, label: category.name })),
+      ...(categories.data ?? []).map((category) => ({
+        value: category._id,
+        label: category.name,
+      })),
     ],
-    [categories.data]
+    [categories.data],
   );
 
   // Active brands, plus the project's current one even if it was deactivated since.
@@ -286,7 +328,10 @@ export function ProjectFormDialog({
           icon: (
             <span
               aria-hidden
-              className={cn("size-2 rounded-full", (LABEL_COLOR_META[brand.color] ?? LABEL_COLOR_META.muted).dot)}
+              className={cn(
+                "size-2 rounded-full",
+                (LABEL_COLOR_META[brand.color] ?? LABEL_COLOR_META.muted).dot,
+              )}
             />
           ),
         })),
@@ -303,18 +348,27 @@ export function ProjectFormDialog({
           icon: (
             <span
               aria-hidden
-              className={cn("size-2 rounded-full", statusColor(status.color).dot)}
+              className={cn(
+                "size-2 rounded-full",
+                statusColor(status.color).dot,
+              )}
             />
           ),
         })),
-    [statuses.data]
+    [statuses.data],
   );
 
   // Configured types, plus the project's current type if it was removed from Settings since.
   const typeOptions = useMemo<OptionItem[]>(() => {
-    const names = types.data?.map((type) => type.name) ?? (types.isError ? DEFAULT_PROJECT_TYPES : []);
+    const names =
+      types.data?.map((type) => type.name) ??
+      (types.isError ? DEFAULT_PROJECT_TYPES : []);
     const current = project?.naming?.type;
-    const all = current && !names.some((name) => name.toLowerCase() === current.toLowerCase()) ? [...names, current] : names;
+    const all =
+      current &&
+      !names.some((name) => name.toLowerCase() === current.toLowerCase())
+        ? [...names, current]
+        : names;
     return all.map((name) => ({ value: name, label: name }));
   }, [types.data, types.isError, project?.naming?.type]);
 
@@ -332,7 +386,7 @@ export function ProjectFormDialog({
     form.brand === NONE
       ? "Pick a brand."
       : selectedBrand?.name.includes(NAMING_SEPARATOR)
-        ? "This brand's name contains \"_\" — rename it first."
+        ? 'This brand\'s name contains "_" — rename it first.'
         : null;
   const typeError = form.type ? null : "Pick a type.";
   const monthError = MONTH_PATTERN.test(form.month) ? null : "Pick a month.";
@@ -353,42 +407,51 @@ export function ProjectFormDialog({
   const codeError = PROJECT_CODE_PATTERN.test(code)
     ? null
     : "2–10 uppercase letters or digits (e.g. WEB).";
-  const datesError =
-    form.deadline && form.startDate && form.deadline < form.startDate
-      ? "The deadline can't be before the start date."
-      : null;
   const hours = parseOptionalNumber(form.hoursAllocated);
   const budget = parseOptionalNumber(form.budget);
   const progressValue = Number(form.progress);
   const progressError =
     form.progressMode === "manual" &&
-    (!Number.isFinite(progressValue) || progressValue < 0 || progressValue > 100)
+    (!Number.isFinite(progressValue) ||
+      progressValue < 0 ||
+      progressValue > 100)
       ? "Enter a percentage between 0 and 100."
       : null;
-  const summaryError = form.summary.length > MAX_SUMMARY ? "Keep the summary shorter." : null;
+  const summaryError =
+    form.summary.length > MAX_SUMMARY ? "Keep the summary shorter." : null;
   const hasErrors = Boolean(
     brandError ||
-      typeError ||
-      monthError ||
-      nameError ||
-      codeError ||
-      datesError ||
-      progressError ||
-      summaryError ||
-      hours === "invalid" ||
-      budget === "invalid"
+    typeError ||
+    monthError ||
+    nameError ||
+    codeError ||
+    progressError ||
+    summaryError ||
+    hours === "invalid" ||
+    budget === "invalid",
   );
   const show = (error: string | null | boolean) => submitted && Boolean(error);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (hasErrors || namingLoading || hours === "invalid" || budget === "invalid") return;
+    if (
+      hasErrors ||
+      namingLoading ||
+      hours === "invalid" ||
+      budget === "invalid"
+    )
+      return;
 
     const category = form.category === NONE ? null : form.category;
     const manager = form.manager === NONE ? null : form.manager;
     // The server composes the name (Brand_Type_MonYYYY_Name) and keeps Project.brand in sync.
-    const naming: ProjectNaming = { brand: form.brand, type: form.type, month: form.month, title };
+    const naming: ProjectNaming = {
+      brand: form.brand,
+      type: form.type,
+      month: form.month,
+      title,
+    };
 
     if (!project) {
       const input: ProjectInput = {
@@ -399,8 +462,6 @@ export function ProjectFormDialog({
         manager,
         members: form.members,
         status: form.status || undefined,
-        startDate: form.startDate || undefined,
-        deadline: form.deadline || null,
         progressMode: form.progressMode,
         hoursAllocated: hours,
         budget,
@@ -408,8 +469,10 @@ export function ProjectFormDialog({
         manualTimeLogs: form.manualTimeLogs,
         requireTaskApproval: form.requireTaskApproval,
       };
-      if (isAdmin && form.departments.length > 0) input.departments = form.departments;
-      if (form.progressMode === "manual") input.progress = Math.round(progressValue);
+      if (isAdmin && form.departments.length > 0)
+        input.departments = form.departments;
+      if (form.progressMode === "manual")
+        input.progress = Math.round(progressValue);
       createProject.mutate(input, {
         onSuccess: (data) => {
           onOpenChange(false);
@@ -424,22 +487,24 @@ export function ProjectFormDialog({
     // Legacy names are converted on save; structured ones only when a part changed.
     if (!sameNaming(project.naming, naming)) input.naming = naming;
     if (code !== original.code) input.code = code;
-    if (form.summary.trim() !== original.summary.trim()) input.summary = form.summary.trim();
+    if (form.summary.trim() !== original.summary.trim())
+      input.summary = form.summary.trim();
     if (form.category !== original.category) input.category = category;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
     if (form.manager !== original.manager) input.manager = manager;
-    if (form.startDate !== original.startDate && form.startDate) input.startDate = form.startDate;
-    if (form.deadline !== original.deadline) input.deadline = form.deadline || null;
-    if (form.progressMode !== original.progressMode) input.progressMode = form.progressMode;
+    if (form.progressMode !== original.progressMode)
+      input.progressMode = form.progressMode;
     if (form.progressMode === "manual" && form.progress !== original.progress) {
       input.progress = Math.round(progressValue);
     }
-    if (form.hoursAllocated !== original.hoursAllocated) input.hoursAllocated = hours;
+    if (form.hoursAllocated !== original.hoursAllocated)
+      input.hoursAllocated = hours;
     if (canViewRates && form.budget !== original.budget) input.budget = budget;
     if (form.isPublic !== original.isPublic) input.isPublic = form.isPublic;
-    if (form.manualTimeLogs !== original.manualTimeLogs) input.manualTimeLogs = form.manualTimeLogs;
+    if (form.manualTimeLogs !== original.manualTimeLogs)
+      input.manualTimeLogs = form.manualTimeLogs;
     if (form.requireTaskApproval !== original.requireTaskApproval) {
       input.requireTaskApproval = form.requireTaskApproval;
     }
@@ -448,7 +513,10 @@ export function ProjectFormDialog({
       onOpenChange(false);
       return;
     }
-    updateProject.mutate({ id: project._id, input }, { onSuccess: () => onOpenChange(false) });
+    updateProject.mutate(
+      { id: project._id, input },
+      { onSuccess: () => onOpenChange(false) },
+    );
   }
 
   return (
@@ -466,13 +534,22 @@ export function ProjectFormDialog({
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
           {legacy && project && (
             <div className="flex gap-2.5 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm">
-              <LuInfo aria-hidden className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+              <LuInfo
+                aria-hidden
+                className="mt-0.5 size-4 shrink-0 text-muted-foreground"
+              />
               <div className="min-w-0 space-y-0.5">
-                <p className="font-medium text-foreground">This project has a legacy name</p>
+                <p className="font-medium text-foreground">
+                  This project has a legacy name
+                </p>
                 <p className="break-words text-muted-foreground">
-                  “{project.name}”. Check the fields below — saving renames it to the new format.
-                  {suggested && !suggested.typeDetected && " No type was found in the old name."}
-                  {suggested?.monthSource === "startDate" && " The month comes from the start date."}
+                  “{project.name}”. Check the fields below — saving renames it
+                  to the new format.
+                  {suggested &&
+                    !suggested.typeDetected &&
+                    " No type was found in the old name."}
+                  {suggested?.monthSource === "startDate" &&
+                    " The month comes from the start date."}
                 </p>
               </div>
             </div>
@@ -486,14 +563,22 @@ export function ProjectFormDialog({
                 {newBrand === null ? (
                   <Combobox
                     items={brandOptions}
-                    value={brandOptions.find((option) => option.value === form.brand) ?? null}
-                    onValueChange={(item) => changeNamePart({ brand: item?.value ?? NONE })}
+                    value={
+                      brandOptions.find(
+                        (option) => option.value === form.brand,
+                      ) ?? null
+                    }
+                    onValueChange={(item) =>
+                      changeNamePart({ brand: item?.value ?? NONE })
+                    }
                     disabled={brands.isPending || namingLoading}
                     autoHighlight
                   >
                     <ComboboxInput
                       id="project-brand"
-                      placeholder={brands.isPending ? "Loading brands…" : "Search brands…"}
+                      placeholder={
+                        brands.isPending ? "Loading brands…" : "Search brands…"
+                      }
                       className="w-full"
                       aria-invalid={show(brandError) || undefined}
                     />
@@ -586,7 +671,9 @@ export function ProjectFormDialog({
                   aria-label="Type"
                 />
                 {show(typeError) && <FieldError>{typeError}</FieldError>}
-                {isAdmin && <ManageLink to="/settings/projects">Manage types</ManageLink>}
+                {isAdmin && (
+                  <ManageLink to="/settings/projects">Manage types</ManageLink>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="project-month">Month</Label>
@@ -616,8 +703,12 @@ export function ProjectFormDialog({
               {show(nameError) ? (
                 <FieldError id="project-name-hint">{nameError}</FieldError>
               ) : (
-                <p id="project-name-hint" className="text-xs text-muted-foreground">
-                  Up to {NAMING_TITLE_MAX} characters, no underscores. {title.length}/{NAMING_TITLE_MAX}
+                <p
+                  id="project-name-hint"
+                  className="text-xs text-muted-foreground"
+                >
+                  Up to {NAMING_TITLE_MAX} characters, no underscores.{" "}
+                  {title.length}/{NAMING_TITLE_MAX}
                 </p>
               )}
             </div>
@@ -641,7 +732,10 @@ export function ProjectFormDialog({
                 value={form.code}
                 onChange={(event) => {
                   setCodeTouched(true);
-                  set("code", event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""));
+                  set(
+                    "code",
+                    event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""),
+                  );
                 }}
                 maxLength={10}
                 placeholder="WASLC"
@@ -652,7 +746,10 @@ export function ProjectFormDialog({
               {show(codeError) ? (
                 <FieldError id="project-code-hint">{codeError}</FieldError>
               ) : (
-                <p id="project-code-hint" className="text-xs text-muted-foreground">
+                <p
+                  id="project-code-hint"
+                  className="text-xs text-muted-foreground"
+                >
                   {isEdit
                     ? "Only new tasks use a new code."
                     : "Suggested from the brand and type; prefixes task codes (WASLC-1)."}
@@ -683,7 +780,11 @@ export function ProjectFormDialog({
                 onChange={(value) => set("category", value)}
                 options={categoryOptions}
               />
-              {isAdmin && <ManageLink to="/settings/projects">Manage categories</ManageLink>}
+              {isAdmin && (
+                <ManageLink to="/settings/projects">
+                  Manage categories
+                </ManageLink>
+              )}
             </div>
 
             {!isEdit && (
@@ -707,7 +808,9 @@ export function ProjectFormDialog({
                 onChange={(value) => set("manager", value)}
                 options={managerOptions}
               />
-              <p className="text-xs text-muted-foreground">Added as a member automatically.</p>
+              <p className="text-xs text-muted-foreground">
+                Added as a member automatically.
+              </p>
             </div>
 
             {isAdmin && (
@@ -726,48 +829,23 @@ export function ProjectFormDialog({
                 options={memberOptions}
                 value={form.members}
                 onValueChange={(value) => set("members", value)}
-                placeholder={assignable.isPending ? "Loading people…" : "Search people…"}
-                emptyText={assignable.isError ? "Couldn't load people." : "No one found."}
+                placeholder={
+                  assignable.isPending ? "Loading people…" : "Search people…"
+                }
+                emptyText={
+                  assignable.isError ? "Couldn't load people." : "No one found."
+                }
               />
             </div>
           )}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label htmlFor="project-start">Start date</Label>
-              <Input
-                id="project-start"
-                type="date"
-                value={form.startDate}
-                onChange={(event) => set("startDate", event.target.value)}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="project-deadline">
-                Deadline <span className="font-normal text-muted-foreground">(optional)</span>
-              </Label>
-              <Input
-                id="project-deadline"
-                type="date"
-                value={form.deadline}
-                min={form.startDate || undefined}
-                onChange={(event) => set("deadline", event.target.value)}
-                aria-invalid={show(datesError) || undefined}
-                aria-describedby={show(datesError) ? "project-dates-error" : undefined}
-              />
-            </div>
-            {show(datesError) && (
-              <div className="sm:col-span-2">
-                <FieldError id="project-dates-error">{datesError}</FieldError>
-              </div>
-            )}
-          </div>
 
           <Separator />
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5 sm:col-span-2">
-              <Label htmlFor="project-progress-mode">Progress calculation</Label>
+              <Label htmlFor="project-progress-mode">
+                Progress calculation
+              </Label>
               <OptionSelect
                 id="project-progress-mode"
                 value={form.progressMode}
@@ -791,12 +869,17 @@ export function ProjectFormDialog({
                   onChange={(event) => set("progress", event.target.value)}
                   aria-invalid={show(progressError) || undefined}
                 />
-                {show(progressError) && <FieldError>{progressError}</FieldError>}
+                {show(progressError) && (
+                  <FieldError>{progressError}</FieldError>
+                )}
               </div>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="project-hours">
-                Hours allocated <span className="font-normal text-muted-foreground">(optional)</span>
+                Hours allocated{" "}
+                <span className="font-normal text-muted-foreground">
+                  (optional)
+                </span>
               </Label>
               <Input
                 id="project-hours"
@@ -809,12 +892,17 @@ export function ProjectFormDialog({
                 placeholder="No limit"
                 aria-invalid={(submitted && hours === "invalid") || undefined}
               />
-              {submitted && hours === "invalid" && <FieldError>Enter a positive number.</FieldError>}
+              {submitted && hours === "invalid" && (
+                <FieldError>Enter a positive number.</FieldError>
+              )}
             </div>
             {canViewRates && (
               <div className="space-y-1.5">
                 <Label htmlFor="project-budget">
-                  Budget ({currencySymbol()}) <span className="font-normal text-muted-foreground">(optional)</span>
+                  Budget ({currencySymbol()}){" "}
+                  <span className="font-normal text-muted-foreground">
+                    (optional)
+                  </span>
                 </Label>
                 <Input
                   id="project-budget"
@@ -824,7 +912,9 @@ export function ProjectFormDialog({
                   value={form.budget}
                   onChange={(event) => set("budget", event.target.value)}
                   placeholder="0"
-                  aria-invalid={(submitted && budget === "invalid") || undefined}
+                  aria-invalid={
+                    (submitted && budget === "invalid") || undefined
+                  }
                 />
                 {submitted && budget === "invalid" && (
                   <FieldError>Enter a positive number.</FieldError>
@@ -899,7 +989,7 @@ function AdminDepartmentsField({
         value: department._id,
         label: department.name,
       })),
-    [departments.data]
+    [departments.data],
   );
   return (
     <div className="space-y-1.5 sm:col-span-2">
@@ -909,8 +999,14 @@ function AdminDepartmentsField({
         options={options}
         value={value}
         onValueChange={onChange}
-        placeholder={departments.isPending ? "Loading departments…" : "Select departments…"}
-        emptyText={departments.isError ? "Couldn't load departments." : "No departments found."}
+        placeholder={
+          departments.isPending ? "Loading departments…" : "Select departments…"
+        }
+        emptyText={
+          departments.isError
+            ? "Couldn't load departments."
+            : "No departments found."
+        }
       />
       <ManageLink to="/admin/departments">Manage departments</ManageLink>
     </div>

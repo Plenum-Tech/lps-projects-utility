@@ -919,6 +919,14 @@ export interface TaskLabelRef {
 export type ActualDateSource = "auto" | "manual" | "import";
 
 /** Mirrors the backend Task model as returned by the API (populated refs). */
+export type TaskIteration = "new" | "rework";
+
+export interface TaskTitleParts {
+  unit: string;
+  quantity: number;
+  shortName: string;
+}
+
 export interface Task {
   _id: string;
   title: string;
@@ -942,6 +950,12 @@ export interface Task {
   lastReminderSentOn: string | null;
   lastManualReminderAt: string | null;
   submissionNotes?: string;
+  /** Rules-era tasks: "new" work or "rework". */
+  iteration?: TaskIteration | null;
+  /** Rules-era tasks: the parts the title is composed from. */
+  titleParts?: TaskTitleParts | null;
+  /** Final deliverable recorded at completion. */
+  finalFile?: { fileId?: string | null; url?: string | null; addedAt?: string | null } | null;
   submittedAt: string | null;
   reviewNotes?: string;
   reviewedAt: string | null;
@@ -1133,6 +1147,11 @@ export interface RecurrenceInput {
 
 /** POST /api/tasks body. Dates are "YYYY-MM-DD". */
 export interface TaskInput {
+  /** Controlled name; the server composes the title from it. */
+  titleParts?: TaskTitleParts;
+  iteration?: TaskIteration;
+  /** The form will upload attachments right after creation (they count as the brief). */
+  hasAttachments?: boolean;
   title: string;
   /** 0..100000 minutes; null clears. */
   estimateMinutes?: number | null;
@@ -1228,6 +1247,10 @@ export interface TaskNoteInput {
 
 /** POST /api/tasks/:id/submit body. */
 export interface TaskSubmitInput {
+  /** A file uploaded to this task as the final deliverable. */
+  finalFileId?: string;
+  /** Or a link to it. */
+  finalUrl?: string;
   submissionNotes?: string;
 }
 

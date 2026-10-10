@@ -121,6 +121,13 @@ async function parseCategory(raw: unknown): Promise<mongoose.Types.ObjectId | nu
   return new mongoose.Types.ObjectId(raw);
 }
 
+
+/** First and last day (UTC midnight) of a "YYYY-MM" month: a project's dates follow its month. */
+function monthBounds(month: string): { start: Date; end: Date } {
+  const [y, m] = month.split("-").map(Number);
+  return { start: new Date(Date.UTC(y!, m! - 1, 1)), end: new Date(Date.UTC(y!, m!, 0)) };
+}
+
 /** Brand id or null/"" (no brand). Inactive brands can't be newly assigned (`current` = the project's brand). */
 async function parseBrand(
   raw: unknown,
@@ -948,9 +955,12 @@ export async function createProjectCore(
 
   const startDate = optionalDate(body.startDate, "startDate");
   if (isInvalid(startDate)) return startDate;
-  const deadline = optionalDate(body.deadline, "deadline");
-  if (isInvalid(deadline)) return deadline;
-  const start = startDate ?? appToday();
+  const rawDeadline = optionalDate(body.deadline, "deadline");
+  if (isInvalid(rawDeadline)) return rawDeadline;
+  // The month is the project's period: without explicit dates, start/end are its first/last day.
+  const bounds = naming ? monthBounds(naming.month) : null;
+  const start = startDate ?? bounds?.start ?? appToday();
+  const deadline = rawDeadline === undefined ? (bounds?.end ?? null) : rawDeadline;
   if (deadline && deadline.getTime() < start.getTime()) return bad("deadline must be on or after startDate");
 
   let progressMode: ProgressMode = "task_completion";
@@ -1101,6 +1111,7 @@ export async function updateProjectCore(
 
   // Name: `naming` converts a legacy name / changes the parts; a brand change on a
   // structured project re-composes the name; a plain `name` only for legacy projects.
+  const monthBefore = project.naming?.month ?? null;
   let namingInput: unknown = body.naming;
   if (namingInput === undefined && project.naming && body.brand !== undefined) {
     if (body.brand === null || body.brand === "") return bad("Brand is required for a structured project name");
@@ -1212,6 +1223,19 @@ export async function updateProjectCore(
     project.deadline = deadline;
     project.lastDeadlineReminderOn = null;
     changed.push("deadline");
+  }
+  // Month changed and no explicit dates: the dates follow the new month.
+  if (
+    project.naming &&
+    project.naming.month !== monthBefore &&
+    body.startDate === undefined &&
+    body.deadline === undefined
+  ) {
+    const bounds = monthBounds(project.naming.month);
+    project.startDate = bounds.start;
+    project.deadline = bounds.end;
+    project.lastDeadlineReminderOn = null;
+    changed.push("startDate", "deadline");
   }
 
   if (body.progressMode !== undefined) {

@@ -15,6 +15,23 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 export const TASK_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 
+/** Iteration marker: first delivery of the work, or a rework of earlier work. */
+export const TASK_ITERATIONS = ["new", "rework"] as const;
+export type TaskIteration = (typeof TASK_ITERATIONS)[number];
+
+/** Controlled task name: "<unit> <quantity> – <short name>" (brand + month come from the project). */
+export interface ITaskTitleParts {
+  unit: string;
+  quantity: number;
+  shortName: string;
+}
+
+export const TASK_TITLE_LIMITS = { unitMax: 40, shortNameMax: 80, quantityMax: 9999 } as const;
+
+export function composeTaskTitle(parts: ITaskTitleParts): string {
+  return `${parts.unit} ${parts.quantity} – ${parts.shortName}`;
+}
+
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
 
 export const RECURRENCE_UNITS = ["day", "week", "month"] as const;
@@ -122,6 +139,12 @@ export interface ITask extends mongoose.Document {
   lastManualReminderAt?: Date | null;
   /** Employee's notes when submitting completed work. */
   submissionNotes?: string;
+  /** Rules-era tasks: new work or rework (required at creation). */
+  iteration?: TaskIteration | null;
+  /** Rules-era tasks: the parts the title is composed from. */
+  titleParts?: ITaskTitleParts | null;
+  /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
+  finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
   submittedAt?: Date | null;
   /** Reviewer's notes on approval/rejection. */
   reviewNotes?: string;
@@ -243,6 +266,29 @@ const taskSchema = new Schema<ITask>(
     lastReminderSentOn: { type: String, default: null },
     lastManualReminderAt: { type: Date, default: null },
     submissionNotes: { type: String, trim: true, maxlength: 2000 },
+    iteration: { type: String, enum: [...TASK_ITERATIONS, null], default: null },
+    titleParts: {
+      type: new Schema(
+        {
+          unit: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.unitMax, required: true },
+          quantity: { type: Number, min: 1, max: TASK_TITLE_LIMITS.quantityMax, required: true },
+          shortName: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.shortNameMax, required: true },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+    finalFile: {
+      type: new Schema(
+        {
+          fileId: { type: Schema.Types.ObjectId, ref: "TaskFile", default: null },
+          url: { type: String, trim: true, maxlength: 2000, default: null },
+          addedAt: { type: Date, default: null },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
     submittedAt: { type: Date, default: null },
     reviewNotes: { type: String, trim: true, maxlength: 2000 },
     reviewedAt: { type: Date, default: null },

@@ -208,6 +208,17 @@ function TaskDetail({
             )}
             <StatusBadge status={task.status} />
             <PriorityIndicator priority={task.priority} />
+            {task.iteration && (
+              <span
+                className={
+                  task.iteration === "rework"
+                    ? "rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-xs font-medium text-warn"
+                    : "rounded-full border bg-muted/40 px-2 py-0.5 text-xs text-muted-foreground"
+                }
+              >
+                {task.iteration === "rework" ? "Rework" : "New work"}
+              </span>
+            )}
             {task.recurrence && (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <LuRepeat aria-hidden className="size-3.5" />

@@ -44,6 +44,7 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -81,6 +82,7 @@ import {
   toDateInput,
 } from "@/lib/tasks";
 import type {
+  TaskIteration,
   RecurrenceInput,
   Task,
   TaskInput,
@@ -98,6 +100,11 @@ const MAX_SUBTASKS = 50;
 
 interface FormState {
   title: string;
+  /** Controlled name: scope unit, quantity, short name. */
+  unit: string;
+  quantity: string;
+  shortName: string;
+  iteration: "" | TaskIteration;
   description: string;
   assignees: string[];
   priority: TaskPriority;
@@ -131,6 +138,10 @@ function initialState(
       : (defaultProjectId ?? NO_PROJECT),
     milestone: task?.milestone?._id ?? NO_MILESTONE,
     title: task?.title ?? "",
+    unit: task?.titleParts?.unit ?? "",
+    quantity: task?.titleParts ? String(task.titleParts.quantity) : "1",
+    shortName: task?.titleParts?.shortName ?? "",
+    iteration: task?.iteration ?? "",
     description: task?.description ?? "",
     assignees: task?.assignees.map((user) => user._id) ?? [],
     priority: task?.priority ?? "medium",
@@ -327,9 +338,9 @@ export function TaskFormDialog({
       ),
     [projects.data, isHeadOrAdmin, me?._id],
   );
-  const projectItems: Record<string, string> = isHeadOrAdmin
-    ? { [NO_PROJECT]: "No project" }
-    : {};
+  // Every new task sits under a project; "No project" only for an older task that has none.
+  const projectItems: Record<string, string> =
+    isEdit && !task?.project ? { [NO_PROJECT]: "No project" } : {};
   for (const project of projectChoices)
     projectItems[project._id] = `${project.code} · ${project.name}`;
   // Keep the current/default project selectable even if filtered out.
@@ -374,8 +385,29 @@ export function TaskFormDialog({
   for (const category of categories.data ?? [])
     categoryItems[category._id] = category.name;
 
-  const titleInvalid =
-    submitted && (form.title.trim() === "" || form.title.trim().length > 200);
+  // New tasks and rules-era tasks use the controlled name; older tasks keep a free title.
+  const controlledName = !task || Boolean(task.titleParts);
+  const quantityNumber = Number(form.quantity);
+  const partsError = !controlledName
+    ? null
+    : !form.unit.trim()
+      ? "Enter the scope unit (e.g. Video, Post, Banner)."
+      : !Number.isInteger(quantityNumber) || quantityNumber < 1
+        ? "Quantity must be a whole number, 1 or more."
+        : !form.shortName.trim()
+          ? "Enter a short name."
+          : null;
+  const composedTitle = controlledName
+    ? `${form.unit.trim()} ${Number.isInteger(quantityNumber) && quantityNumber > 0 ? quantityNumber : "?"} – ${form.shortName.trim()}`
+    : form.title.trim();
+  const titleInvalid = controlledName
+    ? submitted && Boolean(partsError)
+    : submitted && (form.title.trim() === "" || form.title.trim().length > 200);
+  const rulesApply = !task || Boolean(task.iteration);
+  const iterationInvalid = submitted && rulesApply && !form.iteration;
+  const briefMissing =
+    !task && form.description.trim() === "" && attachments.length === 0;
+  const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0;
   const datesInvalid =
     submitted &&
@@ -384,9 +416,12 @@ export function TaskFormDialog({
     form.startDate > form.dueDate;
   const descriptionInvalid = submitted && form.description.length > 2000;
   const recurrenceInvalid = Boolean(recurrenceError(form.recurrence));
-  const projectInvalid = submitted && !isHeadOrAdmin && !projectId;
+  const projectInvalid =
+    submitted && (!task || Boolean(task.project)) && !projectId;
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
-  const estimateInvalid = submitted && estimate === "invalid";
+  const estimateMissing = rulesApply && (estimate === null || estimate === 0);
+  const estimateInvalid =
+    submitted && (estimate === "invalid" || estimateMissing);
   const actualError = actualDatesError(form.actualStart, form.actualEnd);
   const actualInvalid = submitted && Boolean(actualError);
 
@@ -397,15 +432,17 @@ export function TaskFormDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    const title = form.title.trim();
+    const title = composedTitle;
     if (
-      !title ||
-      title.length > 200 ||
+      (controlledName ? Boolean(partsError) : !title || title.length > 200) ||
+      (rulesApply && !form.iteration) ||
+      briefMissing ||
+      ((!task || Boolean(task.project)) && !projectId) ||
+      estimateMissing ||
       form.assignees.length === 0 ||
       form.description.length > 2000 ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
       recurrenceInvalid ||
-      (!isHeadOrAdmin && !projectId) ||
       estimate === "invalid" ||
       (isEdit && actualError)
     ) {
@@ -418,6 +455,13 @@ export function TaskFormDialog({
     if (!task) {
       const input: TaskInput = {
         title,
+        titleParts: {
+          unit: form.unit.trim(),
+          quantity: quantityNumber,
+          shortName: form.shortName.trim(),
+        },
+        ...(form.iteration ? { iteration: form.iteration } : {}),
+        hasAttachments: attachments.length > 0,
         description: form.description.trim() || undefined,
         assignees: form.assignees,
         priority: form.priority,
@@ -464,7 +508,23 @@ export function TaskFormDialog({
     // Edit: send only what changed.
     const original = initialState(task);
     const input: TaskUpdateInput = {};
-    if (title !== original.title) input.title = title;
+    if (controlledName) {
+      if (
+        form.unit.trim() !== original.unit ||
+        form.quantity !== original.quantity ||
+        form.shortName.trim() !== original.shortName
+      ) {
+        input.titleParts = {
+          unit: form.unit.trim(),
+          quantity: quantityNumber,
+          shortName: form.shortName.trim(),
+        };
+      }
+    } else if (title !== original.title) {
+      input.title = title;
+    }
+    if (form.iteration && form.iteration !== original.iteration)
+      input.iteration = form.iteration;
     if (form.description.trim() !== original.description.trim()) {
       input.description = form.description.trim();
     }
@@ -543,29 +603,114 @@ export function TaskFormDialog({
 
           <PageDrawerCard title="Task Info">
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
-              <div className="space-y-1.5">
-                <Label htmlFor="task-title">Title</Label>
-                <Input
-                  id="task-title"
-                  value={form.title}
-                  onChange={(event) => set("title", event.target.value)}
-                  maxLength={200}
-                  placeholder="e.g. Prepare the Q4 onboarding deck"
-                  aria-invalid={titleInvalid || undefined}
-                  aria-describedby={
-                    titleInvalid ? "task-title-error" : undefined
-                  }
-                  autoFocus
-                />
-                {titleInvalid && (
-                  <p id="task-title-error" className="text-xs text-destructive">
-                    A title is required (max 200 characters).
+              {controlledName ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-unit">Task name</Label>
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
+                    <Input
+                      id="task-unit"
+                      value={form.unit}
+                      onChange={(event) => set("unit", event.target.value)}
+                      maxLength={40}
+                      placeholder="Scope unit (e.g. Video)"
+                      aria-label="Scope unit"
+                      aria-invalid={titleInvalid || undefined}
+                      autoFocus
+                    />
+                    <Input
+                      type="number"
+                      min={1}
+                      step={1}
+                      value={form.quantity}
+                      onChange={(event) => set("quantity", event.target.value)}
+                      aria-label="Quantity"
+                      aria-invalid={titleInvalid || undefined}
+                    />
+                    <Input
+                      value={form.shortName}
+                      onChange={(event) => set("shortName", event.target.value)}
+                      maxLength={80}
+                      placeholder="Short name (e.g. Launch teaser)"
+                      aria-label="Short name"
+                      aria-invalid={titleInvalid || undefined}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Title:{" "}
+                    <span className="font-medium text-foreground">
+                      {composedTitle}
+                    </span>{" "}
+                    — brand and month come from the project.
                   </p>
-                )}
-              </div>
+                  {titleInvalid && partsError && (
+                    <p
+                      id="task-title-error"
+                      className="text-xs text-destructive"
+                    >
+                      {partsError}
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-title">Title</Label>
+                  <Input
+                    id="task-title"
+                    value={form.title}
+                    onChange={(event) => set("title", event.target.value)}
+                    maxLength={200}
+                    placeholder="e.g. Prepare the Q4 onboarding deck"
+                    aria-invalid={titleInvalid || undefined}
+                    aria-describedby={
+                      titleInvalid ? "task-title-error" : undefined
+                    }
+                    autoFocus
+                  />
+                  {titleInvalid && (
+                    <p
+                      id="task-title-error"
+                      className="text-xs text-destructive"
+                    >
+                      A title is required (max 200 characters).
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {rulesApply && (
+                <fieldset className="space-y-1.5">
+                  <legend className="text-sm font-medium">Iteration</legend>
+                  <RadioGroup
+                    value={form.iteration}
+                    onValueChange={(value) =>
+                      set("iteration", value as TaskIteration)
+                    }
+                    className="flex flex-wrap gap-4"
+                  >
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <RadioGroupItem value="new" />
+                      New work
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <RadioGroupItem value="rework" />
+                      Rework (an iteration of earlier work)
+                    </label>
+                  </RadioGroup>
+                  {iterationInvalid && (
+                    <p className="text-xs text-destructive">
+                      Choose new work or rework.
+                    </p>
+                  )}
+                </fieldset>
+              )}
 
               <div className="space-y-1.5">
-                <Label htmlFor="task-description">Description</Label>
+                <Label htmlFor="task-description">
+                  Brief{" "}
+                  <span className="font-normal text-muted-foreground">
+                    (a description or an attached file is required)
+                  </span>
+                </Label>
                 <Textarea
                   id="task-description"
                   value={form.description}
@@ -579,13 +724,18 @@ export function TaskFormDialog({
                     Keep the description under 2000 characters.
                   </p>
                 )}
+                {briefInvalid && (
+                  <p className="text-xs text-destructive">
+                    Add the brief: write a description or attach a file below.
+                  </p>
+                )}
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="task-project">Project</Label>
                   <Select
-                    value={form.project}
+                    value={projectItems[form.project] ? form.project : null}
                     onValueChange={(value) =>
                       setForm((current) => ({
                         ...current,
@@ -617,7 +767,7 @@ export function TaskFormDialog({
                   </Select>
                   {projectInvalid && (
                     <p className="text-xs text-destructive">
-                      Choose one of the projects you manage.
+                      Every task belongs to a project — choose one.
                     </p>
                   )}
                   {isEdit &&
@@ -801,8 +951,13 @@ export function TaskFormDialog({
                     estimateMinutes: value.minutes,
                   }))
                 }
-                invalid={estimateInvalid}
+                invalid={submitted && estimate === "invalid"}
               />
+              {submitted && estimateMissing && (
+                <p className="-mt-2 text-xs text-destructive">
+                  Enter the estimated time — it's required for every task.
+                </p>
+              )}
 
               {isEdit && (
                 <fieldset className="space-y-1.5">

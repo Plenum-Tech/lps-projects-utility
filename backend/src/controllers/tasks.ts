@@ -60,8 +60,8 @@ import type { IProject } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { TimeLog } from "../models/TimeLog.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
-import { Task } from "../models/Task.js";
-import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus } from "../models/Task.js";
+import { Task, TASK_ITERATIONS, TASK_TITLE_LIMITS, composeTaskTitle } from "../models/Task.js";
+import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus, ITaskTitleParts, TaskIteration } from "../models/Task.js";
 import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
 import { TaskComment } from "../models/TaskComment.js";
@@ -845,6 +845,24 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
  * history / activity / notifications / SSE. `previousStatus` is captured BEFORE
  * mutating. Returns an `Invalid` (nothing written) when the move isn't allowed.
  */
+/**
+ * Completion rule: a task can't be completed (or sent for review) without a final
+ * deliverable — an uploaded final file, a link, or an outcome note — and without
+ * time logged on it. Returns the reason, or null when it may complete.
+ */
+async function completionBlocker(task: ITask): Promise<string | null> {
+  const hasFinal = Boolean(task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim());
+  if (!hasFinal) return "Add the final file or link, or write an outcome note, before completing this task";
+  const logged = await TimeLog.exists({
+    task: task._id,
+    endTime: { $ne: null },
+    durationMinutes: { $gt: 0 },
+    status: { $ne: "rejected" },
+  });
+  if (!logged) return "Log your time on this task before completing it";
+  return null;
+}
+
 async function applyStatusChange(
   user: IUser,
   task: ITask,
@@ -865,6 +883,11 @@ async function applyStatusChange(
       status: 400,
       error: `Cannot transition from "${task.status}" to "${to}". Allowed: ${allowed.join(", ") || "none"}`,
     };
+  }
+
+  if ((to === "completed" || to === "in_review") && task.status !== to && task.status !== "in_review") {
+    const blocker = await completionBlocker(task);
+    if (blocker) return { status: 400, error: blocker };
   }
 
   const previousStatus = task.status;
@@ -983,6 +1006,12 @@ async function changeStatus(
 
 export interface CreateTaskBody {
   project?: unknown;
+  /** Controlled name parts { unit, quantity, shortName }; the title is composed from them. */
+  titleParts?: unknown;
+  /** "new" | "rework". */
+  iteration?: unknown;
+  /** The form uploads attachments right after creation (they count as the brief). */
+  hasAttachments?: unknown;
   milestone?: unknown;
   title?: unknown;
   description?: unknown;
@@ -1017,6 +1046,10 @@ interface MoveTaskBody {
 
 interface SubmitTaskBody {
   submissionNotes?: unknown;
+  /** A file already uploaded to this task (Files) that is the final deliverable. */
+  finalFileId?: unknown;
+  /** Or a link to the final deliverable (http/https). */
+  finalUrl?: unknown;
 }
 
 interface ReviewTaskBody {
@@ -1029,6 +1062,8 @@ interface ReviewTaskBody {
 // ---------------------------------------------------------------------------
 
 export interface CreateTaskOptions {
+  /** Tasks created in the app's task form: project, brief, estimate, iteration and the controlled name are required. */
+  enforceRules?: boolean;
   /** History action for the "created" row (meetings use "created_from_meeting"). */
   historyAction?: TaskHistoryAction;
   /** Links the task back to a meeting transcript line. */
@@ -1047,6 +1082,35 @@ export interface CreateTaskOptions {
  * membership, short code + global number, history, activity, `task_assigned`
  * notifications and SSE. Heads can only assign to members of their own department.
  */
+/** `titleParts` -> validated parts, undefined when absent. */
+function parseTitleParts(raw: unknown): ITaskTitleParts | undefined | Invalid {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "object") return { status: 400, error: "titleParts must be { unit, quantity, shortName }" };
+  const r = raw as { unit?: unknown; quantity?: unknown; shortName?: unknown };
+  const unit = typeof r.unit === "string" ? r.unit.trim() : "";
+  const shortName = typeof r.shortName === "string" ? r.shortName.trim() : "";
+  const quantity = typeof r.quantity === "number" ? r.quantity : Number(r.quantity);
+  if (!unit || unit.length > TASK_TITLE_LIMITS.unitMax) {
+    return { status: 400, error: `Scope unit is required (max ${TASK_TITLE_LIMITS.unitMax} characters)` };
+  }
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > TASK_TITLE_LIMITS.quantityMax) {
+    return { status: 400, error: `Quantity must be a whole number from 1 to ${TASK_TITLE_LIMITS.quantityMax}` };
+  }
+  if (!shortName || shortName.length > TASK_TITLE_LIMITS.shortNameMax) {
+    return { status: 400, error: `Short name is required (max ${TASK_TITLE_LIMITS.shortNameMax} characters)` };
+  }
+  return { unit, quantity, shortName };
+}
+
+/** `iteration` -> "new" | "rework", undefined when absent. */
+function parseIteration(raw: unknown): TaskIteration | undefined | Invalid {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string" || !(TASK_ITERATIONS as readonly string[]).includes(raw)) {
+    return { status: 400, error: 'iteration must be "new" or "rework"' };
+  }
+  return raw as TaskIteration;
+}
+
 export async function createTaskCore(
   actor: IUser,
   body: CreateTaskBody,
@@ -1054,7 +1118,12 @@ export async function createTaskCore(
   historyExtra: Record<string, unknown> = {},
   options: CreateTaskOptions = {}
 ): Promise<Invalid | { taskId: mongoose.Types.ObjectId; warnings: string[] }> {
-  const { title, description, priority } = body;
+  const { description, priority } = body;
+  const titleParts = parseTitleParts(body.titleParts);
+  if (isInvalid(titleParts)) return titleParts;
+  const iteration = parseIteration(body.iteration);
+  if (isInvalid(iteration)) return iteration;
+  const title = titleParts ? composeTaskTitle(titleParts) : body.title;
 
   // Project tasks: admins, heads and the project manager. Standalone tasks: heads/admins.
   let project: IProject | null = null;
@@ -1147,6 +1216,19 @@ export async function createTaskCore(
   const estimateMinutes = parseEstimate(body.estimateMinutes);
   if (isInvalid(estimateMinutes)) return estimateMinutes;
 
+  // App-created tasks (the task form): every task sits under a project, carries a brief
+  // (description or attachment), an estimate, an iteration marker and a controlled name.
+  if (options.enforceRules) {
+    if (!project) return { status: 400, error: "Every task must belong to a project (pick one)" };
+    const hasDescription = typeof description === "string" && description.trim().length > 0;
+    if (!hasDescription && body.hasAttachments !== true) {
+      return { status: 400, error: "Add a brief: write a description or attach a file" };
+    }
+    if (!titleParts) return { status: 400, error: "Task name needs a scope unit, a quantity and a short name" };
+    if (!iteration) return { status: 400, error: "Choose the iteration: new work or rework" };
+    if (!estimateMinutes || estimateMinutes <= 0) return { status: 400, error: "Enter the estimated time" };
+  }
+
   // Recurrence
   let recurrence: ITaskRecurrence | null = null;
   if (body.recurrence !== undefined) {
@@ -1191,6 +1273,8 @@ export async function createTaskCore(
     shortCode,
     number,
     estimateMinutes: estimateMinutes ?? null,
+    iteration: iteration ?? null,
+    ...(titleParts ? { titleParts } : {}),
     category,
     labels,
     priority: (priority as TaskPriority) || "medium",
@@ -1257,7 +1341,7 @@ export async function createTaskCore(
  */
 export async function createTask(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
-  const result = await createTaskCore(actor, (req.body ?? {}) as CreateTaskBody, req.ip);
+  const result = await createTaskCore(actor, (req.body ?? {}) as CreateTaskBody, req.ip, {}, { enforceRules: true });
   if (isInvalid(result)) {
     res.status(result.status).json({ error: result.error });
     return;
@@ -1401,9 +1485,37 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { submissionNotes } = (req.body ?? {}) as SubmitTaskBody;
+  const { submissionNotes, finalFileId, finalUrl } = (req.body ?? {}) as SubmitTaskBody;
   if (submissionNotes !== undefined && (typeof submissionNotes !== "string" || submissionNotes.trim().length > 2000)) {
     res.status(400).json({ error: "submissionNotes must be 2000 characters or fewer" });
+    return;
+  }
+  let finalFile: { fileId: mongoose.Types.ObjectId | null; url: string | null; addedAt: Date } | null = null;
+  if (finalFileId !== undefined && finalFileId !== null && finalFileId !== "") {
+    if (typeof finalFileId !== "string" || isInvalidObjectId(finalFileId)) {
+      res.status(400).json({ error: "finalFileId must be a valid file ID" });
+      return;
+    }
+    const exists = await TaskFile.exists({ _id: finalFileId, task: task._id });
+    if (!exists) {
+      res.status(400).json({ error: "The final file must be uploaded to this task" });
+      return;
+    }
+    finalFile = { fileId: new mongoose.Types.ObjectId(finalFileId), url: null, addedAt: new Date() };
+  } else if (finalUrl !== undefined && finalUrl !== null && finalUrl !== "") {
+    if (typeof finalUrl !== "string" || !/^https?:\/\/\S+$/i.test(finalUrl.trim()) || finalUrl.trim().length > 2000) {
+      res.status(400).json({ error: "The final link must start with http:// or https://" });
+      return;
+    }
+    finalFile = { fileId: null, url: finalUrl.trim(), addedAt: new Date() };
+  }
+  if (finalFile) task.finalFile = finalFile;
+  if (submissionNotes !== undefined) {
+    task.submissionNotes = typeof submissionNotes === "string" && submissionNotes.trim() ? submissionNotes.trim() : undefined;
+  }
+  const blocker = await completionBlocker(task);
+  if (blocker) {
+    res.status(400).json({ error: blocker });
     return;
   }
 
@@ -1412,7 +1524,6 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   const { skipReview } = await taskProjectFlags(task);
   const now = new Date();
   task.status = skipReview ? "completed" : "in_review";
-  task.submissionNotes = submissionNotes ? (submissionNotes as string).trim() : undefined;
   task.submittedAt = now;
   if (skipReview) task.completedAt = now;
   await applyAutoActualDates(task, previousStatus, task.status, now);
@@ -1560,10 +1671,32 @@ async function applyTaskUpdate(
     return { status: 403, error: "Only the task creator or an admin can update tasks" };
   }
 
-  const { title, description, priority } = body;
+  const { description, priority } = body;
   /** Fields that trigger `task_updated` for the assignees. */
   const notable: string[] = [];
   const changed: string[] = [];
+
+  const titleParts = parseTitleParts(body.titleParts);
+  if (isInvalid(titleParts)) return titleParts;
+  const title = titleParts ? composeTaskTitle(titleParts) : body.title;
+  if (titleParts) {
+    const before = task.titleParts;
+    if (!before || before.unit !== titleParts.unit || before.quantity !== titleParts.quantity || before.shortName !== titleParts.shortName) {
+      task.titleParts = titleParts;
+      changed.push("titleParts");
+    }
+  } else if (body.title !== undefined && task.titleParts) {
+    return { status: 400, error: "This task's name is controlled: send titleParts { unit, quantity, shortName }" };
+  }
+  if (body.iteration !== undefined) {
+    const iteration = parseIteration(body.iteration);
+    if (isInvalid(iteration)) return iteration;
+    if (!iteration && task.iteration) return { status: 400, error: "The iteration can't be cleared" };
+    if (iteration && iteration !== task.iteration) {
+      task.iteration = iteration;
+      notable.push("iteration");
+    }
+  }
 
   if (title !== undefined) {
     if (typeof title !== "string" || !title.trim()) {
@@ -1671,6 +1804,9 @@ async function applyTaskUpdate(
   const extendedBody = body as UpdateTaskBody & { project?: unknown; milestone?: unknown };
   if (extendedBody.project !== undefined) {
     if (extendedBody.project === null || extendedBody.project === "") {
+      if (task.project && task.iteration) {
+        return { status: 400, error: "Every task must belong to a project" };
+      }
       if (task.project) {
         task.project = null;
         task.milestone = null;
