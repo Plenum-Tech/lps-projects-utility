@@ -206,7 +206,7 @@ function TaskRowMenu({
   }
   if (pearity.visible) {
     actions.push({
-      label: task.pearityTag ? "Generate (Pearity)" : "Generate (creates Pearity tag)",
+      label: "Generate on Pearity",
       icon: LuSparkles,
       disabled: pearity.pending,
       onSelect: pearity.onSelect,

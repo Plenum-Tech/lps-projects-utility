@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
@@ -1335,6 +1336,7 @@ export async function createTaskCore(
   // Real-time SSE push to assignees, creator and watchers
   pushTaskUpdate(task, "created", { actorId: actor._id.toString() });
   scheduleBriefCheck(taskId);
+  scheduleTaskTag(taskId);
   if (project) {
     scheduleProgressRecalc(project._id as mongoose.Types.ObjectId);
     pushProjectUpdate(project, "task-created", { taskId: taskId.toString(), shortCode });
@@ -1896,6 +1898,7 @@ async function applyTaskUpdate(
   if (notable.includes("description") || notable.includes("title") || changed.includes("titleParts")) {
     scheduleBriefCheck(task._id as mongoose.Types.ObjectId);
   }
+  if (projectChanged || changed.includes("titleParts")) scheduleTaskTag(task._id as mongoose.Types.ObjectId);
   const taskId = task._id as mongoose.Types.ObjectId;
   const warnings = milestoneWarnings(task.dueDate, milestoneDoc);
   if (projectChanged) {

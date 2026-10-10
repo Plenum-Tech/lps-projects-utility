@@ -12,6 +12,8 @@ import { TaskCategory } from "../models/TaskCategory.js";
 import { User } from "../models/User.js";
 import { settingsAppUrl } from "./companySettings.js";
 import { isDuplicateKeyError } from "./errors.js";
+import { projectMonth } from "./projectExpiry.js";
+import { ensureTaskTag } from "./tagAssign.js";
 import { cached, invalidate } from "./refCache.js";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +33,22 @@ export const PEARITY_PLACEHOLDERS = [
   "brand",
   "category",
   "project",
+  // Task tag and task fields (Generate pre-fills the production engine).
+  "taskTag",
+  "projectTag",
+  "projectCode",
+  "title",
+  "month",
+  "type",
+  "scopeUnit",
+  "quantity",
+  "shortName",
+  "iteration",
+  "status",
+  "priority",
+  "startDate",
+  "dueDate",
+  "estimateMinutes",
 ] as const;
 export type PearityPlaceholder = (typeof PEARITY_PLACEHOLDERS)[number];
 
@@ -151,16 +169,44 @@ export interface TaskLike {
   number?: number | null;
   project?: mongoose.Types.ObjectId | null;
   category?: mongoose.Types.ObjectId | null;
+  // Optional task fields for the engine URL (empty when the caller didn't load them).
+  tag?: string | null;
+  title?: string | null;
+  titleParts?: { unit?: string; quantity?: number; shortName?: string } | null;
+  iteration?: string | null;
+  status?: string | null;
+  priority?: string | null;
+  startDate?: Date | null;
+  dueDate?: Date | null;
+  estimateMinutes?: number | null;
+}
+
+/** Task fields the engine URL can carry (Generate loads the whole task). */
+export interface TaskFields {
+  taskTag: string;
+  title: string;
+  scopeUnit: string;
+  quantity: string;
+  shortName: string;
+  iteration: string;
+  status: string;
+  priority: string;
+  startDate: string;
+  dueDate: string;
+  estimateMinutes: string;
 }
 
 export interface TaskContext {
   taskCode: string;
   /** The task number users see: shortCode ("GenAI Hub-65") or "#<number>"; null when neither exists. */
   taskNo: string | null;
-  project: { id: string; name: string; code: string; archived: boolean } | null;
+  project: { id: string; name: string; code: string; archived: boolean; tag: string; month: string; type: string } | null;
   brand: { id: string; name: string } | null;
   category: { id: string; name: string } | null;
+  fields: TaskFields;
 }
+
+const dateOnly = (d: Date | null | undefined) => (d ? new Date(d).toISOString().slice(0, 10) : "");
 
 /** "GENAI-65"; tasks without a project use "Task-<number>". */
 export function pearityTaskCode(task: Pick<TaskLike, "_id" | "shortCode" | "number">): string {
@@ -208,7 +254,7 @@ export async function taskContexts(tasks: TaskLike[]): Promise<Map<string, TaskC
   const categoryIds = [...new Set(tasks.map((t) => refId(t.category)?.toString()).filter(Boolean))] as string[];
   const [projects, categories] = await Promise.all([
     projectIds.length
-      ? Project.find({ _id: { $in: projectIds } }).select("name code brand archivedAt").lean()
+      ? Project.find({ _id: { $in: projectIds } }).select("name code brand archivedAt tag naming deadline").lean()
       : Promise.resolve([]),
     categoryIds.length ? TaskCategory.find({ _id: { $in: categoryIds } }).select("name").lean() : Promise.resolve([]),
   ]);
@@ -227,14 +273,39 @@ export async function taskContexts(tasks: TaskLike[]): Promise<Map<string, TaskC
       taskCode: pearityTaskCode(task),
       taskNo: taskNoOf(task),
       project: project
-        ? { id: project._id.toString(), name: project.name, code: project.code, archived: Boolean(project.archivedAt) }
+        ? {
+            id: project._id.toString(),
+            name: project.name,
+            code: project.code,
+            archived: Boolean(project.archivedAt),
+            tag: (project as { tag?: string | null }).tag ?? "",
+            month: projectMonth(project as never) ?? "",
+            type: project.naming?.type ?? "",
+          }
         : null,
       brand: brand ? { id: brand._id.toString(), name: brand.name } : null,
       category: category ? { id: category._id.toString(), name: category.name } : null,
+      fields: {
+        taskTag: task.tag ?? "",
+        title: task.title ?? "",
+        scopeUnit: task.titleParts?.unit ?? "",
+        quantity: task.titleParts?.quantity ? String(task.titleParts.quantity) : "",
+        shortName: task.titleParts?.shortName ?? "",
+        iteration: task.iteration ?? "",
+        status: task.status ?? "",
+        priority: task.priority ?? "",
+        startDate: dateOnly(task.startDate),
+        dueDate: dateOnly(task.dueDate),
+        estimateMinutes: task.estimateMinutes ? String(task.estimateMinutes) : "",
+      },
     });
   }
   return out;
 }
+
+/** Task fields to select wherever a task context (and its engine URL) is built. */
+export const TASK_CONTEXT_FIELDS =
+  "shortCode number project category tag title titleParts iteration status priority startDate dueDate estimateMinutes";
 
 // --- Tag naming ------------------------------------------------------------------
 
@@ -396,7 +467,9 @@ export async function ensurePearityTag(
   const existing = await PearityTag.findOne({ task: task._id });
   if (existing) return { tag: await withTagNo(existing), created: false };
 
-  const baseName = buildTagName(context);
+  // The task's own tag (project tag + scope unit + quantity) is the Pearity tag name.
+  const taskTag = await ensureTaskTag(task._id);
+  const baseName = taskTag ?? buildTagName(context);
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const tagId = generateTagId();
     // Another task already uses this name (e.g. a re-used code): keep names unique.
@@ -501,6 +574,21 @@ function fillPearityUrl(
     brand: context.brand?.name ?? "",
     category: context.category?.name ?? "",
     project: context.project?.name ?? "",
+    taskTag: context.fields.taskTag || tag.tagName,
+    projectTag: context.project?.tag ?? "",
+    projectCode: context.project?.code ?? "",
+    title: context.fields.title,
+    month: context.project?.month ?? "",
+    type: context.project?.type ?? "",
+    scopeUnit: context.fields.scopeUnit,
+    quantity: context.fields.quantity,
+    shortName: context.fields.shortName,
+    iteration: context.fields.iteration,
+    status: context.fields.status,
+    priority: context.fields.priority,
+    startDate: context.fields.startDate,
+    dueDate: context.fields.dueDate,
+    estimateMinutes: context.fields.estimateMinutes,
   });
 }
 
@@ -559,7 +647,7 @@ async function tagContexts(
   const givenIds = new Set(given.map((t) => t._id.toString()));
   const lookup = [...missing].filter((id) => !givenIds.has(id));
   const loaded = lookup.length
-    ? await Task.find({ _id: { $in: lookup } }).select("shortCode number project category").lean<TaskLike[]>()
+    ? await Task.find({ _id: { $in: lookup } }).select(TASK_CONTEXT_FIELDS).lean<TaskLike[]>()
     : [];
   for (const [id, context] of await taskContexts([...given, ...loaded])) out.set(id, context);
   return out;

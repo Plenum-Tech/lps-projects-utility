@@ -205,7 +205,20 @@ function taskJson(
     actualStartAt: iso(task.actualStartAt),
     actualEndAt: iso(task.actualEndAt),
     updatedAt: iso(task.updatedAt),
-    project: context.project ? { id: context.project.id, name: context.project.name, code: context.project.code } : null,
+    taskTag: context.fields.taskTag || null,
+    scopeUnit: context.fields.scopeUnit || null,
+    quantity: context.fields.quantity ? Number(context.fields.quantity) : null,
+    shortName: context.fields.shortName || null,
+    project: context.project
+      ? {
+          id: context.project.id,
+          name: context.project.name,
+          code: context.project.code,
+          tag: context.project.tag || null,
+          month: context.project.month || null,
+          type: context.project.type || null,
+        }
+      : null,
     brand: context.brand,
     category: context.category,
     utilityUrl: utilityTaskUrl(task._id),
@@ -312,7 +325,7 @@ export async function apiListTasks(req: Request, res: Response): Promise<void> {
   }
 
   const rows = await Task.find({ $and: and })
-    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt")
+    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes")
     .sort({ updatedAt: -1, _id: -1 })
     .limit(limit + 1)
     .lean<TaskRow[]>();
@@ -497,7 +510,7 @@ async function respondWithTagLookup(res: Response, tag: IPearityTag | null): Pro
     return;
   }
   const task = await Task.findById(tag.task)
-    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt")
+    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes")
     .lean<TaskRow>();
   const ref = (await tagRefs([tag])).get(tag.task.toString())!;
   res.json({ tag: tagJson(tag, ref, task ? taskNoOf(task) : null), task: task ? (await tasksJson([task]))[0] : null });

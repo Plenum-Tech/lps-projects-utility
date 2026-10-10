@@ -975,6 +975,8 @@ export interface Task {
   project?: TaskProjectRef | null;
   milestone?: TaskMilestoneRef | null;
   /** e.g. "WEB-12" — only for project tasks. */
+  /** <project tag>-<UNIT><QTY> — unique; the Pearity tag name. */
+  tag?: string | null;
   shortCode?: string | null;
   /** Global sequence ("#<number>" when there's no short code). Null only before migrate:tables. */
   number?: number | null;
@@ -1806,6 +1808,8 @@ export interface Project {
   /** null / absent = legacy name. */
   naming?: ProjectNaming | null;
   code: string;
+  /** BRAND-MONTH-TYPE-NAME abbreviation (unique). */
+  tag?: string | null;
   summary?: string;
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */

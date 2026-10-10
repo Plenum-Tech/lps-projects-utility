@@ -14,13 +14,14 @@ Utility (LPS – Projects Utility) is the **source of truth** for tasks and for 
 |---|---|---|
 | `taskNo` | `GenAI Hub-65`, `PEAR-12`, `#56` | The **task number** users see in Utility. It is the task's code when the task has one, otherwise `#` followed by the global task number. Users can type or paste it into Pearity. |
 | `tagNo` | `12` | The **tag number** (primary tag identifier). Sequential, starting at 1. |
-| `tagName` | `Ajmal_Design_GenAI-Hub-65` | The stable display name of the tag. |
+| `tagName` | `AJMA-OCT26-PRG-GH-VID3` | The tag itself: the task's tag (see the naming rules). Stable once generated. |
+| `projectTag` | `AJMA-OCT26-PRG-GH` | The project's tag: brand, month, type and name. |
 | `tagId` | `pt_7k3m9q2x` | Legacy random tag id. It still works everywhere for backward compatibility, but new integrations should use `tagNo`. |
 | `taskId` | `66f1c0ffee0000000000abcd` | Utility's internal task id. |
 
 There are two ways in:
 
-1. **Generate in Utility.** A user clicks **Generate** on a task. Utility creates or reuses the tag and opens your production engine in a new tab, using the URL template the Utility admin configured. All values are already filled in. Wherever Utility shows a tag ("Tag #12 · Ajmal_Design_GenAI-Hub-65"), the tag is a link into Pearity (see the tag link URL below).
+1. **Generate in Utility.** A user clicks **Generate** on a task. Utility creates or reuses the tag and opens your production engine in a new tab, using the URL template the Utility admin configured. All values are already filled in. Wherever Utility shows a tag ("Tag #12 · AJMA-OCT26-PRG-GH-VID3"), the tag is a link into Pearity (see the tag link URL below).
 2. **Server-to-server API.** Your backend calls the Utility API documented below. You can use it to look up a task by its task number, to create tags from Pearity, to build a "Utility dashboard" inside Pearity, and to resolve or sync tags.
 
 ---
@@ -47,13 +48,28 @@ Both templates take the same placeholders:
 |---|---|---|
 | `{tagNo}` | `12` | **The tag number. Use it as your primary key.** |
 | `{tagId}` | `pt_7k3m9q2x` | Legacy random tag id. Still filled in for existing templates. |
-| `{tagName}` | `Ajmal_Design_GenAI-Hub-65` | Stable display name (see the naming rules below). |
+| `{tagName}` | `AJMA-OCT26-PRG-GH-VID3` | Stable display name (see the naming rules below). |
 | `{taskNo}` | `GenAI Hub-65` or `#56` | The task number users see (see the table above). |
 | `{taskId}` | `66f1c0ffee0000000000abcd` | Utility task id. Use it with the API. |
 | `{taskCode}` | `GenAI Hub-65` | The task's code. Tasks without a code use `Task-<n>`. |
 | `{brand}` | `Ajmal` | The current brand name of the task's project (empty if there is none). |
 | `{category}` | `Design` | The current task category (empty if there is none). |
 | `{project}` | `Ajmal \| Retainer \| Oct 2026 \| GenAI Hub` | The current project name (empty for standalone tasks). |
+| `{taskTag}` | `AJMA-OCT26-PRG-GH-VID3` | The task's tag (same as `{tagName}` once generated). |
+| `{projectTag}` | `AJMA-OCT26-PRG-GH` | The project's tag. |
+| `{projectCode}` | `GENAIHUB` | The project code. |
+| `{title}` | `Video 3 – Launch teaser` | The task title. |
+| `{month}` | `2026-10` | The project's month. |
+| `{type}` | `Program` | The project type. |
+| `{scopeUnit}` | `Video` | The task's scope unit. |
+| `{quantity}` | `3` | The task's quantity. |
+| `{shortName}` | `Launch teaser` | The task's short name. |
+| `{iteration}` | `new` | `new` or `rework`. |
+| `{status}` | `in_progress` | The task status. |
+| `{priority}` | `medium` | The task priority. |
+| `{startDate}` | `2026-10-05` | Start date (YYYY-MM-DD), empty if none. |
+| `{dueDate}` | `2026-10-20` | Due date (YYYY-MM-DD), empty if none. |
+| `{estimateMinutes}` | `90` | Estimated time in minutes. |
 
 Utility URL-encodes every value (`encodeURIComponent`), so `GenAI Hub-65` arrives as `GenAI%20Hub-65` and `#56` as `%2356`. Decode the query parameters as usual. Treat the URL parameters as hints. Before you save content, confirm the tag with `GET /tags/by-no/{tagNo}`.
 
@@ -61,24 +77,24 @@ Utility URL-encodes every value (`encodeURIComponent`), so `GenAI Hub-65` arrive
 
 ## 2. Tag naming rules
 
-`tagName = <Brand>_<Category>_<TaskCode>`
+Every project and every task in Utility has a tag. Utility builds it from abbreviations:
 
-- Utility takes each part from the task **at creation time** and stores it as a snapshot. It never renames the tag.
-- Each part is sanitized:
-  - Accents are removed (`é` becomes `e`).
-  - Any run of characters outside `A–Z a–z 0–9 -`, including spaces and underscores, becomes a single `-`.
-  - Leading and trailing `-` are trimmed.
-  - Each part is capped at 60 characters.
-- If a part is missing, it falls back:
-  - brand → `NoBrand`
-  - category → `General`
-- `_` appears only as the separator between the three parts.
-- If another task already has the same name (which is rare), Utility appends `-xxxx`, taken from the `tagId`.
+```
+project tag = BRAND-MONTH-TYPE-NAME          AJMA-OCT26-PRG-GH
+task tag    = <project tag>-<UNIT><QUANTITY>   AJMA-OCT26-PRG-GH-VID3
+```
+
+- **Brand**: the brand's short name when set, else an abbreviation ("Ajmal" → `AJMA`, "Homes R Us" → `HRU`, "GITEX" → `GITEX`).
+- **Month**: the project's month as `MMMYY` (`OCT26`).
+- **Type**: `CMP` (Campaign), `PRG` (Program), `PRJ` (Project); other types are abbreviated.
+- **Name**: the project name's initials, numbers and short acronyms kept whole ("GenAI Hub" → `GH`, "Social 360" → `S360`).
+- **Unit + quantity**: the task's scope unit and quantity ("Video", 3 → `VID3`).
+- Tasks without a scope unit (older tasks) end in `T<task number>`; tasks without a project are `TASK-<task number>`.
+- Missing parts are left out. Everything is uppercase letters, digits and `-`.
+- **Tags are unique.** If two tasks would get the same tag, the later one gets `-2`, `-3` … appended (`AJMA-OCT26-PRG-GH-VID3-2`).
+- A task's tag follows its project and scope unit until the first **Generate on Pearity**. From then on it never changes, so it always matches Pearity's copy. `tagName` is that tag.
+- Tags created before October 2026 keep their older `Brand_Category_TaskCode` names.
 - `tagNo` is a positive whole number. The legacy `tagId` format is `pt_` followed by 8 characters from `[0-9a-z]` (`^pt_[0-9a-z]{8}$`).
-
-Examples:
-- `Ajmal Perfumes` / `Social Media` / `GenAI Hub-65` gives `Ajmal-Perfumes_Social-Media_GenAI-Hub-65`.
-- No brand / no category / `#12` gives `NoBrand_General_Task-12`.
 
 ## 3. Server-to-server API
 
@@ -114,26 +130,30 @@ The API returns only task numbers and codes, titles, status, dates, project, bra
   "taskId": "66f1c0ffee0000000000abcd",
   "taskCode": "GenAI Hub-65",
   "taskNo": "GenAI Hub-65",
-  "title": "Diwali hero banner",
+  "title": "Video 3 – Launch teaser",
+  "taskTag": "AJMA-OCT26-PRG-GH-VID3",
+  "scopeUnit": "Video",
+  "quantity": 3,
+  "shortName": "Launch teaser",
   "status": "in_progress",
   "dueDate": "2026-10-20T00:00:00.000Z",
   "actualStartAt": "2026-10-08T05:12:44.000Z",
   "actualEndAt": null,
   "updatedAt": "2026-10-08T09:30:00.000Z",
-  "project": { "id": "66f0…", "name": "Ajmal | Retainer | Oct 2026 | GenAI Hub", "code": "GENAIHUB" },
+  "project": { "id": "66f0…", "name": "Ajmal | Retainer | Oct 2026 | GenAI Hub", "code": "GENAIHUB", "tag": "AJMA-OCT26-PRG-GH", "month": "2026-10", "type": "Program" },
   "brand": { "id": "66e9…", "name": "Ajmal" },
   "category": { "id": "66e1…", "name": "Design" },
   "utilityUrl": "https://utility.example.com/tasks?task=66f1c0ffee0000000000abcd",
   "pearityTag": {
     "tagNo": 12,
     "tagId": "pt_7k3m9q2x",
-    "tagName": "Ajmal_Design_GenAI-Hub-65",
+    "tagName": "AJMA-OCT26-PRG-GH-VID3",
     "createdAt": "2026-10-08T09:30:00.000Z",
     "createdBy": { "id": "66a0…", "name": "Priya" },
     "tagUrl": "https://app.pearity.ai/tags/12"
   },
   "tagUrl": "https://app.pearity.ai/tags/12",
-  "generateUrl": "https://app.pearity.ai/production/new?tagNo=12&tag=Ajmal_Design_GenAI-Hub-65&taskNo=GenAI%20Hub-65&…"
+  "generateUrl": "https://app.pearity.ai/production/new?tagNo=12&tag=AJMA-OCT26-PRG-GH-VID3&taskNo=GenAI%20Hub-65&…"
 }
 ```
 
@@ -196,7 +216,7 @@ curl -s -X POST "https://utility.example.com/api/integrations/pearity/v1/tasks/b
 ```json
 {
   "created": true,
-  "tag": { "tagNo": 12, "tagId": "pt_7k3m9q2x", "tagName": "Ajmal_Design_GenAI-Hub-65", "createdAt": "…", "createdBy": { "id": "…", "name": "Priya" }, "tagUrl": "https://app.pearity.ai/tags/12" },
+  "tag": { "tagNo": 12, "tagId": "pt_7k3m9q2x", "tagName": "AJMA-OCT26-PRG-GH-VID3", "createdAt": "…", "createdBy": { "id": "…", "name": "Priya" }, "tagUrl": "https://app.pearity.ai/tags/12" },
   "task": { "taskId": "…", "taskNo": "GenAI Hub-65", "pearityTag": { "tagNo": 12, "…": "…" }, "…": "…" },
   "tagUrl": "https://app.pearity.ai/tags/12",
   "generateUrl": "https://app.pearity.ai/production/new?tagNo=12&…"
@@ -257,7 +277,7 @@ curl -s -X POST "https://utility.example.com/api/integrations/pearity/v1/tasks/6
 ```json
 {
   "created": true,
-  "tag": { "tagNo": 12, "tagId": "pt_7k3m9q2x", "tagName": "Ajmal_Design_GenAI-Hub-65", "createdAt": "…", "createdBy": { "id": "…", "name": "Priya" }, "tagUrl": "https://app.pearity.ai/tags/12" },
+  "tag": { "tagNo": 12, "tagId": "pt_7k3m9q2x", "tagName": "AJMA-OCT26-PRG-GH-VID3", "createdAt": "…", "createdBy": { "id": "…", "name": "Priya" }, "tagUrl": "https://app.pearity.ai/tags/12" },
   "tagUrl": "https://app.pearity.ai/tags/12",
   "generateUrl": "https://app.pearity.ai/production/new?tagNo=12&…"
 }
@@ -279,7 +299,7 @@ curl -s "https://utility.example.com/api/integrations/pearity/v1/tags/by-no/12" 
   "tag": {
     "tagNo": 12,
     "tagId": "pt_7k3m9q2x",
-    "tagName": "Ajmal_Design_GenAI-Hub-65",
+    "tagName": "AJMA-OCT26-PRG-GH-VID3",
     "taskId": "66f1c0ffee0000000000abcd",
     "taskNo": "GenAI Hub-65",
     "taskCode": "GenAI Hub-65",

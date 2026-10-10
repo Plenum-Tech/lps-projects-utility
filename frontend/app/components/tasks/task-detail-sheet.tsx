@@ -198,6 +198,14 @@ function TaskDetail({
         <SheetHeader className="gap-3 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
           <div className="flex flex-wrap items-center gap-2">
             {task.shortCode && <ShortCode code={task.shortCode} />}
+            {task.tag && (
+              <span
+                className="rounded-md border px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
+                title="Task tag (brand, month, type, project name, scope unit and quantity) — the same tag Pearity uses"
+              >
+                {task.tag}
+              </span>
+            )}
             {typeof task.number === "number" && (
               <span
                 className="font-mono text-xs text-muted-foreground"

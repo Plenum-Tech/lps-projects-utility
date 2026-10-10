@@ -93,7 +93,7 @@ export function PearityGenerateButton({ task }: { task: Pick<Task, "_id" | "pear
     <>
       <Button size="sm" variant="outline" onClick={action.onSelect} disabled={action.pending}>
         {action.pending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSparkles aria-hidden />}
-        Generate
+        Generate on Pearity
       </Button>
       {action.dialog}
     </>
@@ -201,7 +201,7 @@ export function PearityTagSection({ task }: { task: Pick<Task, "_id" | "pearityT
         </div>
       ) : (
         <p className="text-sm text-muted-foreground">
-          Not generated yet. The first <span className="font-medium text-foreground">Generate</span> creates the tag.
+          Not generated yet. The first <span className="font-medium text-foreground">Generate on Pearity</span> sends the task tag to Pearity.
         </p>
       )}
 
@@ -233,8 +233,16 @@ export function PearityTagSection({ task }: { task: Pick<Task, "_id" | "pearityT
 }
 
 /** Tasks table cell: "Tag #12 · name" linked into Pearity (copyable) or "—". */
-export function PearityTagCell({ task, className }: { task: Pick<Task, "pearityTag">; className?: string }) {
-  if (!task.pearityTag) return <span className="text-muted-foreground">--</span>;
+export function PearityTagCell({ task, className }: { task: Pick<Task, "pearityTag" | "tag">; className?: string }) {
+  if (!task.pearityTag) {
+    return task.tag ? (
+      <span className="font-mono text-xs text-muted-foreground" title="Task tag — not generated on Pearity yet">
+        {task.tag}
+      </span>
+    ) : (
+      <span className="text-muted-foreground">--</span>
+    );
+  }
   return (
     <span className={cn("inline-flex max-w-72 items-center gap-0.5", className)}>
       <PearityTagLink tag={task.pearityTag} />

@@ -62,7 +62,8 @@
     "typecheck": "tsc --noEmit",
     "build": "tsc --project tsconfig.build.json",
     "vercel-build": "tsc --project tsconfig.build.json",
-    "manpower:import": "bun src/scripts/manpowerImport.ts"
+    "manpower:import": "bun src/scripts/manpowerImport.ts",
+    "tags:backfill": "bun src/scripts/tagsBackfill.ts"
   },
   "type": "module"
 }

@@ -69,6 +69,8 @@ export interface IProject extends mongoose.Document {
   manualTimeLogs: boolean;
   requireTaskApproval: boolean;
   taskCounter: number;
+  /** BRAND-MONTH-TYPE-NAME abbreviation, unique (lib/tags.ts); follows the name. */
+  tag?: string | null;
   createdBy: mongoose.Types.ObjectId;
   archivedAt?: Date | null;
   /** "YYYY-MM-DD" idempotency key for the deadline reminder job. */
@@ -130,6 +132,7 @@ const projectSchema = new Schema<IProject>(
       default: [],
     },
     taskCounter: { type: Number, default: 0, min: 0 },
+    tag: { type: String, default: null, trim: true, maxlength: 80 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     archivedAt: { type: Date, default: null },
     lastDeadlineReminderOn: { type: String, default: null },
@@ -138,6 +141,7 @@ const projectSchema = new Schema<IProject>(
 );
 
 projectSchema.index({ code: 1 }, { unique: true });
+projectSchema.index({ tag: 1 });
 projectSchema.index({ "members.user": 1, archivedAt: 1 });
 projectSchema.index({ departments: 1 });
 projectSchema.index({ deadline: 1, archivedAt: 1 });

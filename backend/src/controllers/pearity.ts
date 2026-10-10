@@ -78,7 +78,7 @@ export async function getTaskPearity(req: Request, res: Response): Promise<void>
     enabled: pearityActive(settings),
     tag: ref,
     tagUrl: ref?.tagUrl ?? null,
-    proposedTagName: tag ? tag.tagName : buildTagName(context),
+    proposedTagName: tag ? tag.tagName : context.fields.taskTag || buildTagName(context),
     generateUrl: tag ? pearityGenerateUrl(settings, tag, taskId, context) : null,
     usageCount: tag?.usageCount ?? 0,
     generatedBy: tag ? await generatedBy(taskId) : [],

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { scheduleProjectTag } from "../lib/tagAssign.js";
 import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
@@ -1070,6 +1071,7 @@ export async function createProjectCore(
   });
   notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
+  scheduleProjectTag(projectId);
   return { project };
 }
 
@@ -1360,6 +1362,7 @@ export async function updateProjectCore(
   const added = [...(newManager ? [newManager] : []), ...newTeamMembers.filter((u) => !newManager?.equals(u))];
   if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
+  if (changed.some((f) => f === "naming" || f === "name" || f === "brand")) scheduleProjectTag(projectId, true);
   return { changed };
 }
 
@@ -1822,6 +1825,7 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
     ip: req.ip,
   });
   notifyMembersAdded(copy, copy.members.map((m) => m.user), actor);
+  scheduleProjectTag(copy._id as mongoose.Types.ObjectId, true);
   pushProjectUpdate(copy, "created", { actorId: actor._id.toString(), duplicatedFrom: sourceId.toString() });
 
   await respondDetail(res, copyId, actor, 201);

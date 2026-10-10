@@ -143,6 +143,8 @@ export interface ITask extends mongoose.Document {
   iteration?: TaskIteration | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: ITaskTitleParts | null;
+  /** <project tag>-<UNIT><QTY>, unique (lib/tags.ts); frozen once Pearity uses it. */
+  tag?: string | null;
   /** AI brief check (lib/briefCheck.ts): verdict on the description, refreshed when it changes. */
   briefCheck?: { verdict: "ok" | "weak" | "flagged"; reason?: string; model?: string; checkedAt?: Date; hash?: string } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
@@ -269,6 +271,7 @@ const taskSchema = new Schema<ITask>(
     lastManualReminderAt: { type: Date, default: null },
     submissionNotes: { type: String, trim: true, maxlength: 2000 },
     iteration: { type: String, enum: [...TASK_ITERATIONS, null], default: null },
+    tag: { type: String, default: undefined, trim: true, maxlength: 120 },
     titleParts: {
       type: new Schema(
         {
@@ -320,6 +323,7 @@ const taskSchema = new Schema<ITask>(
 
 // Employee's task list — newest first.
 taskSchema.index({ assignees: 1, createdAt: -1 });
+taskSchema.index({ tag: 1 }, { unique: true, partialFilterExpression: { tag: { $type: "string" } }, name: "tag_unique" });
 // "My board" — assignee's tasks per column, in board order.
 taskSchema.index({ assignees: 1, status: 1, position: 1 });
 // Head's created tasks — newest first.

@@ -113,6 +113,14 @@ export function ProjectHeader({
           <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <ShortCode code={project.code} />
+              {project.tag && (
+                <span
+                  className="rounded-md border px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
+                  title="Project tag (brand, month, type and name)"
+                >
+                  {project.tag}
+                </span>
+              )}
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
               {project.expired && (
