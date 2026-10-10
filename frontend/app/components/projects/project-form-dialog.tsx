@@ -11,6 +11,13 @@ import {
   type MultiSelectOption,
 } from "@/components/globals/multi-select";
 import {
+  ProjectTeamFields,
+  sameTeam,
+  teamFromProject,
+  teamToInput,
+  type TeamValue,
+} from "@/components/projects/project-team-fields";
+import {
   FieldError,
   OptionSelect,
   SwitchRow,
@@ -89,6 +96,8 @@ interface FormState {
   departments: string[];
   manager: string;
   members: string[];
+  /** Role → user ids (manpower plan roles + "others"). */
+  team: TeamValue;
   status: string;
   startDate: string;
   deadline: string;
@@ -117,6 +126,7 @@ function initialState(project?: Project | null): FormState {
     departments: project?.departments.map((department) => department._id) ?? [],
     manager: project?.manager?._id ?? NONE,
     members: [],
+    team: teamFromProject(project?.team),
     status: project?.status._id ?? "",
     startDate: project ? toDateInput(project.startDate) : todayKey(),
     deadline: toDateInput(project?.deadline),
@@ -461,6 +471,7 @@ export function ProjectFormDialog({
         category,
         manager,
         members: form.members,
+        team: teamToInput(form.team),
         status: form.status || undefined,
         progressMode: form.progressMode,
         hoursAllocated: hours,
@@ -494,6 +505,7 @@ export function ProjectFormDialog({
       input.departments = form.departments;
     }
     if (form.manager !== original.manager) input.manager = manager;
+    if (isHeadOrAdmin && !sameTeam(form.team, original.team)) input.team = teamToInput(form.team);
     if (form.progressMode !== original.progressMode)
       input.progressMode = form.progressMode;
     if (form.progressMode === "manual" && form.progress !== original.progress) {
@@ -526,7 +538,7 @@ export function ProjectFormDialog({
           <DialogTitle>{isEdit ? "Edit project" : "New project"}</DialogTitle>
           <DialogDescription>
             {isEdit
-              ? "Update the project details. Status and members are managed from the project page."
+              ? "Update the project details and team. Status, rates and other members are managed from the project page."
               : "Set up the project, its team and how progress is measured. Members are notified."}
           </DialogDescription>
         </DialogHeader>
@@ -821,22 +833,20 @@ export function ProjectFormDialog({
             )}
           </div>
 
-          {!isEdit && (
-            <div className="space-y-1.5">
-              <Label htmlFor="project-members">Members</Label>
-              <MultiSelect
-                id="project-members"
-                options={memberOptions}
-                value={form.members}
-                onValueChange={(value) => set("members", value)}
-                placeholder={
-                  assignable.isPending ? "Loading people…" : "Search people…"
-                }
-                emptyText={
-                  assignable.isError ? "Couldn't load people." : "No one found."
-                }
-              />
-            </div>
+          {isHeadOrAdmin && (
+            <ProjectTeamFields
+              value={form.team}
+              onChange={(team) => set("team", team)}
+              options={memberOptions}
+              loading={assignable.isPending}
+              naming={{
+                brand: form.brand === NONE ? "" : form.brand,
+                month: form.month,
+                type: form.type,
+                title,
+              }}
+              enabled={open}
+            />
           )}
 
           <Separator />

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -53,7 +54,7 @@ import { Department } from "../models/Department.js";
 import { Meeting } from "../models/Meeting.js";
 import { Milestone } from "../models/Milestone.js";
 import { Notification } from "../models/Notification.js";
-import { Project, PROGRESS_MODES, PROJECT_CODE_REGEX, PROJECT_LIMITS } from "../models/Project.js";
+import { type IProjectTeamEntry, Project, PROGRESS_MODES, PROJECT_CODE_REGEX, PROJECT_LIMITS } from "../models/Project.js";
 import type { IProject, IProjectNaming, ProgressMode } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { ProjectActivity } from "../models/ProjectActivity.js";
@@ -248,6 +249,35 @@ async function parseUserId(raw: unknown, field: string): Promise<mongoose.Types.
 interface MemberInput {
   user: mongoose.Types.ObjectId;
   hourlyRate: number;
+}
+
+/** `team`: [{ role, users[] }] with plan roles or "others"; empty roles are dropped. */
+async function parseTeam(raw: unknown): Promise<IProjectTeamEntry[] | Invalid> {
+  if (!Array.isArray(raw)) return bad("team must be an array of { role, users }");
+  const entries: IProjectTeamEntry[] = [];
+  const ids = new Set<string>();
+  for (const item of raw as Array<{ role?: unknown; users?: unknown }>) {
+    if (!item || typeof item.role !== "string" || !TEAM_ROLE_KEYS.includes(item.role)) return bad("team has an unknown role");
+    if (entries.some((e) => e.role === item.role)) return bad(`team role ${item.role} appears twice`);
+    if (!Array.isArray(item.users)) return bad("team users must be an array");
+    const users: mongoose.Types.ObjectId[] = [];
+    for (const u of item.users) {
+      if (typeof u !== "string" || isInvalidObjectId(u)) return bad("team must contain valid user IDs");
+      if (!users.some((x) => x.toString() === u)) users.push(new mongoose.Types.ObjectId(u));
+      ids.add(u);
+    }
+    if (users.length) entries.push({ role: item.role, users });
+  }
+  if (ids.size > PROJECT_LIMITS.maxMembers) return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
+  if (ids.size && (await User.countDocuments({ _id: { $in: [...ids] } })) !== ids.size) return bad("A person on the team doesn't exist", 404);
+  return entries;
+}
+
+/** Everyone on the team (unique). */
+function teamUserIds(team: IProjectTeamEntry[]): mongoose.Types.ObjectId[] {
+  const seen = new Map<string, mongoose.Types.ObjectId>();
+  for (const e of team) for (const u of e.users) seen.set(u.toString(), u);
+  return [...seen.values()];
 }
 
 /** `members`: array of user IDs or `{ user, hourlyRate? }`. */
@@ -844,6 +874,8 @@ export interface ProjectBody {
   isPublic?: unknown;
   manualTimeLogs?: unknown;
   requireTaskApproval?: unknown;
+  /** [{ role, users[] }] — the role-based team; its people are added as members. */
+  team?: unknown;
 }
 
 function parseName(raw: unknown): string | Invalid {
@@ -943,6 +975,14 @@ export async function createProjectCore(
     members = parsed;
   }
   if (manager && !members.some((m) => m.user.equals(manager!))) members.push({ user: manager, hourlyRate: 0 });
+  let team: IProjectTeamEntry[] = [];
+  if (body.team !== undefined) {
+    const parsed = await parseTeam(body.team);
+    if (isInvalid(parsed)) return parsed;
+    team = parsed;
+    for (const u of teamUserIds(team)) if (!members.some((m) => m.user.equals(u))) members.push({ user: u, hourlyRate: 0 });
+    if (members.length > PROJECT_LIMITS.maxMembers) return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
+  }
 
   let status: mongoose.Types.ObjectId;
   if (body.status !== undefined) {
@@ -998,6 +1038,7 @@ export async function createProjectCore(
       departments,
       manager,
       members: members.map((m) => ({ user: m.user, hourlyRate: m.hourlyRate, addedAt: new Date() })),
+      team,
       status,
       startDate: start,
       deadline: deadline ?? null,
@@ -1108,6 +1149,7 @@ export async function updateProjectCore(
   if (project.archivedAt) return bad("This project is archived and read-only. Restore it first.", 409);
   const changed: string[] = [];
   let newManager: mongoose.Types.ObjectId | null = null;
+  const newTeamMembers: mongoose.Types.ObjectId[] = [];
 
   // Name: `naming` converts a legacy name / changes the parts; a brand change on a
   // structured project re-composes the name; a plain `name` only for legacy projects.
@@ -1205,6 +1247,22 @@ export async function updateProjectCore(
     }
   }
 
+  if (body.team !== undefined) {
+    const team = await parseTeam(body.team);
+    if (isInvalid(team)) return team;
+    project.team = team;
+    project.markModified("team");
+    changed.push("team");
+    for (const u of teamUserIds(team)) {
+      if (isProjectMember(u, project)) continue;
+      project.members.push({ user: u, hourlyRate: 0, addedAt: new Date() });
+      newTeamMembers.push(u);
+    }
+    if (project.members.length > PROJECT_LIMITS.maxMembers) {
+      return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
+    }
+  }
+
   const startDate = optionalDate(body.startDate, "startDate");
   if (isInvalid(startDate)) return startDate;
   const deadline = optionalDate(body.deadline, "deadline");
@@ -1299,7 +1357,8 @@ export async function updateProjectCore(
     details: { fields: changed, ...options.activityExtra },
     ip,
   });
-  if (newManager) notifyMembersAdded(project, [newManager], actor, options.sendEmail !== false);
+  const added = [...(newManager ? [newManager] : []), ...newTeamMembers.filter((u) => !newManager?.equals(u))];
+  if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
   return { changed };
 }

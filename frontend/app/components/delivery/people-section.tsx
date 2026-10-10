@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { namingMonthLabel } from "@/lib/projects";
 import { Link } from "react-router";
 import { LuChevronDown, LuChevronRight, LuMap, LuUsers } from "react-icons/lu";
 
@@ -212,7 +213,7 @@ export function PeopleSection({
         title="Team map coverage"
         description={
           teamMap.data
-            ? `From each brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = a task on this brand done only by people not listed for it; counted from ${formatDateOnly(teamMap.data.startDate)} since the map reflects the current roster — the period filter doesn't apply. "Mapped but unused" = listed for the brand but with no task on it in the window.`
+            ? `${teamMap.data.planMonths?.length ? `Months with a manpower plan (${teamMap.data.planMonths.map((m) => namingMonthLabel(m)).join(", ")}) check each task against the people planned for its project line (else its brand) that month. ` : ""}Other months use each brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = a task on this brand done only by people not listed for it; counted from ${formatDateOnly(teamMap.data.startDate)} — the period filter doesn't apply. "Mapped but unused" = listed for the brand but with no task on it in the window.`
             : "Who works on which brand, against each brand's team map."
         }
         action={
@@ -420,6 +421,12 @@ function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
                     <span title="Derived from the brand's project members">
                       {" "}
                       · from projects
+                    </span>
+                  )}
+                  {row.planMonths?.length > 0 && (
+                    <span title="On-map people come from the manpower plan for these months">
+                      {" "}
+                      · plan: {row.planMonths.map((m) => namingMonthLabel(m)).join(", ")}
                     </span>
                   )}
                 </p>

@@ -271,6 +271,7 @@ export const PROJECT_POPULATE = [
   { path: "departments", select: "name" },
   { path: "manager", select: "name email" },
   { path: "members.user", select: "name email role department" },
+  { path: "team.users", select: "name email" },
   { path: "createdBy", select: "name email" },
 ];
 

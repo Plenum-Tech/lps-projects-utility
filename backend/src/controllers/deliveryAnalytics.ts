@@ -1,6 +1,9 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { Brand } from "../models/Brand.js";
+import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
+import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
 import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
 import { briefCheckConfigured, briefCheckModel } from "../lib/briefCheck.js";
@@ -672,21 +675,83 @@ export async function getBrandStructure(req: Request, res: Response): Promise<vo
   });
 }
 
+type PlanProject = {
+  _id: mongoose.Types.ObjectId;
+  name: string;
+  brand?: mongoose.Types.ObjectId | null;
+  members?: Array<{ user?: mongoose.Types.ObjectId | null }>;
+  manager?: mongoose.Types.ObjectId | null;
+  naming?: { brand?: mongoose.Types.ObjectId; type?: string; month?: string; title?: string } | null;
+  deadline?: Date | null;
+};
+type PlanMonthMaps = { projectRow: Map<string, string>; rowUsers: Map<string, Set<string>>; brandUsers: Map<string, Set<string>> };
+
+/** Latest plan version of each month in [fromMonth, toMonth], as on-map sets. */
+async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanProject[]): Promise<Map<string, PlanMonthMaps>> {
+  const [plans, brandDocs] = await Promise.all([
+    ManpowerPlan.aggregate<{
+      _id: string;
+      rows: Array<{ key: string; brand: mongoose.Types.ObjectId | null; type: string | null; name: string; cells: Array<{ users: mongoose.Types.ObjectId[] }> }>;
+    }>([
+      { $match: { month: { $gte: fromMonth, $lte: toMonth } } },
+      { $sort: { month: 1, version: -1 } },
+      { $group: { _id: "$month", rows: { $first: "$rows" } } },
+    ]),
+    Brand.find({}).select("name").lean(),
+  ]);
+  const out = new Map<string, PlanMonthMaps>();
+  if (plans.length === 0) return out;
+  const brandNames = new Map(brandDocs.map((b) => [String(b._id), b.name]));
+  const linkable = projects.map((p) => ({
+    _id: String(p._id),
+    name: p.name,
+    brand: p.brand ? String(p.brand) : p.naming?.brand ? String(p.naming.brand) : null,
+    naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
+    deadline: p.deadline ?? null,
+  }));
+  for (const plan of plans) {
+    const rowUsers = new Map<string, Set<string>>();
+    const brandUsers = new Map<string, Set<string>>();
+    for (const r of plan.rows) {
+      const users = new Set(r.cells.flatMap((c) => c.users.map(String)));
+      rowUsers.set(r.key, users);
+      if (!r.brand) continue;
+      const b = String(r.brand);
+      const set = brandUsers.get(b) ?? new Set<string>();
+      for (const u of users) set.add(u);
+      brandUsers.set(b, set);
+    }
+    const projectRow = linkProjectsToRows(
+      plan._id,
+      plan.rows.map((r) => ({ key: r.key, brand: r.brand ? String(r.brand) : null, type: r.type, name: r.name })),
+      linkable,
+      brandNames
+    );
+    out.set(plan._id, { projectRow, rowUsers, brandUsers });
+  }
+  return out;
+}
+
 /**
- * GET /team-map — brand team map coverage since the tracking start date.
- * A brand without a configured map gets one derived from its projects'
- * members and managers (traffic managers excluded), flagged `derived`.
+ * GET /team-map — on-map / off-map coverage per brand since the tracking start date.
+ * A task is checked against the manpower plan of the month it was created in:
+ * the people on its project's plan row, else everyone planned on its brand that
+ * month. Months or brands without a plan use the configured brand team map, or
+ * one derived from the brand's project members and managers (flagged `derived`).
  */
 export async function getTeamMap(req: Request, res: Response): Promise<void> {
-  const projects = await Project.find({ brand: { $ne: null } })
-    .select("brand members.user manager")
-    .lean<Array<{ brand: mongoose.Types.ObjectId; members?: Array<{ user?: mongoose.Types.ObjectId | null }>; manager?: mongoose.Types.ObjectId | null }>>();
+  const projects = await Project.find({})
+    .select("brand members.user manager name naming deadline")
+    .lean<PlanProject[]>();
+  const settingsNow = await getDeliverySettings();
+  const plans = await planMapsFor(settingsNow.teamMapStartDate.slice(0, 7), appDateKey().slice(0, 7), projects);
   await respond(req, res, "team-map", (ctx) => {
     const start = dayFromKey(ctx.settings.teamMapStartDate);
     const traffic = new Set(ctx.settings.trafficManagers);
     const configured = new Map(ctx.settings.brandTeamMap.filter((e) => e.users.length > 0).map((e) => [e.brand, new Set(e.users)]));
     const derived = new Map<string, Set<string>>();
     for (const p of projects) {
+      if (!p.brand) continue;
       const brand = String(p.brand);
       if (configured.has(brand)) continue;
       const set = derived.get(brand) ?? new Set<string>();
@@ -694,44 +759,62 @@ export async function getTeamMap(req: Request, res: Response): Promise<void> {
       if (p.manager && !traffic.has(String(p.manager))) set.add(String(p.manager));
       if (set.size) derived.set(brand, set);
     }
-    const mapOf = (brand: string) => configured.get(brand) ?? derived.get(brand) ?? null;
+    const fallbackOf = (brand: string) => configured.get(brand) ?? derived.get(brand) ?? null;
 
-    type Agg = { tasks: number; offMap: number; working: Map<string, number> };
+    /** The on-map set for one task, and the plan month it came from (null = fallback map). */
+    const mapForFact = (f: TaskFact, brand: string): { set: Set<string> | null; planMonth: string | null } => {
+      const month = keyFromDay(f.createdDay).slice(0, 7);
+      const plan = plans.get(month);
+      if (plan) {
+        const rowKey = f.project ? plan.projectRow.get(f.project) : undefined;
+        const set = (rowKey ? plan.rowUsers.get(rowKey) : undefined) ?? plan.brandUsers.get(brand);
+        if (set) return { set, planMonth: month };
+      }
+      return { set: fallbackOf(brand), planMonth: null };
+    };
+
+    type Agg = { tasks: number; offMap: number; working: Map<string, number>; onMap: Set<string>; planMonths: Set<string> };
+    const emptyAgg = (): Agg => ({ tasks: 0, offMap: 0, working: new Map(), onMap: new Set(), planMonths: new Set() });
     const perBrand = new Map<string, Agg>();
     for (const f of ctx.facts) {
       const created = f.createdDay >= start && f.createdDay <= ctx.today;
       const completed = f.completedDay !== null && f.completedDay >= start && f.completedDay <= ctx.today;
       if (!created && !completed) continue;
       const brand = brandKey(ctx, f);
-      const agg = perBrand.get(brand) ?? { tasks: 0, offMap: 0, working: new Map() };
+      const agg = perBrand.get(brand) ?? emptyAgg();
       perBrand.set(brand, agg);
       agg.tasks++;
       for (const d of f.doers) agg.working.set(d, (agg.working.get(d) ?? 0) + 1);
-      const map = mapOf(brand);
-      if (map && f.doers.length > 0 && f.doers.every((d) => !map.has(d))) agg.offMap++;
+      const { set, planMonth } = mapForFact(f, brand);
+      if (planMonth) agg.planMonths.add(planMonth);
+      if (!set) continue;
+      for (const u of set) agg.onMap.add(u);
+      if (f.doers.length > 0 && f.doers.every((d) => !set.has(d))) agg.offMap++;
     }
 
     const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+    const known = (u: string) => ctx.ref.users.has(u);
     const rows = [...ctx.ref.brands]
       .filter(([id, b]) => b.active || perBrand.has(id))
       .map(([id]) => {
-        const map = mapOf(id);
-        const agg = perBrand.get(id) ?? { tasks: 0, offMap: 0, working: new Map<string, number>() };
+        const agg = perBrand.get(id) ?? emptyAgg();
+        // On-map people: the plan sets used for this brand's tasks, plus the fallback map.
+        const map = new Set([...agg.onMap, ...(fallbackOf(id) ?? [])]);
+        const hasMap = map.size > 0;
         const workers = [...agg.working];
+        const ranked = (list: Array<[string, number]>) =>
+          list.map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person));
         return {
           brand: brandRef(ctx, id),
-          mapped: map ? [...map].map((u) => userRef(ctx, u)).sort(byName) : [],
-          derived: !configured.has(id) && derived.has(id),
+          mapped: [...map].filter(known).map((u) => userRef(ctx, u)).sort(byName),
+          derived: agg.planMonths.size === 0 && !configured.has(id) && derived.has(id),
+          planMonths: [...agg.planMonths].sort(),
           tasks: agg.tasks,
-          offMapTasks: map ? agg.offMap : null,
-          offMapPct: map && agg.tasks > 0 ? Math.round((agg.offMap / agg.tasks) * 100) : null,
-          onMapWorking: map
-            ? workers.filter(([u]) => map.has(u)).map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person))
-            : [],
-          offMapWorking: map
-            ? workers.filter(([u]) => !map.has(u)).map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person))
-            : workers.map(([u, count]) => ({ person: userRef(ctx, u), count })).sort((a, b) => b.count - a.count || byName(a.person, b.person)),
-          mappedUnused: map ? [...map].filter((u) => !agg.working.has(u)).map((u) => userRef(ctx, u)).sort(byName) : [],
+          offMapTasks: hasMap ? agg.offMap : null,
+          offMapPct: hasMap && agg.tasks > 0 ? Math.round((agg.offMap / agg.tasks) * 100) : null,
+          onMapWorking: hasMap ? ranked(workers.filter(([u]) => map.has(u))) : [],
+          offMapWorking: hasMap ? ranked(workers.filter(([u]) => !map.has(u))) : ranked(workers),
+          mappedUnused: hasMap ? [...map].filter((u) => !agg.working.has(u) && known(u)).map((u) => userRef(ctx, u)).sort(byName) : [],
         };
       })
       .sort((a, b) => (b.offMapTasks ?? -1) - (a.offMapTasks ?? -1) || b.tasks - a.tasks || a.brand.name.localeCompare(b.brand.name));
@@ -740,6 +823,7 @@ export async function getTeamMap(req: Request, res: Response): Promise<void> {
       startDate: ctx.settings.teamMapStartDate,
       mappedBrands: configured.size,
       derivedBrands: derived.size,
+      planMonths: [...plans.keys()].sort(),
       totals: {
         tasks: rows.reduce((n, r) => n + r.tasks, 0),
         offMapTasks: rows.reduce((n, r) => n + (r.offMapTasks ?? 0), 0),

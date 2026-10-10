@@ -61,7 +61,8 @@
     "backfill:actual-dates": "bun src/scripts/backfillActualDates.ts",
     "typecheck": "tsc --noEmit",
     "build": "tsc --project tsconfig.build.json",
-    "vercel-build": "tsc --project tsconfig.build.json"
+    "vercel-build": "tsc --project tsconfig.build.json",
+    "manpower:import": "bun src/scripts/manpowerImport.ts"
   },
   "type": "module"
 }

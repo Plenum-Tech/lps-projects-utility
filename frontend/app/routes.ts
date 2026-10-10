@@ -24,6 +24,7 @@ export default [
     route("projects/:id", "routes/projects.$id.tsx"),
     route("meetings", "routes/meetings.tsx"),
     route("meetings/:id", "routes/meetings.$id.tsx"),
+    route("manpower", "routes/manpower.tsx"),
     route("timesheet", "routes/timesheet.tsx"),
     route("timelogs", "routes/timelogs.tsx"),
     route("reports/delivery", "routes/reports.delivery.tsx"),

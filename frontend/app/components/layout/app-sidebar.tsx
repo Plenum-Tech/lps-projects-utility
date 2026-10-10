@@ -23,6 +23,7 @@ import {
   Sparkles,
   Trophy,
   Users,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -168,6 +169,7 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Projects", to: "/projects", icon: FolderKanban, match: ["/projects/"] },
       { title: "Tasks", to: "/tasks", icon: ClipboardList, match: ["/tasks/"] },
       { title: "Meetings", to: "/meetings", icon: MessagesSquare, match: ["/meetings/"] },
+      { title: "Manpower plan", to: "/manpower", icon: UsersRound, roles: MANAGERS },
       { title: "Timesheet", to: "/timesheet", icon: Timer, match: ["/timelogs"] },
     ],
   },

@@ -1813,6 +1813,8 @@ export interface Project {
   departments: { _id: string; name: string }[];
   manager: UserRef | null;
   members: ProjectMember[];
+  /** Team by role (manpower plan roles + "others"). Absent on older responses. */
+  team?: Array<{ role: string; users: Array<{ _id: string; name: string; email?: string }> }>;
   status: ProjectStatusRef;
   startDate: string;
   deadline: string | null;
@@ -1919,6 +1921,8 @@ export interface ProjectInput {
   isPublic?: boolean;
   manualTimeLogs?: boolean;
   requireTaskApproval?: boolean;
+  /** Role-based team (manpower plan roles + "others"); its people become members. */
+  team?: Array<{ role: string; users: string[] }>;
 }
 
 export type ProjectUpdateInput = Partial<
@@ -3381,6 +3385,8 @@ export interface DeliveryTeamMapRow {
   /** People on the brand's map (configured, or derived from its projects' members). */
   mapped: DeliveryUserRef[];
   derived: boolean;
+  /** Months whose manpower plan supplied the map for this brand's tasks. */
+  planMonths: string[];
   /** Tasks created or completed since the start date. */
   tasks: number;
   /** Tasks done entirely by people off the map; null when the brand has no map. */
@@ -3396,6 +3402,8 @@ export interface DeliveryTeamMapResponse {
   startDate: string;
   mappedBrands: number;
   derivedBrands: number;
+  /** Months in the tracking window that have a manpower plan. */
+  planMonths: string[];
   totals: { tasks: number; offMapTasks: number };
   rows: DeliveryTeamMapRow[];
 }
@@ -3532,4 +3540,111 @@ export interface RequiredTraining extends TrainingSummary {
   deadline: string;
   overdue: boolean;
   viewedCount: number;
+}
+
+/* ------------------------------------------------------------------ */
+/* Manpower plan (/api/manpower)                                       */
+/* ------------------------------------------------------------------ */
+
+export interface ManpowerRoleDef {
+  key: string;
+  label: string;
+}
+
+export type ManpowerSection = "active" | "pitch";
+
+export interface ManpowerPersonRef {
+  _id: string;
+  name: string;
+  designation?: string;
+}
+
+export interface ManpowerCell {
+  role: string;
+  users: ManpowerPersonRef[];
+  placeholders: string[];
+  notNeeded: boolean;
+  note: string;
+}
+
+export interface ManpowerRow {
+  key: string;
+  section: ManpowerSection;
+  brand: { _id: string; name: string; shortName?: string; color?: string; active?: boolean } | null;
+  type: string | null;
+  name: string;
+  cells: ManpowerCell[];
+}
+
+export interface ManpowerVersionSummary {
+  version: number;
+  note: string;
+  source: "import" | "edit" | "copy";
+  createdAt: string;
+  createdBy: { _id: string; name: string } | null;
+  rowCount: number;
+}
+
+export interface ManpowerPersonAllocation {
+  user: ManpowerPersonRef;
+  rows: Array<{ key: string; name: string; section: ManpowerSection; roles: string[] }>;
+  activeRows: number;
+  pitchRows: number;
+  leaveDays: number;
+  overAllocated: boolean;
+}
+
+/** GET /manpower — months with a plan, and the role columns. */
+export interface ManpowerMonthsResponse {
+  roles: ManpowerRoleDef[];
+  limits: { maxRows: number; defaultMaxProjectsPerPerson: number; maxProjectsPerPersonMax: number };
+  months: Array<{ month: string; latestVersion: number; versions: number; updatedAt: string }>;
+}
+
+/** GET /manpower/:month?version=N */
+export interface ManpowerPlanResponse {
+  month: string;
+  version: number;
+  latestVersion: number;
+  versions: ManpowerVersionSummary[];
+  plan: {
+    _id: string;
+    month: string;
+    version: number;
+    rows: ManpowerRow[];
+    note: string;
+    maxProjectsPerPerson: number;
+    source: "import" | "edit" | "copy";
+    createdAt: string;
+    createdBy: { _id: string; name: string } | null;
+  };
+  /** Projects of the month linked to each row (by row key). */
+  links: Record<string, Array<{ _id: string; code: string; name: string }>>;
+  people: ManpowerPersonAllocation[];
+  available: Array<ManpowerPersonRef & { leaveDays: number }>;
+}
+
+/** Row as sent to POST /manpower/:month (ids instead of refs). */
+export interface ManpowerRowInput {
+  key: string;
+  section: ManpowerSection;
+  brand: string | null;
+  type: string | null;
+  name: string;
+  cells: Array<{ role: string; users: string[]; placeholders: string[]; notNeeded: boolean; note: string }>;
+}
+
+export interface ManpowerSaveInput {
+  month: string;
+  baseVersion: number | null;
+  rows: ManpowerRowInput[];
+  note: string;
+  maxProjectsPerPerson?: number;
+  source?: "edit" | "copy";
+}
+
+/** GET /manpower/suggest — the plan row a project matches, as a team by role. */
+export interface ManpowerTeamSuggestion {
+  row: { key: string; name: string; version: number; month: string } | null;
+  team: Array<{ role: string; users: Array<{ _id: string; name: string }> }>;
 }

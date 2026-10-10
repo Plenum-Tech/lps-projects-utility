@@ -2,6 +2,7 @@ import mongoose, { Schema } from "mongoose";
 import { cached, invalidateOnWrite } from "../lib/refCache.js";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
 import { addLegacyRef } from "./legacy.js";
+import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 
 export const PROGRESS_MODES = ["manual", "task_completion", "total_time", "deadline"] as const;
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
@@ -36,6 +37,12 @@ export interface IProjectNaming {
   title: string;
 }
 
+/** One role of the project team (manpower plan roles + "others"). */
+export interface IProjectTeamEntry {
+  role: string;
+  users: mongoose.Types.ObjectId[];
+}
+
 export interface IProject extends mongoose.Document {
   /** Composed from `naming` when set (lists, search, sort, CSV use this). */
   name: string;
@@ -49,6 +56,8 @@ export interface IProject extends mongoose.Document {
   /** Project manager (Worksuite project_admin). */
   manager?: mongoose.Types.ObjectId | null;
   members: mongoose.Types.DocumentArray<IProjectMember & mongoose.Types.Subdocument>;
+  /** Team by role (same layout as the manpower plan); everyone on it is also a member. */
+  team: IProjectTeamEntry[];
   status: mongoose.Types.ObjectId;
   startDate: Date;
   deadline?: Date | null;
@@ -108,6 +117,18 @@ const projectSchema = new Schema<IProject>(
     isPublic: { type: Boolean, default: false },
     manualTimeLogs: { type: Boolean, default: true },
     requireTaskApproval: { type: Boolean, default: true },
+    team: {
+      type: [
+        new Schema<IProjectTeamEntry>(
+          {
+            role: { type: String, required: true, enum: TEAM_ROLE_KEYS as string[] },
+            users: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
     taskCounter: { type: Number, default: 0, min: 0 },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     archivedAt: { type: Date, default: null },
