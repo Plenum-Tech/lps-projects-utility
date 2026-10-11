@@ -87,6 +87,9 @@ export interface IProject extends mongoose.Document {
   /** BRAND-MONTH-TYPE-NAME abbreviation, unique (lib/tags.ts); follows the name. */
   tag?: string | null;
   approval?: IProjectApproval | null;
+  /** First "Generate on Pearity" for the project: from then on its tag never changes. */
+  pearityGeneratedAt?: Date | null;
+  pearityGeneratedBy?: mongoose.Types.ObjectId | null;
   createdBy: mongoose.Types.ObjectId;
   archivedAt?: Date | null;
   /** "YYYY-MM-DD" idempotency key for the deadline reminder job. */
@@ -149,6 +152,8 @@ const projectSchema = new Schema<IProject>(
     },
     taskCounter: { type: Number, default: 0, min: 0 },
     tag: { type: String, default: null, trim: true, maxlength: 80 },
+    pearityGeneratedAt: { type: Date, default: null },
+    pearityGeneratedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     approval: {
       type: new Schema<IProjectApproval>(
         {

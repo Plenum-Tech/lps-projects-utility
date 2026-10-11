@@ -70,6 +70,7 @@ import { formatDateOnly } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
+import { ProjectPearityButton } from "@/components/projects/project-pearity-button";
 
 type DialogKind = "edit" | "duplicate" | "archive" | "restore" | "delete" | null;
 
@@ -176,6 +177,7 @@ export function ProjectHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <ProjectPearityButton project={project} />
           <Button
             variant="outline"
             size="sm"

@@ -22,6 +22,7 @@ Utility (LPS – Projects Utility) is the **source of truth** for tasks and for 
 There are two ways in:
 
 1. **Generate in Utility.** A user clicks **Generate** on a task. Utility creates or reuses the tag and opens your production engine in a new tab, using the URL template the Utility admin configured. All values are already filled in. Wherever Utility shows a tag ("Tag #12 · AJMA-OCT26-PRG-GH-VID3"), the tag is a link into Pearity (see the tag link URL below).
+   **Projects too:** the project page has its own **Generate on Pearity** button. It opens the same production engine URL with the project tag in `{tagName}` and `{projectTag}`, the project's name, brand, month, type and dates, and the task-only placeholders empty (`{taskTag}`, `{taskNo}`, `{scopeUnit}` …). After the first project Generate, the project tag never changes.
 2. **Server-to-server API.** Your backend calls the Utility API documented below. You can use it to look up a task by its task number, to create tags from Pearity, to build a "Utility dashboard" inside Pearity, and to resolve or sync tags.
 
 ---

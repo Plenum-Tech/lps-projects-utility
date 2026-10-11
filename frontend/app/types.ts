@@ -1812,6 +1812,8 @@ export interface Project {
   tag?: string | null;
   /** New-project approval; absent = approved (created before approval existed). */
   approval?: ProjectApprovalView | null;
+  /** First "Generate on Pearity" for the project (its tag is frozen from then on). */
+  pearityGeneratedAt?: string | null;
   summary?: string;
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */

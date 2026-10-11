@@ -27,7 +27,7 @@ _Last updated: 8 Oct 2026_
 - **Settings**: company, address, app (timezone, date format), profile, notifications, security, task/project/time-log/leave/meeting/delivery/brands, integrations (Pearity).
 - **Auth**: set-password links, forgot password with an emailed 6-digit code, and an admin **Set default password** action (Employees page) that gives selected (tick rows), pending or all employees one password and asks them to choose their own at the next sign-in.
 - **Tags**: every project has a tag (BRAND-MONTH-TYPE-NAME, e.g. `AJMA-OCT26-PRG-GH`) and every task a unique tag (project tag + scope unit + quantity, e.g. `AJMA-OCT26-PRG-GH-VID3`), shown on the project header, the task header and the tasks table. They follow renames until the task is generated on Pearity. `bun run tags:backfill [--dry-run] [--refresh]` tags existing data.
-- **Pearity**: a *Generate on Pearity* button (the task tag is the Pearity tag; the engine URL can carry every task field) and a server-to-server API incl. each person's assigned tasks for Pearity's dashboard (`docs/pearity-integration.md`). Pearity → Utility is parked until the DAM is ready.
+- **Pearity**: *Generate on Pearity* buttons on each task and each project (projects send their project tag and details; a project's tag is frozen after its first Generate); a *Generate on Pearity* button (the task tag is the Pearity tag; the engine URL can carry every task field) and a server-to-server API incl. each person's assigned tasks for Pearity's dashboard (`docs/pearity-integration.md`). Pearity → Utility is parked until the DAM is ready.
 
 ## Data
 

@@ -98,6 +98,34 @@ export function usePearityGenerate() {
   });
 }
 
+/** Generate on Pearity for a project: freezes its tag (first time) and opens the engine. */
+export function useProjectPearityGenerate() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ projectId }: { projectId: string; navigate: (url: string | null) => void }) =>
+      (await api.post<{ created: boolean; tag: string; generateUrl: string | null }>(`/projects/${projectId}/pearity/generate`)).data,
+    onSuccess: (data, { projectId, navigate }) => {
+      navigate(data.generateUrl);
+      toast.success(data.created ? `Sent project tag ${data.tag} to Pearity` : `Using project tag ${data.tag}`);
+      void queryClient.invalidateQueries({ queryKey: ["projects", "detail", projectId] });
+    },
+    onError: (error, { navigate }) => {
+      navigate(null);
+      toast.error(getErrorMessage(error));
+    },
+  });
+}
+
+/** Starts a project Generate inside the click handler (opens the pending tab synchronously). */
+export function startProjectPearityGenerate(
+  generate: ReturnType<typeof useProjectPearityGenerate>,
+  projectId: string
+): void {
+  const navigate = openPendingTab();
+  generate.mutate({ projectId, navigate });
+}
+
 /** Starts a Generate inside the click handler (opens the pending tab synchronously). */
 export function startPearityGenerate(
   generate: ReturnType<typeof usePearityGenerate>,

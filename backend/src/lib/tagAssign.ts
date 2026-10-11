@@ -57,8 +57,11 @@ function sameFamily(current: string | null | undefined, base: string): boolean {
 
 /** Sets (or refreshes) a project's tag. Returns the tag. */
 export async function ensureProjectTag(projectId: mongoose.Types.ObjectId | string): Promise<string | null> {
-  const project = await Project.findById(projectId).select("name naming brand startDate tag").lean<ProjectForTag & { tag?: string | null }>();
+  const project = await Project.findById(projectId)
+    .select("name naming brand startDate tag pearityGeneratedAt")
+    .lean<ProjectForTag & { tag?: string | null; pearityGeneratedAt?: Date | null }>();
   if (!project) return null;
+  if (project.tag && project.pearityGeneratedAt) return project.tag; // used on Pearity: frozen
   const base = await projectBaseTag(project);
   if (sameFamily(project.tag, base)) return project.tag!;
   const taken = await Project.find({ tag: tagFamilyFilter(base), _id: { $ne: project._id } }).select("tag").lean();
@@ -121,17 +124,18 @@ export function scheduleTaskTag(taskId: mongoose.Types.ObjectId): void {
 export async function backfillTags(options: { refresh?: boolean; dryRun?: boolean } = {}): Promise<{ projects: number; tasks: number }> {
   const types = await getProjectTypes();
   const [projects, brands] = await Promise.all([
-    Project.find({}).select("name naming brand startDate tag").sort({ createdAt: 1 }).lean<Array<ProjectForTag & { tag?: string | null }>>(),
+    Project.find({}).select("name naming brand startDate tag pearityGeneratedAt").sort({ createdAt: 1 }).lean<Array<ProjectForTag & { tag?: string | null; pearityGeneratedAt?: Date | null }>>(),
     Brand.find({}).select("name shortName").lean(),
   ]);
   const brandById = new Map(brands.map((b) => [String(b._id), b]));
   const projectTags = new Map<string, string>();
-  const usedProjectTags = new Set(projects.filter((p) => p.tag && !options.refresh).map((p) => p.tag!.toUpperCase()));
+  const keepProject = (p: (typeof projects)[number]) => Boolean(p.tag) && (!options.refresh || Boolean(p.pearityGeneratedAt));
+  const usedProjectTags = new Set(projects.filter(keepProject).map((p) => p.tag!.toUpperCase()));
   let projectCount = 0;
   const projectOps: Array<{ updateOne: { filter: { _id: mongoose.Types.ObjectId }; update: { $set: { tag: string } } } }> = [];
   for (const p of projects) {
-    if (p.tag && !options.refresh) {
-      projectTags.set(String(p._id), p.tag);
+    if (keepProject(p)) {
+      projectTags.set(String(p._id), p.tag!);
       continue;
     }
     const brandId = p.naming?.brand ?? p.brand ?? null;

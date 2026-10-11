@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { generateProjectPearity } from "../controllers/pearity.js";
 import { decideInApp, listApprovals, requestAgain } from "../controllers/projectApproval.js";
 import {
   deleteProjectFile,
@@ -60,6 +61,7 @@ router.patch("/:id", updateProject);
 router.delete("/:id", requireRole("admin"), deleteProject);
 router.patch("/:id/status", updateProjectStatus);
 router.post("/:id/approval", decideInApp);
+router.post("/:id/pearity/generate", generateProjectPearity);
 router.post("/:id/approval/request", requestAgain);
 router.post("/:id/archive", archiveProject);
 router.post("/:id/restore", restoreProject);

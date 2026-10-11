@@ -1,5 +1,11 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { pearityProjectUrl } from "../lib/pearity.js";
+import { projectMonth } from "../lib/projectExpiry.js";
+import { ensureProjectTag } from "../lib/tagAssign.js";
+import { canViewProject } from "../lib/projectAccess.js";
+import { Brand } from "../models/Brand.js";
+import { Project } from "../models/Project.js";
 import { logActivity } from "../lib/activityLog.js";
 import { generateApiKey } from "../lib/apiKeys.js";
 import {
@@ -341,4 +347,67 @@ export async function revokePearityKey(req: Request, res: Response): Promise<voi
   }
   const populated = await ApiKey.findById(doc._id).populate("createdBy", "name").lean<KeyRow>();
   res.json({ apiKey: keyJson(populated!) });
+}
+
+/**
+ * POST /api/projects/:id/pearity/generate — anyone who can view the project:
+ * makes sure it has its tag, freezes the tag (first time), and returns the
+ * production-engine URL filled with the project's details.
+ */
+export async function generateProjectPearity(req: Request, res: Response): Promise<void> {
+  const settings = await pearitySettings();
+  if (!pearityActive(settings)) {
+    res.status(503).json(DISABLED);
+    return;
+  }
+  const id = req.params.id;
+  if (typeof id !== "string" || !mongoose.isValidObjectId(id)) {
+    res.status(400).json({ error: "Invalid project ID" });
+    return;
+  }
+  const project = await Project.findById(id);
+  if (!project || !canViewProject(req.user!, project)) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const user = req.user!;
+  const tag = project.tag || (await ensureProjectTag(project._id as mongoose.Types.ObjectId));
+  if (!tag) {
+    res.status(500).json({ error: "Could not create the project tag" });
+    return;
+  }
+  const created = !project.pearityGeneratedAt;
+  if (created) {
+    await Project.updateOne(
+      { _id: project._id, pearityGeneratedAt: null },
+      { $set: { pearityGeneratedAt: new Date(), pearityGeneratedBy: user._id } }
+    );
+    logActivity({
+      action: "pearity_tag_created",
+      actor: user,
+      targetType: "project",
+      targetId: project._id as mongoose.Types.ObjectId,
+      targetName: `${project.code} · ${project.name}`,
+      details: { projectTag: tag, source: "utility" },
+      ip: req.ip,
+    });
+  }
+  const brandId = project.naming?.brand ?? project.brand ?? null;
+  const brand = brandId ? await Brand.findById(brandId).select("name").lean() : null;
+  res.status(created ? 201 : 200).json({
+    created,
+    tag,
+    generateUrl: pearityProjectUrl(settings, {
+      id: project._id.toString(),
+      name: project.name,
+      code: project.code,
+      tag,
+      brand: brand?.name ?? "",
+      month: projectMonth(project) ?? "",
+      type: project.naming?.type ?? "",
+      title: project.naming?.title ?? project.name,
+      startDate: project.startDate ?? null,
+      deadline: project.deadline ?? null,
+    }),
+  });
 }

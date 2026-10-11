@@ -592,6 +592,43 @@ function fillPearityUrl(
   });
 }
 
+/**
+ * The engine URL for a project (Generate on Pearity from the project page): the
+ * same template, with the project tag as {tagName}/{projectTag} and the task-only
+ * placeholders left empty. Null when no template is configured.
+ */
+export function pearityProjectUrl(
+  settings: PearitySettingsSnapshot,
+  project: {
+    id: string;
+    name: string;
+    code: string;
+    tag: string;
+    brand: string;
+    month: string;
+    type: string;
+    title: string;
+    startDate: Date | null;
+    deadline: Date | null;
+  }
+): string | null {
+  if (!settings.engineUrlTemplate) return null;
+  const blank = Object.fromEntries(PEARITY_PLACEHOLDERS.map((p) => [p, ""])) as Record<PearityPlaceholder, string>;
+  return fillTemplate(settings.engineUrlTemplate, {
+    ...blank,
+    tagName: project.tag,
+    projectTag: project.tag,
+    projectCode: project.code,
+    project: project.name,
+    brand: project.brand,
+    month: project.month,
+    type: project.type,
+    title: project.title,
+    startDate: dateOnly(project.startDate),
+    dueDate: dateOnly(project.deadline),
+  });
+}
+
 export interface PearityTagRefJson {
   /** Sequential tag number — the primary identifier (null only before the startup backfill). */
   tagNo: number | null;
