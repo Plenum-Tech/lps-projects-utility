@@ -21,6 +21,7 @@ import type {
   DeliverySummaryResponse,
   DeliveryBrandStructureResponse,
   DeliveryTeamMapResponse,
+  DeliveryTrafficResponse,
   DeliveryTeamsResponse,
   DeliveryWeeklyResponse,
 } from "@/types";
@@ -34,6 +35,7 @@ type Endpoint =
   | "briefs"
   | "people"
   | "team-map"
+  | "traffic"
   | "brand-structure";
 
 export const deliveryKeys = {
@@ -97,6 +99,8 @@ export const useDeliveryPeople = (f: DeliveryFilters) =>
   useDeliveryQuery<DeliveryPeopleResponse>("people", deliveryParams(f));
 export const useDeliveryTeamMap = (f: DeliveryFilters) =>
   useDeliveryQuery<DeliveryTeamMapResponse>("team-map", deliveryParams(f));
+export const useDeliveryTraffic = (f: DeliveryFilters) =>
+  useDeliveryQuery<DeliveryTrafficResponse>("traffic", deliveryParams(f));
 export const useDeliveryBrandStructure = (f: DeliveryFilters) =>
   useDeliveryQuery<DeliveryBrandStructureResponse>(
     "brand-structure",

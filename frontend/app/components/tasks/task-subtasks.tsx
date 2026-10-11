@@ -117,7 +117,7 @@ export function TaskSubtasks({
               aria-valuenow={percent}
               aria-valuemin={0}
               aria-valuemax={100}
-              aria-label="Subtask progress"
+              aria-label="Rework progress"
             >
               <div
                 className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
@@ -131,7 +131,7 @@ export function TaskSubtasks({
         {canAdd && total > 0 && total < MAX_SUBTASKS && (
           <Button size="sm" variant="outline" onClick={openAdd}>
             <LuPlus aria-hidden />
-            Add subtask
+            Add rework
           </Button>
         )}
       </div>
@@ -141,7 +141,7 @@ export function TaskSubtasks({
           <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <LuListChecks aria-hidden className="size-4" />
           </span>
-          <p className="text-sm font-medium text-foreground">No subtasks</p>
+          <p className="text-sm font-medium text-foreground">No rework yet</p>
           <p className="text-xs text-muted-foreground">
             {canAdd
               ? "Break the work into smaller steps with owners and dates."
@@ -150,7 +150,7 @@ export function TaskSubtasks({
           {canAdd && (
             <Button size="sm" className="mt-1" onClick={openAdd}>
               <LuPlus aria-hidden />
-              Add subtask
+              Add rework
             </Button>
           )}
         </div>
@@ -191,7 +191,7 @@ export function TaskSubtasks({
       )}
 
       {total >= MAX_SUBTASKS && canAdd && (
-        <p className="text-xs text-muted-foreground">This task has reached the {MAX_SUBTASKS}-subtask limit.</p>
+        <p className="text-xs text-muted-foreground">This task has reached the {MAX_SUBTASKS}-rework limit.</p>
       )}
 
       <SubtaskFormDialog
@@ -483,7 +483,7 @@ function DeleteSubtaskDialog({
     <AlertDialog open={subtask !== null} onOpenChange={(open) => !open && !remove.isPending && onClose()}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Delete this subtask?</AlertDialogTitle>
+          <AlertDialogTitle>Delete this rework?</AlertDialogTitle>
           <AlertDialogDescription>
             &ldquo;{subtask?.title}&rdquo;
             {files > 0 ? ` and its ${files} attachment${files === 1 ? "" : "s"}` : ""} will be removed. This

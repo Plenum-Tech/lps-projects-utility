@@ -8,6 +8,7 @@ import {
   getSummary,
   getBrandStructure,
   getTeamMap,
+  getTraffic,
   getTeams,
   getWeekly,
 } from "../controllers/deliveryAnalytics.js";
@@ -28,6 +29,7 @@ router.get("/delivery/briefs", getBriefs);
 router.get("/delivery/people", getPeople);
 router.get("/delivery/people/:id", getPerson);
 router.get("/delivery/team-map", getTeamMap);
+router.get("/delivery/traffic", getTraffic);
 router.get("/delivery/brand-structure", getBrandStructure);
 
 export default router;

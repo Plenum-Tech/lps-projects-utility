@@ -87,7 +87,7 @@ function findSubtaskOr404(req: Request, res: Response, task: ITask): SubtaskDoc 
   const subId = param(req, "subId");
   const subtask = subId && !isInvalidObjectId(subId) ? task.subtasks.id(subId) : null;
   if (!subtask) {
-    res.status(404).json({ error: "Subtask not found" });
+    res.status(404).json({ error: "Rework not found" });
     return undefined;
   }
   return subtask;
@@ -241,11 +241,11 @@ function notifyAssigned(task: ITask, subtask: SubtaskDoc, actor: IUser): void {
     task,
     subtask,
     actor,
-    title: "Subtask assigned",
-    message: `${actor.name} assigned you the subtask "${subtask.title}" on "${task.title}".`,
-    subject: `☑️ Subtask assigned: ${subtask.title}`,
-    heading: "Subtask Assigned",
-    intro: `${actor.name} assigned you the subtask "${subtask.title}".`,
+    title: "Rework assigned",
+    message: `${actor.name} assigned you the rework "${subtask.title}" on "${task.title}".`,
+    subject: `☑️ Rework assigned: ${subtask.title}`,
+    heading: "Rework Assigned",
+    intro: `${actor.name} assigned you the rework "${subtask.title}".`,
   });
 }
 
@@ -263,11 +263,11 @@ function notifyCreated(task: ITask, subtask: SubtaskDoc, actor: IUser): void {
     task,
     subtask,
     actor,
-    title: "Subtask added",
-    message: `${actor.name} added the subtask "${subtask.title}" to "${task.title}".`,
-    subject: `☑️ New subtask: ${subtask.title}`,
-    heading: "Subtask Added",
-    intro: `${actor.name} added a subtask to "${task.title}".`,
+    title: "Rework added",
+    message: `${actor.name} added the rework "${subtask.title}" to "${task.title}".`,
+    subject: `☑️ New rework: ${subtask.title}`,
+    heading: "Rework Added",
+    intro: `${actor.name} added a rework to "${task.title}".`,
   });
 }
 
@@ -295,7 +295,7 @@ export async function addSubtask(req: Request, res: Response): Promise<void> {
     return;
   }
   if (task.subtasks.length >= TASK_LIMITS.maxSubtasks) {
-    res.status(400).json({ error: `A task can have at most ${TASK_LIMITS.maxSubtasks} subtasks` });
+    res.status(400).json({ error: `A task can have at most ${TASK_LIMITS.maxSubtasks} rework items` });
     return;
   }
 
@@ -406,13 +406,13 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
   }
   const canEdit = role.manage || (role.assignee && subtask.createdBy.equals(user._id));
   if (editingFields && !canEdit) {
-    res.status(403).json({ error: "You can only edit subtasks you created" });
+    res.status(403).json({ error: "You can only edit rework you created" });
     return;
   }
   const canToggle =
     role.manage || !subtask.assignee || subtask.assignee.equals(user._id);
   if (body.done !== undefined && !canToggle) {
-    res.status(403).json({ error: "You can only tick off subtasks assigned to you" });
+    res.status(403).json({ error: "You can only tick off rework assigned to you" });
     return;
   }
   // Actual dates: whoever may edit or tick off the subtask.
@@ -528,11 +528,11 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
         task,
         subtask,
         actor: user,
-        title: "Subtask completed",
+        title: "Rework completed",
         message: `${user.name} completed "${subtask.title}" on "${task.title}".`,
-        subject: `✅ Subtask completed: ${subtask.title}`,
-        heading: "Subtask Completed",
-        intro: `${user.name} completed the subtask "${subtask.title}".`,
+        subject: `✅ Rework completed: ${subtask.title}`,
+        heading: "Rework Completed",
+        intro: `${user.name} completed the rework "${subtask.title}".`,
       });
     }
   }
@@ -559,7 +559,7 @@ export async function deleteSubtask(req: Request, res: Response): Promise<void> 
 
   const role = await subtaskRole(user, task);
   if (!role.manage && !(role.assignee && subtask.createdBy.equals(user._id))) {
-    res.status(403).json({ error: "You can only remove subtasks you created" });
+    res.status(403).json({ error: "You can only remove rework you created" });
     return;
   }
 

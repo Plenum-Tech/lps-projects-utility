@@ -79,6 +79,15 @@ export interface FactsResult {
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
+/** Rework moved inside tasks on 12 Oct 2026: rework items added since then mark the task as reworked. */
+const REWORK_ITEMS_SINCE = Date.UTC(2026, 9, 12);
+function hasReworkItems(ids: unknown[] | undefined): boolean {
+  return (ids ?? []).some((id) => {
+    const ts = (id as { getTimestamp?: () => Date })?.getTimestamp?.();
+    return ts ? ts.getTime() >= REWORK_ITEMS_SINCE : false;
+  });
+}
+
 /** Whole-word, case-insensitive pattern for the rework keywords (null when there are none). */
 export function reworkPattern(keywords: string[]): string | null {
   const words = keywords.map((k) => k.trim()).filter(Boolean).map(escapeRegex);
@@ -105,6 +114,7 @@ interface RawFact {
   actualStartAt?: Date | null;
   actualEndAt?: Date | null;
   rework: boolean;
+  subtaskIds?: unknown[];
 }
 
 const DAY_MS = 86_400_000;
@@ -240,6 +250,8 @@ async function queryFacts(
         startDate: 1,
         actualStartAt: 1,
         actualEndAt: 1,
+        // Rework items (subtasks) — those added since rework moved inside tasks count as rework.
+        subtaskIds: "$subtasks._id",
         // Rules-era tasks carry an explicit iteration marker; older ones use the keyword/category rule.
         rework: {
           $cond: [
@@ -293,7 +305,7 @@ async function queryFacts(
       startDay: r.startDate ? Math.floor(r.startDate.getTime() / DAY_MS) : null,
       actualStartDay: appDay(r.actualStartAt),
       actualEndDay: appDay(r.actualEndAt),
-      rework: Boolean(r.rework),
+      rework: Boolean(r.rework) || hasReworkItems(r.subtaskIds),
     });
   }
   return { facts, minCreatedDay };

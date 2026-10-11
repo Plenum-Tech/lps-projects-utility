@@ -70,7 +70,8 @@ export function SubmitTaskDialog({
   }, [open, task.submissionNotes, task.finalFile?.url]);
 
   const direct = task.project?.requireTaskApproval === false;
-  const noTime = (task.loggedMinutes ?? 0) <= 0;
+  // Logged time is optional for completion.
+  const noTime = false;
   const linkValue = link.trim();
   const linkInvalid =
     mode === "link" && linkValue !== "" && !/^https?:\/\/\S+$/i.test(linkValue);

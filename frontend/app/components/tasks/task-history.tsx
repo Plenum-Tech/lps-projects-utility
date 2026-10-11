@@ -103,7 +103,7 @@ function describe(entry: TaskHistoryEntry): string {
         : `created the task${from}`;
     }
     case "updated":
-      if (d.subtask) return `updated subtask "${str(d.subtask)}" (${list(d.fields)})`;
+      if (d.subtask) return `updated rework "${str(d.subtask)}" (${list(d.fields)})`;
       return d.fields ? `updated ${list(d.fields)}` : "updated the task";
     case "status_changed":
       return `moved it from ${statusLabel(d.from)} to ${statusLabel(d.to)}`;
@@ -114,20 +114,20 @@ function describe(entry: TaskHistoryEntry): string {
       return parts.length ? parts.join(" and ") : "changed the assignees";
     }
     case "subtask_added":
-      return `added subtask "${str(d.title)}"`;
+      return `added rework "${str(d.title)}"`;
     case "subtask_updated":
-      return `updated subtask "${str(d.title)}"${list(d.fields) ? ` (${list(d.fields)})` : ""}`;
+      return `updated rework "${str(d.title)}"${list(d.fields) ? ` (${list(d.fields)})` : ""}`;
     case "subtask_completed":
-      return `completed subtask "${str(d.title)}"`;
+      return `completed rework "${str(d.title)}"`;
     case "subtask_reopened":
-      return `reopened subtask "${str(d.title)}"`;
+      return `reopened rework "${str(d.title)}"`;
     case "subtask_removed":
-      return `removed subtask "${str(d.title)}"`;
+      return `removed rework "${str(d.title)}"`;
     case "comment_added":
       return d.excerpt ? `commented: "${str(d.excerpt)}"` : "added a comment";
     case "file_added": {
       const sub = d.subtask as { title?: unknown } | undefined;
-      const target = sub && str(sub.title) ? ` to subtask "${str(sub.title)}"` : "";
+      const target = sub && str(sub.title) ? ` to rework "${str(sub.title)}"` : "";
       return `attached ${str(d.filename) || "a file"}${target}`;
     }
     case "file_removed":
@@ -156,7 +156,7 @@ function describe(entry: TaskHistoryEntry): string {
     }
     case "subtask_actual_dates_updated": {
       const parts = actualChangeParts(d.changes);
-      return `${parts.length ? parts.join(" and ") : "updated the actual dates"} of subtask "${str(d.title)}"`;
+      return `${parts.length ? parts.join(" and ") : "updated the actual dates"} of rework "${str(d.title)}"`;
     }
     case "pearity_generated": {
       const tag = str(d.tagName);

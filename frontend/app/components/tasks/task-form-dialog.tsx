@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router";
 import {
   LuCalendar,
   LuListChecks,
@@ -21,6 +22,7 @@ import {
   type MultiSelectOption,
 } from "@/components/globals/multi-select";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
+import { ReworkPanel } from "@/components/tasks/rework-panel";
 import { EstimateField } from "@/components/tasks/estimate-field";
 import { LabelColorDot } from "@/components/tasks/label-chip";
 import {
@@ -221,6 +223,7 @@ export function TaskFormDialog({
   );
   const [submitted, setSubmitted] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
   const [savingSubtasks, setSavingSubtasks] = useState(false);
@@ -426,7 +429,8 @@ export function TaskFormDialog({
   const projectInvalid =
     submitted && (!task || Boolean(task.project)) && !projectId;
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
-  const estimateMissing = rulesApply && (estimate === null || estimate === 0);
+  // Estimated time is optional.
+  const estimateMissing = false;
   const estimateInvalid =
     submitted && (estimate === "invalid" || estimateMissing);
   const actualError = actualDatesError(form.actualStart, form.actualEnd);
@@ -593,6 +597,34 @@ export function TaskFormDialog({
     }
   }
 
+  const iterationField = rulesApply ? (
+    <fieldset className="space-y-1.5">
+                  <legend className="text-sm font-medium">Iteration<span aria-hidden className="ml-0.5 text-destructive">*</span></legend>
+                  <RadioGroup
+                    value={form.iteration}
+                    onValueChange={(value) =>
+                      set("iteration", value as TaskIteration)
+                    }
+                    className="flex flex-wrap gap-4"
+                  >
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <RadioGroupItem value="new" />
+                      New work
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <RadioGroupItem value="rework" />
+                      Rework (added inside an existing task)
+                    </label>
+                  </RadioGroup>
+                  {iterationInvalid && (
+                    <p className="text-xs text-destructive">
+                      Choose new work or rework.
+                    </p>
+                  )}
+                </fieldset>
+  ) : null;
+  const reworkMode = !task && form.iteration === "rework";
+
   return (
     <Sheet open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <PageDrawerContent>
@@ -609,10 +641,24 @@ export function TaskFormDialog({
           </SheetHeader>
 
           <PageDrawerCard title="Task Info">
+            {reworkMode ? (
+              <div className="space-y-4">
+                {iterationField}
+                <ReworkPanel
+                  projectItems={projectItems}
+                  initialProject={projectId ?? ""}
+                  onCancel={() => onOpenChange(false)}
+                  onDone={(taskId) => {
+                    onOpenChange(false);
+                    void navigate(`/tasks?task=${taskId}`);
+                  }}
+                />
+              </div>
+            ) : (
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               {controlledName ? (
                 <div className="space-y-1.5">
-                  <Label htmlFor="task-unit">Task name</Label>
+                  <Label htmlFor="task-unit">Task name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
                     <Input
                       id="task-unit"
@@ -684,36 +730,11 @@ export function TaskFormDialog({
                 </div>
               )}
 
-              {rulesApply && (
-                <fieldset className="space-y-1.5">
-                  <legend className="text-sm font-medium">Iteration</legend>
-                  <RadioGroup
-                    value={form.iteration}
-                    onValueChange={(value) =>
-                      set("iteration", value as TaskIteration)
-                    }
-                    className="flex flex-wrap gap-4"
-                  >
-                    <label className="flex cursor-pointer items-center gap-2 text-sm">
-                      <RadioGroupItem value="new" />
-                      New work
-                    </label>
-                    <label className="flex cursor-pointer items-center gap-2 text-sm">
-                      <RadioGroupItem value="rework" />
-                      Rework (an iteration of earlier work)
-                    </label>
-                  </RadioGroup>
-                  {iterationInvalid && (
-                    <p className="text-xs text-destructive">
-                      Choose new work or rework.
-                    </p>
-                  )}
-                </fieldset>
-              )}
+              {iterationField}
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-description">
-                  Brief{" "}
+                  Brief<span aria-hidden className="ml-0.5 text-destructive">*</span>{" "}
                   <span className="font-normal text-muted-foreground">
                     (a description or an attached file is required)
                   </span>
@@ -733,14 +754,21 @@ export function TaskFormDialog({
                 )}
                 {briefInvalid && (
                   <p className="text-xs text-destructive">
-                    Add the brief: write a description or attach a file below.
+                    Add the brief: write a description or attach a file.
                   </p>
                 )}
               </div>
 
+              <AttachmentsField
+                files={attachments}
+                onChange={setAttachments}
+                disabled={pending}
+                existingCount={task?.fileCount ?? 0}
+              />
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="task-project">Project</Label>
+                  <Label htmlFor="task-project">Project<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                   <Select
                     value={projectItems[form.project] ? form.project : null}
                     onValueChange={(value) =>
@@ -821,7 +849,7 @@ export function TaskFormDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="task-assignees">Assignees</Label>
+                <Label htmlFor="task-assignees">Assignees<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <MultiSelect
                   id="task-assignees"
                   options={assigneeOptions}
@@ -960,11 +988,6 @@ export function TaskFormDialog({
                 }
                 invalid={submitted && estimate === "invalid"}
               />
-              {submitted && estimateMissing && (
-                <p className="-mt-2 text-xs text-destructive">
-                  Enter the estimated time — it's required for every task.
-                </p>
-              )}
 
               {isEdit && (
                 <fieldset className="space-y-1.5">
@@ -1048,17 +1071,6 @@ export function TaskFormDialog({
                 )}
               </div>
 
-              {!isEdit && me && (
-                <SubtaskDrafts
-                  value={form.subtasks}
-                  onChange={(value) => set("subtasks", value)}
-                  people={draftPeople}
-                  me={me}
-                  taskTitle={form.title.trim()}
-                  taskDueDate={form.dueDate || null}
-                  disabled={pending}
-                />
-              )}
 
               <RecurrenceField
                 value={form.recurrence}
@@ -1071,12 +1083,6 @@ export function TaskFormDialog({
                 </p>
               )}
 
-              <AttachmentsField
-                files={attachments}
-                onChange={setAttachments}
-                disabled={pending}
-                existingCount={task?.fileCount ?? 0}
-              />
 
               <div className="flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
                 <Button
@@ -1105,6 +1111,7 @@ export function TaskFormDialog({
                 </Button>
               </div>
             </form>
+            )}
           </PageDrawerCard>
         </div>
       </PageDrawerContent>

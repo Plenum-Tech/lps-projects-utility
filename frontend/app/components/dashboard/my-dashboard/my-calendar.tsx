@@ -14,7 +14,7 @@ import type { MyCalendarItem, MyCalendarItemKind, TaskStatus } from "@/types";
 /** Colour per item kind (theme tokens only). */
 const KIND_META: Record<MyCalendarItemKind, { label: string; chip: string; dot: string }> = {
   task: { label: "Task", chip: "bg-chart-2/15 border-chart-2/30", dot: "bg-chart-2" },
-  subtask: { label: "Subtask", chip: "bg-chart-3/15 border-chart-3/30", dot: "bg-chart-3" },
+  subtask: { label: "Rework", chip: "bg-chart-3/15 border-chart-3/30", dot: "bg-chart-3" },
   leave: { label: "Leave", chip: "bg-chart-4/15 border-chart-4/30", dot: "bg-chart-4" },
   project_deadline: {
     label: "Project deadline",
@@ -40,7 +40,7 @@ function describe(item: MyCalendarItem): string {
         .filter(Boolean)
         .join(" · ");
     case "subtask":
-      return `Subtask · ${item.status === "done" ? "Done" : "Open"}`;
+      return `Rework · ${item.status === "done" ? "Done" : "Open"}`;
     case "leave":
       return `${item.leaveType ? `${LEAVE_LABELS[item.leaveType] ?? item.leaveType} leave` : "Leave"} · ${
         item.status === "approved" ? "Approved" : "Pending"

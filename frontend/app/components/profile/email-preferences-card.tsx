@@ -32,7 +32,7 @@ export const PREFERENCES: {
   {
     key: "taskAssigned",
     title: "Task assignments",
-    description: "When a task or subtask is assigned to you.",
+    description: "When a task or rework is assigned to you.",
   },
   {
     key: "taskUpdates",

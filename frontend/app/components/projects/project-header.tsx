@@ -554,7 +554,7 @@ export function DuplicateProjectDialog({
           <SwitchRow
             id="duplicate-tasks"
             label="Include tasks"
-            description="Copy every task with its subtasks (new codes, status reset to To do)."
+            description="Copy every task with its rework items (new codes, status reset to To do)."
             checked={includeTasks}
             onCheckedChange={setIncludeTasks}
           />

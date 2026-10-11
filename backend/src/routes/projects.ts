@@ -15,7 +15,7 @@ import {
   updateMilestoneStatus,
 } from "../controllers/projectMilestones.js";
 import { createNote, deleteNote, listNotes, updateNote } from "../controllers/projectNotes.js";
-import {
+import { listUnbrandedProjects,
   addMembers,
   archiveProject,
   bulkProjects,
@@ -55,6 +55,7 @@ router.get("/export", exportProjects);
 router.post("/bulk", bulkProjects);
 
 router.get("/approvals", listApprovals);
+router.get("/unbranded", listUnbrandedProjects);
 router.get("/:id", getProject);
 router.get("/:id/naming-suggestion", getNamingSuggestion);
 router.patch("/:id", updateProject);

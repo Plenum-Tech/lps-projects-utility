@@ -145,6 +145,10 @@ export interface ITask extends mongoose.Document {
   titleParts?: ITaskTitleParts | null;
   /** <project tag>-<UNIT><QTY>, unique (lib/tags.ts); frozen once Pearity uses it. */
   tag?: string | null;
+  /** The traffic manager a task was created with when only traffic managers were assigned (it waits to be routed). */
+  trafficVia?: mongoose.Types.ObjectId | null;
+  /** First moment someone other than a traffic manager was assigned (creation, or when routed on). */
+  assignedAt?: Date | null;
   /** AI brief check (lib/briefCheck.ts): verdict on the description, refreshed when it changes. */
   briefCheck?: { verdict: "ok" | "weak" | "flagged"; reason?: string; model?: string; checkedAt?: Date; hash?: string } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
@@ -272,6 +276,8 @@ const taskSchema = new Schema<ITask>(
     submissionNotes: { type: String, trim: true, maxlength: 2000 },
     iteration: { type: String, enum: [...TASK_ITERATIONS, null], default: null },
     tag: { type: String, default: undefined, trim: true, maxlength: 120 },
+    trafficVia: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    assignedAt: { type: Date, default: null },
     titleParts: {
       type: new Schema(
         {

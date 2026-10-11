@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { getDeliverySettings } from "../lib/delivery/settings.js";
 import { isProjectApproved, notApprovedMessage } from "../lib/projectApproval.js";
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
@@ -854,16 +855,10 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
  * deliverable — an uploaded final file, a link, or an outcome note — and without
  * time logged on it. Returns the reason, or null when it may complete.
  */
+// Completion needs the final file / link or an outcome note (logged time is optional).
 async function completionBlocker(task: ITask): Promise<string | null> {
   const hasFinal = Boolean(task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim());
   if (!hasFinal) return "Add the final file or link, or write an outcome note, before completing this task";
-  const logged = await TimeLog.exists({
-    task: task._id,
-    endTime: { $ne: null },
-    durationMinutes: { $gt: 0 },
-    status: { $ne: "rejected" },
-  });
-  if (!logged) return "Log your time on this task before completing it";
   return null;
 }
 
@@ -1229,7 +1224,8 @@ export async function createTaskCore(
   if (isInvalid(estimateMinutes)) return estimateMinutes;
 
   // App-created tasks (the task form): every task sits under a project, carries a brief
-  // (description or attachment), an estimate, an iteration marker and a controlled name.
+  // (description or attachment), the "new work" marker and a controlled name. Rework is
+  // never a task of its own — it's a rework item (subtask) inside the original task.
   if (options.enforceRules) {
     if (!project) return { status: 400, error: "Every task must belong to a project (pick one)" };
     const hasDescription = typeof description === "string" && description.trim().length > 0;
@@ -1238,7 +1234,12 @@ export async function createTaskCore(
     }
     if (!titleParts) return { status: 400, error: "Task name needs a scope unit, a quantity and a short name" };
     if (!iteration) return { status: 400, error: "Choose the iteration: new work or rework" };
-    if (!estimateMinutes || estimateMinutes <= 0) return { status: 400, error: "Enter the estimated time" };
+    if (iteration === "rework") {
+      return {
+        status: 400,
+        error: "Rework is added inside the original task: open that task and add a rework item.",
+      };
+    }
   }
 
   // Recurrence
@@ -1274,7 +1275,12 @@ export async function createTaskCore(
     actual.actualEndSource = "import";
   }
 
+  // Traffic desk: a task created with only traffic managers waits to be routed to the team.
+  const trafficManagers = new Set((await getDeliverySettings()).trafficManagers);
+  const onlyTraffic = assignees.length > 0 && assignees.every((a) => trafficManagers.has(String(a._id)));
   const task = await Task.create({
+    trafficVia: onlyTraffic ? assignees[0]!._id : null,
+    assignedAt: onlyTraffic ? null : new Date(),
     title: title.trim(),
     description: typeof description === "string" && description.trim() ? description.trim() : undefined,
     assignees: assignees.map((u) => u._id),
@@ -1921,6 +1927,13 @@ async function applyTaskUpdate(
   if (actualChanges.length > 0) {
     recordTaskHistory(taskId, user, "actual_dates_updated", { changes: actualChanges });
     changed.push("actualDates");
+  }
+  if ((added.length > 0 || removedIds.length > 0) && !task.assignedAt) {
+    // Routed on: the first time someone other than a traffic manager is on the task.
+    const trafficManagers = new Set((await getDeliverySettings()).trafficManagers);
+    if (task.assignees.some((a) => !trafficManagers.has(String(a)))) {
+      await Task.updateOne({ _id: task._id, assignedAt: null }, { $set: { assignedAt: new Date() } });
+    }
   }
   if (added.length > 0 || removedIds.length > 0) {
     const removedUsers = await User.find({ _id: { $in: removedIds } }).select("name").lean();

@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { Brand } from "../models/Brand.js";
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
+import { Task } from "../models/Task.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
 import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
@@ -829,6 +830,72 @@ export async function getTeamMap(req: Request, res: Response): Promise<void> {
         offMapTasks: rows.reduce((n, r) => n + (r.offMapTasks ?? 0), 0),
       },
       rows,
+    };
+  });
+}
+
+/**
+ * GET /traffic — the traffic desk (traffic managers' routing):
+ *  - waiting: open tasks whose only assignees are traffic managers (not routed to the team yet);
+ *  - routed: tasks that came in via a traffic manager and were assigned onwards in the period,
+ *    with the average / median time to assign.
+ * A task counts as the team member's job once routed (traffic managers are never doers).
+ */
+export async function getTraffic(req: Request, res: Response): Promise<void> {
+  await respond(req, res, "traffic", async (ctx) => {
+    const tms = ctx.settings.trafficManagers;
+    if (tms.length === 0) return { configured: false, managers: [], waiting: [], totals: { waiting: 0, routed: 0, avgHours: null, medianHours: null } };
+    const tmIds = tms.map((id) => new mongoose.Types.ObjectId(id));
+    const tmSet = new Set(tms);
+    const periodStart = new Date(`${keyFromDay(ctx.period.current.start)}T00:00:00.000Z`);
+    const periodEnd = new Date(`${keyFromDay(ctx.period.current.end)}T23:59:59.999Z`);
+    const [openWithTm, routed] = await Promise.all([
+      Task.find({ status: { $ne: "completed" }, assignees: { $in: tmIds } })
+        .select("title shortCode number assignees createdAt project dueDate")
+        .lean(),
+      Task.find({ trafficVia: { $in: tmIds }, assignedAt: { $gte: periodStart, $lte: periodEnd } })
+        .select("trafficVia assignedAt createdAt")
+        .lean(),
+    ]);
+    const now = Date.now();
+    const waiting = openWithTm
+      .filter((t) => t.assignees.length > 0 && t.assignees.every((a) => tmSet.has(String(a))))
+      .map((t) => ({
+        id: String(t._id),
+        code: t.shortCode ?? (t.number ? `#${t.number}` : ""),
+        title: t.title,
+        manager: userRef(ctx, String(t.assignees[0])),
+        project: t.project ? ctx.ref.projects.get(String(t.project))?.name ?? null : null,
+        waitingDays: Math.floor((now - new Date(t.createdAt).getTime()) / 86_400_000),
+        dueDate: t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : null,
+      }))
+      .sort((a, b) => b.waitingDays - a.waitingDays);
+    const hoursOf = (t: { assignedAt?: Date | null; createdAt: Date }) =>
+      Math.max(0, (new Date(t.assignedAt!).getTime() - new Date(t.createdAt).getTime()) / 3_600_000);
+    const stats = (list: Array<{ assignedAt?: Date | null; createdAt: Date }>) => {
+      const hours = list.map(hoursOf).sort((a, b) => a - b);
+      if (hours.length === 0) return { avgHours: null, medianHours: null };
+      const avg = hours.reduce((n, h) => n + h, 0) / hours.length;
+      const mid = Math.floor(hours.length / 2);
+      const median = hours.length % 2 ? hours[mid]! : (hours[mid - 1]! + hours[mid]!) / 2;
+      return { avgHours: Math.round(avg * 10) / 10, medianHours: Math.round(median * 10) / 10 };
+    };
+    const managers = tms
+      .map((id) => {
+        const mine = routed.filter((t) => String(t.trafficVia) === id);
+        return {
+          person: userRef(ctx, id),
+          waiting: waiting.filter((w) => w.manager.id === id).length,
+          routed: mine.length,
+          ...stats(mine),
+        };
+      })
+      .sort((a, b) => b.waiting - a.waiting || b.routed - a.routed);
+    return {
+      configured: true,
+      managers,
+      waiting: waiting.slice(0, 50),
+      totals: { waiting: waiting.length, routed: routed.length, ...stats(routed) },
     };
   });
 }

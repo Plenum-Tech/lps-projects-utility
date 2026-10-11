@@ -139,7 +139,7 @@ export function SubtaskFormDialog({
   const [dragOver, setDragOver] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [busy, setBusy] = useState<"saving" | "uploading" | null>(null);
-  /** Set once the subtask is saved but some uploads failed. */
+  /** Set once the rework is saved but some uploads failed. */
   const [savedId, setSavedId] = useState<string | null>(null);
   const [failed, setFailed] = useState<FailedUpload[]>([]);
 
@@ -332,7 +332,7 @@ export function SubtaskFormDialog({
 
     if (!hasFiles) {
       setBusy(null);
-      finish(subId, subtask ? "Subtask updated" : "Subtask added");
+      finish(subId, subtask ? "Rework updated" : "Rework added");
       return;
     }
 
@@ -343,7 +343,7 @@ export function SubtaskFormDialog({
     setBusy(null);
     setPending([]);
     if (failures.length === 0) {
-      finish(subId, subtask ? "Subtask updated" : "Subtask added");
+      finish(subId, subtask ? "Rework updated" : "Rework added");
       return;
     }
     setSavedId(subId);
@@ -368,7 +368,7 @@ export function SubtaskFormDialog({
     <Dialog open={open} onOpenChange={(next) => !busy && onOpenChange(next)}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
-          <DialogTitle>{subtask || draft?.initial ? "Edit subtask" : "Add subtask"}</DialogTitle>
+          <DialogTitle>{subtask || draft?.initial ? "Edit rework" : "Add rework"}</DialogTitle>
           <DialogDescription>
             {draft
               ? `For the new task${task.title ? ` "${task.title}"` : ""} — created when you save the task.`
@@ -397,7 +397,7 @@ export function SubtaskFormDialog({
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => finish(savedId, "Subtask saved")}
+                onClick={() => finish(savedId, "Rework saved")}
                 disabled={busy !== null}
               >
                 Skip these files
@@ -506,7 +506,7 @@ export function SubtaskFormDialog({
                   <FieldError>{actualError}</FieldError>
                 ) : (
                   <p className="text-xs text-muted-foreground">
-                    Optional. Actual end fills in when the subtask is ticked off; leave empty to keep it automatic.
+                    Optional. Actual end fills in when the rework is ticked off; leave empty to keep it automatic.
                   </p>
                 )}
               </div>

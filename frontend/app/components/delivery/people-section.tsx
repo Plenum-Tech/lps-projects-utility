@@ -24,6 +24,7 @@ import {
   type SortColumn,
 } from "@/components/delivery/delivery-ui";
 import { PersonDrawer } from "@/components/delivery/person-drawer";
+import { TrafficDesk } from "@/components/delivery/traffic-desk";
 import {
   WeeklyBars,
   WeeklyLine,
@@ -35,6 +36,7 @@ import {
   useDeliveryBrandStructure,
   useDeliveryPeople,
   useDeliveryTeamMap,
+  useDeliveryTraffic,
   useDeliveryWeekly,
 } from "@/hooks/use-delivery";
 import { formatDateOnly } from "@/lib/format";
@@ -65,6 +67,7 @@ export function PeopleSection({
   const people = useDeliveryPeople(filters);
   const weekly = useDeliveryWeekly(filters);
   const teamMap = useDeliveryTeamMap(filters);
+  const traffic = useDeliveryTraffic(filters);
   const structure = useDeliveryBrandStructure(filters);
   const [person, setPerson] = useState<{ id: string; name: string } | null>(
     null,
@@ -206,6 +209,22 @@ export function PeopleSection({
           skeletonHeight="h-40"
         >
           {() => <BrandStructure data={structure.data!} />}
+        </PanelState>
+      </Panel>
+
+      <Panel
+        title="Traffic desk"
+        description="Tasks that come in via a traffic manager count as the team member's job once assigned onwards. Waiting = open tasks still sitting only with a traffic manager. Time to assign runs from creation to the first team assignee (tracked for tasks created from 12 Oct 2026)."
+        action={
+          isAdmin && (
+            <Link to="/settings/delivery" className="text-xs font-medium text-primary underline-offset-4 hover:underline">
+              Traffic managers
+            </Link>
+          )
+        }
+      >
+        <PanelState query={traffic} errorTitle="Couldn't load the traffic desk" skeletonHeight="h-40">
+          {() => <TrafficDesk data={traffic.data!} />}
         </PanelState>
       </Panel>
 

@@ -633,7 +633,7 @@ export function subtaskTemplate(params: {
     <p>Hi <strong>${escapeHtml(params.firstName)}</strong>,</p>
     <p>${escapeHtml(params.intro)}</p>
     <div style="background-color: #f9fafb; border-left: 4px solid #3b82f6; padding: 16px; margin: 16px 0; border-radius: 0 6px 6px 0;">
-      <p style="margin: 0 0 4px; color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;">Subtask</p>
+      <p style="margin: 0 0 4px; color: #6b7280; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;">Rework</p>
       <h3 style="margin: 0 0 8px; color: #1f2937;">${escapeHtml(params.subtaskTitle)}</h3>
       <table style="width: 100%; border-collapse: collapse;">
         ${row("Task", parent)}
@@ -650,7 +650,7 @@ export function subtaskTemplate(params: {
           : ""
       }
     </div>
-    <a href="${escapeHtml(link)}" style="${BUTTON_STYLE}">${escapeHtml(params.buttonLabel ?? "View Subtask")}</a>
+    <a href="${escapeHtml(link)}" style="${BUTTON_STYLE}">${escapeHtml(params.buttonLabel ?? "View Rework")}</a>
   `;
   return wrapTemplate(escapeHtml(params.heading), body);
 }

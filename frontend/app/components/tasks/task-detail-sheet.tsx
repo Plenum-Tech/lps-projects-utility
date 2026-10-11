@@ -102,7 +102,7 @@ export function TaskDetailSheet({
   taskId: string | null;
   me: { _id: string; role: Role };
   onClose: () => void;
-  /** `?subtask=<id>` (email links): open the Subtasks tab with it expanded. */
+  /** `?subtask=<id>` (email links): open the Rework tab with it expanded. */
   subtaskId?: string | null;
   /** `?tab=notes` etc. */
   tab?: string | null;
@@ -551,7 +551,7 @@ function TaskDetail({
           >
             <TabsList className="no-scrollbar w-full justify-start overflow-x-auto sm:justify-center">
               <TabsTrigger value="subtasks">
-                Subtasks
+                Rework
                 {task.subtasks.length > 0 && (
                   <Count>
                     {doneSubtasks}/{task.subtasks.length}

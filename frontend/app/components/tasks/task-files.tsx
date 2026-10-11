@@ -251,8 +251,8 @@ function groupFiles(files: TaskFile[], subtasks: Subtask[]) {
   }
   const ids = [...bySubtask.keys()].sort((a, b) => (order.get(a) ?? 999) - (order.get(b) ?? 999));
   for (const id of ids) {
-    const title = subtasks.find((sub) => sub._id === id)?.title ?? "Removed subtask";
-    groups.push({ key: id, label: `Subtask: ${title}`, files: bySubtask.get(id)! });
+    const title = subtasks.find((sub) => sub._id === id)?.title ?? "Removed rework";
+    groups.push({ key: id, label: `Rework: ${title}`, files: bySubtask.get(id)! });
   }
   return groups;
 }

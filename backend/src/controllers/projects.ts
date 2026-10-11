@@ -253,6 +253,17 @@ interface MemberInput {
   hourlyRate: number;
 }
 
+/** First free code: `base`, else base + 2, 3 … (trimmed to 10 characters). */
+async function uniqueProjectCode(base: string): Promise<string> {
+  if (!(await Project.exists({ code: base }))) return base;
+  for (let n = 2; n < 1000; n++) {
+    const suffix = String(n);
+    const candidate = `${base.slice(0, 10 - suffix.length)}${suffix}`;
+    if (!(await Project.exists({ code: candidate }))) return candidate;
+  }
+  return base;
+}
+
 /** `team`: [{ role, users[] }] with plan roles or "others"; empty roles are dropped. */
 async function parseTeam(raw: unknown): Promise<IProjectTeamEntry[] | Invalid> {
   if (!Array.isArray(raw)) return bad("team must be an array of { role, users }");
@@ -880,6 +891,8 @@ export interface ProjectBody {
   requireTaskApproval?: unknown;
   /** [{ role, users[] }] — the role-based team; its people are added as members. */
   team?: unknown;
+  /** true when `code` is the form's suggestion (not typed): a taken code gets a number added. */
+  autoCode?: unknown;
 }
 
 function parseName(raw: unknown): string | Invalid {
@@ -939,8 +952,10 @@ export async function createProjectCore(
   } else {
     return bad("Project brand, type, month and name are required");
   }
-  const code = parseCode(body.code);
-  if (isInvalid(code)) return code;
+  const parsedCode = parseCode(body.code);
+  if (isInvalid(parsedCode)) return parsedCode;
+  // A suggested code (autoCode) that's already taken gets a number: 80SP → 80SP2, 80SP3 …
+  const code = body.autoCode === true ? await uniqueProjectCode(parsedCode) : parsedCode;
   const summary = parseSummary(body.summary);
   if (isInvalid(summary)) return summary;
 
@@ -2019,3 +2034,25 @@ export async function listAssignableMembers(req: Request, res: Response): Promis
   res.json({ users: users.map((u) => u.toJSON()), total: users.length, limit: null, offset: 0 });
 }
 
+
+/** Legacy projects must be mapped to a brand by this date (5-day warning from 12 Oct 2026). */
+const BRAND_MAPPING_DEADLINE = process.env.BRAND_MAPPING_DEADLINE ?? "2026-10-17";
+
+/**
+ * GET /api/projects/unbranded — active projects without a brand that the
+ * current user can fix (admins: all; others: projects they manage), plus the
+ * mapping deadline. Drives the "map your projects to a brand" pop-up.
+ */
+export async function listUnbrandedProjects(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  const projects = await Project.find({ brand: null, archivedAt: null })
+    .select("name code manager createdBy members departments isPublic brand naming archivedAt")
+    .sort({ createdAt: -1 })
+    .limit(500);
+  const mine = projects.filter((p) => canManageProject(user, p));
+  res.json({
+    deadline: BRAND_MAPPING_DEADLINE,
+    total: mine.length,
+    projects: mine.slice(0, 100).map((p) => ({ _id: p._id.toString(), code: p.code, name: p.name })),
+  });
+}

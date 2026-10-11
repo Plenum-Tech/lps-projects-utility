@@ -20,7 +20,7 @@ export function MySubtasksStrip({ onOpen }: { onOpen: (taskId: string, subtaskId
       <div className="mb-2 flex items-center gap-2">
         <LuListTodo aria-hidden className="size-4 text-primary" />
         <h2 id="my-subtasks-heading" className="text-sm font-semibold text-foreground">
-          My subtasks
+          My rework
         </h2>
         <span className="rounded-full bg-muted px-1.5 text-[0.7rem] text-muted-foreground tabular-nums">
           {items.length}

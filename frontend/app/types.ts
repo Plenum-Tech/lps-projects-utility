@@ -1933,6 +1933,8 @@ export interface ProjectInput {
   requireTaskApproval?: boolean;
   /** Role-based team (manpower plan roles + "others"); its people become members. */
   team?: Array<{ role: string; users: string[] }>;
+  /** true when `code` is the suggested one: if taken, the server adds a number. */
+  autoCode?: boolean;
 }
 
 export type ProjectUpdateInput = Partial<
@@ -3701,4 +3703,21 @@ export interface ProjectApprovalQueue {
   isApprover: boolean;
   pending: ProjectApprovalLinkResponse["project"][];
   recent: ProjectApprovalLinkResponse["project"][];
+}
+
+/** GET /analytics/delivery/traffic — the traffic desk. */
+export interface DeliveryTrafficResponse {
+  meta: DeliveryMeta;
+  configured: boolean;
+  managers: Array<{ person: DeliveryUserRef; waiting: number; routed: number; avgHours: number | null; medianHours: number | null }>;
+  waiting: Array<{
+    id: string;
+    code: string;
+    title: string;
+    manager: DeliveryUserRef;
+    project: string | null;
+    waitingDays: number;
+    dueDate: string | null;
+  }>;
+  totals: { waiting: number; routed: number; avgHours: number | null; medianHours: number | null };
 }

@@ -467,6 +467,8 @@ export function ProjectFormDialog({
       const input: ProjectInput = {
         naming,
         code,
+        // A suggested (untouched) code that's taken gets a number added by the server.
+        autoCode: !codeTouched,
         summary: form.summary.trim() || undefined,
         category,
         manager,
@@ -571,7 +573,7 @@ export function ProjectFormDialog({
             <legend className="sr-only">Project name</legend>
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5">
-                <Label htmlFor="project-brand">Brand</Label>
+                <Label htmlFor="project-brand">Brand<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 {newBrand === null ? (
                   <Combobox
                     items={brandOptions}
@@ -671,7 +673,7 @@ export function ProjectFormDialog({
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="project-type">Type</Label>
+                <Label htmlFor="project-type">Type<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <OptionSelect
                   id="project-type"
                   value={form.type}
@@ -688,7 +690,7 @@ export function ProjectFormDialog({
                 )}
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="project-month">Month</Label>
+                <Label htmlFor="project-month">Month<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <Input
                   id="project-month"
                   type="month"
@@ -701,7 +703,7 @@ export function ProjectFormDialog({
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="project-name">Name</Label>
+              <Label htmlFor="project-name">Name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
               <Input
                 id="project-name"
                 value={form.title}
@@ -738,7 +740,7 @@ export function ProjectFormDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="project-code">Code</Label>
+              <Label htmlFor="project-code">Code<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
               <Input
                 id="project-code"
                 value={form.code}
