@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { decideInApp, requestAgain } from "../controllers/projectApproval.js";
+import { decideInApp, listApprovals, requestAgain } from "../controllers/projectApproval.js";
 import {
   deleteProjectFile,
   downloadProjectFile,
@@ -53,6 +53,7 @@ router.get("/export", exportProjects);
 // Bulk status / archive / restore / delete (admin) — per-item permission checks.
 router.post("/bulk", bulkProjects);
 
+router.get("/approvals", listApprovals);
 router.get("/:id", getProject);
 router.get("/:id/naming-suggestion", getNamingSuggestion);
 router.patch("/:id", updateProject);

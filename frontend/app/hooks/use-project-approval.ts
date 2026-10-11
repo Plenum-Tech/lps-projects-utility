@@ -3,7 +3,20 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { projectKeys } from "@/hooks/use-projects";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
-import type { ProjectApprovalLinkResponse, ProjectApprovalView } from "@/types";
+import type { ProjectApprovalLinkResponse, ProjectApprovalQueue, ProjectApprovalView } from "@/types";
+
+export const approvalQueueKey = ["project-approvals", "queue"] as const;
+
+/** The approver's queue (pending + decided in 30 days); `isApprover` false for everyone else. */
+export function useApprovalQueue(enabled = true) {
+  return useQuery({
+    queryKey: approvalQueueKey,
+    queryFn: async () => (await api.get<ProjectApprovalQueue>("/projects/approvals")).data,
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: 120_000,
+  });
+}
 
 /** Approvers: approve / reject a pending project from the app. */
 export function useDecideProjectApproval() {
@@ -14,6 +27,7 @@ export function useDecideProjectApproval() {
       (await api.post<{ approval: ProjectApprovalView }>(`/projects/${id}/approval`, { decision, reason })).data,
     onSuccess: (_data, { decision }) => {
       void queryClient.invalidateQueries({ queryKey: projectKeys.all });
+      void queryClient.invalidateQueries({ queryKey: approvalQueueKey });
       toast.success(decision === "approve" ? "Project approved" : "Project rejected");
     },
     onError: (error) => toast.error(getErrorMessage(error)),

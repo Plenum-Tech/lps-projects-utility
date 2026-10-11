@@ -203,6 +203,7 @@ export function ProjectsTable({
             <ProjectApprovalBadge project={project} />
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {project.tag && <span className="font-mono">{project.tag} · </span>}
             {project.category?.name ?? "Uncategorised"}
           </p>
         </div>

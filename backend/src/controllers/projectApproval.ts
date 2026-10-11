@@ -152,3 +152,32 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
   const updated = await Project.findById(project._id);
   res.json({ approval: await approvalView(updated!) });
 }
+
+/**
+ * GET /api/projects/approvals — the approver's queue: projects awaiting approval
+ * (oldest first) and those decided in the last 30 days. Non-approvers get
+ * `isApprover: false` and empty lists (the sidebar uses this to hide the menu).
+ */
+export async function listApprovals(req: Request, res: Response): Promise<void> {
+  if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
+    res.json({ isApprover: false, pending: [], recent: [] });
+    return;
+  }
+  const since = new Date(Date.now() - 30 * 86_400_000);
+  const [pending, recent] = await Promise.all([
+    Project.find({ "approval.status": "pending", archivedAt: null }).sort({ "approval.requestedAt": 1 }).limit(100),
+    Project.find({
+      "approval.status": { $in: ["approved", "rejected"] },
+      "approval.decidedAt": { $gte: since },
+      "approval.decidedBy": { $ne: null },
+      "approval.reason": { $ne: "Created by an approver" },
+    })
+      .sort({ "approval.decidedAt": -1 })
+      .limit(30),
+  ]);
+  res.json({
+    isApprover: true,
+    pending: await Promise.all(pending.map(summary)),
+    recent: await Promise.all(recent.map(summary)),
+  });
+}

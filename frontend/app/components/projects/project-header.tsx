@@ -115,12 +115,15 @@ export function ProjectHeader({
             <div className="flex flex-wrap items-center gap-2">
               <ShortCode code={project.code} />
               {project.tag && (
-                <span
-                  className="rounded-md border px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
-                  title="Project tag (brand, month, type and name)"
+                <button
+                  type="button"
+                  onClick={() => void navigator.clipboard?.writeText(project.tag!).catch(() => undefined)}
+                  className="rounded-md border px-1.5 py-0.5 font-mono text-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  title="Project tag (brand, month, type and name) — click to copy"
+                  aria-label={`Project tag ${project.tag}, copy`}
                 >
-                  {project.tag}
-                </span>
+                  Tag: {project.tag}
+                </button>
               )}
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}

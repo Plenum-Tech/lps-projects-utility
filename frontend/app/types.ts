@@ -3693,3 +3693,10 @@ export interface ProjectApprovalLinkResponse {
     approval: ProjectApprovalView | null;
   };
 }
+
+/** GET /projects/approvals — the approver's queue. */
+export interface ProjectApprovalQueue {
+  isApprover: boolean;
+  pending: ProjectApprovalLinkResponse["project"][];
+  recent: ProjectApprovalLinkResponse["project"][];
+}

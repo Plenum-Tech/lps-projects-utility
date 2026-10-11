@@ -5,6 +5,7 @@ import {
   CalendarCheck,
   CalendarDays,
   ChevronRight,
+  ClipboardCheck,
   ClipboardList,
   FileText,
   FolderKanban,
@@ -47,11 +48,13 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
+import { useApprovalQueue } from "@/hooks/use-project-approval";
 import { FEATURES, type FeatureName } from "@/lib/features";
 import type { Role } from "@/types";
 
@@ -74,10 +77,14 @@ interface NavItem {
   isActive?: (pathname: string, search: URLSearchParams) => boolean;
   /** Shown only while this feature switch is on (lib/features.ts). */
   feature?: FeatureName;
+  /** Shown only to project approvers, with the number of projects waiting. */
+  approvers?: boolean;
 }
 
 interface ResolvedNavItem extends Omit<NavItem, "to"> {
   to: string;
+  /** Count shown at the end of the item (e.g. projects waiting for approval). */
+  count?: number;
 }
 
 interface NavGroup {
@@ -167,6 +174,7 @@ const NAV_GROUPS: NavGroup[] = [
     collapsible: true,
     items: [
       { title: "Projects", to: "/projects", icon: FolderKanban, match: ["/projects/"] },
+      { title: "Approvals", to: "/approvals", icon: ClipboardCheck, approvers: true },
       { title: "Tasks", to: "/tasks", icon: ClipboardList, match: ["/tasks/"] },
       { title: "Meetings", to: "/meetings", icon: MessagesSquare, match: ["/meetings/"] },
       { title: "Manpower plan", to: "/manpower", icon: UsersRound, roles: MANAGERS },
@@ -198,7 +206,7 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-function resolveGroups(role: Role): ResolvedNavGroup[] {
+function resolveGroups(role: Role, approver: { isApprover: boolean; pending: number }): ResolvedNavGroup[] {
   return NAV_GROUPS.map((group, index) => ({
     key: group.label ?? `block-${index}`,
     label: group.label,
@@ -206,9 +214,11 @@ function resolveGroups(role: Role): ResolvedNavGroup[] {
     items: group.items
       .filter((item) => !item.roles || item.roles.includes(role))
       .filter((item) => !item.feature || FEATURES[item.feature])
+      .filter((item) => !item.approvers || approver.isApprover)
       .map((item) => ({
         ...item,
         to: typeof item.to === "string" ? item.to : (item.to[role] ?? ""),
+        count: item.approvers ? approver.pending : undefined,
       }))
       .filter((item) => item.to !== ""),
   })).filter((group) => group.items.length > 0);
@@ -236,10 +246,14 @@ export function AppSidebar() {
   const logout = useLogout();
   const navigate = useNavigate();
   const brand = useBrand();
+  const approvals = useApprovalQueue(Boolean(user));
 
   if (!user) return null;
 
-  const groups = resolveGroups(user.role);
+  const groups = resolveGroups(user.role, {
+    isApprover: Boolean(approvals.data?.isApprover),
+    pending: approvals.data?.pending.length ?? 0,
+  });
   const location: NavLocation = { pathname, search: new URLSearchParams(search) };
 
   return (
@@ -344,6 +358,11 @@ function NavItems({ items, location }: { items: ResolvedNavItem[]; location: Nav
             <item.icon />
             <span>{item.title}</span>
           </SidebarMenuButton>
+          {item.count ? (
+            <SidebarMenuBadge aria-label={`${item.count} waiting`} className="bg-primary text-primary-foreground">
+              {item.count}
+            </SidebarMenuBadge>
+          ) : null}
         </SidebarMenuItem>
       ))}
     </SidebarMenu>
