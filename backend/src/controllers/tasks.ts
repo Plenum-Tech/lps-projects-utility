@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isProjectApproved, notApprovedMessage } from "../lib/projectApproval.js";
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
@@ -1140,6 +1141,9 @@ export async function createTaskCore(
     if (!options.allowClosedProject && isProjectExpired(resolved)) {
       return { status: 400, error: PROJECT_CLOSED_MESSAGE };
     }
+    if (!options.allowClosedProject && !isProjectApproved(resolved)) {
+      return { status: 400, error: await notApprovedMessage(resolved) };
+    }
     project = resolved;
   } else if (actor.role === "employee") {
     return { status: 403, error: "Only heads and admins can create tasks outside a project" };
@@ -1832,6 +1836,9 @@ async function applyTaskUpdate(
       if (!task.project || !task.project.equals(resolved._id as mongoose.Types.ObjectId)) {
         if (isProjectExpired(resolved)) {
           return { status: 400, error: "That project closed at the end of its month. Tasks can't be moved into it." };
+        }
+        if (!isProjectApproved(resolved)) {
+          return { status: 400, error: await notApprovedMessage(resolved) };
         }
         task.project = resolved._id as mongoose.Types.ObjectId;
         task.milestone = null;

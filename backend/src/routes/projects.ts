@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { decideInApp, requestAgain } from "../controllers/projectApproval.js";
 import {
   deleteProjectFile,
   downloadProjectFile,
@@ -57,6 +58,8 @@ router.get("/:id/naming-suggestion", getNamingSuggestion);
 router.patch("/:id", updateProject);
 router.delete("/:id", requireRole("admin"), deleteProject);
 router.patch("/:id/status", updateProjectStatus);
+router.post("/:id/approval", decideInApp);
+router.post("/:id/approval/request", requestAgain);
 router.post("/:id/archive", archiveProject);
 router.post("/:id/restore", restoreProject);
 router.post("/:id/duplicate", requireRole("head", "admin"), duplicateProject);

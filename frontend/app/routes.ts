@@ -8,6 +8,8 @@ export default [
   route("set-password/:token", "routes/set-password.$token.tsx"),
   // Public: forgot password (email → 6-digit code → new password).
   route("forgot-password", "routes/forgot-password.tsx"),
+  // Public: approve / reject a new project from the emailed link.
+  route("project-approval/:token", "routes/project-approval.$token.tsx"),
   layout("routes/protected.tsx", [
     route("dashboard", "routes/dashboard.tsx"),
     route("profile", "routes/profile.tsx"),

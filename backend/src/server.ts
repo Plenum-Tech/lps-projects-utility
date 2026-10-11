@@ -59,6 +59,7 @@ import usersRouter from "./routes/users.js";
 import settingsRouter from "./routes/settings.js";
 import analyticsRouter from "./routes/analytics.js";
 import brandsRouter from "./routes/brands.js";
+import projectApprovalRouter from "./routes/projectApproval.js";
 import manpowerRouter from "./routes/manpower.js";
 import integrationsRouter, { pearityApiRouter } from "./routes/integrations.js";
 import { companySettingsFreshness } from "./lib/companySettings.js";
@@ -208,6 +209,7 @@ app.use("/api/auth/login", strictRateLimit);
 // Strict: public invitation preview/accept (token guessing + password set).
 app.use("/api/invitations/accept", inviteAcceptRateLimit);
 app.use("/api/password-setup", passwordSetupRateLimit);
+app.use("/api/project-approval", passwordSetupRateLimit);
 // Strict: public forgot-password steps (code requests, code guessing, password set).
 app.use("/api/auth/password-reset/request", passwordResetRequestRateLimit);
 app.use("/api/auth/password-reset/verify", passwordResetVerifyRateLimit);
@@ -267,6 +269,7 @@ app.use("/api/documents", documentsRouter);
 app.use("/api/meetings", meetingsRouter);
 app.use("/api/imports", importsRouter);
 app.use("/api/brands", brandsRouter);
+app.use("/api/project-approval", projectApprovalRouter);
 app.use("/api/manpower", manpowerRouter);
 app.use("/api/analytics", analyticsRouter);
 // Pearity: server-to-server API (Bearer key) first, then the session/admin endpoints.

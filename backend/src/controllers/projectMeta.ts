@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { User } from "../models/User.js";
 import { logActivity } from "../lib/activityLog.js";
 import { parseHhmm } from "../lib/appTime.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -322,6 +323,8 @@ function parseProjectTypes(raw: unknown): string[] | { error: string } {
 interface SettingsBody {
   logTimeFor?: unknown;
   approvalRequired?: unknown;
+  projectApprovalRequired?: unknown;
+  projectApprovers?: unknown;
   autoStopTimerAt?: unknown;
   trackerReminderAt?: unknown;
   deadlineReminderDays?: unknown;
@@ -347,7 +350,20 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
     }
     settings.logTimeFor = body.logTimeFor as LogTimeFor;
   }
-  for (const field of ["approvalRequired", "dailyTimeLogReport"] as const) {
+  if (body.projectApprovers !== undefined) {
+    const raw = body.projectApprovers;
+    if (!Array.isArray(raw) || raw.length > 10 || raw.some((id) => typeof id !== "string" || !mongoose.isValidObjectId(id))) {
+      res.status(400).json({ error: "projectApprovers must be up to 10 user IDs" });
+      return;
+    }
+    const ids = [...new Set(raw as string[])];
+    if (ids.length && (await User.countDocuments({ _id: { $in: ids } })) !== ids.length) {
+      res.status(404).json({ error: "An approver doesn't exist" });
+      return;
+    }
+    settings.projectApprovers = ids.map((id) => new mongoose.Types.ObjectId(id));
+  }
+  for (const field of ["approvalRequired", "projectApprovalRequired", "dailyTimeLogReport"] as const) {
     if (body[field] === undefined) continue;
     if (typeof body[field] !== "boolean") {
       res.status(400).json({ error: `${field} must be a boolean` });

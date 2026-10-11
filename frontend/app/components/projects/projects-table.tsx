@@ -27,6 +27,7 @@ import { canManageProjectClient, progressTone, statusColor } from "@/lib/project
 import { formatDMY } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectStatus, Role } from "@/types";
+import { ProjectApprovalBadge } from "@/components/projects/project-approval";
 
 export type ProjectDialogKind = "edit" | "duplicate" | "archive" | "restore" | "delete";
 
@@ -199,6 +200,7 @@ export function ProjectsTable({
               <LuPin aria-label="Pinned" className="size-3.5 shrink-0 text-primary" />
             )}
             {!project.naming && <LegacyNameBadge />}
+            <ProjectApprovalBadge project={project} />
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {project.category?.name ?? "Uncategorised"}
@@ -288,6 +290,7 @@ export function ProjectsTable({
                 <ShortCode code={project.code} />
                 {project.pinned && <LuPin aria-label="Pinned" className="size-3.5 text-primary" />}
                 {!project.naming && <LegacyNameBadge />}
+                <ProjectApprovalBadge project={project} />
               </div>
               <Link
                 to={`/projects/${project._id}`}

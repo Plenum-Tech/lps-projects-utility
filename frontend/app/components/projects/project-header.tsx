@@ -69,6 +69,7 @@ import { PROJECT_CODE_PATTERN, statusColor } from "@/lib/projects";
 import { formatDateOnly } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
+import { ProjectApprovalBadge } from "@/components/projects/project-approval";
 
 type DialogKind = "edit" | "duplicate" | "archive" | "restore" | "delete" | null;
 
@@ -123,6 +124,7 @@ export function ProjectHeader({
               )}
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
+              <ProjectApprovalBadge project={project} />
               {project.expired && (
                 <Badge
                   variant="outline"

@@ -15,6 +15,7 @@ import { settingsTimeZone } from "./companySettings.js";
 import { initialActualDates } from "./actualDates.js";
 import { scheduleTaskTag } from "./tagAssign.js";
 import { isProjectExpired } from "./projectExpiry.js";
+import { isProjectApproved } from "./projectApproval.js";
 
 // ---------------------------------------------------------------------------
 // Date-only helpers — due/start dates are stored as UTC midnight of a calendar
@@ -197,7 +198,7 @@ async function generateOccurrence(parent: ITask, now: Date): Promise<ITask | nul
   let project: IProject | null = null;
   if (parent.project) {
     project = await Project.findById(parent.project);
-    if (!project || project.archivedAt || isProjectExpired(project) || (await isProjectStatusCompleted(project))) return null;
+    if (!project || project.archivedAt || isProjectExpired(project) || !isProjectApproved(project) || (await isProjectStatusCompleted(project))) return null;
   }
 
   // Deleted users are dropped, and on a project only current members/the

@@ -335,6 +335,7 @@ export function TaskFormDialog({
           !project.archivedAt &&
           !project.status.isCompleted &&
           !project.expired &&
+          (!project.approval || project.approval.status === "approved") &&
           (isHeadOrAdmin || project.manager?._id === me?._id),
       ),
     [projects.data, isHeadOrAdmin, me?._id],
@@ -346,7 +347,10 @@ export function TaskFormDialog({
     projectItems[project._id] = `${project.code} · ${project.name}`;
   // Keep the task's current project selectable even if filtered out (a new
   // task can't go into a closed project, so its default must still be open).
-  const defaultClosed = !isEdit && projects.data?.find((project) => project._id === projectId)?.expired;
+  const defaultProject = projects.data?.find((project) => project._id === projectId);
+  const defaultClosed =
+    !isEdit &&
+    Boolean(defaultProject?.expired || (defaultProject?.approval && defaultProject.approval.status !== "approved"));
   if (projectId && !projectItems[projectId] && !defaultClosed) {
     const current =
       task?.project ??

@@ -37,6 +37,21 @@ export interface IProjectNaming {
   title: string;
 }
 
+export const PROJECT_APPROVAL_STATUSES = ["pending", "approved", "rejected"] as const;
+export type ProjectApprovalStatus = (typeof PROJECT_APPROVAL_STATUSES)[number];
+
+/** Approval of a new project (absent on projects created before approval existed = approved). */
+export interface IProjectApproval {
+  status: ProjectApprovalStatus;
+  requestedAt: Date;
+  requestedBy: mongoose.Types.ObjectId | null;
+  decidedAt?: Date | null;
+  decidedBy?: mongoose.Types.ObjectId | null;
+  reason?: string;
+  /** One emailed link per approver: SHA-256 of the token, never the token itself. */
+  tokens: Array<{ user: mongoose.Types.ObjectId; hash: string; expiresAt: Date }>;
+}
+
 /** One role of the project team (manpower plan roles + "others"). */
 export interface IProjectTeamEntry {
   role: string;
@@ -71,6 +86,7 @@ export interface IProject extends mongoose.Document {
   taskCounter: number;
   /** BRAND-MONTH-TYPE-NAME abbreviation, unique (lib/tags.ts); follows the name. */
   tag?: string | null;
+  approval?: IProjectApproval | null;
   createdBy: mongoose.Types.ObjectId;
   archivedAt?: Date | null;
   /** "YYYY-MM-DD" idempotency key for the deadline reminder job. */
@@ -133,6 +149,33 @@ const projectSchema = new Schema<IProject>(
     },
     taskCounter: { type: Number, default: 0, min: 0 },
     tag: { type: String, default: null, trim: true, maxlength: 80 },
+    approval: {
+      type: new Schema<IProjectApproval>(
+        {
+          status: { type: String, enum: PROJECT_APPROVAL_STATUSES, required: true },
+          requestedAt: { type: Date, required: true },
+          requestedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+          decidedAt: { type: Date, default: null },
+          decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+          reason: { type: String, default: "", trim: true, maxlength: 500 },
+          tokens: {
+            type: [
+              new Schema(
+                {
+                  user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+                  hash: { type: String, required: true },
+                  expiresAt: { type: Date, required: true },
+                },
+                { _id: false }
+              ),
+            ],
+            default: [],
+          },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     archivedAt: { type: Date, default: null },
     lastDeadlineReminderOn: { type: String, default: null },
@@ -142,6 +185,7 @@ const projectSchema = new Schema<IProject>(
 
 projectSchema.index({ code: 1 }, { unique: true });
 projectSchema.index({ tag: 1 });
+projectSchema.index({ "approval.tokens.hash": 1 });
 projectSchema.index({ "members.user": 1, archivedAt: 1 });
 projectSchema.index({ departments: 1 });
 projectSchema.index({ deadline: 1, archivedAt: 1 });
@@ -155,6 +199,9 @@ projectSchema.set("toJSON", {
     const json = ret as unknown as Record<string, unknown>;
     delete json.__v;
     delete json.lastDeadlineReminderOn;
+    // Approval link tokens never leave the server.
+    const approval = json.approval as Record<string, unknown> | undefined;
+    if (approval) delete approval.tokens;
     return json;
   },
 });

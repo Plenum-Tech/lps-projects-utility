@@ -1810,6 +1810,8 @@ export interface Project {
   code: string;
   /** BRAND-MONTH-TYPE-NAME abbreviation (unique). */
   tag?: string | null;
+  /** New-project approval; absent = approved (created before approval existed). */
+  approval?: ProjectApprovalView | null;
   summary?: string;
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */
@@ -1862,6 +1864,8 @@ export interface ProjectPermissions {
   canApproveTime: boolean;
   isManager: boolean;
   isMember: boolean;
+  /** Detail page only: the current user approves this pending project. */
+  canApprove?: boolean;
 }
 
 export type MilestoneStatus = "incomplete" | "complete";
@@ -2041,6 +2045,10 @@ export interface ProjectSettings {
   _id: string;
   logTimeFor: "project" | "task";
   approvalRequired: boolean;
+  /** New projects need approval before tasks can be added. */
+  projectApprovalRequired: boolean;
+  /** Approver user ids (empty = aasim@lps-me.com). */
+  projectApprovers: string[];
   autoStopTimerAt: string | null;
   trackerReminderAt: string | null;
   deadlineReminderDays: number;
@@ -3651,4 +3659,37 @@ export interface ManpowerSaveInput {
 export interface ManpowerTeamSuggestion {
   row: { key: string; name: string; version: number; month: string } | null;
   team: Array<{ role: string; users: Array<{ _id: string; name: string }> }>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Project approval                                                    */
+/* ------------------------------------------------------------------ */
+
+export interface ProjectApprovalView {
+  status: "pending" | "approved" | "rejected";
+  requestedAt: string;
+  /** Populated on the detail page; a plain id in lists. */
+  requestedBy: { _id: string; name: string | null } | string | null;
+  decidedAt: string | null;
+  decidedBy: { _id: string; name: string | null } | string | null;
+  reason: string;
+}
+
+/** GET /project-approval/:token (public). */
+export interface ProjectApprovalLinkResponse {
+  approver: { name: string };
+  project: {
+    _id: string;
+    name: string;
+    code: string;
+    tag: string | null;
+    brand: string | null;
+    type: string | null;
+    month: string | null;
+    manager: string | null;
+    requestedBy: string | null;
+    summary: string;
+    team: string[];
+    approval: ProjectApprovalView | null;
+  };
 }

@@ -11,6 +11,10 @@ export type DeadlineReminderTarget = (typeof DEADLINE_REMINDER_TARGETS)[number];
 export interface IProjectSettings extends mongoose.Document {
   logTimeFor: LogTimeFor;
   approvalRequired: boolean;
+  /** New projects wait for an approver before tasks can be added. */
+  projectApprovalRequired: boolean;
+  /** Who approves new projects; empty = PROJECT_APPROVER_EMAILS (default aasim@lps-me.com). */
+  projectApprovers: mongoose.Types.ObjectId[];
   /** "HH:mm" (app timezone): running timers are stopped at this time daily. */
   autoStopTimerAt?: string | null;
   /** "HH:mm" (app timezone): remind employees with no log today. */
@@ -33,6 +37,8 @@ const projectSettingsSchema = new Schema<IProjectSettings>(
   {
     logTimeFor: { type: String, enum: LOG_TIME_FOR, default: "project" },
     approvalRequired: { type: Boolean, default: true },
+    projectApprovalRequired: { type: Boolean, default: true },
+    projectApprovers: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
     autoStopTimerAt: { type: String, default: null, match: HHMM },
     trackerReminderAt: { type: String, default: null, match: HHMM },
     deadlineReminderDays: { type: Number, default: 3, min: 0, max: 60 },

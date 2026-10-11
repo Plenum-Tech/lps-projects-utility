@@ -23,6 +23,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useMeetingConfig } from "@/hooks/use-meetings";
+import { ProjectApprovalCard } from "@/components/projects/settings/project-approval-card";
 
 /** Settings → Profile: name, employment details (read-only) and department. */
 export function ProfileSection() {
@@ -103,6 +104,7 @@ export function TaskSection() {
 export function ProjectSection() {
   return (
     <div className="space-y-6">
+      <ProjectApprovalCard />
       <ProjectStatusesCard />
       <ProjectTypesCard />
       <ProjectCategoriesCard />

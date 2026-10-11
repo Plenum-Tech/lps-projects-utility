@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { approvalView, isProjectApprover, requestProjectApproval } from "../lib/projectApproval.js";
 import { scheduleProjectTag } from "../lib/tagAssign.js";
 import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { logActivity } from "../lib/activityLog.js";
@@ -351,6 +352,8 @@ export async function loadProjectDetail(projectId: mongoose.Types.ObjectId, user
   const populated = await Project.findById(projectId).populate(PROJECT_POPULATE);
   if (!populated) return null;
   const [project] = await serializeProjects([populated], user);
+  project!.approval = await approvalView(raw);
+  const canApprove = raw.approval?.status === "pending" && (await isProjectApprover(user._id as mongoose.Types.ObjectId));
 
   const today = appToday();
   const [counts, logged, overdueTasks, milestones, milestoneTasks] = await Promise.all([
@@ -400,7 +403,7 @@ export async function loadProjectDetail(projectId: mongoose.Types.ObjectId, user
     },
   };
 
-  return { project: project!, permissions, stats };
+  return { project: project!, permissions: { ...permissions, canApprove }, stats };
 }
 
 async function respondDetail(res: Response, projectId: mongoose.Types.ObjectId, user: IUser, status = 200): Promise<void> {
@@ -1072,6 +1075,7 @@ export async function createProjectCore(
   notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
   scheduleProjectTag(projectId);
+  await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false });
   return { project };
 }
 
@@ -1826,6 +1830,7 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
   });
   notifyMembersAdded(copy, copy.members.map((m) => m.user), actor);
   scheduleProjectTag(copy._id as mongoose.Types.ObjectId, true);
+  await requestProjectApproval(copy._id as mongoose.Types.ObjectId, actor);
   pushProjectUpdate(copy, "created", { actorId: actor._id.toString(), duplicatedFrom: sourceId.toString() });
 
   await respondDetail(res, copyId, actor, 201);

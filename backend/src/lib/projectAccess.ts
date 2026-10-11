@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isProjectApproved } from "./projectApproval.js";
 import { isProjectExpired, projectClosesOn } from "./projectExpiry.js";
 import { cached } from "./refCache.js";
 import { Project } from "../models/Project.js";
@@ -144,7 +145,10 @@ export function projectPermissions(
     canDelete: user.role === "admin" && archived,
     // Copying needs create rights and management of the source (heads: their own projects).
     canDuplicate: canCreateProject(user) && manage,
-    canCreateTasks: canCreateProjectTasks(user, project) && !archived,
+    canCreateTasks:
+      canCreateProjectTasks(user, project) &&
+      !archived &&
+      isProjectApproved(project as { approval?: { status?: string } | null }),
     canUploadFiles: canContribute(user, project) && !archived,
     canAddNotes: canContribute(user, project) && !archived,
     canViewRates: canViewRates(user, project),

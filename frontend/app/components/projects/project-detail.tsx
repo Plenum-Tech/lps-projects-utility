@@ -30,6 +30,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useProject, useProjectRealtime } from "@/hooks/use-projects";
+import { ProjectApprovalBanner } from "@/components/projects/project-approval";
 
 const TABS = [
   "overview",
@@ -124,6 +125,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <ProjectHeader project={project} permissions={permissions} />
+      <ProjectApprovalBanner project={project} permissions={permissions} />
 
       <Tabs
         value={tab}
