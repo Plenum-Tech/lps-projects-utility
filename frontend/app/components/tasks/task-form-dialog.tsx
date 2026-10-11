@@ -989,66 +989,6 @@ export function TaskFormDialog({
                 invalid={submitted && estimate === "invalid"}
               />
 
-              {isEdit && (
-                <fieldset className="space-y-1.5">
-                  <legend className="mb-1.5 text-sm leading-none font-medium">
-                    Actual dates
-                  </legend>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="task-actual-start"
-                        className="text-xs text-muted-foreground"
-                      >
-                        Actual start
-                      </Label>
-                      <Input
-                        id="task-actual-start"
-                        type="datetime-local"
-                        value={form.actualStart}
-                        max={toDateTimeInput(new Date())}
-                        onChange={(event) =>
-                          set("actualStart", event.target.value)
-                        }
-                        aria-invalid={actualInvalid || undefined}
-                        aria-describedby="task-actual-hint"
-                      />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label
-                        htmlFor="task-actual-end"
-                        className="text-xs text-muted-foreground"
-                      >
-                        Actual end
-                      </Label>
-                      <Input
-                        id="task-actual-end"
-                        type="datetime-local"
-                        value={form.actualEnd}
-                        min={form.actualStart || undefined}
-                        max={toDateTimeInput(new Date())}
-                        onChange={(event) =>
-                          set("actualEnd", event.target.value)
-                        }
-                        aria-invalid={actualInvalid || undefined}
-                        aria-describedby="task-actual-hint"
-                      />
-                    </div>
-                  </div>
-                  <p
-                    id="task-actual-hint"
-                    className={
-                      actualInvalid
-                        ? "text-xs text-destructive"
-                        : "text-xs text-muted-foreground"
-                    }
-                  >
-                    {actualInvalid
-                      ? actualError
-                      : "Optional — filled automatically. Edited values aren't changed automatically; clear a field to return it to automatic."}
-                  </p>
-                </fieldset>
-              )}
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-labels">Labels</Label>

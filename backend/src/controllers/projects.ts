@@ -1067,7 +1067,7 @@ export async function createProjectCore(
       budget: budget ?? null,
       isPublic: isPublic ?? false,
       manualTimeLogs: manualTimeLogs ?? true,
-      requireTaskApproval: requireTaskApproval ?? true,
+      requireTaskApproval: requireTaskApproval ?? false,
       createdBy: actor._id,
     });
   } catch (error) {

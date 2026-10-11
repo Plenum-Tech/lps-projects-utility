@@ -324,7 +324,10 @@ export function allowedTransitions(
   task: AccessTask & { status: TaskStatus },
   options: TransitionOptions = {}
 ): TaskStatus[] {
-  const all: TaskStatus[] = ["todo", "in_progress", "in_review", "completed", "rejected"];
+  // Projects without task approval only use To do / In progress / Completed.
+  const all: TaskStatus[] = options.skipReview
+    ? ["todo", "in_progress", "completed"]
+    : ["todo", "in_progress", "in_review", "completed", "rejected"];
   return all.filter((to) => to !== task.status && canTransition(user, task, to, options));
 }
 
@@ -470,8 +473,8 @@ export function taskPermissions(
     canDuplicate: !flags.archived && (task.project ? Boolean(flags.canCreateTasks) : user.role !== "employee"),
     /** Start a timer / log time on this task (server re-checks project rules). */
     canLogTime: (manage || assignee) && task.status !== "completed",
-    /** Edit Actual start / end: the task's managers (incl. its department head) and assignees. */
-    canEditActualDates: manageSubtasks || assignee,
+    /** Actual start / end follow the time logs (Time tab), so they aren't edited by hand. */
+    canEditActualDates: false,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */
     skipsReview: Boolean(flags.skipReview),
     /** The task belongs to an archived project. */

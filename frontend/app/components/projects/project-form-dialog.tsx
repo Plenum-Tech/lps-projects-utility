@@ -136,7 +136,7 @@ function initialState(project?: Project | null): FormState {
     budget: numberText(project?.budget),
     isPublic: project?.isPublic ?? false,
     manualTimeLogs: project?.manualTimeLogs ?? true,
-    requireTaskApproval: project?.requireTaskApproval ?? true,
+    requireTaskApproval: project?.requireTaskApproval ?? false,
   };
 }
 
@@ -814,25 +814,7 @@ export function ProjectFormDialog({
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="project-manager">Project manager</Label>
-              <OptionSelect
-                id="project-manager"
-                value={form.manager}
-                onChange={(value) => set("manager", value)}
-                options={managerOptions}
-              />
-              <p className="text-xs text-muted-foreground">
-                Added as a member automatically.
-              </p>
-            </div>
 
-            {isAdmin && (
-              <AdminDepartmentsField
-                value={form.departments}
-                onChange={(value) => set("departments", value)}
-              />
-            )}
           </div>
 
           {isHeadOrAdmin && (
@@ -886,63 +868,9 @@ export function ProjectFormDialog({
                 )}
               </div>
             )}
-            <div className="space-y-1.5">
-              <Label htmlFor="project-hours">
-                Hours allocated{" "}
-                <span className="font-normal text-muted-foreground">
-                  (optional)
-                </span>
-              </Label>
-              <Input
-                id="project-hours"
-                type="number"
-                inputMode="decimal"
-                min={0}
-                step="0.5"
-                value={form.hoursAllocated}
-                onChange={(event) => set("hoursAllocated", event.target.value)}
-                placeholder="No limit"
-                aria-invalid={(submitted && hours === "invalid") || undefined}
-              />
-              {submitted && hours === "invalid" && (
-                <FieldError>Enter a positive number.</FieldError>
-              )}
-            </div>
-            {canViewRates && (
-              <div className="space-y-1.5">
-                <Label htmlFor="project-budget">
-                  Budget ({currencySymbol()}){" "}
-                  <span className="font-normal text-muted-foreground">
-                    (optional)
-                  </span>
-                </Label>
-                <Input
-                  id="project-budget"
-                  type="number"
-                  inputMode="decimal"
-                  min={0}
-                  value={form.budget}
-                  onChange={(event) => set("budget", event.target.value)}
-                  placeholder="0"
-                  aria-invalid={
-                    (submitted && budget === "invalid") || undefined
-                  }
-                />
-                {submitted && budget === "invalid" && (
-                  <FieldError>Enter a positive number.</FieldError>
-                )}
-              </div>
-            )}
           </div>
 
           <div className="space-y-2">
-            <SwitchRow
-              id="project-public"
-              label="Public project"
-              description="Everyone in the organisation can view it, not just members."
-              checked={form.isPublic}
-              onCheckedChange={(value) => set("isPublic", value)}
-            />
             <SwitchRow
               id="project-manual-logs"
               label="Allow manual time logs"

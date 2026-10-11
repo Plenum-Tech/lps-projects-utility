@@ -137,7 +137,7 @@ const projectSchema = new Schema<IProject>(
     budget: { type: Number, default: null, min: 0 },
     isPublic: { type: Boolean, default: false },
     manualTimeLogs: { type: Boolean, default: true },
-    requireTaskApproval: { type: Boolean, default: true },
+    requireTaskApproval: { type: Boolean, default: false },
     team: {
       type: [
         new Schema<IProjectTeamEntry>(

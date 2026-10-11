@@ -97,4 +97,18 @@ timeLogSchema.set("toJSON", {
 // Imported documents (bun run import:worksuite) carry `legacy` for idempotent re-runs.
 addLegacyRef(timeLogSchema);
 
+// Keep the task's Actual start / end in step with its time logs.
+function syncTaskActuals(doc: { task?: unknown } | null): void {
+  const task = doc?.task;
+  if (!task) return;
+  void import("../lib/actualDates.js")
+    .then((m) => m.syncActualDatesFromLogs(task as mongoose.Types.ObjectId))
+    .catch(() => undefined);
+}
+timeLogSchema.post("save", (doc) => syncTaskActuals(doc));
+timeLogSchema.post("findOneAndUpdate", (doc: { task?: unknown } | null) => syncTaskActuals(doc));
+timeLogSchema.post("deleteOne", { document: true, query: false }, function (this: { task?: unknown }) {
+  syncTaskActuals(this);
+});
+
 export const TimeLog = mongoose.model<ITimeLog>("TimeLog", timeLogSchema);

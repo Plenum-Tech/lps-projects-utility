@@ -66,8 +66,8 @@ function refreshAll(queryClient: QueryClient) {
   void queryClient.invalidateQueries({ queryKey: projectKeys.all });
   void queryClient.invalidateQueries({ queryKey: ["timesheets"] });
   void queryClient.invalidateQueries({ queryKey: ["work-reports"] });
-  // "Hours logged" on the task tables.
-  void queryClient.invalidateQueries({ queryKey: taskKeys.lists });
+  // "Hours logged" on the task tables and the open task (details, actual dates).
+  void queryClient.invalidateQueries({ queryKey: taskKeys.all });
 }
 
 // ---------------------------------------------------------------------------

@@ -379,3 +379,27 @@ export function applySubtaskManualActualDates(
   }
   return changes;
 }
+
+/**
+ * Actual start / end follow the task's time logs (one place to enter time: the
+ * Time tab): start = the earliest logged start; end = the latest logged end once
+ * the task is completed. Tasks without time logs keep the status-based dates.
+ */
+export async function syncActualDatesFromLogs(taskId: Id | null | undefined): Promise<void> {
+  if (!taskId) return;
+  const id = typeof taskId === "string" ? new mongoose.Types.ObjectId(taskId) : (taskId as mongoose.Types.ObjectId);
+  const [task, span] = await Promise.all([
+    Task.findById(id).select("status").lean(),
+    TimeLog.aggregate<{ start: Date; end: Date }>([
+      { $match: { task: id, endTime: { $ne: null }, status: { $ne: "rejected" } } },
+      { $group: { _id: null, start: { $min: "$startTime" }, end: { $max: "$endTime" } } },
+    ]),
+  ]);
+  if (!task || !span[0]) return;
+  const set: Record<string, unknown> = { actualStartAt: span[0].start, actualStartSource: "auto" };
+  if (task.status === "completed") {
+    set.actualEndAt = span[0].end;
+    set.actualEndSource = "auto";
+  }
+  await Task.updateOne({ _id: id }, { $set: set });
+}

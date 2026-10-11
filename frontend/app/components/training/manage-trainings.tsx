@@ -53,6 +53,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { ConvertProgress } from "@/components/training/convert-progress";
 import { useDepartments } from "@/hooks/use-departments";
 import {
   useAdminTrainings,
@@ -568,6 +569,7 @@ function TrainingFormDialog({
               <p className="text-xs text-destructive">Choose at least one.</p>
             )}
           </fieldset>
+          {pending && file && <ConvertProgress fileSize={file.size} />}
           <DialogFooter>
             <Button
               type="button"
@@ -765,6 +767,15 @@ function ProgressDialog({
                       </TableCell>
                       <TableCell className="text-sm">
                         {row.completedAt ? formatDate(row.completedAt) : "—"}
+                        {row.hrNotifiedAt && (
+                          <span
+                            className="block text-[11px] text-muted-foreground"
+                            title={`HR emailed: ${(row.hrNotifiedTo ?? []).join(", ")}`}
+                          >
+                            HR emailed {formatDate(row.hrNotifiedAt)} · {(row.hrNotifiedTo ?? []).length} recipient
+                            {(row.hrNotifiedTo ?? []).length === 1 ? "" : "s"}
+                          </span>
+                        )}
                       </TableCell>
                     </TableRow>
                   ))

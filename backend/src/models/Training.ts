@@ -86,6 +86,9 @@ export interface ITrainingProgress extends mongoose.Document {
   startedAt?: Date | null;
   /** When the mandatory-training pop-up first showed this training to the person. */
   firstSeenAt?: Date | null;
+  /** When the HR completion email was sent, and to whom. */
+  hrNotifiedAt?: Date | null;
+  hrNotifiedTo?: string[];
   completedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -104,6 +107,8 @@ const trainingProgressSchema = new Schema<ITrainingProgress>(
     viewed: { type: [Number], default: [] },
     startedAt: { type: Date, default: null },
     firstSeenAt: { type: Date, default: null },
+    hrNotifiedAt: { type: Date, default: null },
+    hrNotifiedTo: { type: [String], default: [] },
     completedAt: { type: Date, default: null },
   },
   { timestamps: true },

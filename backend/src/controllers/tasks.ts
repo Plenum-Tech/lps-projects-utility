@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
+import { syncActualDatesFromLogs } from "../lib/actualDates.js";
 import { isProjectApproved, notApprovedMessage } from "../lib/projectApproval.js";
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
@@ -920,6 +921,7 @@ async function applyStatusChange(
   }
 
   await task.save();
+  if (to === "completed") void syncActualDatesFromLogs(task._id as mongoose.Types.ObjectId);
   await normalizeColumnIfNeeded(task);
 
   if (statusChanged) {
@@ -1548,6 +1550,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   if (skipReview) task.completedAt = now;
   await applyAutoActualDates(task, previousStatus, task.status, now);
   await task.save();
+  if (skipReview) void syncActualDatesFromLogs(task._id as mongoose.Types.ObjectId);
   const taskId = task._id as mongoose.Types.ObjectId;
   scheduleProgressRecalc(task.project ?? null);
 

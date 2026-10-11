@@ -3534,6 +3534,9 @@ export interface TrainingProgressRow extends TrainingProgressSummary {
     designation: string;
     department: Pick<Department, "_id" | "name"> | null;
   };
+  /** When HR was emailed about the completion, and to whom. */
+  hrNotifiedAt?: string | null;
+  hrNotifiedTo?: string[];
 }
 
 export interface TrainingInput {

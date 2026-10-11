@@ -100,7 +100,7 @@ function rowPermissions(actor: IUser, log: PopulatedLog) {
     isHeadOfUser(actor, owner) ||
     Boolean(project?.manager && project.manager.equals(actor._id));
   const fromTimesheet = Boolean(log.weeklyTimesheet);
-  const editable = !fromTimesheet && (approver || (own && log.status === "pending"));
+  const editable = !fromTimesheet && (approver || own);
   return {
     canEdit: editable,
     canDelete: editable,
@@ -213,7 +213,7 @@ function parseMemo(raw: unknown): string | undefined | Invalid {
   return raw.trim();
 }
 
-/** Validates a finished window: ≥ 1 minute, ≤ 24 h, not in the future, no overlap. */
+/** Validates a finished window: ≥ 1 minute, ≤ 24 h, not in the future (overlaps are allowed). */
 async function validateWindow(
   userId: mongoose.Types.ObjectId,
   start: Date,
@@ -225,14 +225,9 @@ async function validateWindow(
   const minutes = Math.round((end.getTime() - start.getTime()) / 60_000);
   if (minutes < 1) return { status: 400, error: "A time log must be at least 1 minute" };
   if (minutes > MAX_ENTRY_MINUTES) return { status: 400, error: "A single time log cannot exceed 24 hours" };
-  const overlap = await findOverlap(userId, start, end, excludeId);
-  if (overlap) {
-    return {
-      status: 409,
-      error: "This entry overlaps another time log",
-      extra: { conflict: { _id: overlap._id, startTime: overlap.startTime, endTime: overlap.endTime ?? null } },
-    };
-  }
+  // Time entry is free-flowing: overlapping entries are allowed.
+  void userId;
+  void excludeId;
   return minutes;
 }
 
@@ -610,7 +605,7 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
 function canModify(actor: IUser, log: ITimeLog, owner: IUser, project: IProject | null): string | null {
   if (log.weeklyTimesheet) return "This entry comes from a weekly timesheet. Edit the timesheet instead.";
   if (isApprover(actor, owner, project)) return null;
-  if (log.user.equals(actor._id)) return log.status === "pending" ? null : "Only pending time logs can be changed";
+  if (log.user.equals(actor._id)) return null;
   return "You can't change this time log";
 }
 
@@ -689,6 +684,10 @@ export async function updateTimeLog(req: Request, res: Response): Promise<void> 
   }
   if (memo !== undefined) log.memo = memo;
   if (!log.user.equals(actor._id)) log.editedBy = actor._id;
+  if ((changesWindow || changesTarget) && log.user.equals(actor._id) && log.status !== "pending") {
+    const settings = await getProjectSettings();
+    if (settings.approvalRequired && !canReviewTime(actor, owner, currentProject)) log.status = "pending";
+  }
   await log.save();
   if (log.task && (changesWindow || changesTarget)) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
 

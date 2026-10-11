@@ -1,5 +1,6 @@
 import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
+import { settingsTimeZone } from "../lib/companySettings.js";
 import multer from "multer";
 import { logActivity } from "../lib/activityLog.js";
 import { genericEmailTemplate, sendBatchEmails } from "../lib/email.js";
@@ -380,7 +381,7 @@ async function notifyHrOfCompletion(user: IUser, training: ITraining, completedA
     const recipients = (await hrRecipients()).filter((e) => e.toLowerCase() !== user.email.toLowerCase());
     if (recipients.length === 0) return;
     const department = user.department ? await Department.findById(user.department).select("name").lean() : null;
-    const when = completedAt.toLocaleString("en-GB", { timeZone: process.env.APP_TIMEZONE || "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    const when = completedAt.toLocaleString("en-GB", { timeZone: settingsTimeZone(), dateStyle: "medium", timeStyle: "short" });
     await sendBatchEmails(
       recipients.map((to) => ({
         to,
@@ -401,6 +402,10 @@ async function notifyHrOfCompletion(user: IUser, training: ITraining, completedA
           buttonLabel: "Open training progress",
         }),
       }))
+    );
+    await TrainingProgress.updateOne(
+      { training: training._id, user: user._id },
+      { $set: { hrNotifiedAt: new Date(), hrNotifiedTo: recipients } }
     );
   } catch (err) {
     console.error("[training] HR completion email failed", err instanceof Error ? err.message : err);
@@ -939,6 +944,8 @@ export async function trainingProgress(
         department: user.department ?? null,
       },
       ...rest,
+      hrNotifiedAt: byUser.get(user._id.toString())?.hrNotifiedAt ?? null,
+      hrNotifiedTo: byUser.get(user._id.toString())?.hrNotifiedTo ?? [],
     };
   });
   res.json({ training: summary(training), rows });
