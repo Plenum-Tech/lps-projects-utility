@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { LuPlus, LuRefreshCw } from "react-icons/lu";
@@ -21,6 +21,9 @@ import type { TaskListResponse, TaskStatus } from "@/types";
 export interface ReworkTaskOption {
   value: string;
   label: string;
+  /** The task's project (rework is created in the same project). */
+  projectId?: string;
+  projectLabel?: string;
 }
 
 /** "RWT-3 · Post 1 – Teaser" (code, else #number). */
@@ -30,7 +33,8 @@ export function reworkTaskLabel(task: { title: string; shortCode?: string | null
 }
 
 /**
- * Picks the original task a rework task belongs to (tasks of `projectId`).
+ * Picks the original task a rework task belongs to: tasks of `projectId`, or
+ * the most recent tasks across every project you can see when it's null.
  * `initial` stays selectable even if it isn't in the loaded page of tasks.
  */
 export function ReworkTaskPicker({
@@ -44,20 +48,39 @@ export function ReworkTaskPicker({
   id: string;
   projectId: string | null;
   value: string;
-  onChange: (value: string) => void;
+  onChange: (value: string, option: ReworkTaskOption | null) => void;
   initial?: ReworkTaskOption | null;
   invalid?: boolean;
 }) {
+  // Newest tasks first; typing searches the server (code or name).
+  const [typed, setTyped] = useState("");
+  const [search, setSearch] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setSearch(typed.trim().length >= 2 ? typed.trim() : ""), 250);
+    return () => clearTimeout(timer);
+  }, [typed]);
   const tasks = useQuery({
-    queryKey: ["tasks", "rework-picker", projectId],
+    queryKey: ["tasks", "rework-picker", projectId ?? "all", search],
     queryFn: async () =>
-      (await api.get<TaskListResponse>("/tasks", { params: { project: projectId, limit: 300, sort: "-createdAt" } })).data
-        .tasks,
-    enabled: Boolean(projectId),
+      (
+        await api.get<TaskListResponse>("/tasks", {
+          params: {
+            ...(projectId ? { project: projectId } : { scope: "all" }),
+            ...(search ? { search } : {}),
+            limit: 200,
+          },
+        })
+      ).data.tasks,
     staleTime: 30_000,
+    placeholderData: (previous) => previous,
   });
   const options = useMemo<ReworkTaskOption[]>(() => {
-    const list = (tasks.data ?? []).map((t) => ({ value: t._id, label: reworkTaskLabel(t) }));
+    const list: ReworkTaskOption[] = (tasks.data ?? []).map((t) => ({
+      value: t._id,
+      label: projectId || !t.project ? reworkTaskLabel(t) : `${reworkTaskLabel(t)} (${t.project.code})`,
+      projectId: t.project?._id,
+      projectLabel: t.project ? `${t.project.code} · ${t.project.name}` : undefined,
+    }));
     if (initial && !list.some((o) => o.value === initial.value)) list.unshift(initial);
     return list;
   }, [tasks.data, initial]);
@@ -67,13 +90,16 @@ export function ReworkTaskPicker({
     <Combobox
       items={options}
       value={selected}
-      onValueChange={(option: ReworkTaskOption | null) => onChange(option?.value ?? "")}
+      onValueChange={(option: ReworkTaskOption | null) => onChange(option?.value ?? "", option)}
+      onInputValueChange={(text: string) => {
+        // Don't search for the chosen task's own label.
+        if (!selected || text !== selected.label) setTyped(text);
+      }}
       isItemEqualToValue={(a: ReworkTaskOption, b: ReworkTaskOption) => a.value === b.value}
-      disabled={!projectId}
     >
       <ComboboxInput
         id={id}
-        placeholder={!projectId ? "Choose the project first" : tasks.isPending ? "Loading tasks…" : "Search the project's tasks…"}
+        placeholder={tasks.isPending ? "Loading tasks…" : "Search tasks by code or name…"}
         aria-invalid={invalid || undefined}
         className="w-full"
       />

@@ -1,3 +1,4 @@
+import { scheduleBriefCheck } from "../lib/briefCheck.js";
 import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import multer from "multer";
@@ -208,6 +209,8 @@ async function storeFiles(
     fileIds: created.map((f) => f._id.toString()),
     ...(subtask ? { subtaskId: subtask._id.toString() } : {}),
   });
+  // Attachments count toward the brief score.
+  if (!subtask) scheduleBriefCheck(task._id as mongoose.Types.ObjectId);
 
   const populated = await TaskFile.find({ _id: { $in: created.map((f) => f._id) } })
     .populate(FILE_POPULATE)

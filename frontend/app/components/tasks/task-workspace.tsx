@@ -89,6 +89,7 @@ const BASE_DEFAULTS = {
   department: "",
   overdue: "",
   pearityTag: "",
+  iteration: "",
   recurringParent: "",
   // Set by My dashboard links (shown as removable chips).
   statusIn: "",
@@ -101,6 +102,7 @@ type FilterKey = keyof typeof BASE_DEFAULTS;
 
 const INLINE_KEYS: FilterKey[] = ["search", "status", "project", "from", "to"];
 const SHEET_KEYS: FilterKey[] = [
+  "iteration",
   "priority",
   "label",
   "category",
@@ -256,6 +258,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
     to: filters.to || undefined,
     overdue: filters.overdue === "on",
     pearityTag: pearityOn && (filters.pearityTag === "has" || filters.pearityTag === "none") ? filters.pearityTag : "",
+    iteration: filters.iteration === "new" || filters.iteration === "rework" ? filters.iteration : "",
     pinned: view === "pinned",
     recurringParent: filters.recurringParent || undefined,
     statusIn: filters.statusIn || undefined,
@@ -670,6 +673,16 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
             onChange={(department) => table.setFilters({ department })}
           />
         )}
+        <SheetSelect
+          label="Work type"
+          value={filters.iteration}
+          onChange={(iteration) => table.setFilters({ iteration })}
+          anyLabel="New work and rework"
+          options={[
+            { value: "new", label: "New work" },
+            { value: "rework", label: "Rework" },
+          ]}
+        />
         {pearityOn && (
           <SheetSelect
             label="Pearity tag"

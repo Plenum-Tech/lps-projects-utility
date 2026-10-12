@@ -42,6 +42,7 @@ import {
 import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
 import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
+import { TaskTimerAction } from "@/components/tasks/task-timer-button";
 import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -269,6 +270,7 @@ function TaskDetail({
                 Review
               </Button>
             )}
+            <TaskTimerAction task={task} me={me} />
             {moveTargets.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -545,6 +547,23 @@ function TaskDetail({
                 <p className="text-sm break-words whitespace-pre-wrap text-foreground">
                   {task.description}
                 </p>
+                {typeof task.briefCheck?.score === "number" && (
+                  <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span
+                      className={
+                        task.briefCheck.score >= 70
+                          ? "rounded-full bg-primary/10 px-2 py-0.5 font-medium text-primary"
+                          : task.briefCheck.score >= 40
+                            ? "rounded-full bg-warn/10 px-2 py-0.5 font-medium text-warn"
+                            : "rounded-full bg-destructive/10 px-2 py-0.5 font-medium text-destructive"
+                      }
+                      title="AI brief quality: English, clear, on-brand, actionable; a link or file scores higher"
+                    >
+                      Brief score {task.briefCheck.score}/100
+                    </span>
+                    {task.briefCheck.reason}
+                  </p>
+                )}
               </section>
             )}
 

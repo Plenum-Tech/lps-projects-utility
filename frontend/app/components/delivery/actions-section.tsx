@@ -393,6 +393,14 @@ function ByBrieferTable({ data }: { data: DeliveryBriefsResponse }) {
     ...(data.aiConfigured
       ? ([
           {
+            id: "aiScore",
+            header: "Brief score",
+            hint: "Average AI brief score (0–100): English, clear, on-brand, actionable; links score higher",
+            align: "right",
+            cell: (row) => (row.ai.avgScore == null ? "—" : `${row.ai.avgScore}`),
+            sortValue: (row) => row.ai.avgScore ?? -1,
+          },
+          {
             id: "aiOk",
             header: "AI: good",
             hint: "Share of checked briefs the AI rated ok",

@@ -16,8 +16,8 @@ export const PROJECT_LIMITS = {
   maxHourlyRate: 100000,
 } as const;
 
-/** 2-10 uppercase letters/digits, e.g. "WEB". */
-export const PROJECT_CODE_REGEX = /^[A-Z0-9]{2,10}$/;
+/** 2-12 uppercase letters/digits, e.g. "WEB" or "WASLCMP1026". */
+export const PROJECT_CODE_REGEX = /^[A-Z0-9]{2,12}$/;
 
 export interface IProjectMember {
   user: mongoose.Types.ObjectId;

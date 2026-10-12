@@ -87,6 +87,8 @@ export interface TaskFilters {
   completedTo?: string;
   /** Pearity tag: "has" / "none". */
   pearityTag?: "has" | "none" | "";
+  /** New work / rework. */
+  iteration?: "new" | "rework" | "";
 }
 
 /** Server-side sort fields of GET /api/tasks. */
@@ -158,6 +160,7 @@ function filterParams(filters: TaskFilters): Record<string, string> {
   if (filters.completedFrom) params.completedFrom = filters.completedFrom;
   if (filters.completedTo) params.completedTo = filters.completedTo;
   if (filters.pearityTag) params.pearityTag = filters.pearityTag;
+  if (filters.iteration) params.iteration = filters.iteration;
   return params;
 }
 

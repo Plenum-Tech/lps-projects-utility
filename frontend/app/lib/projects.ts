@@ -29,8 +29,8 @@ export function statusColor(color: ColorToken) {
   return LABEL_COLOR_META[color] ?? LABEL_COLOR_META.primary;
 }
 
-/** Project codes: 2-10 uppercase letters/digits. */
-export const PROJECT_CODE_PATTERN = /^[A-Z0-9]{2,10}$/;
+/** Project codes: 2-12 uppercase letters/digits. */
+export const PROJECT_CODE_PATTERN = /^[A-Z0-9]{2,12}$/;
 
 /** Suggests a code from a project name ("Website redesign" → "WR"). */
 export function suggestCode(name: string): string {
@@ -98,15 +98,31 @@ export function suggestNamingCode(brand: string, type: string): string {
 }
 
 /**
- * Preview of the server-generated project code: brand (4) + type initial + MMYY,
- * e.g. WASLC1026. The server adds a number if it's taken; codes never change.
+ * Preview of the server-generated project code: brand (4) + type (3) + MMYY,
+ * e.g. WASLCMP1026. The server adds a number if it's taken; codes never change.
  */
+/** Type part of codes and tags (mirrors backend lib/tags.ts typeTag). */
+const TYPE_CODES: Record<string, string> = {
+  campaign: "CMP",
+  program: "PRG",
+  programme: "PRG",
+  project: "PRJ",
+  retainer: "RET",
+  pitch: "PIT",
+};
+function typeCode(type: string): string {
+  const t = type.trim().toLowerCase();
+  if (TYPE_CODES[t]) return TYPE_CODES[t];
+  const words = type.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+  return (words.length > 1 ? words.map((w) => w[0]).join("") : (words[0] ?? "")).slice(0, 3);
+}
+
 export function previewProjectCode(brand: string, type: string, month: string): string {
   const alnum = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, "");
   const head = alnum(brand).slice(0, 4);
   if (!head || !type || !/^\d{4}-\d{2}$/.test(month)) return "";
   const [year, mm] = month.split("-");
-  return `${head}${alnum(type).slice(0, 1)}${mm}${year.slice(2)}`.slice(0, 9);
+  return `${head}${typeCode(type)}${mm}${year.slice(2)}`.slice(0, 11);
 }
 
 /** true = legacy free-text name (no structured parts). */

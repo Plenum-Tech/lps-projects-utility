@@ -432,8 +432,10 @@ export function TaskFormDialog({
   for (const category of categories.data ?? [])
     categoryItems[category._id] = category.name;
 
+  // New rework: only the original task is asked for; the name is versioned by the server.
+  const reworkCreate = !task && form.iteration === "rework";
   // New tasks and rules-era tasks use the controlled name; older tasks keep a free title.
-  const controlledName = !task || Boolean(task.titleParts);
+  const controlledName = (!task || Boolean(task.titleParts)) && !reworkCreate;
   const quantityNumber = Number(form.quantity);
   const partsError = !controlledName
     ? null
@@ -453,8 +455,11 @@ export function TaskFormDialog({
   const rulesApply = !task || Boolean(task.iteration);
   const iterationInvalid = submitted && rulesApply && !form.iteration;
   const reworkMissing = !task && form.iteration === "rework" && !form.reworkOf;
-  const briefMissing =
-    !task && form.description.trim() === "" && attachments.length === 0;
+  // Rework needs both the brief and at least one file (e.g. the client feedback).
+  const briefMissing = reworkCreate
+    ? form.description.trim() === "" || attachments.length === 0
+    : !task && form.description.trim() === "" && attachments.length === 0;
+  const dueMissing = reworkCreate && form.dueDate === "";
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0;
   const datesInvalid =
@@ -483,7 +488,8 @@ export function TaskFormDialog({
     setSubmitted(true);
     const title = composedTitle;
     if (
-      (controlledName ? Boolean(partsError) : !title || title.length > 200) ||
+      (reworkCreate ? false : controlledName ? Boolean(partsError) : !title || title.length > 200) ||
+      dueMissing ||
       (rulesApply && !form.iteration) ||
       reworkMissing ||
       briefMissing ||
@@ -505,11 +511,16 @@ export function TaskFormDialog({
     if (!task) {
       const input: TaskInput = {
         title,
-        titleParts: {
-          unit: form.unit.trim(),
-          quantity: quantityNumber,
-          shortName: form.shortName.trim(),
-        },
+        // Rework: the server names it after the original task with a version (R1, R2 …).
+        ...(reworkCreate
+          ? {}
+          : {
+              titleParts: {
+                unit: form.unit.trim(),
+                quantity: quantityNumber,
+                shortName: form.shortName.trim(),
+              },
+            }),
         ...(form.iteration ? { iteration: form.iteration } : {}),
         ...(form.iteration === "rework" && form.reworkOf ? { reworkOf: form.reworkOf } : {}),
         hasAttachments: attachments.length > 0,
@@ -673,17 +684,30 @@ export function TaskFormDialog({
         </Label>
         <ReworkTaskPicker
           id="task-rework-of"
-          projectId={projectId}
+          projectId={defaultReworkOf ? projectId : null}
           value={form.reworkOf}
-          onChange={(value) => set("reworkOf", value)}
+          onChange={(value, option) =>
+            setForm((current) => ({
+              ...current,
+              reworkOf: value,
+              // The project comes from the chosen task.
+              ...(option?.projectId && option.projectId !== current.project
+                ? { project: option.projectId, milestone: NO_MILESTONE }
+                : {}),
+            }))
+          }
           initial={defaultReworkOf}
           invalid={submitted && reworkMissing}
         />
         {submitted && reworkMissing && (
           <p className="text-xs text-destructive">Choose the task this rework is for.</p>
         )}
+        {form.reworkOf && projectId && !projectItems[projectId] && (
+          <p className="text-xs text-destructive">You can't add tasks to this task's project.</p>
+        )}
         <p className="text-xs text-muted-foreground">
-          The rework is a new task and appears in the original task&apos;s Rework tab.
+          The rework is a new task in the same project, named after the original with a version (R1, R2 …),
+          and appears in the original task&apos;s Rework tab.
         </p>
       </div>
     ) : null;
@@ -708,7 +732,9 @@ export function TaskFormDialog({
           {!workOnly && (
           <PageDrawerCard title="Task Info">
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
-              {controlledName ? (
+              {iterationField}
+              {reworkField}
+              {reworkCreate ? null : controlledName ? (
                 <div className="space-y-1.5">
                   <Label htmlFor="task-unit">Task name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
@@ -782,14 +808,14 @@ export function TaskFormDialog({
                 </div>
               )}
 
-              {iterationField}
-              {reworkField}
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-description">
                   Brief<span aria-hidden className="ml-0.5 text-destructive">*</span>{" "}
                   <span className="font-normal text-muted-foreground">
-                    (a description or an attached file is required)
+                    {reworkCreate
+                    ? "(a description and at least one file are required)"
+                    : "(a description or an attached file is required)"}
                   </span>
                 </Label>
                 <Textarea
@@ -807,7 +833,9 @@ export function TaskFormDialog({
                 )}
                 {briefInvalid && (
                   <p className="text-xs text-destructive">
-                    Add the brief: write a description or attach a file.
+                    {reworkCreate
+                      ? "Rework needs the brief and at least one file (e.g. the client feedback)."
+                      : "Add the brief: write a description or attach a file."}
                   </p>
                 )}
               </div>
@@ -835,7 +863,7 @@ export function TaskFormDialog({
                       }))
                     }
                     isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}
-                    disabled={Boolean(defaultProjectId) && !isEdit}
+                    disabled={(Boolean(defaultProjectId) && !isEdit) || reworkCreate}
                   >
                     <ComboboxInput
                       id="task-project"
@@ -998,7 +1026,10 @@ export function TaskFormDialog({
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label htmlFor="task-due">Due date</Label>
+                  <Label htmlFor="task-due">
+                    Due date
+                    {reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}
+                  </Label>
                   <Input
                     id="task-due"
                     type="date"
@@ -1011,6 +1042,9 @@ export function TaskFormDialog({
                     }
                   />
                 </div>
+                {submitted && dueMissing && (
+                  <p className="text-xs text-destructive sm:col-span-2">Choose the due date for this rework.</p>
+                )}
                 {datesInvalid && (
                   <p
                     id="task-dates-error"

@@ -41,8 +41,9 @@ import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
 
 /**
- * Complete the task (or send it for review). Time spent is mandatory (entered
- * here unless already logged); the final file or link and the outcome note are optional.
+ * Complete the task (or send it for review). Both are mandatory: an outcome —
+ * a note, the final file or link (or a file already on the task) — and the time
+ * spent (entered here unless already logged).
  */
 export function SubmitTaskDialog({
   task,
@@ -91,12 +92,20 @@ export function SubmitTaskDialog({
   // Time spent is mandatory: required here unless time is already logged on the task.
   const alreadyLogged = (task.loggedMinutes ?? 0) > 0;
   const timeMissing = !alreadyLogged && spent === 0;
+  // Outcome is mandatory too: a note, the final file or link, or a file already on the task.
+  const outcomeMissing =
+    !notes.trim() &&
+    !(mode === "file" && file) &&
+    !(mode === "link" && linkValue && !linkInvalid) &&
+    !task.finalFile?.fileId &&
+    !task.finalFile?.url &&
+    !(task.fileCount > 0);
   const pending = submit.isPending || upload.isPending || logging;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (noTime || linkInvalid || timeInvalid || timeMissing) return;
+    if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing) return;
     // Time spent is logged on the task first (ending now), then the task is completed.
     if (spent > 0) {
       setLogging(true);
@@ -233,9 +242,15 @@ export function SubmitTaskDialog({
               placeholder="What was delivered? Anything the reviewer should check?"
             />
             <p className="text-xs text-muted-foreground">
-              Optional.
+              Needed unless you attach the final file or link.
             </p>
           </div>
+
+          {submitted && outcomeMissing && (
+            <p className="text-xs text-destructive">
+              Add an outcome note, or the final file or link.
+            </p>
+          )}
 
           <fieldset className="space-y-1.5">
             <legend className="mb-1.5 text-sm leading-none font-medium">

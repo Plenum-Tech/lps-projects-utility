@@ -954,6 +954,8 @@ export interface Task {
   submissionNotes?: string;
   /** Rules-era tasks: "new" work or "rework". */
   iteration?: TaskIteration | null;
+  /** AI brief check: quality score 0–100 (English, clear, on-brand, links score higher). */
+  briefCheck?: { verdict: "ok" | "weak" | "flagged"; score?: number | null; reason?: string; checkedAt?: string } | null;
   /** Rework tasks: the original task (populated). */
   reworkOf?: { _id: string; title: string; shortCode?: string | null; number?: number | null; status: TaskStatus } | null;
   /** Rules-era tasks: the parts the title is composed from. */
@@ -3319,7 +3321,7 @@ export interface DeliveryBriefSummary {
   covered: number;
   coveragePct: number | null;
   /** AI brief check verdicts among the briefs that have been checked. */
-  ai: { checked: number; ok: number; weak: number; flagged: number; okPct: number | null };
+  ai: { checked: number; ok: number; weak: number; flagged: number; okPct: number | null; avgScore?: number | null };
   rework: number;
   reworkPct: number | null;
 }

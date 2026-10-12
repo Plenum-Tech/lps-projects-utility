@@ -385,6 +385,23 @@ export function TasksTable({
       cell: (task) => <AvatarStack users={task.assignees} label="Assigned to" />,
     },
     {
+      id: "iteration",
+      header: "Work",
+      cell: (task) =>
+        task.iteration === "rework" ? (
+          <span
+            className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warn"
+            title={task.reworkOf ? `Rework of ${task.reworkOf.shortCode ?? ""} ${task.reworkOf.title}`.trim() : "Rework"}
+          >
+            Rework
+          </span>
+        ) : (
+          <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground">
+            New work
+          </span>
+        ),
+    },
+    {
       id: "status",
       header: "Status",
       sortKey: "status",

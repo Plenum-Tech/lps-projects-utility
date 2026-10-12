@@ -430,11 +430,20 @@ export async function getBriefs(req: Request, res: Response): Promise<void> {
       const covered = list.filter((r) => r.covered).length;
       const checked = list.filter((r) => r.ai);
       const count = (v: "ok" | "weak" | "flagged") => checked.filter((r) => r.ai!.verdict === v).length;
+      const scores = checked.map((r) => r.ai!.score).filter((s): s is number => typeof s === "number");
+      const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
       return {
         briefs: list.length,
         covered,
         coveragePct: pct(covered, list.length),
-        ai: { checked: checked.length, ok: count("ok"), weak: count("weak"), flagged: count("flagged"), okPct: pct(count("ok"), checked.length) },
+        ai: {
+          checked: checked.length,
+          ok: count("ok"),
+          weak: count("weak"),
+          flagged: count("flagged"),
+          okPct: pct(count("ok"), checked.length),
+          avgScore,
+        },
         rework: list.filter((r) => r.fact.rework).length,
         reworkPct: pct(list.filter((r) => r.fact.rework).length, list.length),
       };

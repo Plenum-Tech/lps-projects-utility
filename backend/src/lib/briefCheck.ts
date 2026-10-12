@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import mongoose from "mongoose";
 import { Task } from "../models/Task.js";
+import { TaskFile } from "../models/TaskFile.js";
 
 // ---------------------------------------------------------------------------
 // AI brief check (Delivery Pulse): an OpenAI model reads a task's brief and
@@ -26,17 +27,21 @@ export function briefCheckModel(): string {
 }
 
 const SYSTEM_PROMPT = `You review task briefs written inside a creative/marketing agency.
-Each brief is the instruction a creator receives. Classify it:
-- "ok": clear and relevant enough to act on.
-- "weak": relevant but too thin or vague to act on (e.g. one word, "as discussed", no deliverable described).
-- "flagged": gibberish, keyboard mash, test/placeholder text, unrelated to the task title or project, or about a different brand than the project's.
-Reply with JSON only: {"verdict":"ok"|"weak"|"flagged","reason":"at most 15 words"}.`;
+Each brief is the instruction a creator receives. Score its quality from 0 to 100:
+- Written in clear, proper English and easy to understand: up to 30 points.
+- Linked to the brand and the project (mentions the brand, product, campaign or audience): up to 25 points.
+- Actionable: says what to deliver (format, size, copy, deadline or acceptance criteria): up to 25 points.
+- Includes a reference link (deck, drive, Figma, example) or attached files: up to 20 points; neither scores 0 here.
+Briefs without proper information (one word, "as discussed", "pls do", placeholders) score below 20.
+Gibberish, test text or a brief about a different brand than the project's scores below 10.
+Then classify: "ok" (score 70+), "weak" (40-69) or "flagged" (below 40).
+Reply with JSON only: {"score":0-100,"verdict":"ok"|"weak"|"flagged","reason":"at most 15 words"}.`;
 
 function hashOf(parts: string[]): string {
   return crypto.createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 32);
 }
 
-async function askModel(input: { brand: string; project: string; title: string; brief: string }) {
+async function askModel(input: { brand: string; project: string; title: string; brief: string; files: number }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -55,18 +60,30 @@ async function askModel(input: { brand: string; project: string; title: string; 
           { role: "system", content: SYSTEM_PROMPT },
           {
             role: "user",
-            content: `Brand: ${input.brand || "(none)"}\nProject: ${input.project || "(none)"}\nTask title: ${input.title}\nBrief:\n${input.brief.slice(0, 4000)}`,
+            content: `Brand: ${input.brand || "(none)"}\nProject: ${input.project || "(none)"}\nTask title: ${input.title}\nAttached files: ${input.files}\nBrief:\n${input.brief.slice(0, 4000)}`,
           },
         ],
       }),
     });
     if (!res.ok) throw new Error(`OpenAI ${res.status}`);
     const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const parsed = JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as { verdict?: unknown; reason?: unknown };
-    const verdict = (BRIEF_VERDICTS as readonly string[]).includes(String(parsed.verdict)) ? (parsed.verdict as BriefVerdict) : null;
+    const parsed = JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as { score?: unknown; verdict?: unknown; reason?: unknown };
+    const rawScore = Number(parsed.score);
+    const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, Math.round(rawScore))) : null;
+    // The verdict follows the score when there is one.
+    const verdict: BriefVerdict | null =
+      score !== null
+        ? score >= 70
+          ? "ok"
+          : score >= 40
+            ? "weak"
+            : "flagged"
+        : (BRIEF_VERDICTS as readonly string[]).includes(String(parsed.verdict))
+          ? (parsed.verdict as BriefVerdict)
+          : null;
     if (!verdict) throw new Error("Unexpected model reply");
     const reason = typeof parsed.reason === "string" ? parsed.reason.trim().slice(0, 200) : "";
-    return { verdict, reason };
+    return { verdict, score, reason };
   } finally {
     clearTimeout(timer);
   }
@@ -98,12 +115,19 @@ export async function checkTaskBrief(taskId: mongoose.Types.ObjectId | string, f
     }
     const brand = task.project?.brand?.name ?? "";
     const project = task.project?.name ?? "";
-    const hash = hashOf([brand, project, task.title, brief]);
+    // "v2": the scoring prompt — older verdicts are re-checked when the brief is next checked.
+    // Attachments count toward the score, so adding files re-checks too.
+    const files = await TaskFile.countDocuments({ task: task._id, subtask: null });
+    const hash = hashOf(["v2", brand, project, task.title, brief, String(Math.min(files, 1))]);
     if (!force && task.briefCheck?.hash === hash) return null;
-    const { verdict, reason } = await askModel({ brand, project, title: task.title, brief });
+    const { verdict, score, reason } = await askModel({ brand, project, title: task.title, brief, files });
     await Task.updateOne(
       { _id: task._id },
-      { $set: { briefCheck: { verdict, reason, model: briefCheckModel(), checkedAt: new Date(), hash } } },
+      {
+        $set: {
+          briefCheck: { verdict, ...(score !== null ? { score } : {}), reason, model: briefCheckModel(), checkedAt: new Date(), hash },
+        },
+      },
       { timestamps: false }
     );
     return verdict;

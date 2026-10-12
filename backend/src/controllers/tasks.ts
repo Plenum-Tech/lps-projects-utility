@@ -512,6 +512,14 @@ async function buildListFilter(
     and.push({ _id: pearityTag === "has" ? { $in: tagged } : { $nin: tagged } });
   }
 
+  // `?iteration=new|rework` — new work (incl. older tasks without the marker) or rework.
+  const iterationFilter = req.query.iteration;
+  if (iterationFilter !== undefined && iterationFilter !== "") {
+    if (iterationFilter === "rework") and.push({ iteration: "rework" });
+    else if (iterationFilter === "new") and.push({ iteration: { $ne: "rework" } });
+    else return { status: 400, error: "iteration must be one of: new, rework" };
+  }
+
   if (priority !== undefined && priority !== "") {
     if (typeof priority !== "string" || !TASK_PRIORITIES.includes(priority as TaskPriority)) {
       return { status: 400, error: PRIORITY_ERROR };
@@ -857,10 +865,20 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
  * time logged on it. Returns the reason, or null when it may complete.
  */
 // Completion needs the final file / link or an outcome note (logged time is optional).
-/** A task can be completed once time spent on it is logged (comments, files and notes are optional). */
+/**
+ * A task can be completed only with (1) a record of the outcome — an outcome
+ * note, the final file or link, or a file on the task — and (2) time spent logged.
+ */
 async function completionBlocker(task: ITask): Promise<string | null> {
-  const log = await TimeLog.exists({ task: task._id, status: { $ne: "rejected" } });
-  return log ? null : "Log the time spent before completing this task";
+  const [file, log] = await Promise.all([
+    TaskFile.exists({ task: task._id }),
+    TimeLog.exists({ task: task._id, status: { $ne: "rejected" } }),
+  ]);
+  const outcome = Boolean(task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim() || file);
+  if (!outcome && !log) return "Add a note, file or link and log the time spent before completing this task";
+  if (!outcome) return "Add a note, file or link before completing this task";
+  if (!log) return "Log the time spent before completing this task";
+  return null;
 }
 
 async function applyStatusChange(
@@ -1124,11 +1142,11 @@ export async function createTaskCore(
   options: CreateTaskOptions = {}
 ): Promise<Invalid | { taskId: mongoose.Types.ObjectId; warnings: string[] }> {
   const { description, priority } = body;
-  const titleParts = parseTitleParts(body.titleParts);
+  let titleParts = parseTitleParts(body.titleParts);
   if (isInvalid(titleParts)) return titleParts;
   const iteration = parseIteration(body.iteration);
   if (isInvalid(iteration)) return iteration;
-  const title = titleParts ? composeTaskTitle(titleParts) : body.title;
+  let title: unknown = titleParts ? composeTaskTitle(titleParts) : body.title;
 
   // Project tasks: admins, heads, the project manager and members. Standalone tasks: heads/admins.
   let project: IProject | null = null;
@@ -1156,7 +1174,9 @@ export async function createTaskCore(
     milestone = resolved;
   }
 
-  // Validate title
+  // Validate title (rework is named from the original task further down)
+  const autoNamed = iteration === "rework" && typeof body.reworkOf === "string" && body.reworkOf !== "";
+  if (autoNamed && (typeof title !== "string" || !title.trim())) title = "Rework";
   if (typeof title !== "string" || !title.trim()) {
     return { status: 400, error: "title is required" };
   }
@@ -1238,6 +1258,14 @@ export async function createTaskCore(
     if (!project || !reworkOf.project || !reworkOf.project.equals(project._id as mongoose.Types.ObjectId)) {
       return { status: 400, error: "The rework must be in the same project as the original task" };
     }
+    if (iteration === "rework") {
+      // Auto-versioned name: the original's name + R<round> ("Video 1 – Teaser R2").
+      const round = (await Task.countDocuments({ reworkOf: reworkOf._id })) + 1;
+      const base = reworkOf.titleParts ?? { unit: "Rework", quantity: 1, shortName: reworkOf.title };
+      const shortName = `${base.shortName.replace(/\s+R\d+$/, "").slice(0, TASK_TITLE_LIMITS.shortNameMax - 5)} R${round}`;
+      titleParts = { unit: base.unit, quantity: base.quantity, shortName };
+      title = composeTaskTitle(titleParts);
+    }
   }
 
   // App-created tasks (the task form): every task sits under a project, carries a brief
@@ -1253,6 +1281,15 @@ export async function createTaskCore(
     if (!iteration) return { status: 400, error: "Choose the iteration: new work or rework" };
     if (iteration === "rework" && !reworkOf) {
       return { status: 400, error: "Choose the task this rework is for" };
+    }
+    // Rework: the brief and at least one file (e.g. client feedback), and a due date.
+    if (iteration === "rework") {
+      if (!hasDescription || body.hasAttachments !== true) {
+        return { status: 400, error: "Rework needs the brief and at least one file" };
+      }
+      if (body.dueDate === undefined || body.dueDate === null || body.dueDate === "") {
+        return { status: 400, error: "Choose the due date for this rework" };
+      }
     }
   }
 
@@ -1295,7 +1332,7 @@ export async function createTaskCore(
   const task = await Task.create({
     trafficVia: onlyTraffic ? assignees[0]!._id : null,
     assignedAt: onlyTraffic ? null : new Date(),
-    title: title.trim(),
+    title: String(title).trim(),
     description: typeof description === "string" && description.trim() ? description.trim() : undefined,
     assignees: assignees.map((u) => u._id),
     assignedBy: actor._id,

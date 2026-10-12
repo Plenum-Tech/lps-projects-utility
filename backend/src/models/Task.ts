@@ -154,7 +154,15 @@ export interface ITask extends mongoose.Document {
   /** First moment someone other than a traffic manager was assigned (creation, or when routed on). */
   assignedAt?: Date | null;
   /** AI brief check (lib/briefCheck.ts): verdict on the description, refreshed when it changes. */
-  briefCheck?: { verdict: "ok" | "weak" | "flagged"; reason?: string; model?: string; checkedAt?: Date; hash?: string } | null;
+  briefCheck?: {
+    verdict: "ok" | "weak" | "flagged";
+    /** Brief quality 0–100 (English, clear, on-brand, links score higher). */
+    score?: number;
+    reason?: string;
+    model?: string;
+    checkedAt?: Date;
+    hash?: string;
+  } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
   finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
   submittedAt?: Date | null;
@@ -299,6 +307,7 @@ const taskSchema = new Schema<ITask>(
       type: new Schema(
         {
           verdict: { type: String, enum: ["ok", "weak", "flagged"], required: true },
+          score: { type: Number, min: 0, max: 100 },
           reason: { type: String, trim: true, maxlength: 200 },
           model: { type: String, trim: true },
           checkedAt: { type: Date },

@@ -1,5 +1,6 @@
 import { LuLoaderCircle, LuPlay, LuSquare } from "react-icons/lu";
 
+import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useTimeLogSettings } from "@/hooks/use-project-meta";
 import { useActiveTimer, useStartTaskTimer, useStopTimer } from "@/hooks/use-timelogs";
@@ -94,5 +95,35 @@ export function TaskTimerButton({
       </TooltipTrigger>
       <TooltipContent>{runningHere ? "Stop timer" : (blocked ?? "Start timer")}</TooltipContent>
     </Tooltip>
+  );
+}
+
+/** Task page header: a labelled Start timer / Stop timer button for this task. */
+export function TaskTimerAction({ task, me }: { task: Task; me: { _id: string; role: Role } }) {
+  const active = useActiveTimer();
+  const start = useStartTaskTimer();
+  const stop = useStopTimer();
+  const timeSettings = useTimeLogSettings();
+  const runningHere = Boolean(active.data && active.data.task?._id === task._id);
+  if (task.project?.archivedAt && !runningHere) return null;
+  const blocked = runningHere ? null : timerBlockedReason(task, me, timeSettings.data?.logTimeFor);
+  if (blocked) return null;
+  const pending = start.isPending || stop.isPending;
+  return (
+    <Button
+      size="sm"
+      variant={runningHere ? "destructive" : "outline"}
+      disabled={pending}
+      onClick={() => (runningHere ? stop.mutate(undefined) : start.mutate({ taskId: task._id }))}
+    >
+      {pending ? (
+        <LuLoaderCircle aria-hidden className="animate-spin" />
+      ) : runningHere ? (
+        <LuSquare aria-hidden />
+      ) : (
+        <LuPlay aria-hidden />
+      )}
+      {runningHere ? "Stop timer" : "Start timer"}
+    </Button>
   );
 }

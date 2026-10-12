@@ -69,7 +69,7 @@ export interface BriefInput {
   /** Bodies of comments and non-private notes (only those containing a link are needed). */
   linkTexts: string[];
   /** Stored AI verdict on the description (null = not checked). */
-  ai: { verdict: "ok" | "weak" | "flagged"; reason: string } | null;
+  ai: { verdict: "ok" | "weak" | "flagged"; score: number | null; reason: string } | null;
 }
 
 export interface BriefScore {
@@ -156,7 +156,12 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
   const verdicts = new Map(
     descriptions.flatMap((d) =>
       wanted.has(String(d._id)) && d.briefCheck
-        ? [[String(d._id), { verdict: d.briefCheck.verdict, reason: d.briefCheck.reason ?? "" }] as const]
+        ? [
+            [
+              String(d._id),
+              { verdict: d.briefCheck.verdict, score: d.briefCheck.score ?? null, reason: d.briefCheck.reason ?? "" },
+            ] as const,
+          ]
         : []
     )
   );

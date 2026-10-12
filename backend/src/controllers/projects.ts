@@ -52,6 +52,7 @@ import { appToday } from "../lib/taskJobs.js";
 import { nextTaskNumber } from "../lib/taskNumbers.js";
 import { stopTimersWhere } from "../lib/timeLogs.js";
 import { Brand } from "../models/Brand.js";
+import { typeTag } from "../lib/tags.js";
 import { Department } from "../models/Department.js";
 import { Meeting } from "../models/Meeting.js";
 import { Milestone } from "../models/Milestone.js";
@@ -111,9 +112,9 @@ function optionalBoolean(raw: unknown, field: string): boolean | undefined | Inv
 }
 
 function parseCode(raw: unknown): string | Invalid {
-  if (typeof raw !== "string") return bad("code is required (2-10 letters/digits)");
+  if (typeof raw !== "string") return bad("code is required (2-12 letters/digits)");
   const code = raw.trim().toUpperCase();
-  if (!PROJECT_CODE_REGEX.test(code)) return bad("code must be 2-10 uppercase letters or digits");
+  if (!PROJECT_CODE_REGEX.test(code)) return bad("code must be 2-12 uppercase letters or digits");
   return code;
 }
 
@@ -253,20 +254,21 @@ interface MemberInput {
   hourlyRate: number;
 }
 
-/** First free code: `base`, else base + 2, 3 … (trimmed to 10 characters). */
+/** First free code: `base`, else base + 2, 3 … (trimmed to 12 characters). */
 async function uniqueProjectCode(base: string): Promise<string> {
   if (!(await Project.exists({ code: base }))) return base;
   for (let n = 2; n < 1000; n++) {
     const suffix = String(n);
-    const candidate = `${base.slice(0, 10 - suffix.length)}${suffix}`;
+    const candidate = `${base.slice(0, 12 - suffix.length)}${suffix}`;
     if (!(await Project.exists({ code: candidate }))) return candidate;
   }
   return base;
 }
 
 /**
- * The fixed, unique project code: brand (short name, 4) + type initial + MMYY,
- * e.g. Wasl · Campaign · Oct 2026 → WASLC1026; a clash gets a number (WASLC10262).
+ * The fixed, unique project code: brand (short name, 4) + type (3: PRJ, PRG,
+ * CMP …) + MMYY, e.g. Wasl · Campaign · Oct 2026 → WASLCMP1026; a clash gets
+ * a number (WASLCMP10262).
  * Legacy names: an abbreviation of the name.
  */
 async function generateProjectCode(naming: IProjectNaming | null, name: string): Promise<string> {
@@ -275,7 +277,7 @@ async function generateProjectCode(naming: IProjectNaming | null, name: string):
   if (naming) {
     const brand = await Brand.findById(naming.brand).select("name shortName").lean<{ name: string; shortName?: string }>();
     const head = alnum(brand?.shortName || brand?.name || "").slice(0, 4);
-    const initial = alnum(naming.type).slice(0, 1);
+    const initial = alnum(typeTag(naming.type)).slice(0, 3);
     const [year, month] = naming.month.split("-");
     base = `${head}${initial}${month ?? ""}${(year ?? "").slice(2)}`;
   } else {
@@ -283,7 +285,7 @@ async function generateProjectCode(naming: IProjectNaming | null, name: string):
     base = words.length === 1 ? words[0]!.slice(0, 6) : words.map((w) => w[0]).join("").slice(0, 6);
   }
   if (base.length < 2) base = `${base}PR`.slice(0, 2);
-  return uniqueProjectCode(base.slice(0, 9));
+  return uniqueProjectCode(base.slice(0, 11));
 }
 
 /** `team`: [{ role, users[] }] with plan roles or "others"; empty roles are dropped. */
