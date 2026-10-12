@@ -389,17 +389,22 @@ export async function syncActualDatesFromLogs(taskId: Id | null | undefined): Pr
   if (!taskId) return;
   const id = typeof taskId === "string" ? new mongoose.Types.ObjectId(taskId) : (taskId as mongoose.Types.ObjectId);
   const [task, span] = await Promise.all([
-    Task.findById(id).select("status").lean(),
+    Task.findById(id).select("status actualStartSource actualEndSource").lean(),
     TimeLog.aggregate<{ start: Date; end: Date }>([
       { $match: { task: id, endTime: { $ne: null }, status: { $ne: "rejected" } } },
       { $group: { _id: null, start: { $min: "$startTime" }, end: { $max: "$endTime" } } },
     ]),
   ]);
   if (!task || !span[0]) return;
-  const set: Record<string, unknown> = { actualStartAt: span[0].start, actualStartSource: "auto" };
-  if (task.status === "completed") {
+  // Dates edited by hand stay as they are (clear them to go back to automatic).
+  const set: Record<string, unknown> = {};
+  if (task.actualStartSource !== "manual") {
+    set.actualStartAt = span[0].start;
+    set.actualStartSource = "auto";
+  }
+  if (task.status === "completed" && task.actualEndSource !== "manual") {
     set.actualEndAt = span[0].end;
     set.actualEndSource = "auto";
   }
-  await Task.updateOne({ _id: id }, { $set: set });
+  if (Object.keys(set).length > 0) await Task.updateOne({ _id: id }, { $set: set });
 }

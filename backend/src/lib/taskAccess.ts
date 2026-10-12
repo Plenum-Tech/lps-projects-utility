@@ -476,8 +476,8 @@ export function taskPermissions(
     /** Start a timer / log time on this task (server re-checks project rules). */
     // Comments, files and time stay editable after completion.
     canLogTime: manage || assignee,
-    /** Actual start / end follow the time logs (Time tab), so they aren't edited by hand. */
-    canEditActualDates: false,
+    /** Edit Actual start / end (filled from the time logs): the task's managers and assignees. */
+    canEditActualDates: manageSubtasks || assignee,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */
     skipsReview: Boolean(flags.skipReview),
     /** The task belongs to an archived project. */
