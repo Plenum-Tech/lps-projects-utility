@@ -1716,6 +1716,8 @@ export interface TaskProjectRef {
   code: string;
   archivedAt: string | null;
   requireTaskApproval: boolean;
+  /** false = only the timer (and time spent when completing) for non-managers. */
+  manualTimeLogs?: boolean;
 }
 
 /** `Task.milestone` as populated by the task endpoints. */

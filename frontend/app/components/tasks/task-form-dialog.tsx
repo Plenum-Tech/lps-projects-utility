@@ -893,6 +893,12 @@ export function TaskFormDialog({
                       Every task belongs to a project — choose one.
                     </p>
                   )}
+                  {!isEdit && !projects.isPending && projectChoices.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      You aren&apos;t on any open project yet. Create a project (Projects → Add project), or ask a
+                      project&apos;s manager to add you to its team.
+                    </p>
+                  )}
                   {isEdit &&
                     task?.project &&
                     form.project !== task.project._id && (

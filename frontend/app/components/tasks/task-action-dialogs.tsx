@@ -112,6 +112,7 @@ export function SubmitTaskDialog({
       try {
         const end = new Date();
         await api.post("/timelogs", {
+          completion: true,
           task: task._id,
           project: task.project?._id,
           startTime: new Date(end.getTime() - spent * 60_000).toISOString(),

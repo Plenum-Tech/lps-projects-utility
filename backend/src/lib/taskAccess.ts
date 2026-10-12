@@ -108,7 +108,7 @@ export const TASK_POPULATE = [
   { path: "category", select: "name" },
   { path: "subtasks.assignee", select: "name email" },
   { path: "reviewedBy", select: "name" },
-  { path: "project", select: "name code archivedAt requireTaskApproval" },
+  { path: "project", select: "name code archivedAt requireTaskApproval manualTimeLogs" },
   { path: "milestone", select: "title endDate status" },
   { path: "reworkOf", select: "title shortCode number status" },
 ];

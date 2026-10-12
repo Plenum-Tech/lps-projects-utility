@@ -20,7 +20,7 @@ import {
   timeLogVisibilityFilter,
 } from "../lib/projectAccess.js";
 import { scheduleProgressRecalc } from "../lib/projectProgress.js";
-import { canViewTaskAsync, isAssignee, parseDateOnly } from "../lib/taskAccess.js";
+import { canViewTaskAsync, isAssignee, isSubtaskAssignee, parseDateOnly } from "../lib/taskAccess.js";
 import {
   computeDurations,
   computeEarnings,
@@ -539,6 +539,8 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     memo?: unknown;
     user?: unknown;
     subtask?: unknown;
+    /** Time spent entered while completing the task / a rework item (mandatory there). */
+    completion?: unknown;
   };
 
   let owner: IUser = actor;
@@ -575,7 +577,13 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
   if (!owner._id.equals(actor._id) && !isApprover(actor, owner, project)) {
     return send(res, { status: 403, error: "Only admins, the employee's department head or the project manager can log time for others" });
   }
-  if (project && !project.manualTimeLogs && !canManageProject(actor, project)) {
+  // Completing a task requires the time spent, so that entry is always accepted
+  // for your own time on a task you're assigned to (even with manual entries off).
+  const completionEntry =
+    body.completion === true &&
+    owner._id.equals(actor._id) &&
+    Boolean(task && (isAssignee(actor, task) || isSubtaskAssignee(actor, task)));
+  if (project && !project.manualTimeLogs && !canManageProject(actor, project) && !completionEntry) {
     return send(res, { status: 403, error: "Manual time entries are disabled for this project" });
   }
 

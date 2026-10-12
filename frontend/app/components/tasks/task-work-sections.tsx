@@ -23,6 +23,8 @@ export function TaskWorkSections({
   me: { _id: string; role: Role };
   initialTab?: WorkTab;
 }) {
+  // Projects can switch manual entries off (their managers can still add them).
+  const manualOff = task.project?.manualTimeLogs === false && !permissions.canEdit;
   const [tab, setTab] = useState<WorkTab>(task.project || initialTab !== "time" ? initialTab : "comments");
   return (
     <section className="rounded-xl border bg-card p-4 shadow-xs sm:p-6">
@@ -46,8 +48,15 @@ export function TaskWorkSections({
           />
         </TabsContent>
         {task.project && (
-          <TabsContent value="time" className="pt-3">
-            <TimeLogPanel taskId={task._id} canLogTime={Boolean(permissions.canLogTime)} manualAllowed />
+          <TabsContent value="time" className="space-y-3 pt-3">
+            {manualOff && (
+              <p className="rounded-lg border border-warn/40 bg-warn/5 px-3 py-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">Manual time entries are off for this project.</span> Use the
+                timer, or enter the time spent when you mark the task complete. The project&apos;s manager, its creator or
+                an admin can turn them on in Projects → Edit → &ldquo;Allow manual time logs&rdquo;.
+              </p>
+            )}
+            <TimeLogPanel taskId={task._id} canLogTime={Boolean(permissions.canLogTime)} manualAllowed={!manualOff} />
           </TabsContent>
         )}
       </Tabs>

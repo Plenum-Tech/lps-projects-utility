@@ -330,15 +330,9 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const categories = useTaskCategories();
   const assignable = useAssignableUsers(Boolean(user) && isManager);
   const projectOptions = useProjectOptions(Boolean(user) && !project);
-  // Employees may create tasks in projects they manage or belong to (the form
-  // limits the project picker to those), so they get "New task" when they have one.
-  const managesActiveProject = (projectOptions.data ?? []).some(
-    (option) =>
-      (option.manager?._id === user?._id || option.members.some((member) => member.user?._id === user?._id)) &&
-      !option.archivedAt &&
-      !option.status.isCompleted
-  );
-  const canCreate = project ? project.canCreateTasks : isManager || managesActiveProject;
+  // Everyone gets "Add task" (the form lists the projects they can add to, or
+  // explains how to get one); inside a project it follows its permissions.
+  const canCreate = project ? project.canCreateTasks : true;
   const milestoneProject = project?._id ?? (filters.project && filters.project !== "none" ? filters.project : "");
   const milestones = useMilestones(milestoneProject || null, Boolean(milestoneProject));
   const recurringParent = useTask(filters.recurringParent || null);
