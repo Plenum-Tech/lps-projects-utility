@@ -1,3 +1,4 @@
+import { SubmitTaskDialog } from "@/components/tasks/task-action-dialogs";
 import { useMemo, useState } from "react";
 import {
   DndContext,
@@ -57,6 +58,7 @@ export function TaskBoard({
   onOpen: (id: string) => void;
 }) {
   const moveTask = useMoveTask();
+  const [completing, setCompleting] = useState<Task | null>(null);
   const toast = useToast();
   const [activeTask, setActiveTask] = useState<Task | null>(null);
 
@@ -116,6 +118,11 @@ export function TaskBoard({
       toast.warning(`You can't move this task to ${STATUS_META[targetStatus].label}.`);
       return;
     }
+    // Completing asks for the time spent and a note, file or link (Mark as complete).
+    if (targetStatus === "completed" && task.status !== "completed") {
+      setCompleting(task);
+      return;
+    }
 
     // Target column without the dragged card.
     const target = board.columns[targetStatus].filter((item) => item._id !== task._id);
@@ -147,6 +154,7 @@ export function TaskBoard({
   }
 
   return (
+    <>
     <DndContext
       sensors={sensors}
       collisionDetection={collisionDetection}
@@ -185,6 +193,14 @@ export function TaskBoard({
         {activeTask ? <TaskCard task={activeTask} dragging /> : null}
       </DragOverlay>
     </DndContext>
+      {completing && (
+        <SubmitTaskDialog
+          task={completing}
+          open
+          onOpenChange={(open) => !open && setCompleting(null)}
+        />
+      )}
+    </>
   );
 }
 

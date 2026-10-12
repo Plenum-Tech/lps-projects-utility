@@ -246,8 +246,12 @@ export function allowedDropStatuses(
 ): TaskStatus[] {
   // Tasks of archived projects are read-only.
   if (task.project?.archivedAt) return [];
+  // Projects without task approval (mirrors the server): To do / In progress /
+  // Completed only, and Completed can be chosen from any status.
+  const skipReview = task.project?.requireTaskApproval === false;
   const isCreator = task.assignedBy?._id === user._id;
   if (user.role === "admin" || isCreator) {
+    if (skipReview) return ["todo", "in_progress", "completed"];
     return TASK_STATUSES.filter(
       (status) =>
         status === task.status ||
@@ -257,12 +261,10 @@ export function allowedDropStatuses(
   }
   const isAssignee = task.assignees.some((assignee) => assignee._id === user._id);
   if (!isAssignee) return [];
-  const targets = [task.status, ...ASSIGNEE_TRANSITIONS[task.status]];
-  // Projects without review: assignees may complete work directly.
-  if (task.project?.requireTaskApproval === false && task.status === "in_progress") {
-    targets.push("completed");
+  if (skipReview) {
+    return task.status === "completed" ? ["completed"] : ["todo", "in_progress", "completed"];
   }
-  return targets;
+  return [task.status, ...ASSIGNEE_TRANSITIONS[task.status]];
 }
 
 /**

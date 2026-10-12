@@ -1,3 +1,4 @@
+import { SegmentedControl, type SegmentedOption } from "@/components/globals/segmented-control";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router";
 import {
@@ -99,6 +100,14 @@ const BASE_DEFAULTS = {
   completedTo: "",
 };
 type FilterKey = keyof typeof BASE_DEFAULTS;
+
+type StatusTab = "all" | "todo" | "in_progress" | "completed";
+const STATUS_TABS: readonly SegmentedOption<StatusTab>[] = [
+  { value: "all", label: "All", title: "All tasks" },
+  { value: "todo", label: "To do", title: "To do" },
+  { value: "in_progress", label: "In progress", title: "In progress" },
+  { value: "completed", label: "Completed", title: "Completed" },
+];
 
 const INLINE_KEYS: FilterKey[] = ["search", "status", "project", "from", "to"];
 const SHEET_KEYS: FilterKey[] = [
@@ -586,6 +595,17 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
         ) : view === "calendar" ? (
           <TasksCalendar filters={taskFilters} status={status} onOpen={openTask} />
         ) : (
+          <>
+          {/* Sections by status (the Board view shows them as columns). */}
+          {view === "list" && (
+            <SegmentedControl
+              label="Task section"
+              value={(["todo", "in_progress", "completed"].includes(filters.status) ? filters.status : "all") as StatusTab}
+              onChange={(value) => table.setFilters({ status: value === "all" ? "" : value })}
+              options={STATUS_TABS}
+              className="w-fit"
+            />
+          )}
           <TasksTable
             tasks={tasks}
             total={total}
@@ -617,6 +637,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
               ) : null
             }
           />
+          </>
         )}
       </div>
 

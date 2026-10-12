@@ -1,3 +1,4 @@
+import { SubmitTaskDialog } from "@/components/tasks/task-action-dialogs";
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router";
 import {
@@ -147,6 +148,8 @@ function LoggedCell({ task }: { task: Task }) {
  */
 function TaskStatusCell({ task, me }: { task: Task; me: Me }) {
   const [opened, setOpened] = useState(false);
+  // Completing asks for the time spent and a note, file or link (Mark as complete).
+  const [completing, setCompleting] = useState(false);
   const updateStatus = useUpdateTaskStatus();
   const clientAllowed = allowedDropStatuses(task, me).filter((status) => status !== task.status);
   const mayBeManager = clientAllowed.length === 0 && Boolean(task.project) && !task.project?.archivedAt;
@@ -156,15 +159,24 @@ function TaskStatusCell({ task, me }: { task: Task; me: Me }) {
     : clientAllowed;
 
   return (
+    <>
     <InlineStatus
       value={task.status}
       options={STATUS_OPTIONS}
       allowed={allowed}
       loadingAllowed={mayBeManager && opened && detail.isPending}
       onOpenChange={(open) => open && setOpened(true)}
-      onChange={(status) => updateStatus.mutateAsync({ id: task._id, status: status as Task["status"] })}
+      onChange={async (status) => {
+        if (status === "completed") {
+          setCompleting(true);
+          return;
+        }
+        await updateStatus.mutateAsync({ id: task._id, status: status as Task["status"] });
+      }}
       label={`Change status of ${taskCode(task) || task.title}`}
     />
+    <SubmitTaskDialog task={task} open={completing} onOpenChange={setCompleting} />
+    </>
   );
 }
 
