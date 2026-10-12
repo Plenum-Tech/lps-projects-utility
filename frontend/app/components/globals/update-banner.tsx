@@ -6,8 +6,15 @@ import { Button } from "@/components/ui/button";
 const CHECK_EVERY_MS = 3 * 60_000;
 const MANIFEST = /\/assets\/manifest-[A-Za-z0-9_-]+\.js/;
 
-/** The build this tab is running (its route manifest file; absent in dev). */
+/**
+ * The build this tab is running: React Router's route manifest URL (absent in
+ * dev). Read from window.__reactRouterManifest — the <link rel="modulepreload">
+ * tags in index.html are removed once the app hydrates.
+ */
 function currentBuild(): string | null {
+  const manifest = (window as unknown as { __reactRouterManifest?: { url?: string } }).__reactRouterManifest;
+  const fromRouter = manifest?.url?.match(MANIFEST)?.[0];
+  if (fromRouter) return fromRouter;
   const link = document.querySelector<HTMLLinkElement>('link[href*="/assets/manifest-"]');
   return link?.getAttribute("href")?.match(MANIFEST)?.[0] ?? null;
 }
