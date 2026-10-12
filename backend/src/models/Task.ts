@@ -143,6 +143,8 @@ export interface ITask extends mongoose.Document {
   submissionNotes?: string;
   /** Rules-era tasks: new work or rework (required at creation). */
   iteration?: TaskIteration | null;
+  /** Rework tasks: the original task this reworks (shown in its Rework tab as history). */
+  reworkOf?: mongoose.Types.ObjectId | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: ITaskTitleParts | null;
   /** <project tag>-<UNIT><QTY>, unique (lib/tags.ts); frozen once Pearity uses it. */
@@ -278,6 +280,7 @@ const taskSchema = new Schema<ITask>(
     lastManualReminderAt: { type: Date, default: null },
     submissionNotes: { type: String, trim: true, maxlength: 2000 },
     iteration: { type: String, enum: [...TASK_ITERATIONS, null], default: null },
+    reworkOf: { type: Schema.Types.ObjectId, ref: "Task", default: null, index: true },
     tag: { type: String, default: undefined, trim: true, maxlength: 120 },
     trafficVia: { type: Schema.Types.ObjectId, ref: "User", default: null },
     assignedAt: { type: Date, default: null },

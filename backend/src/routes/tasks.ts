@@ -10,6 +10,7 @@ import {
   duplicateTask,
   exportTasks,
   getTask,
+  listReworkTasks,
   listHistory,
   listTasks,
   mentionableUsers,
@@ -83,6 +84,7 @@ router.post("/", createTask);
 
 // Any authenticated user (with access): task detail.
 router.get("/:id", getTask);
+router.get("/:id/reworks", listReworkTasks);
 
 // Creator/admin: update task details (creators may be project managers with the employee role).
 router.patch("/:id", updateTask);

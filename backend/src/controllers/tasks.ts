@@ -1011,6 +1011,8 @@ export interface CreateTaskBody {
   titleParts?: unknown;
   /** "new" | "rework". */
   iteration?: unknown;
+  /** Rework: the original task (same project). */
+  reworkOf?: unknown;
   /** The form uploads attachments right after creation (they count as the brief). */
   hasAttachments?: unknown;
   milestone?: unknown;
@@ -1225,9 +1227,22 @@ export async function createTaskCore(
   const estimateMinutes = parseEstimate(body.estimateMinutes);
   if (isInvalid(estimateMinutes)) return estimateMinutes;
 
+  // Rework is a task of its own, linked to the original task (same project).
+  let reworkOf: ITask | null = null;
+  if (body.reworkOf !== undefined && body.reworkOf !== null && body.reworkOf !== "") {
+    if (typeof body.reworkOf !== "string" || isInvalidObjectId(body.reworkOf)) {
+      return { status: 400, error: "reworkOf must be a valid task ID" };
+    }
+    reworkOf = await Task.findById(body.reworkOf);
+    if (!reworkOf) return { status: 404, error: "The task being reworked was not found" };
+    if (!project || !reworkOf.project || !reworkOf.project.equals(project._id as mongoose.Types.ObjectId)) {
+      return { status: 400, error: "The rework must be in the same project as the original task" };
+    }
+  }
+
   // App-created tasks (the task form): every task sits under a project, carries a brief
-  // (description or attachment), the "new work" marker and a controlled name. Rework is
-  // never a task of its own — it's a rework item (subtask) inside the original task.
+  // (description or attachment), the iteration and a controlled name. Rework tasks
+  // name the original task they rework.
   if (options.enforceRules) {
     if (!project) return { status: 400, error: "Every task must belong to a project (pick one)" };
     const hasDescription = typeof description === "string" && description.trim().length > 0;
@@ -1236,11 +1251,8 @@ export async function createTaskCore(
     }
     if (!titleParts) return { status: 400, error: "Task name needs a scope unit, a quantity and a short name" };
     if (!iteration) return { status: 400, error: "Choose the iteration: new work or rework" };
-    if (iteration === "rework") {
-      return {
-        status: 400,
-        error: "Rework is added inside the original task: open that task and add a rework item.",
-      };
+    if (iteration === "rework" && !reworkOf) {
+      return { status: 400, error: "Choose the task this rework is for" };
     }
   }
 
@@ -1294,6 +1306,7 @@ export async function createTaskCore(
     number,
     estimateMinutes: estimateMinutes ?? null,
     iteration: iteration ?? null,
+    reworkOf: iteration === "rework" && reworkOf ? reworkOf._id : null,
     ...(titleParts ? { titleParts } : {}),
     category,
     labels,
@@ -1310,6 +1323,14 @@ export async function createTaskCore(
     sourceMeeting: options.sourceMeeting ?? null,
   });
   const taskId = task._id as mongoose.Types.ObjectId;
+
+  if (task.reworkOf) {
+    recordTaskHistory(task.reworkOf, actor, "rework_added", {
+      reworkTask: taskId.toString(),
+      title: task.title,
+      shortCode: task.shortCode ?? null,
+    });
+  }
 
   recordTaskHistory(taskId, actor, options.historyAction ?? "created", {
     assignees: assignees.map((u) => u.name),
@@ -1454,6 +1475,25 @@ export async function getTask(req: Request, res: Response): Promise<void> {
 
   const detail = await loadTaskDetail(task._id as mongoose.Types.ObjectId, req.user!);
   res.json(detail);
+}
+
+/** GET /api/tasks/:id/reworks — rework tasks made from this task (its rework history). */
+export async function listReworkTasks(req: Request, res: Response): Promise<void> {
+  const task = await getViewableTaskOr404(req, res);
+  if (!task) return;
+  const reworks = await Task.find({ reworkOf: task._id })
+    .select("title shortCode number status priority assignees assignedBy dueDate completedAt createdAt")
+    .populate([
+      { path: "assignees", select: "name email" },
+      { path: "assignedBy", select: "name" },
+    ])
+    .sort({ createdAt: 1 })
+    .limit(200)
+    .lean();
+  res.json({
+    tasks: reworks.map((r, index) => ({ ...r, _id: String(r._id), round: index + 1 })),
+    total: reworks.length,
+  });
 }
 
 /** Assignee/creator/admin: changes status (same transition rules as a board move). */

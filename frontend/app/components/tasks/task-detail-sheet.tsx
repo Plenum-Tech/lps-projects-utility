@@ -46,14 +46,7 @@ import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
 import { TaskHistory } from "@/components/tasks/task-history";
 import { TaskNotes } from "@/components/tasks/task-notes";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
-import { ReworkPanel } from "@/components/tasks/rework-panel";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -198,6 +191,8 @@ function TaskDetail({
     (status) => status !== task.status,
   );
   const canReviewNow = permissions.canReview && task.status === "in_review";
+  // Rework is a new task in the same project, so it needs task-create rights there.
+  const canAddRework = Boolean(task.project) && !permissions.readOnly && Boolean(permissions.canDuplicate);
   const doneSubtasks = task.subtasks.filter((sub) => sub.done).length;
 
   return (
@@ -250,6 +245,15 @@ function TaskDetail({
             {formatDistanceToNow(new Date(task.createdAt), { addSuffix: true })}
             {task.department && ` · ${task.department.name}`}
           </SheetDescription>
+          {task.reworkOf && (
+            <p className="flex flex-wrap items-center gap-1.5 text-sm text-muted-foreground">
+              <LuRefreshCw aria-hidden className="size-3.5" />
+              Rework of
+              <Link to={`/tasks?task=${task.reworkOf._id}`} className="font-medium text-foreground underline-offset-2 hover:underline">
+                {reworkTaskLabel(task.reworkOf)}
+              </Link>
+            </p>
+          )}
 
           {/* Actions */}
           <div className="flex flex-wrap items-center gap-2 pt-1">
@@ -312,7 +316,7 @@ function TaskDetail({
               </DropdownMenu>
             )}
             <PearityGenerateButton task={task} />
-            {task.project && !permissions.readOnly && (permissions.canAddSubtasks || permissions.canManageSubtasks) && (
+            {canAddRework && (
               <Button variant="outline" size="sm" onClick={() => setDialog("rework")}>
                 <LuRefreshCw aria-hidden />
                 Add rework
@@ -590,12 +594,22 @@ function TaskDetail({
               <TabsTrigger value="history">History</TabsTrigger>
             </TabsList>
             <TabsContent value="subtasks" className="pt-3">
-              <TaskSubtasks
-                task={task}
-                permissions={permissions}
-                me={me}
-                focusSubtaskId={subtaskId}
-              />
+              <div className="space-y-4">
+                <ReworkHistory
+                  taskId={task._id}
+                  onAdd={canAddRework ? () => setDialog("rework") : undefined}
+                />
+                {/* Rework items added inside the task before rework became its own task. */}
+                {task.subtasks.length > 0 && (
+                  <TaskSubtasks
+                    task={task}
+                    permissions={permissions}
+                    me={me}
+                    focusSubtaskId={subtaskId}
+                    legacyOnly
+                  />
+                )}
+              </div>
             </TabsContent>
             <TabsContent value="comments" className="pt-3">
               <TaskComments taskId={task._id} me={me} />
@@ -637,32 +651,13 @@ function TaskDetail({
         task={task}
       />
       {task.project && (
-        <Dialog open={dialog === "rework"} onOpenChange={(open) => setDialog(open ? "rework" : null)}>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Add rework</DialogTitle>
-              <DialogDescription>
-                Added inside &ldquo;{task.title}&rdquo; as a rework item. Its history stays on the task.
-              </DialogDescription>
-            </DialogHeader>
-            {dialog === "rework" && (
-              <ReworkPanel
-                projectItems={{ [task.project._id]: `${task.project.code} · ${task.project.name}` }}
-                initialProject={task.project._id}
-                initialTask={{
-                  value: task._id,
-                  label: `${task.shortCode ?? (typeof task.number === "number" ? `#${task.number}` : "")} · ${task.title}`,
-                  assignees: task.assignees.map((a) => ({ _id: a._id, name: a.name })),
-                }}
-                onCancel={() => setDialog(null)}
-                onDone={() => {
-                  setDialog(null);
-                  setTab("subtasks");
-                }}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
+        <TaskFormDialog
+          open={dialog === "rework"}
+          onOpenChange={(open) => setDialog(open ? "rework" : null)}
+          defaultProjectId={task.project._id}
+          defaultIteration="rework"
+          defaultReworkOf={{ value: task._id, label: reworkTaskLabel(task) }}
+        />
       )}
       <SubmitTaskDialog
         task={task}

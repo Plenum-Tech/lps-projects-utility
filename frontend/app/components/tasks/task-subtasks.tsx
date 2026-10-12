@@ -53,12 +53,15 @@ export function TaskSubtasks({
   permissions,
   me,
   focusSubtaskId,
+  legacyOnly = false,
 }: {
   task: Task;
   permissions: TaskPermissions;
   me: { _id: string; role: Role };
   /** `?subtask=<id>` — expanded and scrolled into view on open. */
   focusSubtaskId?: string | null;
+  /** Earlier rework items only: no new items (rework is now its own task). */
+  legacyOnly?: boolean;
 }) {
   const files = useTaskFiles(task._id);
   const [expanded, setExpanded] = useState<Set<string>>(
@@ -85,7 +88,7 @@ export function TaskSubtasks({
   const total = task.subtasks.length;
   const percent = total ? Math.round((done / total) * 100) : 0;
   const readOnly = Boolean(permissions.readOnly);
-  const canAdd = !readOnly && Boolean(permissions.canAddSubtasks ?? permissions.canManageSubtasks);
+  const canAdd = !legacyOnly && !readOnly && Boolean(permissions.canAddSubtasks ?? permissions.canManageSubtasks);
 
   function toggleExpanded(id: string) {
     setExpanded((current) => {
@@ -103,6 +106,7 @@ export function TaskSubtasks({
 
   return (
     <div className="space-y-4">
+      {legacyOnly && <h3 className="text-sm font-medium">Earlier rework items</h3>}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {total > 0 ? (
           <div className="min-w-48 flex-1 space-y-1.5">

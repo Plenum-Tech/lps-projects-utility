@@ -22,7 +22,7 @@ import {
   type MultiSelectOption,
 } from "@/components/globals/multi-select";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
-import { ReworkPanel } from "@/components/tasks/rework-panel";
+import { ReworkTaskPicker, type ReworkTaskOption } from "@/components/tasks/rework-panel";
 import { EstimateField } from "@/components/tasks/estimate-field";
 import { LabelColorDot } from "@/components/tasks/label-chip";
 import {
@@ -107,6 +107,8 @@ interface FormState {
   quantity: string;
   shortName: string;
   iteration: "" | TaskIteration;
+  /** Rework: the original task's id. */
+  reworkOf: string;
   description: string;
   assignees: string[];
   priority: TaskPriority;
@@ -128,6 +130,8 @@ interface FormState {
 function initialState(
   task?: Task | null,
   defaultProjectId?: string,
+  defaultIteration?: TaskIteration,
+  defaultReworkOf?: ReworkTaskOption | null,
 ): FormState {
   const estimate = splitEstimate(task?.estimateMinutes);
   return {
@@ -143,7 +147,8 @@ function initialState(
     unit: task?.titleParts?.unit ?? "",
     quantity: task?.titleParts ? String(task.titleParts.quantity) : "1",
     shortName: task?.titleParts?.shortName ?? "",
-    iteration: task?.iteration ?? "",
+    iteration: task?.iteration ?? defaultIteration ?? "",
+    reworkOf: task ? (task.reworkOf?._id ?? "") : (defaultReworkOf?.value ?? ""),
     description: task?.description ?? "",
     assignees: task?.assignees.map((user) => user._id) ?? [],
     priority: task?.priority ?? "medium",
@@ -188,6 +193,8 @@ export function TaskFormDialog({
   task,
   onCreated,
   defaultProjectId,
+  defaultIteration,
+  defaultReworkOf,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -196,6 +203,10 @@ export function TaskFormDialog({
   onCreated?: (id: string) => void;
   /** Create mode: pre-select this project (project detail → Tasks tab). */
   defaultProjectId?: string;
+  /** Create mode: pre-select the iteration ("rework" from a task's Add rework). */
+  defaultIteration?: TaskIteration;
+  /** Create mode: the original task a rework is for (pre-selected). */
+  defaultReworkOf?: ReworkTaskOption | null;
 }) {
   const isEdit = Boolean(task);
   const { data: me } = useCurrentUser();
@@ -212,7 +223,7 @@ export function TaskFormDialog({
   useRefetchOnFocus(categories.refetch, open && isAdmin);
 
   const [form, setForm] = useState<FormState>(() =>
-    initialState(task, defaultProjectId),
+    initialState(task, defaultProjectId, defaultIteration, defaultReworkOf),
   );
   const projectId = form.project === NO_PROJECT ? null : form.project;
   const projectDetail = useProject(open ? projectId : null);
@@ -238,7 +249,7 @@ export function TaskFormDialog({
 
   useEffect(() => {
     if (open) {
-      setForm(initialState(task, defaultProjectId));
+      setForm(initialState(task, defaultProjectId, defaultIteration, defaultReworkOf));
       setAttachments([]);
       setSubmitted(false);
     }
@@ -417,6 +428,7 @@ export function TaskFormDialog({
     : submitted && (form.title.trim() === "" || form.title.trim().length > 200);
   const rulesApply = !task || Boolean(task.iteration);
   const iterationInvalid = submitted && rulesApply && !form.iteration;
+  const reworkMissing = !task && form.iteration === "rework" && !form.reworkOf;
   const briefMissing =
     !task && form.description.trim() === "" && attachments.length === 0;
   const briefInvalid = submitted && briefMissing;
@@ -449,6 +461,7 @@ export function TaskFormDialog({
     if (
       (controlledName ? Boolean(partsError) : !title || title.length > 200) ||
       (rulesApply && !form.iteration) ||
+      reworkMissing ||
       briefMissing ||
       ((!task || Boolean(task.project)) && !projectId) ||
       estimateMissing ||
@@ -474,6 +487,7 @@ export function TaskFormDialog({
           shortName: form.shortName.trim(),
         },
         ...(form.iteration ? { iteration: form.iteration } : {}),
+        ...(form.iteration === "rework" && form.reworkOf ? { reworkOf: form.reworkOf } : {}),
         hasAttachments: attachments.length > 0,
         description: form.description.trim() || undefined,
         assignees: form.assignees,
@@ -615,7 +629,7 @@ export function TaskFormDialog({
                     </label>
                     <label className="flex cursor-pointer items-center gap-2 text-sm">
                       <RadioGroupItem value="rework" />
-                      Rework (added inside an existing task)
+                      Rework (a new task linked to the original)
                     </label>
                   </RadioGroup>
                   {iterationInvalid && (
@@ -625,7 +639,29 @@ export function TaskFormDialog({
                   )}
                 </fieldset>
   ) : null;
-  const reworkMode = !task && form.iteration === "rework";
+  // Rework tasks name the original task (same project); shown in its Rework tab.
+  const reworkField =
+    !task && form.iteration === "rework" ? (
+      <div className="space-y-1.5">
+        <Label htmlFor="task-rework-of">
+          Task to rework<span aria-hidden className="ml-0.5 text-destructive">*</span>
+        </Label>
+        <ReworkTaskPicker
+          id="task-rework-of"
+          projectId={projectId}
+          value={form.reworkOf}
+          onChange={(value) => set("reworkOf", value)}
+          initial={defaultReworkOf}
+          invalid={submitted && reworkMissing}
+        />
+        {submitted && reworkMissing && (
+          <p className="text-xs text-destructive">Choose the task this rework is for.</p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          The rework is a new task and appears in the original task&apos;s Rework tab.
+        </p>
+      </div>
+    ) : null;
 
   return (
     <Sheet open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
@@ -643,20 +679,6 @@ export function TaskFormDialog({
           </SheetHeader>
 
           <PageDrawerCard title="Task Info">
-            {reworkMode ? (
-              <div className="space-y-4">
-                {iterationField}
-                <ReworkPanel
-                  projectItems={projectItems}
-                  initialProject={projectId ?? ""}
-                  onCancel={() => onOpenChange(false)}
-                  onDone={(taskId) => {
-                    onOpenChange(false);
-                    void navigate(`/tasks?task=${taskId}`);
-                  }}
-                />
-              </div>
-            ) : (
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               {controlledName ? (
                 <div className="space-y-1.5">
@@ -733,6 +755,7 @@ export function TaskFormDialog({
               )}
 
               {iterationField}
+              {reworkField}
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-description">
@@ -778,6 +801,7 @@ export function TaskFormDialog({
                         ...current,
                         project: String(value ?? NO_PROJECT),
                         milestone: NO_MILESTONE,
+                        reworkOf: "",
                       }))
                     }
                     items={projectItems}
@@ -1053,7 +1077,6 @@ export function TaskFormDialog({
                 </Button>
               </div>
             </form>
-            )}
           </PageDrawerCard>
         </div>
       </PageDrawerContent>

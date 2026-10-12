@@ -59,6 +59,7 @@ const ACTION_ICONS: Record<TaskHistoryAction, { icon: IconType; tone: string }> 
   actual_dates_updated: { icon: LuCalendarClock, tone: "bg-chart-3/15 text-foreground" },
   subtask_actual_dates_updated: { icon: LuCalendarClock, tone: "bg-muted text-muted-foreground" },
   pearity_generated: { icon: LuSparkles, tone: "bg-chart-5/15 text-foreground" },
+  rework_added: { icon: LuRefreshCw, tone: "bg-warn/10 text-foreground" },
 };
 
 function str(value: unknown): string {
@@ -164,6 +165,8 @@ function describe(entry: TaskHistoryEntry): string {
       if (d.created) return `created the Pearity tag ${tag} and opened the production engine${via}`;
       return `generated in Pearity with the tag ${tag}${via}`;
     }
+    case "rework_added":
+      return `added rework ${d.shortCode ? `${str(d.shortCode)} ` : ""}"${str(d.title)}" as a new task`;
     default:
       return "made a change";
   }

@@ -25,6 +25,7 @@ export const TASK_HISTORY_ACTIONS = [
   "actual_dates_updated",
   "subtask_actual_dates_updated",
   "pearity_generated",
+  "rework_added",
 ] as const;
 
 export type TaskHistoryAction = (typeof TASK_HISTORY_ACTIONS)[number];

@@ -499,6 +499,11 @@ export function useCreateTask() {
       if (data.task.project) {
         void queryClient.invalidateQueries({ queryKey: ["projects"] });
       }
+      // A rework task: refresh the original's rework history.
+      if (data.task.reworkOf) {
+        void queryClient.invalidateQueries({ queryKey: ["tasks", data.task.reworkOf._id, "reworks"] });
+        void queryClient.invalidateQueries({ queryKey: taskKeys.detail(data.task.reworkOf._id) });
+      }
       toast.success(
         data.task.shortCode
           ? `Task ${data.task.shortCode} created`

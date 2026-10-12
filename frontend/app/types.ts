@@ -954,6 +954,8 @@ export interface Task {
   submissionNotes?: string;
   /** Rules-era tasks: "new" work or "rework". */
   iteration?: TaskIteration | null;
+  /** Rework tasks: the original task (populated). */
+  reworkOf?: { _id: string; title: string; shortCode?: string | null; number?: number | null; status: TaskStatus } | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: TaskTitleParts | null;
   /** Final deliverable recorded at completion. */
@@ -1154,6 +1156,8 @@ export interface TaskInput {
   /** Controlled name; the server composes the title from it. */
   titleParts?: TaskTitleParts;
   iteration?: TaskIteration;
+  /** Rework: the original task's id (same project). */
+  reworkOf?: string;
   /** The form will upload attachments right after creation (they count as the brief). */
   hasAttachments?: boolean;
   title: string;
@@ -1408,7 +1412,8 @@ export type TaskHistoryAction =
   | "created_from_meeting"
   | "actual_dates_updated"
   | "subtask_actual_dates_updated"
-  | "pearity_generated";
+  | "pearity_generated"
+  | "rework_added";
 
 export interface TaskHistoryEntry {
   _id: string;

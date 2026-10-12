@@ -110,6 +110,7 @@ export const TASK_POPULATE = [
   { path: "reviewedBy", select: "name" },
   { path: "project", select: "name code archivedAt requireTaskApproval" },
   { path: "milestone", select: "title endDate status" },
+  { path: "reworkOf", select: "title shortCode number status" },
 ];
 
 // ---------------------------------------------------------------------------
