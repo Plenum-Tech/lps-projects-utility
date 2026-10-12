@@ -161,9 +161,14 @@ function progressView(
     (n) => n >= 1 && n <= training.slides.length,
   );
   const completedAt = progress?.completedAt ?? null;
+  const seen = new Set(viewed);
   return {
-    viewed: [...new Set(viewed)].sort((a, b) => a - b),
-    viewedCount: new Set(viewed).size,
+    viewed: [...seen].sort((a, b) => a - b),
+    viewedCount: seen.size,
+    /** Slide numbers not read yet (empty once completed). */
+    missing: completedAt
+      ? []
+      : Array.from({ length: training.slides.length }, (_, i) => i + 1).filter((n) => !seen.has(n)),
     startedAt: progress?.startedAt ?? null,
     completedAt,
     status: completedAt
@@ -618,6 +623,21 @@ export async function completeTraining(
       });
     return;
   }
+  // Slides read just before confirming may not have been saved yet: add them first.
+  const raw = (req.body as { slides?: unknown })?.slides;
+  const lastSlides = (Array.isArray(raw) ? raw : []).filter(
+    (n): n is number => Number.isInteger(n) && n >= 1 && n <= training.slides.length,
+  );
+  if (lastSlides.length > 0) {
+    await TrainingProgress.updateOne(
+      { training: training._id, user: user._id },
+      {
+        $addToSet: { viewed: { $each: lastSlides } },
+        $setOnInsert: { version: training.version, startedAt: new Date() },
+      },
+      { upsert: true },
+    );
+  }
   const progress = await TrainingProgress.findOne({
     training: training._id,
     user: user._id,
@@ -627,9 +647,11 @@ export async function completeTraining(
     res.json({ progress: view });
     return;
   }
-  const left = training.slides.length - view.viewedCount;
-  if (!progress || left > 0) {
-    res.status(409).json({ error: `Read all slides first (${left} left)` });
+  if (!progress || view.missing.length > 0) {
+    res.status(409).json({
+      error: `Slides not read yet: ${view.missing.join(", ")}`,
+      missing: view.missing,
+    });
     return;
   }
   progress.completedAt = new Date();

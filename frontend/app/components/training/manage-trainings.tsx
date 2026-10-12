@@ -634,6 +634,7 @@ function ProgressDialog({
         Department: row.user.department?.name ?? "",
         Designation: row.user.designation,
         "Slides read": `${row.viewedCount} / ${training.slideCount}`,
+        "Slides not read": row.status === "completed" ? "" : (row.missing ?? []).join(", "),
         Status: STATUS_LABEL[row.status],
         Started: row.startedAt ? formatDate(row.startedAt) : "",
         Completed: row.completedAt ? formatDate(row.completedAt) : "",
@@ -751,6 +752,14 @@ function ProgressDialog({
                       </TableCell>
                       <TableCell className="text-right text-sm tabular-nums">
                         {row.viewedCount} / {training?.slideCount}
+                        {row.status !== "completed" && (row.missing?.length ?? 0) > 0 && (
+                          <span
+                            className="block max-w-56 truncate text-xs text-warn"
+                            title={`Not read: slides ${row.missing!.join(", ")}`}
+                          >
+                            Not read: {row.missing!.length > 12 ? `${row.missing!.slice(0, 12).join(", ")}…` : row.missing!.join(", ")}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <Badge

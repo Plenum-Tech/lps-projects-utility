@@ -3516,6 +3516,8 @@ export interface TrainingSummary {
 
 export interface TrainingProgressSummary {
   viewedCount: number;
+  /** Slide numbers not read yet (empty once completed). */
+  missing?: number[];
   startedAt: string | null;
   completedAt: string | null;
   status: TrainingStatus;

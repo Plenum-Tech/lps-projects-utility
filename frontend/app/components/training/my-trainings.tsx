@@ -175,6 +175,14 @@ function TrainingCard({ training }: { training: MyTraining }) {
             <p className="text-xs text-muted-foreground">
               {progress.viewedCount} of {training.slideCount} slides read
             </p>
+            {(progress.missing?.length ?? 0) > 0 && (
+              <p className="text-xs text-warn">
+                Not read yet: slide{progress.missing!.length === 1 ? "" : "s"}{" "}
+                {progress.missing!.length > 15
+                  ? `${progress.missing!.slice(0, 15).join(", ")}…`
+                  : progress.missing!.join(", ")}
+              </p>
+            )}
           </div>
         )}
       </CardContent>

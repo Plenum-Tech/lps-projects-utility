@@ -12,6 +12,15 @@ import {
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -50,6 +59,7 @@ export default function TrainingReader() {
   const record = useRecordTrainingProgress(id);
   const complete = useCompleteTraining(id);
   const [acknowledged, setAcknowledged] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
   const data = query.data;
   const training = data?.training;
@@ -64,6 +74,22 @@ export default function TrainingReader() {
   const readCount = Math.min(read.size, total);
   const left = total - readCount;
   const allRead = total > 0 && left === 0;
+  // Slide numbers not read yet (shown so the reader can jump straight to them).
+  const missing = Array.from({ length: total }, (_, i) => i + 1).filter((n) => !read.has(n));
+
+  function goToSlide(slide: number) {
+    slideRefs.current[slide - 1]?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  function confirmComplete() {
+    // Send the slides read in this session too, so none is lost to the save delay.
+    if (flushTimer.current) {
+      clearTimeout(flushTimer.current);
+      flushTimer.current = null;
+    }
+    pending.current.clear();
+    complete.mutate([...seen], { onSettled: () => setConfirming(false) });
+  }
 
   const recordRef = useRef(record.mutate);
   recordRef.current = record.mutate;
@@ -313,10 +339,27 @@ export default function TrainingReader() {
                   {training.title}&rdquo;.
                 </span>
               </label>
+              {missing.length > 0 && (
+                <div className="mt-4 rounded-lg border border-warn/40 bg-warn/5 px-3 py-2.5">
+                  <p className="text-sm font-medium text-foreground">
+                    Not read yet: {missing.length} slide{missing.length === 1 ? "" : "s"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {missing.slice(0, 60).map((slide) => (
+                      <Button key={slide} size="sm" variant="outline" onClick={() => goToSlide(slide)}>
+                        Slide {slide}
+                      </Button>
+                    ))}
+                    {missing.length > 60 && (
+                      <span className="self-center text-xs text-muted-foreground">…and {missing.length - 60} more</span>
+                    )}
+                  </div>
+                </div>
+              )}
               <div className="mt-4 flex flex-wrap items-center gap-3">
                 <Button
                   disabled={!allRead || !acknowledged || complete.isPending}
-                  onClick={() => complete.mutate()}
+                  onClick={() => setConfirming(true)}
                 >
                   {complete.isPending ? (
                     <LoaderCircle className="animate-spin" />
@@ -331,6 +374,24 @@ export default function TrainingReader() {
                   </span>
                 )}
               </div>
+              <AlertDialog open={confirming} onOpenChange={(open) => !complete.isPending && setConfirming(open)}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Mark this training as complete?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      You confirm you have read and understood all {total} slides of &ldquo;{training.title}&rdquo;.
+                      HR is notified and your progress shows as completed.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={complete.isPending}>Cancel</AlertDialogCancel>
+                    <Button onClick={confirmComplete} disabled={complete.isPending}>
+                      {complete.isPending ? <LoaderCircle className="animate-spin" /> : <CheckCircle2 />}
+                      Confirm
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </>
           )}
         </section>

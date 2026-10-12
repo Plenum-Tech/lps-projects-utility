@@ -125,10 +125,11 @@ export function useCompleteTraining(id: string) {
   const queryClient = useQueryClient();
   const toast = useToast();
   return useMutation({
-    mutationFn: async () => {
+    /** `slides`: slides read in this session (saved with the completion). */
+    mutationFn: async (slides: number[] = []) => {
       const { data } = await api.post<{
         progress: TrainingDetailResponse["progress"];
-      }>(`/trainings/${id}/complete`, { acknowledged: true });
+      }>(`/trainings/${id}/complete`, { acknowledged: true, slides });
       return data.progress;
     },
     onSuccess: (progress) => {
