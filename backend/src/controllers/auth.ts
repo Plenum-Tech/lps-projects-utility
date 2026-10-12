@@ -1,3 +1,4 @@
+import { canViewTimeReport } from "../lib/reportAccess.js";
 import type { Request, Response } from "express";
 import { logActivity } from "../lib/activityLog.js";
 import { expiresInToMs, signAccessToken, TOKEN_COOKIE, verifyAccessToken } from "../lib/jwt.js";
@@ -105,5 +106,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
 
 /** Returns the authenticated user (requireAuth guarantees req.user is present). */
 export async function me(req: Request, res: Response): Promise<void> {
-  res.json({ user: req.user!.toJSON() });
+  const user = req.user!;
+  // What the menus may show (computed server-side).
+  res.json({ user: { ...user.toJSON(), access: { timeReport: await canViewTimeReport(user) } } });
 }

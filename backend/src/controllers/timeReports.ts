@@ -699,14 +699,9 @@ async function loadReportTasks(
   const and: Record<string, unknown>[] = [];
   // A department's tasks: `task.department` (first assignee's) or any assignee
   // from it. Per-employee rows are then limited to that department's members.
-  let scopeDepartment: mongoose.Types.ObjectId | null = department;
-  if (actor.role === "head") {
-    if (!actor.department) return { tasks: [], from: range.from, to: range.to, members: new Set() };
-    if (department && !department.equals(actor.department)) {
-      return { status: 403, error: "Heads can only report on their own department" };
-    }
-    scopeDepartment = actor.department;
-  }
+  // The Task Report is view-only and open to everyone, across all departments.
+  void actor;
+  const scopeDepartment: mongoose.Types.ObjectId | null = department;
   let members: Set<string> | null = null;
   if (scopeDepartment) {
     const ids = await departmentUserIds(scopeDepartment);

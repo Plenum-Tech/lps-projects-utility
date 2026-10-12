@@ -30,6 +30,12 @@ export interface IBrand extends mongoose.Document {
   shortName?: string;
   color: BrandColor;
   active: boolean;
+  /** New brands wait for leadership: approved brands are usable; pending/rejected aren't. */
+  status: "approved" | "pending" | "rejected";
+  requestedBy?: mongoose.Types.ObjectId | null;
+  decidedBy?: mongoose.Types.ObjectId | null;
+  decidedAt?: Date | null;
+  rejectReason?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,6 +47,11 @@ const brandSchema = new Schema<IBrand>(
     shortName: { type: String, trim: true, maxlength: BRAND_LIMITS.shortNameMax, default: "" },
     color: { type: String, enum: BRAND_COLORS, default: "chart-1" },
     active: { type: Boolean, default: true },
+    status: { type: String, enum: ["approved", "pending", "rejected"], default: "approved", index: true },
+    requestedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    decidedAt: { type: Date, default: null },
+    rejectReason: { type: String, trim: true, maxlength: 500, default: "" },
   },
   { timestamps: true }
 );

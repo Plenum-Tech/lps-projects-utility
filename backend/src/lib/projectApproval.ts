@@ -18,8 +18,8 @@ import { formatNamingMonth } from "./projectNaming.js";
 // the project page. Projects created before approval existed count as approved.
 // ---------------------------------------------------------------------------
 
-/** Used when no approver is configured in Settings → Projects. */
-const DEFAULT_APPROVER_EMAILS = (process.env.PROJECT_APPROVER_EMAILS ?? "aasim@lps-me.com")
+/** Leadership (approvers) when none is configured in Settings → Projects: Aasim and Rania Nazmy. */
+const DEFAULT_APPROVER_EMAILS = (process.env.PROJECT_APPROVER_EMAILS ?? "aasim@lps-me.com,rania@lps-me.com")
   .split(",")
   .map((e) => e.trim().toLowerCase())
   .filter(Boolean);

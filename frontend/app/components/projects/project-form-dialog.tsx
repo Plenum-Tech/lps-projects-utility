@@ -254,7 +254,8 @@ export function ProjectFormDialog({
       {
         onSuccess: (brand) => {
           setNewBrand(null);
-          changeNamePart({ brand: brand._id });
+          // Leadership's brands are approved at once; others wait for approval.
+          if ((brand.status ?? "approved") === "approved") changeNamePart({ brand: brand._id });
         },
       },
     );
@@ -319,6 +320,8 @@ export function ProjectFormDialog({
     const currentId = project?.brand?._id;
     return [
       ...(brands.data ?? [])
+        // Brands waiting for (or refused) leadership approval can't be picked yet.
+        .filter((brand) => (brand.status ?? "approved") === "approved" || brand._id === currentId)
         .filter((brand) => brand.active || brand._id === currentId)
         .map((brand) => ({
           value: brand._id,
@@ -648,7 +651,16 @@ export function ProjectFormDialog({
                 {newBrand !== null && newBrand.includes(NAMING_SEPARATOR) && (
                   <FieldError>Brand names can’t contain “_”.</FieldError>
                 )}
-                {isAdmin && newBrand === null && (
+                {(brands.data ?? []).some((brand) => brand.status === "pending") && (
+                  <p className="text-xs text-muted-foreground">
+                    Waiting for leadership approval:{" "}
+                    {(brands.data ?? [])
+                      .filter((brand) => brand.status === "pending")
+                      .map((brand) => brand.name)
+                      .join(", ")}
+                  </p>
+                )}
+                {newBrand === null && (
                   <button
                     type="button"
                     onClick={() => setNewBrand("")}

@@ -103,10 +103,9 @@ function parseFilters(req: Request): { periodKey: PeriodKey; filters: DeliveryFi
   };
 }
 
-function scopeOf(req: Request): DeliveryScope {
-  const user = req.user!;
-  if (user.role === "admin") return { kind: "all", department: null };
-  return { kind: "department", department: user.department ? String(user.department) : null };
+/** Delivery Pulse is view-only and not sensitive: everyone sees the whole company. */
+function scopeOf(_req: Request): DeliveryScope {
+  return { kind: "all", department: null };
 }
 
 async function buildCtx(req: Request, overrides: Partial<DeliveryFilters> = {}): Promise<Ctx> {

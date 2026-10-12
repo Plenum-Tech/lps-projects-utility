@@ -7,9 +7,10 @@ import { RejectDialog } from "@/components/projects/project-approval";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useApprovalQueue, useDecideProjectApproval } from "@/hooks/use-project-approval";
+import { useApprovalQueue, useDecideBrand, useDecideProjectApproval } from "@/hooks/use-project-approval";
+import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
-import type { ProjectApprovalLinkResponse } from "@/types";
+import type { BrandApprovalItem, ProjectApprovalLinkResponse } from "@/types";
 
 import type { Route } from "./+types/approvals";
 
@@ -35,7 +36,7 @@ export default function ApprovalsRoute() {
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Approvals"
-        description="New projects wait here until you approve them. Nobody can add tasks to a project before that."
+        description="Leadership approvals: new brands wait here until you approve them. Projects and tasks need no approval."
       />
 
       {queue.isPending && <Skeleton className="h-60 w-full rounded-xl" />}
@@ -43,15 +44,19 @@ export default function ApprovalsRoute() {
       {queue.data && !queue.data.isApprover && (
         <EmptyState
           icon={LuClipboardCheck}
-          title="You're not a project approver"
-          description="Admins choose the approvers in Settings → Projects → Project approval."
+          title="You're not in leadership"
+          description="Admins choose leadership (the approvers) in Settings → Projects → Project approval."
         />
       )}
 
       {queue.data?.isApprover && (
+        <BrandApprovals pending={queue.data.brands?.pending ?? []} recent={queue.data.brands?.recent ?? []} />
+      )}
+
+      {queue.data?.isApprover && queue.data.pending.length + queue.data.recent.length > 0 && (
         <>
           <section className="space-y-3">
-            <h2 className="text-sm font-medium text-foreground">Waiting for you ({queue.data.pending.length})</h2>
+            <h2 className="text-sm font-medium text-foreground">Projects waiting for you ({queue.data.pending.length})</h2>
             {queue.data.pending.length === 0 ? (
               <EmptyState icon={LuClipboardCheck} title="Nothing to approve" description="New projects will appear here." />
             ) : (
@@ -146,5 +151,109 @@ export default function ApprovalsRoute() {
         }
       />
     </div>
+  );
+}
+
+/** New brands proposed by the team, waiting for leadership. */
+function BrandApprovals({ pending, recent }: { pending: BrandApprovalItem[]; recent: BrandApprovalItem[] }) {
+  const decide = useDecideBrand();
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+
+  return (
+    <>
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium text-foreground">New brands waiting for you ({pending.length})</h2>
+        {pending.length === 0 ? (
+          <EmptyState icon={LuClipboardCheck} title="No brands to approve" description="Brands proposed by the team appear here." />
+        ) : (
+          <ul className="space-y-3">
+            {pending.map((brand) => (
+              <li key={brand._id} className="rounded-xl border bg-card p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 space-y-1">
+                    <p className="font-medium break-words text-foreground">{brand.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {brand.shortName ? `Short name ${brand.shortName} · ` : ""}
+                      Proposed by {brand.requestedBy?.name ?? "someone"} · {formatDateTime(brand.createdAt)}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button size="sm" onClick={() => decide.mutate({ id: brand._id, decision: "approve" })} disabled={decide.isPending}>
+                      <LuCircleCheck aria-hidden />
+                      Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setRejectingId(brand._id);
+                        setReason("");
+                      }}
+                      disabled={decide.isPending}
+                    >
+                      <LuCircleX aria-hidden />
+                      Reject
+                    </Button>
+                  </div>
+                </div>
+                {rejectingId === brand._id && (
+                  <div className="mt-3 space-y-2">
+                    <Textarea
+                      value={reason}
+                      onChange={(e) => setReason(e.target.value)}
+                      rows={2}
+                      maxLength={500}
+                      placeholder="Reason (for example: same as an existing brand)"
+                      aria-label="Reason for rejecting"
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        disabled={decide.isPending}
+                        onClick={() =>
+                          decide.mutate(
+                            { id: brand._id, decision: "reject", reason: reason.trim() || undefined },
+                            { onSuccess: () => setRejectingId(null) },
+                          )
+                        }
+                      >
+                        {decide.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : null}
+                        Reject brand
+                      </Button>
+                      <Button size="sm" variant="ghost" onClick={() => setRejectingId(null)}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {recent.length > 0 && (
+        <section className="space-y-2">
+          <h2 className="text-sm font-medium text-foreground">Brands decided in the last 30 days</h2>
+          <ul className="divide-y rounded-xl border bg-card text-sm">
+            {recent.map((brand) => (
+              <li key={brand._id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
+                <span className="font-medium">{brand.name}</span>
+                {brand.status === "approved" ? (
+                  <Badge variant="secondary">Approved</Badge>
+                ) : (
+                  <Badge variant="destructive">Rejected</Badge>
+                )}
+                <span className="text-xs text-muted-foreground">
+                  {brand.decidedBy?.name ?? ""} · {formatDateTime(brand.decidedAt)}
+                  {brand.rejectReason ? ` · ${brand.rejectReason}` : ""}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </>
   );
 }

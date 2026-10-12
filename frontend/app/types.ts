@@ -11,6 +11,8 @@ export interface User {
   name: string;
   email: string;
   role: Role;
+  /** What menus may show (from /auth/me). */
+  access?: { timeReport: boolean };
   /** Department id when assigned (single department per employee). */
   department?: string | null;
   /** Email notification switches (present on /auth/me and user responses). */
@@ -3061,6 +3063,8 @@ export interface Brand {
   shortName: string;
   color: BrandColor;
   active: boolean;
+  /** Absent on older brands (= approved). Pending / rejected brands can't be used yet. */
+  status?: "approved" | "pending" | "rejected";
   projectCount: number;
   createdAt: string;
   updatedAt: string;
@@ -3717,10 +3721,24 @@ export interface ProjectApprovalLinkResponse {
 }
 
 /** GET /projects/approvals — the approver's queue. */
+export interface BrandApprovalItem {
+  _id: string;
+  name: string;
+  shortName: string;
+  status: "approved" | "pending" | "rejected";
+  requestedBy: { _id: string; name: string; email?: string } | null;
+  decidedBy: { _id: string; name: string } | null;
+  decidedAt: string | null;
+  rejectReason: string;
+  createdAt: string;
+}
+
 export interface ProjectApprovalQueue {
   isApprover: boolean;
   pending: ProjectApprovalLinkResponse["project"][];
   recent: ProjectApprovalLinkResponse["project"][];
+  /** New brands waiting for leadership (same approvers). */
+  brands?: { pending: BrandApprovalItem[]; recent: BrandApprovalItem[] };
 }
 
 /** GET /analytics/delivery/traffic — the traffic desk. */

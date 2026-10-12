@@ -160,7 +160,7 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
  */
 export async function listApprovals(req: Request, res: Response): Promise<void> {
   if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
-    res.json({ isApprover: false, pending: [], recent: [] });
+    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] } });
     return;
   }
   const since = new Date(Date.now() - 30 * 86_400_000);
@@ -175,9 +175,31 @@ export async function listApprovals(req: Request, res: Response): Promise<void> 
       .sort({ "approval.decidedAt": -1 })
       .limit(30),
   ]);
+  // New brands proposed for leadership approval (same approvers).
+  const [brandPending, brandRecent] = await Promise.all([
+    Brand.find({ status: "pending" }).sort({ createdAt: 1 }).populate("requestedBy", "name email").limit(100).lean(),
+    Brand.find({ status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since }, requestedBy: { $ne: null } })
+      .sort({ decidedAt: -1 })
+      .populate("requestedBy", "name email")
+      .populate("decidedBy", "name")
+      .limit(30)
+      .lean(),
+  ]);
+  const brandRow = (b: (typeof brandPending)[number]) => ({
+    _id: String(b._id),
+    name: b.name,
+    shortName: b.shortName ?? "",
+    status: b.status,
+    requestedBy: b.requestedBy ?? null,
+    decidedBy: (b as { decidedBy?: unknown }).decidedBy ?? null,
+    decidedAt: b.decidedAt ?? null,
+    rejectReason: b.rejectReason ?? "",
+    createdAt: b.createdAt,
+  });
   res.json({
     isApprover: true,
     pending: await Promise.all(pending.map(summary)),
     recent: await Promise.all(recent.map(summary)),
+    brands: { pending: brandPending.map(brandRow), recent: brandRecent.map(brandRow) },
   });
 }

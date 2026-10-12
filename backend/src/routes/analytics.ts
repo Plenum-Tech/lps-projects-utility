@@ -13,12 +13,10 @@ import {
   getWeekly,
 } from "../controllers/deliveryAnalytics.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
-import { requireRole } from "../middlewares/requireRole.js";
 
-// /api/analytics/delivery/* — Delivery Pulse. Admins see everything; heads are
-// scoped to tasks where any doer is in their department; employees get 403.
+// /api/analytics/delivery/* — Delivery Pulse: view-only, everyone sees everything.
 const router = Router();
-router.use(requireAuth, requireRole("admin", "head"));
+router.use(requireAuth);
 
 router.get("/delivery/summary", getSummary);
 router.get("/delivery/weekly", getWeekly);

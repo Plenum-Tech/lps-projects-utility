@@ -70,3 +70,19 @@ export function useDecideByLink(token: string) {
     },
   });
 }
+
+/** Leadership: approve / reject a proposed brand. */
+export function useDecideBrand() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ id, decision, reason }: { id: string; decision: "approve" | "reject"; reason?: string }) =>
+      (await api.post(`/brands/${id}/approval`, { decision, reason })).data,
+    onSuccess: (_data, { decision }) => {
+      void queryClient.invalidateQueries({ queryKey: approvalQueueKey });
+      void queryClient.invalidateQueries({ queryKey: ["brands"] });
+      toast.success(decision === "approve" ? "Brand approved" : "Brand rejected");
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}

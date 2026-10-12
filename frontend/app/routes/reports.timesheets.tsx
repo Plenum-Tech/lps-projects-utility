@@ -8,17 +8,18 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Weekly Timesheet Report | LPS" }];
 }
 
-/** Head/admin only — heads are limited to their department server-side. */
+/** Admins, heads (their department, server-side) and Finance. */
 export default function TimesheetReportPage() {
   const { data: user } = useCurrentUser();
   if (!user) return null;
-  if (user.role === "employee") {
+  // Admins, heads and Finance (computed by the server).
+  if (!(user.access?.timeReport ?? user.role !== "employee")) {
     return (
       <AccessDenied
-        title="Managers only"
-        description="The weekly timesheet report is available to department heads and administrators."
+        title="Not available"
+        description="The weekly timesheet report is available to administrators, heads of department and Finance."
       />
     );
   }
-  return <TimesheetReport role={user.role} />;
+  return <TimesheetReport role={user.role === "employee" ? "admin" : user.role} />;
 }

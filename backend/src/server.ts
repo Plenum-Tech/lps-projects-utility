@@ -47,7 +47,6 @@ import notificationsRouter from "./routes/notifications.js";
 import performanceReviewsRouter from "./routes/performanceReviews.js";
 import projectMetaRouter from "./routes/projectMeta.js";
 import projectsRouter from "./routes/projects.js";
-import reportsRouter from "./routes/reports.js";
 import aiInsightsRouter from "./routes/aiInsights.js";
 import dashboardRouter from "./routes/dashboard.js";
 import { taskCategoriesRouter, taskLabelsRouter, taskSettingsRouter } from "./routes/taskMeta.js";
@@ -216,12 +215,6 @@ app.use("/api/auth/password-reset/verify", passwordResetVerifyRateLimit);
 app.use("/api/auth/password-reset/complete", passwordResetCompleteRateLimit);
 // Moderate: expensive compute operations
 app.use("/api/ai-insights", moderateRateLimit);
-// Work reports (tasks/time/timesheets) are plain aggregates the report pages call
-// several times per view: they use the standard limit, not the HR-report one.
-const WORK_REPORT_PATH = /^\/(tasks|time|timesheets)(\/|$)/;
-app.use("/api/reports", (req, res, next) =>
-  WORK_REPORT_PATH.test(req.path) ? next() : moderateRateLimit(req, res, next),
-);
 // Standard: general API endpoints. The SSE stream is long-lived and reconnects on
 // its own, so it is exempt — a 429 there would trigger a reconnect loop.
 app.use("/api", (req, res, next) =>
@@ -250,9 +243,8 @@ app.use("/api/trainings", trainingsRouter);
 app.use("/api/feedback", feedbackRouter);
 app.use("/api/notifications", notificationsRouter);
 app.use("/api/attendance", attendanceRouter);
-// Work reports first: their guards are per route, so HR paths fall through to the admin-only router.
+// Work reports (tasks / time / timesheets); the old HR reports were removed.
 app.use("/api/reports", timeReportsRouter);
-app.use("/api/reports", reportsRouter);
 app.use("/api/performance-reviews", performanceReviewsRouter);
 app.use("/api/ai-insights", aiInsightsRouter);
 app.use("/api/dashboard", dashboardRouter);

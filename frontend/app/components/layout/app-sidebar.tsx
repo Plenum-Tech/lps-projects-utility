@@ -79,6 +79,8 @@ interface NavItem {
   feature?: FeatureName;
   /** Shown only to project approvers, with the number of projects waiting. */
   approvers?: boolean;
+  /** Shown only to people who may see the Time Log Report (admins, heads, Finance). */
+  timeReport?: boolean;
 }
 
 interface ResolvedNavItem extends Omit<NavItem, "to"> {
@@ -185,12 +187,11 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Reports",
     collapsible: true,
     items: [
-      { title: "Delivery Pulse", to: "/reports/delivery", icon: Activity, roles: MANAGERS },
-      { title: "Task Report", to: "/reports/tasks", icon: ListChecks, roles: MANAGERS },
-      { title: "Time Log Report", to: "/reports/time", icon: BarChart3, roles: MANAGERS },
+      { title: "Delivery Pulse", to: "/reports/delivery", icon: Activity },
+      { title: "Task Report", to: "/reports/tasks", icon: ListChecks },
+      { title: "Time Log Report", to: "/reports/time", icon: BarChart3, timeReport: true },
       // Weekly Timesheet (submit/approve workflow) is hidden: hours are covered by the
       // Time Log Report. The page still exists at /reports/timesheets.
-      { title: "HR Reports", to: "/admin/reports", icon: BarChart3, roles: ADMIN },
       { title: "Activity Log", to: "/admin/activity-log", icon: History, roles: ADMIN },
       {
         title: "AI Insights",
@@ -206,7 +207,11 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-function resolveGroups(role: Role, approver: { isApprover: boolean; pending: number }): ResolvedNavGroup[] {
+function resolveGroups(
+  role: Role,
+  approver: { isApprover: boolean; pending: number },
+  access: { timeReport: boolean },
+): ResolvedNavGroup[] {
   return NAV_GROUPS.map((group, index) => ({
     key: group.label ?? `block-${index}`,
     label: group.label,
@@ -215,6 +220,7 @@ function resolveGroups(role: Role, approver: { isApprover: boolean; pending: num
       .filter((item) => !item.roles || item.roles.includes(role))
       .filter((item) => !item.feature || FEATURES[item.feature])
       .filter((item) => !item.approvers || approver.isApprover)
+      .filter((item) => !item.timeReport || access.timeReport)
       .map((item) => ({
         ...item,
         to: typeof item.to === "string" ? item.to : (item.to[role] ?? ""),
@@ -250,10 +256,15 @@ export function AppSidebar() {
 
   if (!user) return null;
 
-  const groups = resolveGroups(user.role, {
-    isApprover: Boolean(approvals.data?.isApprover),
-    pending: approvals.data?.pending.length ?? 0,
-  });
+  const groups = resolveGroups(
+    user.role,
+    {
+      isApprover: Boolean(approvals.data?.isApprover),
+      // Projects and new brands waiting for leadership.
+      pending: (approvals.data?.pending.length ?? 0) + (approvals.data?.brands?.pending.length ?? 0),
+    },
+    { timeReport: user.access?.timeReport ?? user.role !== "employee" },
+  );
   const location: NavLocation = { pathname, search: new URLSearchParams(search) };
 
   return (

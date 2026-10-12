@@ -42,7 +42,6 @@ export default [
       ...prefix("admin", [
         route("users", "routes/admin/users.tsx"),
         route("departments", "routes/admin/departments.tsx"),
-        route("reports", "routes/admin/reports.tsx"),
         route("leaves", "routes/admin/leaves.tsx"),
         route("feedback", "routes/admin/feedback.tsx"),
         route("activity-log", "routes/admin/activity-log.tsx"),

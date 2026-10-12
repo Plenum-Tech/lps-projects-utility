@@ -55,7 +55,11 @@ export function useCreateBrand() {
     },
     onSuccess: (brand) => {
       invalidate();
-      toast.success(`Brand “${brand.name}” added`);
+      if (brand.status === "pending") {
+        toast.success(`Brand “${brand.name}” sent to leadership for approval. You can use it once it's approved.`);
+      } else {
+        toast.success(`Brand “${brand.name}” added`);
+      }
     },
   });
 }

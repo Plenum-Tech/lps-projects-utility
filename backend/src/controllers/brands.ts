@@ -6,6 +6,8 @@ import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand, BRAND_COLORS, BRAND_LIMITS, type BrandColor, type IBrand } from "../models/Brand.js";
 import { DeliverySettings } from "../models/DeliverySettings.js";
 import { Project } from "../models/Project.js";
+import { isProjectApprover, projectApproverIds } from "../lib/projectApproval.js";
+import { notifyUsers } from "../lib/notifications.js";
 
 // ---------------------------------------------------------------------------
 // /api/brands — GET for every signed-in user; POST/PATCH/DELETE admin only.
@@ -77,22 +79,56 @@ function sendFieldError(res: Response, err: unknown): boolean {
 
 /** GET /api/brands[?active=true] — any signed-in user; sorted by name, with `projectCount`. */
 export async function listBrands(req: Request, res: Response): Promise<void> {
-  const filter = req.query.active === "true" ? { active: true } : {};
+  const user = req.user!;
+  // Approved brands for everyone (older brands have no status = approved); your own
+  // pending / rejected proposals too, so the form can show them as waiting.
+  // Admins (Settings → Brands) see every brand, with its status.
+  const visible: Record<string, unknown> =
+    user.role === "admin"
+      ? {}
+      : { $or: [{ status: { $exists: false } }, { status: "approved" }, { requestedBy: user._id }] };
+  const filter: Record<string, unknown> = req.query.active === "true" ? { $and: [visible, { active: true }] } : visible;
   const brands = await Brand.find(filter).sort({ nameKey: 1, name: 1, _id: 1 });
   const counts = await projectCounts(brands.map((b) => b._id as mongoose.Types.ObjectId));
   res.json({ brands: brands.map((b) => serialize(b, counts.get(String(b._id)) ?? 0)), total: brands.length });
 }
 
-/** POST /api/brands — admin; `{ name, shortName?, color?, active? }`. */
+/**
+ * POST /api/brands — anyone; `{ name, shortName?, color?, active? }`. Leadership's
+ * brands are approved at once; everyone else's wait for leadership approval.
+ */
 export async function createBrand(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = req.user!;
+  const leader = await isProjectApprover(user._id as mongoose.Types.ObjectId);
   try {
     const brand = await Brand.create({
       name: parseName(body.name),
       shortName: parseShortName(body.shortName),
       color: body.color === undefined ? "chart-1" : parseColor(body.color),
       active: body.active === undefined ? true : parseActive(body.active),
+      status: leader ? "approved" : "pending",
+      requestedBy: user._id,
+      ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),
     });
+    if (!leader) {
+      notifyUsers({
+        recipients: await projectApproverIds(),
+        actor: user,
+        type: "brand_approval_requested",
+        title: "New brand awaiting your approval",
+        message: `${user.name} proposed the brand "${brand.name}". Approve it so projects can use it.`,
+        link: "/approvals",
+        email: {
+          subject: `New brand to approve: ${brand.name}`,
+          heading: "New Brand Awaiting Approval",
+          intro: `${user.name} proposed a new brand. Projects can use it once you approve it.`,
+          cardTitle: brand.name,
+          rows: brand.shortName ? [["Short name", brand.shortName]] : [],
+          buttonLabel: "Open Approvals",
+        },
+      });
+    }
     logActivity({
       action: "settings_updated",
       actor: req.user,
@@ -198,4 +234,66 @@ export async function deleteBrand(req: Request, res: Response): Promise<void> {
     ip: req.ip,
   });
   res.json({ success: true });
+}
+
+/**
+ * POST /api/brands/:id/approval — leadership; `{ decision: "approve" | "reject", reason? }`.
+ * GET-less: the queue is part of GET /api/projects/approvals.
+ */
+export async function decideBrand(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  if (!(await isProjectApprover(user._id as mongoose.Types.ObjectId))) {
+    res.status(403).json({ error: "Only leadership can approve brands" });
+    return;
+  }
+  const brand = await findBrandOr404(req, res);
+  if (!brand) return;
+  const body = (req.body ?? {}) as { decision?: unknown; reason?: unknown };
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    res.status(400).json({ error: 'decision must be "approve" or "reject"' });
+    return;
+  }
+  if (brand.status !== "pending") {
+    res.status(409).json({ error: `This brand is already ${brand.status ?? "approved"}` });
+    return;
+  }
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+  brand.status = body.decision === "approve" ? "approved" : "rejected";
+  brand.decidedBy = user._id as mongoose.Types.ObjectId;
+  brand.decidedAt = new Date();
+  brand.rejectReason = brand.status === "rejected" ? reason : "";
+  await brand.save();
+  logActivity({
+    action: "settings_updated",
+    actor: user,
+    targetType: "brand",
+    targetId: brand._id as mongoose.Types.ObjectId,
+    targetName: brand.name,
+    details: { brand: brand.status, reason: reason || undefined },
+    ip: req.ip,
+  });
+  if (brand.requestedBy) {
+    const approved = brand.status === "approved";
+    notifyUsers({
+      recipients: [brand.requestedBy],
+      actor: user,
+      type: approved ? "brand_approved" : "brand_rejected",
+      title: approved ? "Brand approved" : "Brand not approved",
+      message: approved
+        ? `${user.name} approved the brand "${brand.name}". You can use it on projects now.`
+        : `${user.name} didn't approve the brand "${brand.name}"${reason ? `: ${reason}` : "."}`,
+      link: "/projects",
+      email: {
+        subject: approved ? `Brand approved: ${brand.name}` : `Brand not approved: ${brand.name}`,
+        heading: approved ? "Brand Approved" : "Brand Not Approved",
+        intro: approved
+          ? `${user.name} approved "${brand.name}". You can pick it when you create a project.`
+          : `${user.name} didn't approve "${brand.name}".`,
+        cardTitle: brand.name,
+        rows: reason ? [["Reason", reason]] : [],
+        buttonLabel: "Open Projects",
+      },
+    });
+  }
+  res.json({ brand: serialize(brand, 0) });
 }

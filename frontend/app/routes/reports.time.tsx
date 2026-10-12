@@ -8,17 +8,18 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Time Log Report | LPS" }];
 }
 
-/** Head/admin only — heads are limited to their department server-side. */
+/** Admins, heads (their department, server-side) and Finance. */
 export default function TimeReportPage() {
   const { data: user } = useCurrentUser();
   if (!user) return null;
-  if (user.role === "employee") {
+  // Admins, heads and Finance (computed by the server).
+  if (!(user.access?.timeReport ?? user.role !== "employee")) {
     return (
       <AccessDenied
-        title="Managers only"
-        description="The time log report is available to department heads and administrators."
+        title="Not available"
+        description="The time log report is available to administrators, heads of department and Finance."
       />
     );
   }
-  return <TimeReport role={user.role} />;
+  return <TimeReport role={user.role === "employee" ? "admin" : user.role} />;
 }

@@ -10,18 +10,18 @@ import {
   timeSummary,
 } from "../controllers/timeReports.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
-import { requireRole } from "../middlewares/requireRole.js";
+import { requireTimeReportAccess } from "../lib/reportAccess.js";
 
 /**
- * Work reports under /api/reports (head + admin; heads see their department).
- * Mounted BEFORE the admin-only HR reports router: guards are per route (not
- * router.use) so unmatched paths fall through to the HR router untouched.
+ * Work reports under /api/reports. Task Report: everyone (view-only). Time Log
+ * Report and timesheets: admins, heads (their department) and Finance.
  */
 const router = Router();
-const guard = [requireAuth, requireRole("head", "admin")];
+const everyone = [requireAuth];
+const guard = [requireAuth, requireTimeReportAccess];
 
-router.get("/tasks/summary", ...guard, taskSummary);
-router.get("/tasks/export", ...guard, taskExport);
+router.get("/tasks/summary", ...everyone, taskSummary);
+router.get("/tasks/export", ...everyone, taskExport);
 router.get("/time/summary", ...guard, timeSummary);
 router.get("/time/export", ...guard, timeExport);
 router.get("/time/export.xlsx", ...guard, timeExportXlsx);

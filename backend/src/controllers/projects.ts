@@ -139,8 +139,11 @@ async function parseBrand(
 ): Promise<mongoose.Types.ObjectId | null | Invalid> {
   if (raw === null || raw === "") return null;
   if (typeof raw !== "string" || isInvalidObjectId(raw)) return bad("brand must be a valid brand ID or null");
-  const brand = await Brand.findById(raw).select("active");
+  const brand = await Brand.findById(raw).select("active status");
   if (!brand) return bad("Brand not found", 404);
+  if (brand.status && brand.status !== "approved" && !(current && current.equals(brand._id as mongoose.Types.ObjectId))) {
+    return bad(brand.status === "pending" ? "This brand is waiting for leadership approval" : "This brand was not approved");
+  }
   if (!brand.active && !(current && current.equals(brand._id as mongoose.Types.ObjectId))) {
     return bad("This brand is inactive");
   }
