@@ -35,6 +35,14 @@ import {
 interface ProjectOption {
   value: string;
   label: string;
+  /** Lower-cased name + code, "_" as spaces: what the search matches. */
+  search: string;
+}
+
+/** Every typed word must appear (any order): "ajmal gcc" finds "Ajmal_Program_Oct2026_GCC Retainer". */
+function matchesProject(option: ProjectOption, query: string): boolean {
+  const words = query.toLowerCase().replace(/[_·]/g, " ").split(/\s+/).filter(Boolean);
+  return words.every((word) => option.search.includes(word));
 }
 import { TaskWorkSections, type WorkTab } from "@/components/tasks/task-work-sections";
 import { EstimateField } from "@/components/tasks/estimate-field";
@@ -384,7 +392,7 @@ export function TaskFormDialog({
   const projectItems: Record<string, string> =
     isEdit && !task?.project ? { [NO_PROJECT]: "No project" } : {};
   for (const project of projectChoices)
-    projectItems[project._id] = `${project.code} · ${project.name}`;
+    projectItems[project._id] = project.name;
   // Keep the task's current project selectable even if filtered out (a new
   // task can't go into a closed project, so its default must still be open).
   const defaultProject = projects.data?.find((project) => project._id === projectId);
@@ -395,7 +403,7 @@ export function TaskFormDialog({
     const current =
       task?.project ??
       projects.data?.find((project) => project._id === projectId);
-    if (current) projectItems[projectId] = `${current.code} · ${current.name}`;
+    if (current) projectItems[projectId] = current.name;
   }
 
   const milestoneItems: Record<string, string> = {
@@ -672,7 +680,10 @@ export function TaskFormDialog({
                   )}
                 </fieldset>
   ) : null;
-  const projectOptions: ProjectOption[] = Object.entries(projectItems).map(([value, label]) => ({ value, label }));
+  const projectOptions: ProjectOption[] = Object.entries(projectItems).map(([value, label]) => {
+    const code = projects.data?.find((p) => p._id === value)?.code ?? task?.project?.code ?? "";
+    return { value, label, search: `${label} ${code}`.toLowerCase().replace(/[_·]/g, " ") };
+  });
   // Rework tasks name the original task (same project); shown in its Rework tab.
   const reworkField =
     !task && form.iteration === "rework" ? (
@@ -847,6 +858,7 @@ export function TaskFormDialog({
                   {/* Searchable: type part of the code or name. */}
                   <Combobox
                     items={projectOptions}
+                    filter={matchesProject}
                     value={projectOptions.find((o) => o.value === form.project) ?? null}
                     onValueChange={(option: ProjectOption | null) =>
                       setForm((current) => ({
