@@ -455,10 +455,8 @@ export function TaskFormDialog({
   const rulesApply = !task || Boolean(task.iteration);
   const iterationInvalid = submitted && rulesApply && !form.iteration;
   const reworkMissing = !task && form.iteration === "rework" && !form.reworkOf;
-  // Rework needs both the brief and at least one file (e.g. the client feedback).
-  const briefMissing = reworkCreate
-    ? form.description.trim() === "" || attachments.length === 0
-    : !task && form.description.trim() === "" && attachments.length === 0;
+  // New work and rework: a written brief or an attached file.
+  const briefMissing = !task && form.description.trim() === "" && attachments.length === 0;
   const dueMissing = reworkCreate && form.dueDate === "";
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0;
@@ -813,9 +811,7 @@ export function TaskFormDialog({
                 <Label htmlFor="task-description">
                   Brief<span aria-hidden className="ml-0.5 text-destructive">*</span>{" "}
                   <span className="font-normal text-muted-foreground">
-                    {reworkCreate
-                    ? "(a description and at least one file are required)"
-                    : "(a description or an attached file is required)"}
+                    (a description or an attached file is required)
                   </span>
                 </Label>
                 <Textarea
@@ -833,9 +829,7 @@ export function TaskFormDialog({
                 )}
                 {briefInvalid && (
                   <p className="text-xs text-destructive">
-                    {reworkCreate
-                      ? "Rework needs the brief and at least one file (e.g. the client feedback)."
-                      : "Add the brief: write a description or attach a file."}
+                    Add the brief: write a description or attach a file.
                   </p>
                 )}
               </div>

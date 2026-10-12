@@ -1282,11 +1282,8 @@ export async function createTaskCore(
     if (iteration === "rework" && !reworkOf) {
       return { status: 400, error: "Choose the task this rework is for" };
     }
-    // Rework: the brief and at least one file (e.g. client feedback), and a due date.
+    // Rework also needs a due date (the brief rule is the same as new work).
     if (iteration === "rework") {
-      if (!hasDescription || body.hasAttachments !== true) {
-        return { status: 400, error: "Rework needs the brief and at least one file" };
-      }
       if (body.dueDate === undefined || body.dueDate === null || body.dueDate === "") {
         return { status: 400, error: "Choose the due date for this rework" };
       }
