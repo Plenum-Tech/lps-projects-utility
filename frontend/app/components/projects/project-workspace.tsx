@@ -571,7 +571,7 @@ export function ProjectWorkspace() {
         />
       </FiltersSheet>
 
-      {isHeadOrAdmin && <ProjectFormDialog open={createOpen} onOpenChange={setCreateOpen} />}
+      <ProjectFormDialog open={createOpen} onOpenChange={setCreateOpen} />
 
       {dialog && (
         <>
