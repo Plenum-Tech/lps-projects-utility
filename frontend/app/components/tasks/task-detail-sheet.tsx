@@ -46,6 +46,14 @@ import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
 import { TaskHistory } from "@/components/tasks/task-history";
 import { TaskNotes } from "@/components/tasks/task-notes";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
+import { ReworkPanel } from "@/components/tasks/rework-panel";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -181,7 +189,7 @@ function TaskDetail({
     setTab(initialTab);
   }, [initialTab, subtaskId]);
   const [dialog, setDialog] = useState<
-    "edit" | "submit" | "review" | "delete" | null
+    "edit" | "submit" | "review" | "delete" | "rework" | null
   >(null);
   const updateStatus = useUpdateTaskStatus();
   const remind = useRemindTask();
@@ -284,7 +292,15 @@ function TaskDetail({
                       <DropdownMenuItem
                         key={status}
                         onClick={() =>
-                          updateStatus.mutate({ id: task._id, status })
+                          updateStatus.mutate(
+                            { id: task._id, status },
+                            {
+                              // Nothing recorded yet: open "Mark as complete" to add a note or file.
+                              onError: () => {
+                                if (status === "completed" && permissions.canSubmit) setDialog("submit");
+                              },
+                            },
+                          )
                         }
                       >
                         <span
@@ -299,6 +315,12 @@ function TaskDetail({
               </DropdownMenu>
             )}
             <PearityGenerateButton task={task} />
+            {task.project && !permissions.readOnly && (permissions.canAddSubtasks || permissions.canManageSubtasks) && (
+              <Button variant="outline" size="sm" onClick={() => setDialog("rework")}>
+                <LuRefreshCw aria-hidden />
+                Add rework
+              </Button>
+            )}
             {permissions.canEdit && (
               <Button
                 variant="outline"
@@ -617,6 +639,34 @@ function TaskDetail({
         onOpenChange={(open) => setDialog(open ? "edit" : null)}
         task={task}
       />
+      {task.project && (
+        <Dialog open={dialog === "rework"} onOpenChange={(open) => setDialog(open ? "rework" : null)}>
+          <DialogContent className="sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>Add rework</DialogTitle>
+              <DialogDescription>
+                Added inside &ldquo;{task.title}&rdquo; as a rework item. Its history stays on the task.
+              </DialogDescription>
+            </DialogHeader>
+            {dialog === "rework" && (
+              <ReworkPanel
+                projectItems={{ [task.project._id]: `${task.project.code} · ${task.project.name}` }}
+                initialProject={task.project._id}
+                initialTask={{
+                  value: task._id,
+                  label: `${task.shortCode ?? (typeof task.number === "number" ? `#${task.number}` : "")} · ${task.title}`,
+                  assignees: task.assignees.map((a) => ({ _id: a._id, name: a.name })),
+                }}
+                onCancel={() => setDialog(null)}
+                onDone={() => {
+                  setDialog(null);
+                  setTab("subtasks");
+                }}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      )}
       <SubmitTaskDialog
         task={task}
         open={dialog === "submit"}

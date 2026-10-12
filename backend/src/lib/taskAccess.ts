@@ -465,14 +465,16 @@ export function taskPermissions(
     canAddSubtasks: manageSubtasks || assignee,
     /** Toggle done — non-managers only on subtasks assigned to them or unassigned. */
     canToggleSubtasks: manageSubtasks || assignee || subtaskAssignee,
-    canSubmit: assignee && ["todo", "in_progress", "rejected"].includes(task.status),
+    canSubmit:
+      (assignee || (manage && Boolean(flags.skipReview))) && ["todo", "in_progress", "rejected"].includes(task.status),
     allowedStatuses: flags.archived
       ? []
       : allowedTransitions(user, task, { skipReview: flags.skipReview, projectManager: flags.projectManager }),
     /** Copy the task: project tasks need create rights in the project; standalone ones heads/admins. */
     canDuplicate: !flags.archived && (task.project ? Boolean(flags.canCreateTasks) : user.role !== "employee"),
     /** Start a timer / log time on this task (server re-checks project rules). */
-    canLogTime: (manage || assignee) && task.status !== "completed",
+    // Comments, files and time stay editable after completion.
+    canLogTime: manage || assignee,
     /** Actual start / end follow the time logs (Time tab), so they aren't edited by hand. */
     canEditActualDates: false,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */

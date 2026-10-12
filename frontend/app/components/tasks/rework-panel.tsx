@@ -17,7 +17,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
-import type { TaskListResponse } from "@/types";
+import type { MentionableUsersResponse, TaskListResponse } from "@/types";
 
 const NOBODY = "__nobody";
 
@@ -43,19 +43,22 @@ function Req() {
 export function ReworkPanel({
   projectItems,
   initialProject,
+  initialTask,
   onDone,
   onCancel,
 }: {
   /** Projects the user can work in: id → label. */
   projectItems: Record<string, string>;
   initialProject: string;
+  /** Pre-selected task (opened from a task): the user only fills in the rest. */
+  initialTask?: TaskOption;
   onDone: (taskId: string) => void;
   onCancel: () => void;
 }) {
   const toast = useToast();
   const queryClient = useQueryClient();
   const [project, setProject] = useState(initialProject && projectItems[initialProject] ? initialProject : "");
-  const [taskId, setTaskId] = useState("");
+  const [taskId, setTaskId] = useState(initialTask && project ? initialTask.value : "");
   const [title, setTitle] = useState("");
   const [details, setDetails] = useState("");
   const [assignee, setAssignee] = useState(NOBODY);
@@ -70,16 +73,23 @@ export function ReworkPanel({
     enabled: Boolean(project),
     staleTime: 30_000,
   });
-  const options = useMemo<TaskOption[]>(
-    () =>
-      (tasks.data ?? []).map((t) => ({
-        value: t._id,
-        label: `${t.shortCode ?? (t.number ? `#${t.number}` : "")} · ${t.title}`,
-        assignees: (t.assignees ?? []).map((a) => ({ _id: a._id, name: a.name })),
-      })),
-    [tasks.data],
-  );
+  const options = useMemo<TaskOption[]>(() => {
+    const list = (tasks.data ?? []).map((t) => ({
+      value: t._id,
+      label: `${t.shortCode ?? (t.number ? `#${t.number}` : "")} · ${t.title}`,
+      assignees: (t.assignees ?? []).map((a) => ({ _id: a._id, name: a.name })),
+    }));
+    if (initialTask && project === initialProject && !list.some((o) => o.value === initialTask.value)) list.unshift(initialTask);
+    return list;
+  }, [tasks.data, initialTask, project, initialProject]);
   const selected = options.find((o) => o.value === taskId) ?? null;
+  // Rework can go to anyone, not only the task's assignees.
+  const people = useQuery({
+    queryKey: ["tasks", taskId, "subtask-assignees"],
+    queryFn: async () => (await api.get<MentionableUsersResponse>(`/tasks/${taskId}/subtask-assignees`)).data.users,
+    enabled: Boolean(taskId),
+    staleTime: 60_000,
+  });
 
   // Default the rework to the task's first assignee.
   useEffect(() => {
@@ -117,7 +127,8 @@ export function ReworkPanel({
   }
 
   const assigneeItems: Record<string, string> = { [NOBODY]: "Not assigned" };
-  for (const a of selected?.assignees ?? []) assigneeItems[a._id] = a.name;
+  for (const a of selected?.assignees ?? []) assigneeItems[a._id] = `${a.name} (on the task)`;
+  for (const u of people.data ?? []) if (!assigneeItems[u._id]) assigneeItems[u._id] = u.name;
 
   return (
     <form onSubmit={submit} noValidate className="space-y-4 rounded-lg border border-dashed p-4">

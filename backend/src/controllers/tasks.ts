@@ -857,10 +857,19 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
  * time logged on it. Returns the reason, or null when it may complete.
  */
 // Completion needs the final file / link or an outcome note (logged time is optional).
+/**
+ * A task can be completed once there's any record of the work: the final file
+ * or link, an outcome note, a comment, a file, or logged time.
+ */
 async function completionBlocker(task: ITask): Promise<string | null> {
-  const hasFinal = Boolean(task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim());
-  if (!hasFinal) return "Add the final file or link, or write an outcome note, before completing this task";
-  return null;
+  if (task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim()) return null;
+  const [comment, file, log] = await Promise.all([
+    TaskComment.exists({ task: task._id }),
+    TaskFile.exists({ task: task._id }),
+    TimeLog.exists({ task: task._id, status: { $ne: "rejected" } }),
+  ]);
+  if (comment || file || log) return null;
+  return "Add a comment, a file, logged time or an outcome note before completing this task";
 }
 
 async function applyStatusChange(
@@ -1498,8 +1507,12 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
 
   const user = req.user!;
   if (!isAssignee(user, task)) {
-    res.status(403).json({ error: "You can only submit your own tasks" });
-    return;
+    // Whoever manages the task may also mark it complete on projects without task approval.
+    const flags = await taskProjectFlags(task, user);
+    if (!(flags.skipReview && canManageTask(user, task, flags))) {
+      res.status(403).json({ error: "You can only submit your own tasks" });
+      return;
+    }
   }
 
   if (task.status !== "todo" && task.status !== "in_progress" && task.status !== "rejected") {

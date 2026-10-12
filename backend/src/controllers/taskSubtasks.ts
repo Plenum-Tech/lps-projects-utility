@@ -25,6 +25,7 @@ import { Task } from "../models/Task.js";
 import type { ITask, SubtaskPendingNotify } from "../models/Task.js";
 import { TASK_LIMITS } from "../models/Task.js";
 import { TaskFile } from "../models/TaskFile.js";
+import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 
@@ -42,6 +43,8 @@ interface SubtaskBody {
   startDate?: unknown;
   dueDate?: unknown;
   done?: unknown;
+  /** What was done — one way to meet the "note, file or time" rule for ticking rework off. */
+  completionNote?: unknown;
   /** ISO date-time; null/"" clears it (back to automatic). */
   actualStartAt?: unknown;
   actualEndAt?: unknown;
@@ -104,24 +107,14 @@ async function subtaskRole(user: IUser, task: ITask) {
 }
 
 /**
- * Who a subtask may be assigned to: task assignees, the task creator, project
- * members/manager (project tasks) and — for heads and admins — anyone they can
- * assign tasks to (admin: everyone; head: their department).
+ * Who rework may be assigned to: anyone (rework often goes to someone other
+ * than the task's assignees).
  */
 async function subtaskCandidateFilter(
-  actor: IUser,
-  task: ITask
+  _actor: IUser,
+  _task: ITask
 ): Promise<Record<string, unknown>> {
-  if (actor.role === "admin") return {};
-  const ids = new Set<string>([...task.assignees.map((id) => id.toString()), task.assignedBy.toString()]);
-  if (task.project) {
-    const project = await Project.findById(task.project).select("members.user manager").lean();
-    for (const member of project?.members ?? []) ids.add(member.user.toString());
-    if (project?.manager) ids.add(project.manager.toString());
-  }
-  const or: Record<string, unknown>[] = [{ _id: { $in: [...ids] } }];
-  if (actor.role === "head" && actor.department) or.push({ department: actor.department });
-  return { $or: or };
+  return {};
 }
 
 async function parseSubtaskAssignee(
@@ -138,7 +131,7 @@ async function parseSubtaskAssignee(
   if (!allowed) {
     return {
       error:
-        "A subtask can be assigned to a task assignee, the task creator, a project member, or someone you can assign tasks to",
+        "Rework can only be assigned to an existing user",
     };
   }
   return new mongoose.Types.ObjectId(raw);
@@ -486,6 +479,23 @@ export async function updateSubtask(req: Request, res: Response): Promise<void> 
     if (typeof body.done !== "boolean") {
       res.status(400).json({ error: "done must be a boolean" });
       return;
+    }
+    if (body.completionNote !== undefined) {
+      if (typeof body.completionNote !== "string" || body.completionNote.trim().length > 2000) {
+        res.status(400).json({ error: "completionNote must be 2000 characters or fewer" });
+        return;
+      }
+      subtask.completionNote = body.completionNote.trim();
+    }
+    if (body.done && !subtask.done) {
+      const [file, log] = await Promise.all([
+        TaskFile.exists({ task: task._id, subtask: subtask._id }),
+        TimeLog.exists({ task: task._id, subtask: subtask._id, status: { $ne: "rejected" } }),
+      ]);
+      if (!subtask.completionNote?.trim() && !file && !log) {
+        res.status(400).json({ error: "Add a note, attach a file or log time on this rework before marking it done" });
+        return;
+      }
     }
     if (subtask.done !== body.done) {
       const at = new Date();

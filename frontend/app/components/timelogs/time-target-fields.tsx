@@ -29,9 +29,10 @@ export function useLoggableProjects(enabled = true) {
 
 /**
  * Tasks for a picker: every task of `projectId`, or my assigned tasks when no
- * project is chosen. `openOnly` drops completed tasks (they can't take time).
+ * project is chosen. `openOnly` drops completed tasks (completed tasks can
+ * still take time, so it's off by default).
  */
-export function usePickerTasks(projectId: string, { enabled = true, openOnly = true } = {}) {
+export function usePickerTasks(projectId: string, { enabled = true, openOnly = false } = {}) {
   const query = useTaskList(
     {
       scope: projectId ? "all" : "assigned",

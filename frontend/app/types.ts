@@ -881,6 +881,8 @@ export interface Subtask {
   /** Plain text (may be missing on subtasks created before the full form). */
   description?: string;
   done: boolean;
+  /** Written when the rework was ticked off. */
+  completionNote?: string;
   /** Null when unassigned (or the assignee was deleted). */
   assignee: UserRef | null;
   startDate?: string | null;
@@ -1186,6 +1188,8 @@ export interface SubtaskUpdateInput {
   startDate?: string | null;
   dueDate?: string | null;
   done?: boolean;
+  /** What was done (one way to meet the note / file / time rule for ticking rework off). */
+  completionNote?: string;
   /** ISO date-time; null clears it (back to automatic). */
   actualStartAt?: string | null;
   actualEndAt?: string | null;

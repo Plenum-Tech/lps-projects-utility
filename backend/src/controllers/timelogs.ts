@@ -192,7 +192,6 @@ async function resolveTarget(
     if (project.archivedAt) return { status: 409, error: "This project is archived" };
     if (await isProjectStatusCompleted(project)) return { status: 409, error: "This project is completed" };
   }
-  if (task?.status === "completed") return { status: 409, error: "This task is completed" };
   if (!(await canLogOn(owner, project, task))) {
     return { status: 403, error: "Only project members or task assignees can log time here" };
   }
@@ -539,6 +538,7 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     endTime?: unknown;
     memo?: unknown;
     user?: unknown;
+    subtask?: unknown;
   };
 
   let owner: IUser = actor;
@@ -560,6 +560,18 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
   if (isInvalid(target)) return send(res, target);
   const { project, task } = target;
 
+  // Optional rework item on the task the time was spent on.
+  let subtask: mongoose.Types.ObjectId | null = null;
+  if (body.subtask !== undefined && body.subtask !== null && body.subtask !== "") {
+    if (typeof body.subtask !== "string" || isInvalidObjectId(body.subtask)) {
+      return send(res, { status: 400, error: "subtask must be a valid rework item ID" });
+    }
+    if (!task || !task.subtasks.some((sub) => sub._id.equals(body.subtask as string))) {
+      return send(res, { status: 400, error: "The rework item isn't on this task" });
+    }
+    subtask = new mongoose.Types.ObjectId(body.subtask);
+  }
+
   if (!owner._id.equals(actor._id) && !isApprover(actor, owner, project)) {
     return send(res, { status: 403, error: "Only admins, the employee's department head or the project manager can log time for others" });
   }
@@ -579,6 +591,7 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     user: owner._id,
     project: project ? project._id : null,
     task: task ? task._id : null,
+    subtask,
     startTime: start,
     endTime: end,
     durationMinutes,

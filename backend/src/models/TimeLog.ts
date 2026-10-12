@@ -17,6 +17,8 @@ export interface ITimeLog extends mongoose.Document {
   user: mongoose.Types.ObjectId;
   project?: mongoose.Types.ObjectId | null;
   task?: mongoose.Types.ObjectId | null;
+  /** The rework item (task subtask) this time was spent on, if any. */
+  subtask?: mongoose.Types.ObjectId | null;
   startTime: Date;
   /** null = timer running. */
   endTime?: Date | null;
@@ -53,6 +55,7 @@ const timeLogSchema = new Schema<ITimeLog>(
     user: { type: Schema.Types.ObjectId, ref: "User", required: true },
     project: { type: Schema.Types.ObjectId, ref: "Project", default: null },
     task: { type: Schema.Types.ObjectId, ref: "Task", default: null },
+    subtask: { type: Schema.Types.ObjectId, default: null },
     startTime: { type: Date, required: true },
     // Always stored explicitly (null while running) — the partial unique index relies on it.
     endTime: { type: Date, default: null },

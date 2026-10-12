@@ -64,6 +64,8 @@ export interface ISubtask {
   title: string;
   description?: string;
   done: boolean;
+  /** What was done, written when the rework is ticked off. */
+  completionNote?: string;
   assignee?: mongoose.Types.ObjectId | null;
   startDate?: Date | null;
   dueDate?: Date | null;
@@ -174,6 +176,7 @@ const subtaskSchema = new Schema<ISubtask>({
   title: { type: String, required: true, trim: true, maxlength: 200 },
   description: { type: String, trim: true, maxlength: 2000, default: "" },
   done: { type: Boolean, default: false },
+  completionNote: { type: String, trim: true, maxlength: 2000, default: "" },
   assignee: { type: Schema.Types.ObjectId, ref: "User", default: null },
   startDate: { type: Date, default: null },
   dueDate: { type: Date, default: null },

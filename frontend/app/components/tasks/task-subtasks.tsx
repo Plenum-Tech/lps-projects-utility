@@ -14,6 +14,7 @@ import {
 } from "react-icons/lu";
 
 import { VarianceChip, varianceDays } from "@/components/tasks/actual-dates";
+import { CompleteReworkDialog } from "@/components/tasks/complete-rework-dialog";
 import { SubtaskFormDialog } from "@/components/tasks/subtask-form";
 import { UserAvatar } from "@/components/tasks/task-badges";
 import { FileRow } from "@/components/tasks/task-files";
@@ -286,6 +287,7 @@ function SubtaskRow({
   onDelete: () => void;
 }) {
   const update = useUpdateSubtask(task._id);
+  const [completing, setCompleting] = useState(false);
   const rowRef = useRef<HTMLLIElement>(null);
   const isMine = subtask.assignee?._id === me._id;
   const panelId = `subtask-panel-${subtask._id}`;
@@ -298,13 +300,22 @@ function SubtaskRow({
 
   return (
     <li ref={rowRef} className={cn("transition-colors duration-200", focused && "bg-primary/5")}>
+      <CompleteReworkDialog
+        task={task}
+        subtask={subtask}
+        existingFiles={files.length}
+        open={completing}
+        onOpenChange={setCompleting}
+      />
       <div className="flex items-center gap-2 px-3 py-2.5 sm:gap-3">
         <Checkbox
           checked={subtask.done}
           disabled={!canToggle || update.isPending}
-          onCheckedChange={(checked) =>
-            update.mutate({ subId: subtask._id, input: { done: Boolean(checked) } })
-          }
+          onCheckedChange={(checked) => {
+            // Ticking off asks for a note, file or time; un-ticking is immediate.
+            if (checked) setCompleting(true);
+            else update.mutate({ subId: subtask._id, input: { done: false } });
+          }}
           aria-label={`Mark "${subtask.title}" as ${subtask.done ? "not done" : "done"}`}
         />
         <button
@@ -408,6 +419,12 @@ function SubtaskRow({
 
       {expanded && (
         <div id={panelId} className="space-y-3 border-t bg-muted/20 px-3 py-3 sm:pl-12">
+          {subtask.completionNote ? (
+            <p className="rounded-md border bg-card px-2.5 py-1.5 text-sm break-words whitespace-pre-wrap text-foreground">
+              <span className="font-medium">Done: </span>
+              {subtask.completionNote}
+            </p>
+          ) : null}
           {subtask.description ? (
             <p className="text-sm break-words whitespace-pre-wrap text-foreground">{subtask.description}</p>
           ) : (

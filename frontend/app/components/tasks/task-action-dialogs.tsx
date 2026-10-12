@@ -38,9 +38,9 @@ import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
 
 /**
- * Assignee: complete the task (or send it for review). The final deliverable sits
- * at the top — upload a file or paste a link — and is required unless an outcome
- * note is written. Time must be logged first.
+ * Complete the task (or send it for review). The final file or link and the
+ * outcome note are optional here: the server accepts completion once the task
+ * has any record of the work (comment, file, logged time, final or note).
  */
 export function SubmitTaskDialog({
   task,
@@ -75,20 +75,12 @@ export function SubmitTaskDialog({
   const linkValue = link.trim();
   const linkInvalid =
     mode === "link" && linkValue !== "" && !/^https?:\/\/\S+$/i.test(linkValue);
-  const hasFinal =
-    (mode === "file" && Boolean(file)) ||
-    (mode === "link" && linkValue !== "" && !linkInvalid);
-  const missingFinal =
-    !hasFinal &&
-    !notes.trim() &&
-    !task.finalFile?.fileId &&
-    !task.finalFile?.url;
   const pending = submit.isPending || upload.isPending;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (noTime || missingFinal || linkInvalid) return;
+    if (noTime || linkInvalid) return;
     let finalFileId: string | undefined;
     if (mode === "file" && file) {
       const uploaded = await upload
@@ -203,14 +195,9 @@ export function SubmitTaskDialog({
               placeholder="What was delivered? Anything the reviewer should check?"
             />
             <p className="text-xs text-muted-foreground">
-              Required when there is no final file or link.
+              Needed only if the task has no comment, file or logged time yet.
             </p>
           </div>
-          {submitted && missingFinal && (
-            <p className="text-xs text-destructive">
-              Add the final file or link, or write an outcome note.
-            </p>
-          )}
 
           <DialogFooter>
             <Button
