@@ -16,6 +16,12 @@ const { BSON } = mongoose.mongo;
  * its own copy, so handlers can mutate/save `req.user` safely.
  */
 const USER_CACHE_MS = 10_000;
+/** Fields the default user query leaves out (schema `select: false`). */
+const UNSELECTED = Object.fromEntries(
+  Object.entries(User.schema.paths)
+    .filter(([, path]) => (path.options as { select?: unknown }).select === false)
+    .map(([name]) => [name, 0])
+);
 
 async function loadUser(id: string): Promise<InstanceType<typeof User> | null> {
   if (!mongoose.isValidObjectId(id)) return null;
@@ -23,7 +29,9 @@ async function loadUser(id: string): Promise<InstanceType<typeof User> | null> {
     const raw = await User.findById(id).lean();
     return raw ? BSON.serialize(raw) : null;
   });
-  return bytes ? User.hydrate(BSON.deserialize(bytes)) : null;
+  // The lean read leaves out `select: false` fields (the password hash): tell
+  // mongoose they weren't loaded so saving req.user doesn't fail "required".
+  return bytes ? User.hydrate(BSON.deserialize(bytes), UNSELECTED) : null;
 }
 
 /** Reads the JWT from the httpOnly cookie, verifies it, and attaches the current user to the request. */
