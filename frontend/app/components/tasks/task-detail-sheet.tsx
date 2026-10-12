@@ -291,17 +291,14 @@ function TaskDetail({
                     {moveTargets.map((status) => (
                       <DropdownMenuItem
                         key={status}
-                        onClick={() =>
-                          updateStatus.mutate(
-                            { id: task._id, status },
-                            {
-                              // Nothing recorded yet: open "Mark as complete" to add a note or file.
-                              onError: () => {
-                                if (status === "completed" && permissions.canSubmit) setDialog("submit");
-                              },
-                            },
-                          )
-                        }
+                        onClick={() => {
+                          // Completing opens "Mark as complete" (time spent, final file, note).
+                          if (status === "completed" && permissions.canSubmit) {
+                            setDialog("submit");
+                            return;
+                          }
+                          updateStatus.mutate({ id: task._id, status });
+                        }}
                       >
                         <span
                           aria-hidden

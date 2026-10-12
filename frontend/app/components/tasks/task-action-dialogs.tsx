@@ -34,13 +34,15 @@ import {
   useUploadTaskFiles,
 } from "@/hooks/use-tasks";
 import { ACCEPT } from "@/components/tasks/task-files";
+import { useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
+import { api, getErrorMessage } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
 
 /**
- * Complete the task (or send it for review). The final file or link and the
- * outcome note are optional here: the server accepts completion once the task
- * has any record of the work (comment, file, logged time, final or note).
+ * Complete the task (or send it for review). Time spent is mandatory (entered
+ * here unless already logged); the final file or link and the outcome note are optional.
  */
 export function SubmitTaskDialog({
   task,
@@ -53,7 +55,12 @@ export function SubmitTaskDialog({
 }) {
   const submit = useSubmitTask();
   const upload = useUploadTaskFiles(task._id);
+  const queryClient = useQueryClient();
+  const toast = useToast();
   const [notes, setNotes] = useState("");
+  const [hours, setHours] = useState("");
+  const [minutes, setMinutes] = useState("");
+  const [logging, setLogging] = useState(false);
   const [mode, setMode] = useState<"file" | "link">("file");
   const [file, setFile] = useState<File | null>(null);
   const [link, setLink] = useState("");
@@ -65,6 +72,8 @@ export function SubmitTaskDialog({
       setLink(task.finalFile?.url ?? "");
       setMode(task.finalFile?.url ? "link" : "file");
       setFile(null);
+      setHours("");
+      setMinutes("");
       setSubmitted(false);
     }
   }, [open, task.submissionNotes, task.finalFile?.url]);
@@ -75,12 +84,41 @@ export function SubmitTaskDialog({
   const linkValue = link.trim();
   const linkInvalid =
     mode === "link" && linkValue !== "" && !/^https?:\/\/\S+$/i.test(linkValue);
-  const pending = submit.isPending || upload.isPending;
+  const h = hours.trim() === "" ? 0 : Number(hours);
+  const m = minutes.trim() === "" ? 0 : Number(minutes);
+  const timeInvalid = !Number.isInteger(h) || !Number.isInteger(m) || h < 0 || m < 0 || m > 59 || h > 23;
+  const spent = timeInvalid ? 0 : h * 60 + m;
+  // Time spent is mandatory: required here unless time is already logged on the task.
+  const alreadyLogged = (task.loggedMinutes ?? 0) > 0;
+  const timeMissing = !alreadyLogged && spent === 0;
+  const pending = submit.isPending || upload.isPending || logging;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (noTime || linkInvalid) return;
+    if (noTime || linkInvalid || timeInvalid || timeMissing) return;
+    // Time spent is logged on the task first (ending now), then the task is completed.
+    if (spent > 0) {
+      setLogging(true);
+      try {
+        const end = new Date();
+        await api.post("/timelogs", {
+          task: task._id,
+          project: task.project?._id,
+          startTime: new Date(end.getTime() - spent * 60_000).toISOString(),
+          endTime: end.toISOString(),
+          memo: "Logged when completing the task",
+        });
+        void queryClient.invalidateQueries({ queryKey: ["timelogs"] });
+        setHours("");
+        setMinutes("");
+      } catch (error) {
+        toast.error(getErrorMessage(error));
+        return;
+      } finally {
+        setLogging(false);
+      }
+    }
     let finalFileId: string | undefined;
     if (mode === "file" && file) {
       const uploaded = await upload
@@ -195,9 +233,51 @@ export function SubmitTaskDialog({
               placeholder="What was delivered? Anything the reviewer should check?"
             />
             <p className="text-xs text-muted-foreground">
-              Needed only if the task has no comment, file or logged time yet.
+              Optional.
             </p>
           </div>
+
+          <fieldset className="space-y-1.5">
+            <legend className="mb-1.5 text-sm leading-none font-medium">
+              Time spent
+              {!alreadyLogged && (
+                <span aria-hidden className="ml-0.5 text-destructive">
+                  *
+                </span>
+              )}
+            </legend>
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label="Hours"
+                inputMode="numeric"
+                value={hours}
+                onChange={(event) => setHours(event.target.value)}
+                placeholder="0"
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">h</span>
+              <Input
+                aria-label="Minutes"
+                inputMode="numeric"
+                value={minutes}
+                onChange={(event) => setMinutes(event.target.value)}
+                placeholder="0"
+                className="w-20"
+              />
+              <span className="text-sm text-muted-foreground">m</span>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {task.loggedMinutes
+                ? `${Math.floor(task.loggedMinutes / 60)}h ${task.loggedMinutes % 60}m already logged. Add any time not logged yet.`
+                : "No time logged yet. Enter the time spent; it's logged on the Time tab, ending now."}
+            </p>
+            {submitted && timeMissing && !timeInvalid && (
+              <p className="text-xs text-destructive">Enter the time spent on this task.</p>
+            )}
+            {submitted && timeInvalid && (
+              <p className="text-xs text-destructive">Enter whole hours (0–23) and minutes (0–59).</p>
+            )}
+          </fieldset>
 
           <DialogFooter>
             <Button
