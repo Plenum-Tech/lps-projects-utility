@@ -58,7 +58,7 @@ export function UpdateBanner() {
     >
       <LuRefreshCw aria-hidden className="size-4 shrink-0 text-primary" />
       <p className="min-w-0 flex-1 text-sm">
-        A new version of Projects Utility is available. Refresh to get the latest changes.
+        A new version of Projects Utility is available. Click Refresh to get the latest changes.
       </p>
       <Button size="sm" onClick={() => window.location.reload()}>
         Refresh
