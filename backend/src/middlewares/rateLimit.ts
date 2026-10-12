@@ -1,4 +1,5 @@
 import type { NextFunction, Request, Response } from "express";
+import { verifyAccessToken } from "../lib/jwt.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,14 +137,34 @@ function defaultKeyGenerator(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? "unknown";
 }
 
+/**
+ * Signed-in requests count per user (a whole office shares one public IP);
+ * anonymous ones per IP. The token is only read here — requireAuth still
+ * verifies every request properly.
+ */
+function userOrIpKey(req: Request): string {
+  const token = (req as Request & { cookies?: Record<string, string> }).cookies?.token;
+  if (token) {
+    try {
+      return `user:${verifyAccessToken(token).sub}`;
+    } catch {
+      // expired / invalid: fall back to the IP
+    }
+  }
+  return `ip:${defaultKeyGenerator(req)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Pre-configured rate limiters for common tiers
 // ---------------------------------------------------------------------------
 
-/** Strict — auth endpoints (e.g. login). 10 failed attempts per 15 minutes (successful logins aren't counted). */
+/**
+ * Strict — auth endpoints (e.g. login). 50 failed attempts per 15 minutes per IP
+ * (successful logins aren't counted; an office of ~100 people shares one IP).
+ */
 export const strictRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 50,
   skipSuccessfulRequests: true,
   message: "Too many login attempts. Please try again later.",
 });
@@ -156,13 +177,15 @@ export const moderateRateLimit = rateLimit({
 });
 
 /**
- * Standard — general API endpoints. 1000 requests per 15 minutes.
+ * Standard — general API endpoints. 1500 requests per 15 minutes per user.
  * Board, project and report pages fire several queries per view (plus SSE-driven
  * refetches), so 100 was exhausted within minutes of normal use.
  */
 export const standardRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,
+  max: 1500,
+  // Per signed-in user, not per IP: everyone in the office shares one address.
+  keyGenerator: userOrIpKey,
 });
 
 /**
