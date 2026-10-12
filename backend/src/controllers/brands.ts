@@ -94,8 +94,8 @@ export async function listBrands(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * POST /api/brands — anyone; `{ name, shortName?, color?, active? }`. Leadership's
- * brands are approved at once; everyone else's wait for leadership approval.
+ * POST /api/brands — admins; `{ name, shortName?, color?, active? }`. Leadership's
+ * brands are approved at once; other admins' wait for leadership approval.
  */
 export async function createBrand(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as Record<string, unknown>;

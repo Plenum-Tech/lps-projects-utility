@@ -660,7 +660,7 @@ export function ProjectFormDialog({
                       .join(", ")}
                   </p>
                 )}
-                {newBrand === null && (
+                {isAdmin && newBrand === null && (
                   <button
                     type="button"
                     onClick={() => setNewBrand("")}
