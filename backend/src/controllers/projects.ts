@@ -264,6 +264,28 @@ async function uniqueProjectCode(base: string): Promise<string> {
   return base;
 }
 
+/**
+ * The fixed, unique project code: brand (short name, 4) + type initial + MMYY,
+ * e.g. Wasl · Campaign · Oct 2026 → WASLC1026; a clash gets a number (WASLC10262).
+ * Legacy names: an abbreviation of the name.
+ */
+async function generateProjectCode(naming: IProjectNaming | null, name: string): Promise<string> {
+  const alnum = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  let base = "";
+  if (naming) {
+    const brand = await Brand.findById(naming.brand).select("name shortName").lean<{ name: string; shortName?: string }>();
+    const head = alnum(brand?.shortName || brand?.name || "").slice(0, 4);
+    const initial = alnum(naming.type).slice(0, 1);
+    const [year, month] = naming.month.split("-");
+    base = `${head}${initial}${month ?? ""}${(year ?? "").slice(2)}`;
+  } else {
+    const words = name.toUpperCase().replace(/[^A-Z0-9 ]/g, " ").split(/\s+/).filter(Boolean);
+    base = words.length === 1 ? words[0]!.slice(0, 6) : words.map((w) => w[0]).join("").slice(0, 6);
+  }
+  if (base.length < 2) base = `${base}PR`.slice(0, 2);
+  return uniqueProjectCode(base.slice(0, 9));
+}
+
 /** `team`: [{ role, users[] }] with plan roles or "others"; empty roles are dropped. */
 async function parseTeam(raw: unknown): Promise<IProjectTeamEntry[] | Invalid> {
   if (!Array.isArray(raw)) return bad("team must be an array of { role, users }");
@@ -922,6 +944,8 @@ export interface ProjectWriteOptions {
   activityExtra?: Record<string, unknown>;
   /** Create with a free-text `name` when `naming` is absent (Excel import, with a warning). */
   allowLegacyName?: boolean;
+  /** Excel import: keep the sheet's project code (create) and allow changing it (update). */
+  keepCode?: boolean;
 }
 
 /**
@@ -952,10 +976,15 @@ export async function createProjectCore(
   } else {
     return bad("Project brand, type, month and name are required");
   }
-  const parsedCode = parseCode(body.code);
-  if (isInvalid(parsedCode)) return parsedCode;
-  // A suggested code (autoCode) that's already taken gets a number: 80SP → 80SP2, 80SP3 …
-  const code = body.autoCode === true ? await uniqueProjectCode(parsedCode) : parsedCode;
+  // Project codes are generated here (fixed and unique) — only imports bring their own.
+  let code: string;
+  if (options.keepCode) {
+    const parsedCode = parseCode(body.code);
+    if (isInvalid(parsedCode)) return parsedCode;
+    code = parsedCode;
+  } else {
+    code = await generateProjectCode(naming, name);
+  }
   const summary = parseSummary(body.summary);
   if (isInvalid(summary)) return summary;
 
@@ -1226,8 +1255,9 @@ export async function updateProjectCore(
   if (body.code !== undefined) {
     const code = parseCode(body.code);
     if (isInvalid(code)) return code;
-    // Existing task short codes are never rewritten — only new tasks use the new code.
+    // Project codes are fixed once created (imports may still correct them).
     if (code !== project.code) {
+      if (!options.keepCode) return bad("The project code is fixed and can't be changed");
       project.code = code;
       changed.push("code");
     }
@@ -1696,8 +1726,7 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
   }
   const clash = await ensureUniqueName(name);
   if (clash) return send(res, clash);
-  const code = parseCode(body.code);
-  if (isInvalid(code)) return send(res, code);
+  const code = await generateProjectCode(naming, name);
   const includeTasks = optionalBoolean(body.includeTasks, "includeTasks");
   if (isInvalid(includeTasks)) return send(res, includeTasks);
   const startDate = optionalDate(body.startDate, "startDate");

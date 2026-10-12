@@ -1922,7 +1922,8 @@ export interface ProjectInput {
   name?: string;
   /** Structured name parts (required on create); the server composes `name`. */
   naming?: ProjectNaming;
-  code: string;
+  /** Ignored by the server: codes are generated (fixed, unique). */
+  code?: string;
   summary?: string;
   category?: string | null;
   /** Brand id; null / "" clears it. */
@@ -1952,7 +1953,8 @@ export type ProjectUpdateInput = Partial<
 
 export interface ProjectDuplicateInput {
   name?: string;
-  code: string;
+  /** Ignored by the server: the copy gets a generated code. */
+  code?: string;
   includeTasks?: boolean;
   startDate?: string;
   deadline?: string | null;

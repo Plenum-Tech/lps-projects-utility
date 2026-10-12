@@ -97,6 +97,18 @@ export function suggestNamingCode(brand: string, type: string): string {
   return code.length >= 2 ? code : `${code}PR`.slice(0, 2);
 }
 
+/**
+ * Preview of the server-generated project code: brand (4) + type initial + MMYY,
+ * e.g. WASLC1026. The server adds a number if it's taken; codes never change.
+ */
+export function previewProjectCode(brand: string, type: string, month: string): string {
+  const alnum = (text: string) => text.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const head = alnum(brand).slice(0, 4);
+  if (!head || !type || !/^\d{4}-\d{2}$/.test(month)) return "";
+  const [year, mm] = month.split("-");
+  return `${head}${alnum(type).slice(0, 1)}${mm}${year.slice(2)}`.slice(0, 9);
+}
+
 /** true = legacy free-text name (no structured parts). */
 export function isLegacyProjectName(project: Pick<Project, "naming">): boolean {
   return !project.naming;

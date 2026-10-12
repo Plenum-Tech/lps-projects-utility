@@ -392,7 +392,7 @@ export async function runProjectRow(
   }
   if (plan.createBrand) body.brand = await ensureBrand(plan.createBrand);
   if (body.naming && typeof body.naming === "object") body.naming = { ...(body.naming as object), brand: body.brand };
-  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId }, allowLegacyName: true };
+  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId }, allowLegacyName: true, keepCode: true };
 
   if (plan.action === "create") {
     const result = await createProjectCore(actor, body, ip, writeOptions);

@@ -65,7 +65,7 @@ import {
   useDuplicateProject,
   useTogglePin,
 } from "@/hooks/use-projects";
-import { PROJECT_CODE_PATTERN, statusColor } from "@/lib/projects";
+import { statusColor } from "@/lib/projects";
 import { formatDateOnly } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
@@ -435,7 +435,6 @@ export function DuplicateProjectDialog({
   const duplicate = useDuplicateProject();
   const navigate = useNavigate();
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
   const [includeTasks, setIncludeTasks] = useState(false);
   const [startDate, setStartDate] = useState("");
   const [deadline, setDeadline] = useState("");
@@ -444,14 +443,12 @@ export function DuplicateProjectDialog({
   useEffect(() => {
     if (!open) return;
     setName(`${project.name} (copy)`);
-    setCode(`${project.code}2`.slice(0, 10));
     setIncludeTasks(false);
     setStartDate("");
     setDeadline("");
     setSubmitted(false);
   }, [open, project.name, project.code]);
 
-  const codeError = PROJECT_CODE_PATTERN.test(code) ? null : "2–10 uppercase letters or digits.";
   const nameError = name.trim() ? null : "A name is required.";
   const datesError =
     startDate && deadline && deadline < startDate
@@ -461,13 +458,12 @@ export function DuplicateProjectDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (codeError || nameError || datesError) return;
+    if (nameError || datesError) return;
     duplicate.mutate(
       {
         id: project._id,
         input: {
           name: name.trim(),
-          code,
           includeTasks,
           ...(startDate ? { startDate } : {}),
           ...(deadline ? { deadline } : {}),
@@ -506,18 +502,10 @@ export function DuplicateProjectDialog({
               {submitted && nameError && <FieldError>{nameError}</FieldError>}
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="duplicate-code">Code</Label>
-              <Input
-                id="duplicate-code"
-                value={code}
-                onChange={(event) =>
-                  setCode(event.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ""))
-                }
-                maxLength={10}
-                className="font-mono uppercase"
-                aria-invalid={(submitted && Boolean(codeError)) || undefined}
-              />
-              {submitted && codeError && <FieldError>{codeError}</FieldError>}
+              <Label>Code</Label>
+              <p className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                A new unique code is assigned automatically.
+              </p>
             </div>
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
