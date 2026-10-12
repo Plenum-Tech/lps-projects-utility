@@ -77,15 +77,16 @@ export function canViewProject(user: AccessUser, project: AccessProject): boolea
   return project.isPublic;
 }
 
-/** Edit, status, members, milestones, archive: admin, the manager, or the head who created it. */
+/** Edit, status, members, milestones, archive: admin, the manager, or whoever created it. */
 export function canManageProject(user: AccessUser, project: AccessProject): boolean {
   if (user.role === "admin") return true;
   if (isProjectManager(user, project)) return true;
-  return user.role === "head" && sameId(project.createdBy, user._id);
+  return sameId(project.createdBy, user._id);
 }
 
-export function canCreateProject(user: AccessUser): boolean {
-  return user.role === "admin" || (user.role === "head" && Boolean(user.department));
+/** Anyone signed in may create a project (it still needs approval before tasks). */
+export function canCreateProject(_user: AccessUser): boolean {
+  return true;
 }
 
 /** Create tasks in the project: admin, managers, members, and heads who can view it. */

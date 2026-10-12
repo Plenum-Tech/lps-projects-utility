@@ -47,7 +47,7 @@ function parseType(raw: unknown): ImportType | null {
 
 /** Projects: admin / head (own department). Tasks: admin, head, project managers. */
 async function mayImport(actor: IUser, type: ImportType): Promise<boolean> {
-  return type === "projects" ? canCreateProject(actor) : canImportTasks(actor);
+  return type === "projects" ? actor.role !== "employee" && canCreateProject(actor) : canImportTasks(actor);
 }
 
 const FORBIDDEN: Record<ImportType, string> = {

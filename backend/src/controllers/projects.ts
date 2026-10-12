@@ -233,8 +233,8 @@ async function parseDepartments(actor: IUser, raw: unknown): Promise<mongoose.Ty
   }
   const ids = [...new Set(raw as string[])];
   if (ids.length > PROJECT_LIMITS.maxDepartments) return bad(`At most ${PROJECT_LIMITS.maxDepartments} departments`);
-  if (actor.role === "head" && ids.some((id) => !actor.department || id !== actor.department.toString())) {
-    return bad("Heads can only create projects for their own department", 403);
+  if (actor.role !== "admin" && ids.some((id) => !actor.department || id !== actor.department.toString())) {
+    return bad("You can only create projects for your own department", 403);
   }
   const count = await Department.countDocuments({ _id: { $in: ids } });
   if (count !== ids.length) return bad("Department not found", 404);
@@ -936,7 +936,7 @@ export async function createProjectCore(
   options: ProjectWriteOptions = {}
 ): Promise<Invalid | { project: IProject }> {
   if (!canCreateProject(actor)) {
-    return bad("Only admins and department heads can create projects", 403);
+    return bad("You can't create projects", 403);
   }
 
   let name: string;
@@ -973,7 +973,7 @@ export async function createProjectCore(
     brand = parsed;
   }
 
-  let departments: mongoose.Types.ObjectId[] = actor.role === "head" && actor.department ? [actor.department] : [];
+  let departments: mongoose.Types.ObjectId[] = actor.role !== "admin" && actor.department ? [actor.department] : [];
   if (body.departments !== undefined) {
     const parsed = await parseDepartments(actor, body.departments);
     if (isInvalid(parsed)) return parsed;
@@ -994,6 +994,10 @@ export async function createProjectCore(
     members = parsed;
   }
   if (manager && !members.some((m) => m.user.equals(manager!))) members.push({ user: manager, hourlyRate: 0 });
+  // Employees who create a project join it (so they can add tasks and log time).
+  if (actor.role === "employee" && !members.some((m) => m.user.equals(actor._id))) {
+    members.push({ user: actor._id as mongoose.Types.ObjectId, hourlyRate: 0 });
+  }
   let team: IProjectTeamEntry[] = [];
   if (body.team !== undefined) {
     const parsed = await parseTeam(body.team);
@@ -1650,7 +1654,7 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
   if (!source) return;
   const actor = req.user!;
   if (!canCreateProject(actor)) {
-    res.status(403).json({ error: "Only admins and department heads can create projects" });
+    res.status(403).json({ error: "You can't create projects" });
     return;
   }
   if (!canManageProject(actor, source)) {
@@ -2024,11 +2028,17 @@ export async function listProjectTasks(req: Request, res: Response): Promise<voi
   await listTasksForProject(req, res, project);
 }
 
-/** GET /api/projects/:id/members/assignable — members (for task assignee pickers). */
+/**
+ * GET /api/projects/:id/members/assignable — people who can be added as members
+ * (everyone not yet a member) for those who manage the project; others get the
+ * current members.
+ */
 export async function listAssignableMembers(req: Request, res: Response): Promise<void> {
   const project = await getViewableProjectOr404(req, res);
   if (!project) return;
-  const users = await User.find({ _id: { $in: project.members.map((m) => m.user) } })
+  const memberIds = project.members.map((m) => m.user);
+  const filter = canManageProject(req.user!, project) ? { _id: { $nin: memberIds } } : { _id: { $in: memberIds } };
+  const users = await User.find(filter)
     .select("name email role department")
     .sort({ name: 1 });
   res.json({ users: users.map((u) => u.toJSON()), total: users.length, limit: null, offset: 0 });

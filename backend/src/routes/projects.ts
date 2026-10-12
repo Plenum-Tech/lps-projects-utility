@@ -48,7 +48,7 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/", listProjects);
-router.post("/", requireRole("head", "admin"), createProject);
+router.post("/", createProject);
 // CSV of the list filters (or ?ids=), max 5000 rows.
 router.get("/export", exportProjects);
 // Bulk status / archive / restore / delete (admin) — per-item permission checks.
@@ -66,7 +66,7 @@ router.post("/:id/pearity/generate", generateProjectPearity);
 router.post("/:id/approval/request", requestAgain);
 router.post("/:id/archive", archiveProject);
 router.post("/:id/restore", restoreProject);
-router.post("/:id/duplicate", requireRole("head", "admin"), duplicateProject);
+router.post("/:id/duplicate", duplicateProject);
 
 // Members
 router.get("/:id/members/assignable", listAssignableMembers);

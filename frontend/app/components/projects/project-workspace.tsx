@@ -282,18 +282,14 @@ export function ProjectWorkspace() {
       icon={LuFolderKanban}
       title="No projects yet"
       description={
-        isHeadOrAdmin
-          ? "Create your first project, add the team and start tracking work and time."
-          : "Projects you're a member of will show up here."
+        "Create your first project, add the team and start tracking work and time."
       }
       className="border-0"
     >
-      {isHeadOrAdmin && (
-        <Button onClick={() => setCreateOpen(true)}>
-          <LuPlus aria-hidden />
-          Add project
-        </Button>
-      )}
+      <Button onClick={() => setCreateOpen(true)}>
+        <LuPlus aria-hidden />
+        Add project
+      </Button>
     </EmptyState>
   );
 
@@ -308,12 +304,10 @@ export function ProjectWorkspace() {
         <DataTableToolbar
           actions={
             <>
-              {isHeadOrAdmin && (
-                <Button onClick={() => setCreateOpen(true)}>
-                  <LuPlus aria-hidden />
-                  Add project
-                </Button>
-              )}
+              <Button onClick={() => setCreateOpen(true)}>
+                <LuPlus aria-hidden />
+                Add project
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => exportCsv()}

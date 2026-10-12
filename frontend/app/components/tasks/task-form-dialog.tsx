@@ -23,6 +23,19 @@ import {
 } from "@/components/globals/multi-select";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
 import { ReworkTaskPicker, type ReworkTaskOption } from "@/components/tasks/rework-panel";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
+
+interface ProjectOption {
+  value: string;
+  label: string;
+}
 import { TaskWorkSections, type WorkTab } from "@/components/tasks/task-work-sections";
 import { EstimateField } from "@/components/tasks/estimate-field";
 import { LabelColorDot } from "@/components/tasks/label-chip";
@@ -650,6 +663,7 @@ export function TaskFormDialog({
                   )}
                 </fieldset>
   ) : null;
+  const projectOptions: ProjectOption[] = Object.entries(projectItems).map(([value, label]) => ({ value, label }));
   // Rework tasks name the original task (same project); shown in its Rework tab.
   const reworkField =
     !task && form.iteration === "rework" ? (
@@ -808,38 +822,38 @@ export function TaskFormDialog({
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="task-project">Project<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
-                  <Select
-                    value={projectItems[form.project] ? form.project : null}
-                    onValueChange={(value) =>
+                  {/* Searchable: type part of the code or name. */}
+                  <Combobox
+                    items={projectOptions}
+                    value={projectOptions.find((o) => o.value === form.project) ?? null}
+                    onValueChange={(option: ProjectOption | null) =>
                       setForm((current) => ({
                         ...current,
-                        project: String(value ?? NO_PROJECT),
+                        project: option?.value ?? NO_PROJECT,
                         milestone: NO_MILESTONE,
                         reworkOf: "",
                       }))
                     }
-                    items={projectItems}
+                    isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}
                     disabled={Boolean(defaultProjectId) && !isEdit}
                   >
-                    <SelectTrigger
+                    <ComboboxInput
                       id="task-project"
                       className="w-full"
+                      placeholder={projects.isPending ? "Loading…" : "Search projects by code or name…"}
                       aria-invalid={projectInvalid || undefined}
-                    >
-                      <SelectValue
-                        placeholder={
-                          projects.isPending ? "Loading…" : "Choose a project"
-                        }
-                      />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(projectItems).map(([value, label]) => (
-                        <SelectItem key={value} value={value}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No projects found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(option: ProjectOption) => (
+                          <ComboboxItem key={option.value} value={option}>
+                            {option.label}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
                   {projectInvalid && (
                     <p className="text-xs text-destructive">
                       Every task belongs to a project — choose one.
