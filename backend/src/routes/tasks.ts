@@ -62,7 +62,8 @@ router.get("/subtasks/mine", mySubtasks);
 router.get("/created", requireRole("head", "admin"), createdTasks);
 
 // Head/admin: users the caller may assign (head: own department).
-router.get("/assignable-users", requireRole("head", "admin"), assignableUsers);
+// People pickers (task assignees, project team, report filters): any signed-in user.
+router.get("/assignable-users", assignableUsers);
 
 // Any authenticated user: lean month/week calendar rows (?from&to + list filters, max 500).
 router.get("/calendar", calendarTasks);

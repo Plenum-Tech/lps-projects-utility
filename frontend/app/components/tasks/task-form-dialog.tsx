@@ -246,7 +246,7 @@ export function TaskFormDialog({
   const isHeadOrAdmin = isAdmin || me?.role === "head";
   const createTask = useCreateTask();
   const updateTask = useUpdateTask();
-  const assignable = useAssignableUsers(open && isHeadOrAdmin);
+  const assignable = useAssignableUsers(open);
   const labels = useTaskLabels();
   const categories = useTaskCategories();
   const projects = useProjectOptions(open);
@@ -314,7 +314,7 @@ export function TaskFormDialog({
     }
     for (const member of projectDetail.data?.project.members ?? [])
       add(member.user);
-    if (isHeadOrAdmin) for (const user of assignable.data ?? []) add(user);
+    for (const user of assignable.data ?? []) add(user);
     return [...people.values()];
   }, [me, projectDetail.data, assignable.data, form.assignees, isHeadOrAdmin]);
 
@@ -337,7 +337,7 @@ export function TaskFormDialog({
           description: `${member.user.email} · Member`,
         });
       }
-      if (projectDetail.data?.permissions.canManageMembers) {
+      if (projectDetail.data?.permissions.canManageMembers || projectDetail.data?.permissions.canCreateTasks) {
         for (const user of assignable.data ?? []) {
           if (!options.has(user._id)) {
             options.set(user._id, {

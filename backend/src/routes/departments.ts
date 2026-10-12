@@ -21,7 +21,8 @@ router.get("/mine", myDepartment);
 
 // Admin-only: CRUD + employee assignment.
 router.post("/", requireRole("admin"), createDepartment);
-router.get("/", requireRole("admin"), listDepartments);
+// The list (names) is read by report filters and pickers: any signed-in user.
+router.get("/", listDepartments);
 router.get("/:id", requireRole("admin"), getDepartment);
 router.patch("/:id", requireRole("admin"), updateDepartment);
 router.delete("/:id", requireRole("admin"), deleteDepartment);

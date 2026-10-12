@@ -181,7 +181,7 @@ export function ProjectWorkspace() {
   const brands = useBrands(false, Boolean(user));
   const projectTypes = useProjectTypes(Boolean(user));
   const typeLabel = filters.type === "none" ? "Legacy names" : filters.type;
-  const people = useAssignableUsers(Boolean(user) && isHeadOrAdmin);
+  const people = useAssignableUsers(Boolean(user));
 
   const selection = useRowSelection();
   const { clear: clearSelection } = selection;

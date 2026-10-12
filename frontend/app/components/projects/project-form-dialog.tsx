@@ -189,7 +189,7 @@ export function ProjectFormDialog({
   const statuses = useProjectStatuses();
   const categories = useProjectCategories();
   // Employees (project managers editing) get 403 here — only fetch for head/admin.
-  const assignable = useAssignableUsers(open && isHeadOrAdmin);
+  const assignable = useAssignableUsers(open);
 
   const brands = useBrands(false, open);
   const types = useProjectTypes(open);
@@ -496,7 +496,7 @@ export function ProjectFormDialog({
       input.departments = form.departments;
     }
     if (form.manager !== original.manager) input.manager = manager;
-    if (isHeadOrAdmin && !sameTeam(form.team, original.team)) input.team = teamToInput(form.team);
+    if (!sameTeam(form.team, original.team)) input.team = teamToInput(form.team);
     if (form.progressMode !== original.progressMode)
       input.progressMode = form.progressMode;
     if (form.progressMode === "manual" && form.progress !== original.progress) {
@@ -800,21 +800,19 @@ export function ProjectFormDialog({
 
           </div>
 
-          {isHeadOrAdmin && (
-            <ProjectTeamFields
-              value={form.team}
-              onChange={(team) => set("team", team)}
-              options={memberOptions}
-              loading={assignable.isPending}
-              naming={{
-                brand: form.brand === NONE ? "" : form.brand,
-                month: form.month,
-                type: form.type,
-                title,
-              }}
-              enabled={open}
-            />
-          )}
+          <ProjectTeamFields
+            value={form.team}
+            onChange={(team) => set("team", team)}
+            options={memberOptions}
+            loading={assignable.isPending}
+            naming={{
+              brand: form.brand === NONE ? "" : form.brand,
+              month: form.month,
+              type: form.type,
+              title,
+            }}
+            enabled={open}
+          />
 
           <Separator />
 

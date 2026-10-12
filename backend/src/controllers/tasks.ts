@@ -300,7 +300,7 @@ async function resolveMilestone(raw: unknown, project: IProject | null): Promise
 
 /**
  * Project tasks may only be assigned to project members. Non-members are
- * auto-added when the actor can manage the project; otherwise 400.
+ * auto-added when the actor can manage the project or add tasks to it; otherwise 400.
  * Returns the users that were added as members.
  */
 async function ensureProjectMembers(
@@ -311,7 +311,8 @@ async function ensureProjectMembers(
 ): Promise<IUser[] | Invalid> {
   const outsiders = assignees.filter((u) => !isProjectMember(u, project));
   if (outsiders.length === 0) return [];
-  if (!canManageProject(actor, project)) {
+  // Anyone who may add tasks to the project may bring a colleague in as an assignee.
+  if (!canManageProject(actor, project) && !canCreateProjectTasks(actor, project)) {
     return {
       status: 400,
       error: `${outsiders.map((u) => u.name).join(", ")} ${outsiders.length === 1 ? "is" : "are"} not a member of this project`,
@@ -2275,14 +2276,9 @@ export async function assignableUsers(req: Request, res: Response): Promise<void
   const { limit, offset } = parsePagination(req);
   const search = searchRegex(req.query.search);
 
+  // Everyone can pick from the whole company (project tasks add the assignee to the project).
+  void user;
   const filter: Record<string, unknown> = {};
-  if (user.role === "head") {
-    if (!user.department) {
-      res.json({ users: [], total: 0, limit, offset });
-      return;
-    }
-    filter.department = user.department;
-  }
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }
