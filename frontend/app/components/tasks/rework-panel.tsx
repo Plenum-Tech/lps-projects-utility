@@ -44,8 +44,11 @@ export function ReworkTaskPicker({
   onChange,
   initial,
   invalid,
+  requireProject = false,
 }: {
   id: string;
+  /** Pick the project first: no tasks until one is chosen. */
+  requireProject?: boolean;
   projectId: string | null;
   value: string;
   onChange: (value: string, option: ReworkTaskOption | null) => void;
@@ -73,6 +76,7 @@ export function ReworkTaskPicker({
       ).data.tasks,
     staleTime: 30_000,
     placeholderData: (previous) => previous,
+    enabled: !requireProject || Boolean(projectId),
   });
   const options = useMemo<ReworkTaskOption[]>(() => {
     const list: ReworkTaskOption[] = (tasks.data ?? []).map((t) => ({
@@ -96,10 +100,17 @@ export function ReworkTaskPicker({
         if (!selected || text !== selected.label) setTyped(text);
       }}
       isItemEqualToValue={(a: ReworkTaskOption, b: ReworkTaskOption) => a.value === b.value}
+      disabled={requireProject && !projectId}
     >
       <ComboboxInput
         id={id}
-        placeholder={tasks.isPending ? "Loading tasks…" : "Search tasks by code or name…"}
+        placeholder={
+          requireProject && !projectId
+            ? "Choose the project first"
+            : tasks.isPending
+              ? "Loading tasks…"
+              : "Search the project's tasks by code or name…"
+        }
         aria-invalid={invalid || undefined}
         className="w-full"
       />

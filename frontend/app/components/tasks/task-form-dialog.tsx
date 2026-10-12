@@ -687,24 +687,56 @@ export function TaskFormDialog({
   // Rework tasks name the original task (same project); shown in its Rework tab.
   const reworkField =
     !task && form.iteration === "rework" ? (
+      <div className="space-y-4">
+      <div className="space-y-1.5">
+        <Label htmlFor="task-rework-project">
+          Project<span aria-hidden className="ml-0.5 text-destructive">*</span>
+        </Label>
+        <Combobox
+          items={projectOptions}
+          value={projectOptions.find((o) => o.value === form.project) ?? null}
+          onValueChange={(option: ProjectOption | null) =>
+            setForm((current) => ({
+              ...current,
+              project: option?.value ?? NO_PROJECT,
+              milestone: NO_MILESTONE,
+              // A new project means a new list of tasks.
+              reworkOf: option?.value === current.project ? current.reworkOf : "",
+            }))
+          }
+          filter={matchesProject}
+          isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}
+          disabled={Boolean(defaultReworkOf)}
+        >
+          <ComboboxInput
+            id="task-rework-project"
+            className="w-full"
+            placeholder={projects.isPending ? "Loading…" : "Search projects by name…"}
+            aria-invalid={projectInvalid || undefined}
+          />
+          <ComboboxContent>
+            <ComboboxEmpty>No projects found.</ComboboxEmpty>
+            <ComboboxList>
+              {(option: ProjectOption) => (
+                <ComboboxItem key={option.value} value={option}>
+                  {option.label}
+                </ComboboxItem>
+              )}
+            </ComboboxList>
+          </ComboboxContent>
+        </Combobox>
+        {projectInvalid && <p className="text-xs text-destructive">Choose the project first.</p>}
+      </div>
       <div className="space-y-1.5">
         <Label htmlFor="task-rework-of">
           Task to rework<span aria-hidden className="ml-0.5 text-destructive">*</span>
         </Label>
         <ReworkTaskPicker
           id="task-rework-of"
-          projectId={defaultReworkOf ? projectId : null}
+          requireProject
+          projectId={projectId}
           value={form.reworkOf}
-          onChange={(value, option) =>
-            setForm((current) => ({
-              ...current,
-              reworkOf: value,
-              // The project comes from the chosen task.
-              ...(option?.projectId && option.projectId !== current.project
-                ? { project: option.projectId, milestone: NO_MILESTONE }
-                : {}),
-            }))
-          }
+          onChange={(value) => set("reworkOf", value)}
           initial={defaultReworkOf}
           invalid={submitted && reworkMissing}
         />
@@ -718,6 +750,7 @@ export function TaskFormDialog({
           The rework is a new task in the same project, named after the original with a version (R1, R2 …),
           and appears in the original task&apos;s Rework tab.
         </p>
+      </div>
       </div>
     ) : null;
 
