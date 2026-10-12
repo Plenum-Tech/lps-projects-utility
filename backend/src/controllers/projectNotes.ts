@@ -61,6 +61,8 @@ function notifyNote(project: IProject, note: IProjectNote, actor: IUser, recipie
   const projectId = project._id as mongoose.Types.ObjectId;
   notifyUsers({
     recipients,
+    // Email people the note was shared with and the project's owners; members see it in the bell.
+    emailOnly: [...note.sharedWith, ...(project.manager ? [project.manager] : []), project.createdBy],
     actor,
     type: "project_note",
     title: "New project note",

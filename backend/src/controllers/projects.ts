@@ -1483,14 +1483,15 @@ export async function applyProjectStatus(
     ip,
   });
 
-  // Manager, members and admins (Worksuite skipped admins) — never the actor.
-  const admins = await User.find({ role: "admin" }).select("_id").lean();
+  // The project's people only (never the actor). Members see it in the bell;
+  // only the manager and the creator are emailed.
   notifyUsers({
     recipients: [
       ...(project.manager ? [project.manager] : []),
+      project.createdBy,
       ...project.members.map((m) => m.user),
-      ...admins.map((a) => a._id),
     ],
+    emailOnly: [...(project.manager ? [project.manager] : []), project.createdBy],
     actor,
     type: "project_status_changed",
     title: "Project status changed",

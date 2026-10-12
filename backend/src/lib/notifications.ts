@@ -361,6 +361,11 @@ export interface UsersNotifyParams {
   project?: mongoose.Types.ObjectId | null;
   /** In-app only: no emails (bulk imports with "Send assignment emails" off). */
   skipEmail?: boolean;
+  /**
+   * Email only these people (everyone in `recipients` still gets the in-app
+   * notification). Keeps project-wide events from emailing every member.
+   */
+  emailOnly?: Array<mongoose.Types.ObjectId | string>;
   email: {
     subject: string;
     heading: string;
@@ -404,7 +409,9 @@ export async function notifyUsersAsync(params: UsersNotifyParams): Promise<numbe
   }
   if (params.skipEmail) return users.length;
 
+  const emailOnly = params.emailOnly ? new Set(params.emailOnly.map((id) => id.toString())) : null;
   const emails = users
+    .filter((user) => !emailOnly || emailOnly.has(user._id.toString()))
     .filter((user) => user.email && wantsEmail(user.emailPreferences, params.type))
     .map((user) => ({
       to: user.email,

@@ -110,6 +110,8 @@ export async function uploadProjectFiles(req: Request, res: Response): Promise<v
   const names = created.map((f) => f.filename);
   notifyUsers({
     recipients: [...(project.manager ? [project.manager] : []), ...project.members.map((m) => m.user)],
+    // Members see it in the bell; only the manager and the creator are emailed.
+    emailOnly: [...(project.manager ? [project.manager] : []), project.createdBy],
     actor: user,
     type: "project_file",
     title: "New project file",
