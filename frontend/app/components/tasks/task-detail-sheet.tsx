@@ -28,7 +28,6 @@ import {
   PearityGenerateButton,
   PearityTagSection,
 } from "@/components/tasks/pearity";
-import { TimeLogPanel } from "@/components/timelogs/time-log-panel";
 import {
   DeleteTaskDialog,
   ReviewTaskDialog,
@@ -40,13 +39,10 @@ import {
   StatusBadge,
   UserAvatar,
 } from "@/components/tasks/task-badges";
-import { TaskComments } from "@/components/tasks/task-comments";
-import { TaskFiles } from "@/components/tasks/task-files";
 import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
-import { TaskHistory } from "@/components/tasks/task-history";
-import { TaskNotes } from "@/components/tasks/task-notes";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
 import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
+import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -65,7 +61,6 @@ import {
 } from "@/components/ui/sheet";
 import { PageDrawerContent } from "@/components/globals/page-drawer";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useRemindTask, useTask, useUpdateTaskStatus } from "@/hooks/use-tasks";
 import { getErrorMessage } from "@/lib/api";
 import { formatTimestamp } from "@/lib/meetings";
@@ -176,14 +171,18 @@ function TaskDetail({
   subtaskId: string | null;
   initialTab: TabValue;
 }) {
-  const [tab, setTab] = useState<TabValue>(initialTab);
-  // Follow later deep links (e.g. a notification click while the sheet is open).
-  useEffect(() => {
-    setTab(initialTab);
-  }, [initialTab, subtaskId]);
   const [dialog, setDialog] = useState<
-    "edit" | "submit" | "review" | "delete" | "rework" | null
+    "edit" | "update" | "submit" | "review" | "delete" | "rework" | null
   >(null);
+  // Comments, files and time live in Edit (editors) / Update (others).
+  const workTab: WorkTab | undefined =
+    initialTab === "comments" || initialTab === "files" || initialTab === "time" ? initialTab : undefined;
+  const isWorker = task.assignees.some((a) => a._id === me._id);
+  const canWork = !permissions.readOnly && (permissions.canEdit || Boolean(permissions.canLogTime) || isWorker);
+  useEffect(() => {
+    // Links to ?tab=comments|files|time open the form on that section.
+    if (workTab && canWork) setDialog(permissions.canEdit ? "edit" : "update");
+  }, [workTab]); // eslint-disable-line react-hooks/exhaustive-deps
   const updateStatus = useUpdateTaskStatus();
   const remind = useRemindTask();
 
@@ -193,7 +192,6 @@ function TaskDetail({
   const canReviewNow = permissions.canReview && task.status === "in_review";
   // Rework is a new task in the same project, so it needs task-create rights there.
   const canAddRework = Boolean(task.project) && !permissions.readOnly && Boolean(permissions.canDuplicate);
-  const doneSubtasks = task.subtasks.filter((sub) => sub.done).length;
 
   return (
     <>
@@ -322,7 +320,7 @@ function TaskDetail({
                 Add rework
               </Button>
             )}
-            {permissions.canEdit && (
+            {permissions.canEdit ? (
               <Button
                 variant="outline"
                 size="sm"
@@ -331,6 +329,13 @@ function TaskDetail({
                 <LuPencil aria-hidden />
                 Edit
               </Button>
+            ) : (
+              canWork && (
+                <Button variant="outline" size="sm" onClick={() => setDialog("update")}>
+                  <LuPencil aria-hidden />
+                  Update
+                </Button>
+              )
             )}
             {permissions.canRemind && (
               <Button
@@ -567,88 +572,32 @@ function TaskDetail({
           </div>
         </section>
 
-        <section className="rounded-xl border bg-card p-4 shadow-xs sm:p-6">
-          <Tabs
-            value={tab}
-            onValueChange={(value) => setTab(value as TabValue)}
-          >
-            <TabsList className="no-scrollbar w-full justify-start overflow-x-auto sm:justify-center">
-              <TabsTrigger value="subtasks">
-                Rework
-                {task.subtasks.length > 0 && (
-                  <Count>
-                    {doneSubtasks}/{task.subtasks.length}
-                  </Count>
-                )}
-              </TabsTrigger>
-              <TabsTrigger value="comments">
-                Comments
-                {task.commentCount > 0 && <Count>{task.commentCount}</Count>}
-              </TabsTrigger>
-              <TabsTrigger value="notes">Notes</TabsTrigger>
-              <TabsTrigger value="files">
-                Files
-                {task.fileCount > 0 && <Count>{task.fileCount}</Count>}
-              </TabsTrigger>
-              {task.project && <TabsTrigger value="time">Time</TabsTrigger>}
-              <TabsTrigger value="history">History</TabsTrigger>
-            </TabsList>
-            <TabsContent value="subtasks" className="pt-3">
-              <div className="space-y-4">
-                <ReworkHistory
-                  taskId={task._id}
-                  onAdd={canAddRework ? () => setDialog("rework") : undefined}
-                />
-                {/* Rework items added inside the task before rework became its own task. */}
-                {task.subtasks.length > 0 && (
-                  <TaskSubtasks
-                    task={task}
-                    permissions={permissions}
-                    me={me}
-                    focusSubtaskId={subtaskId}
-                    legacyOnly
-                  />
-                )}
-              </div>
-            </TabsContent>
-            <TabsContent value="comments" className="pt-3">
-              <TaskComments taskId={task._id} me={me} />
-            </TabsContent>
-            <TabsContent value="notes" className="pt-3">
-              <TaskNotes
-                taskId={task._id}
-                me={me}
-                readOnly={permissions.readOnly}
-              />
-            </TabsContent>
-            <TabsContent value="files" className="pt-3">
-              <TaskFiles
-                taskId={task._id}
-                me={me}
-                canManageAll={permissions.canDelete || me.role === "admin"}
-                subtasks={task.subtasks}
-              />
-            </TabsContent>
-            {task.project && (
-              <TabsContent value="time" className="pt-3">
-                <TimeLogPanel
-                  taskId={task._id}
-                  canLogTime={Boolean(permissions.canLogTime)}
-                  manualAllowed
-                />
-              </TabsContent>
-            )}
-            <TabsContent value="history" className="pt-3">
-              <TaskHistory taskId={task._id} />
-            </TabsContent>
-          </Tabs>
+        {/* Below the task: only its rework history. Comments, files and time are in Edit / Update. */}
+        <section className="space-y-4 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
+          <ReworkHistory
+            taskId={task._id}
+            onAdd={canAddRework ? () => setDialog("rework") : undefined}
+          />
+          {/* Rework items added inside the task before rework became its own task. */}
+          {task.subtasks.length > 0 && (
+            <TaskSubtasks
+              task={task}
+              permissions={permissions}
+              me={me}
+              focusSubtaskId={subtaskId}
+              legacyOnly
+            />
+          )}
         </section>
       </div>
 
       <TaskFormDialog
-        open={dialog === "edit"}
-        onOpenChange={(open) => setDialog(open ? "edit" : null)}
+        open={dialog === "edit" || dialog === "update"}
+        onOpenChange={(open) => setDialog(open ? (permissions.canEdit ? "edit" : "update") : null)}
         task={task}
+        permissions={permissions}
+        workOnly={dialog === "update"}
+        initialWorkTab={workTab}
       />
       {task.project && (
         <TaskFormDialog
@@ -695,14 +644,6 @@ function Fact({
       </dt>
       <dd className="text-foreground">{children}</dd>
     </div>
-  );
-}
-
-function Count({ children }: { children: ReactNode }) {
-  return (
-    <span className="rounded-full bg-muted px-1.5 text-[0.7rem] text-muted-foreground tabular-nums">
-      {children}
-    </span>
   );
 }
 

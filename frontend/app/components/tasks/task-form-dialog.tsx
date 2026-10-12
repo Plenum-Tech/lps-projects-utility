@@ -23,6 +23,7 @@ import {
 } from "@/components/globals/multi-select";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
 import { ReworkTaskPicker, type ReworkTaskOption } from "@/components/tasks/rework-panel";
+import { TaskWorkSections, type WorkTab } from "@/components/tasks/task-work-sections";
 import { EstimateField } from "@/components/tasks/estimate-field";
 import { LabelColorDot } from "@/components/tasks/label-chip";
 import {
@@ -88,6 +89,7 @@ import type {
   RecurrenceInput,
   Task,
   TaskInput,
+  TaskPermissions,
   TaskPriority,
   TaskUpdateInput,
   UserRef,
@@ -195,6 +197,9 @@ export function TaskFormDialog({
   defaultProjectId,
   defaultIteration,
   defaultReworkOf,
+  permissions,
+  workOnly = false,
+  initialWorkTab,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -207,6 +212,12 @@ export function TaskFormDialog({
   defaultIteration?: TaskIteration;
   /** Create mode: the original task a rework is for (pre-selected). */
   defaultReworkOf?: ReworkTaskOption | null;
+  /** Edit mode: the task's permissions — shows its comments, files and time below the form. */
+  permissions?: TaskPermissions;
+  /** Assignees who can't edit the task: only comments, files and time. */
+  workOnly?: boolean;
+  /** Which of comments / files / time to open first. */
+  initialWorkTab?: WorkTab;
 }) {
   const isEdit = Boolean(task);
   const { data: me } = useCurrentUser();
@@ -672,12 +683,15 @@ export function TaskFormDialog({
               {isEdit ? "Update Task" : "Add Task"}
             </SheetTitle>
             <SheetDescription>
-              {isEdit
-                ? "Update the details. Newly added assignees are notified."
-                : "Assign work to one or more people. Everyone assigned gets notified."}
+              {workOnly
+                ? `${task?.title ?? ""} — add comments, files and time.`
+                : isEdit
+                  ? "Update the details, comments, files and time. Newly added assignees are notified."
+                  : "Assign work to one or more people. Everyone assigned gets notified."}
             </SheetDescription>
           </SheetHeader>
 
+          {!workOnly && (
           <PageDrawerCard title="Task Info">
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               {controlledName ? (
@@ -1078,6 +1092,15 @@ export function TaskFormDialog({
               </div>
             </form>
           </PageDrawerCard>
+          )}
+          {task && permissions && me && (
+            <TaskWorkSections
+              task={task}
+              permissions={permissions}
+              me={{ _id: me._id, role: me.role }}
+              initialTab={initialWorkTab}
+            />
+          )}
         </div>
       </PageDrawerContent>
     </Sheet>
