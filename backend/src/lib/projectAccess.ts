@@ -88,9 +88,9 @@ export function canCreateProject(user: AccessUser): boolean {
   return user.role === "admin" || (user.role === "head" && Boolean(user.department));
 }
 
-/** Create tasks in the project: admin, managers, and heads who can view it. */
+/** Create tasks in the project: admin, managers, members, and heads who can view it. */
 export function canCreateProjectTasks(user: AccessUser, project: AccessProject): boolean {
-  if (canManageProject(user, project)) return true;
+  if (canManageProject(user, project) || isProjectMember(user, project)) return true;
   return user.role === "head" && canViewProject(user, project);
 }
 

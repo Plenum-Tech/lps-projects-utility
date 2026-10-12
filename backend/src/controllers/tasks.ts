@@ -1128,7 +1128,7 @@ export async function createTaskCore(
   if (isInvalid(iteration)) return iteration;
   const title = titleParts ? composeTaskTitle(titleParts) : body.title;
 
-  // Project tasks: admins, heads and the project manager. Standalone tasks: heads/admins.
+  // Project tasks: admins, heads, the project manager and members. Standalone tasks: heads/admins.
   let project: IProject | null = null;
   if (body.project !== undefined && body.project !== null && body.project !== "") {
     const resolved = await resolveTaskProject(actor, body.project);

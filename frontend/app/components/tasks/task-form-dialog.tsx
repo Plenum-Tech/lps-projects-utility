@@ -330,7 +330,7 @@ export function TaskFormDialog({
   }, [assignable.data, task, projectId, projectDetail.data]);
 
   // Projects the caller may add tasks to: heads/admins → any visible project,
-  // employees → projects they manage. Archived / completed ones are excluded.
+  // employees → projects they manage or are a member of. Archived / completed ones are excluded.
   const projectChoices = useMemo(
     () =>
       (projects.data ?? []).filter(
@@ -339,7 +339,9 @@ export function TaskFormDialog({
           !project.status.isCompleted &&
           !project.expired &&
           (!project.approval || project.approval.status === "approved") &&
-          (isHeadOrAdmin || project.manager?._id === me?._id),
+          (isHeadOrAdmin ||
+            project.manager?._id === me?._id ||
+            project.members.some((member) => member.user?._id === me?._id)),
       ),
     [projects.data, isHeadOrAdmin, me?._id],
   );
