@@ -1314,6 +1314,29 @@ export function useDeleteTaskFile(taskId: string) {
   });
 }
 
+/**
+ * Opens an attachment for viewing in a new tab (images, PDFs and text show in
+ * the browser; other types download). The tab is opened first so the click
+ * isn't treated as a pop-up.
+ */
+export async function viewTaskFile(taskId: string, file: TaskFile): Promise<void> {
+  const tab = window.open("", "_blank");
+  try {
+    const response = await api.get<Blob>(`/tasks/${taskId}/files/${file._id}`, {
+      responseType: "blob",
+      timeout: 120_000,
+    });
+    const type = file.mimeType || response.data.type || "application/octet-stream";
+    const url = URL.createObjectURL(new Blob([response.data], { type }));
+    if (tab) tab.location.href = url;
+    else window.open(url, "_blank");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (error) {
+    tab?.close();
+    throw error;
+  }
+}
+
 /** Downloads an attachment through the authenticated API (cookie auth). */
 export async function downloadTaskFile(
   taskId: string,

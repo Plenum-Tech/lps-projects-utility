@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   downloadTaskFile,
+  viewTaskFile,
   useDeleteTaskFile,
   useTaskFiles,
   useUploadTaskFiles,
@@ -288,9 +289,15 @@ export function FileRow({
         <Icon aria-hidden className="size-4" />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-foreground" title={file.filename}>
+        {/* Click the name to view the file in a new tab. */}
+        <button
+          type="button"
+          onClick={() => void viewTaskFile(taskId, file).catch((error) => toast.error(getErrorMessage(error)))}
+          className="block max-w-full truncate text-left text-sm font-medium text-foreground underline-offset-2 hover:text-primary hover:underline"
+          title={`View ${file.filename}`}
+        >
           {file.filename}
-        </p>
+        </button>
         <p className="truncate text-xs text-muted-foreground">
           {formatFileSize(file.size)} · {file.uploadedBy?.name ?? "Unknown"} ·{" "}
           {formatDistanceToNow(new Date(file.createdAt), { addSuffix: true })}

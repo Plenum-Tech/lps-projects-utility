@@ -1,3 +1,4 @@
+import { CompletionSummary } from "@/components/tasks/completion-summary";
 import { RichText } from "@/components/globals/rich-text";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
@@ -566,15 +567,11 @@ function TaskDetail({
               </section>
             )}
 
-            {(task.submissionNotes || task.reviewNotes) && (
+            {/* What was entered when the task was completed. */}
+            <CompletionSummary task={task} />
+
+            {task.reviewNotes && (
               <div className="grid gap-3">
-                {task.submissionNotes && (
-                  <Callout
-                    title={`Submission notes${task.submittedAt ? ` · ${formatDistanceToNow(new Date(task.submittedAt), { addSuffix: true })}` : ""}`}
-                  >
-                    {task.submissionNotes}
-                  </Callout>
-                )}
                 {task.reviewNotes && (
                   <Callout
                     tone={

@@ -1627,7 +1627,12 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   const now = new Date();
   task.status = skipReview ? "completed" : "in_review";
   task.submittedAt = now;
-  if (skipReview) task.completedAt = now;
+  if (skipReview) {
+    task.completedAt = now;
+    // Who completed it (shown in the task's Completion box).
+    task.reviewedAt = now;
+    task.reviewedBy = user._id as mongoose.Types.ObjectId;
+  }
   await applyAutoActualDates(task, previousStatus, task.status, now);
   await task.save();
   if (skipReview) void syncActualDatesFromLogs(task._id as mongoose.Types.ObjectId);
