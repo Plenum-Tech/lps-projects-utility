@@ -15,6 +15,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toast";
 import { createQueryClient } from "./lib/query-client";
 import { PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_SHORT_NAME } from "./lib/brand";
+import { THEME_BOOT_SCRIPT } from "./lib/theme";
 
 export const links: Route.LinksFunction = () => [
   { rel: "icon", href: "/favicon.ico", sizes: "48x48" },
@@ -41,9 +42,11 @@ export const meta: Route.MetaFunction = () => [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
+        {/* Apply the saved colour theme before the first paint (lib/theme.ts). */}
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <meta name="application-name" content={PRODUCT_SHORT_NAME} />
         <meta name="apple-mobile-web-app-title" content={PRODUCT_SHORT_NAME} />

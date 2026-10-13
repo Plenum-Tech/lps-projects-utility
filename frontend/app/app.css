@@ -13,11 +13,7 @@
 
 html,
 body {
-  @apply bg-white dark:bg-gray-950;
-
-  @media (prefers-color-scheme: dark) {
-    color-scheme: dark;
-  }
+  @apply bg-background text-foreground;
 }
 
 @theme inline {
@@ -159,6 +155,21 @@ body {
   --critical: oklch(0.71 0.18 25);
   --pulse-blue: oklch(0.7 0.15 255);
   --pulse-lime: oklch(0.86 0.2 130);
+}
+
+/* Black: the dark theme with pure-black surfaces (OLED-friendly). */
+.dark.black {
+  --background: oklch(0 0 0);
+  --card: oklch(0.155 0 0);
+  --popover: oklch(0.175 0 0);
+  --secondary: oklch(0.22 0 0);
+  --muted: oklch(0.22 0 0);
+  --accent: oklch(0.24 0 0);
+  --sidebar: oklch(0.09 0 0);
+  --sidebar-accent: oklch(0.2 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 16%);
+  --sidebar-border: oklch(1 0 0 / 12%);
 }
 
 @layer base {

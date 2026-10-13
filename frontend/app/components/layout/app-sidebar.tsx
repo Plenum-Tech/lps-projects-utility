@@ -31,6 +31,7 @@ import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
 import { BrandLogo, BrandMark, useBrand } from "@/components/layout/brand";
+import { ThemeMenu } from "@/components/layout/theme-menu";
 import { PRODUCT_NAME, PRODUCT_SHORT_NAME, PRODUCT_TAGLINE } from "@/lib/brand";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -329,6 +330,7 @@ export function AppSidebar() {
           </span>
           <span className="sr-only">— open profile settings</span>
         </Link>
+        <ThemeMenu />
         <Button
           variant="ghost"
           onClick={() => logout.mutate(undefined, { onSuccess: () => navigate("/") })}
