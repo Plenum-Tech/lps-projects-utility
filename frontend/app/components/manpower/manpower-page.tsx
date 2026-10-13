@@ -20,7 +20,7 @@ import { formatDateTime } from "@/lib/format";
 import { MANPOWER_ROLE_FALLBACK, newRowKey, shiftMonth } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { todayKey } from "@/lib/tasks";
-import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection, Role } from "@/types";
+import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/types";
 
 import { CellDialog, RowDialog } from "./plan-editors";
 import { PeopleView } from "./people-view";
@@ -67,16 +67,17 @@ interface Draft {
 
 /**
  * Manpower plan: all brands × roles for a month, each person's allocation
- * (clashes and availability), and the version history. Heads read; admins edit,
+ * (clashes and availability), and the version history. Admins and heads read; leadership and Nazeer edit,
  * and every save becomes a new version.
  */
-export function ManpowerPage({ role }: { role: Role }) {
-  const isAdmin = role === "admin";
+export function ManpowerPage() {
   const [params, setParams] = useSearchParams();
   const thisMonth = todayKey().slice(0, 7);
   const months = useManpowerMonths();
   const planMonths = months.data?.months ?? [];
   const roles = months.data?.roles ?? MANPOWER_ROLE_FALLBACK;
+  // Leadership and Nazeer change the plan; other admins and heads read it.
+  const canEdit = months.data?.canEdit === true;
 
   const month = /^\d{4}-\d{2}$/.test(params.get("month") ?? "")
     ? params.get("month")!
@@ -107,7 +108,7 @@ export function ManpowerPage({ role }: { role: Role }) {
 
   // Copy source for a month without a plan: the latest earlier month that has one.
   const copyFrom = planMonths.find((m) => m.month < month)?.month ?? null;
-  const copySource = useManpowerPlan(copyFrom ?? "", null, isAdmin && notFound && Boolean(copyFrom));
+  const copySource = useManpowerPlan(copyFrom ?? "", null, canEdit && notFound && Boolean(copyFrom));
 
   const [highlight, setHighlight] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -132,9 +133,9 @@ export function ManpowerPage({ role }: { role: Role }) {
   }, [draft?.dirty]);
 
   const editing = draft !== null;
-  const brands = useBrands(false, isAdmin && editing);
-  const types = useProjectTypes(isAdmin && editing);
-  const assignable = useAssignableUsers(isAdmin && editing);
+  const brands = useBrands(false, canEdit && editing);
+  const types = useProjectTypes(canEdit && editing);
+  const assignable = useAssignableUsers(canEdit && editing);
   const peopleOptions = useMemo<MultiSelectOption[]>(
     () =>
       (assignable.data ?? []).map((u) => ({
@@ -250,7 +251,7 @@ export function ManpowerPage({ role }: { role: Role }) {
                   </SelectContent>
                 </Select>
               )}
-              {isAdmin && data && (
+              {canEdit && data && (
                 <Button size="sm" onClick={() => startEdit(planRowsToTable(data), data.latestVersion, "edit")}>
                   <LuPencil aria-hidden />
                   {data.version === data.latestVersion ? "Edit plan" : "Edit from this version"}
@@ -319,14 +320,14 @@ export function ManpowerPage({ role }: { role: Role }) {
           icon={LuUsers}
           title={`No plan for ${namingMonthLabel(month)} yet`}
           description={
-            isAdmin
+            canEdit
               ? copyFrom
                 ? `Start from ${namingMonthLabel(copyFrom)}'s latest version and adjust, or start blank.`
                 : "Start a blank plan for this month."
-              : "An admin hasn't planned this month yet."
+              : "Leadership hasn't planned this month yet."
           }
         >
-          {isAdmin && (
+          {canEdit && (
             <div className="flex flex-wrap justify-center gap-2">
               {copyFrom && (
                 <Button

@@ -3640,6 +3640,8 @@ export interface ManpowerPersonAllocation {
 export interface ManpowerMonthsResponse {
   roles: ManpowerRoleDef[];
   limits: { maxRows: number; defaultMaxProjectsPerPerson: number; maxProjectsPerPersonMax: number };
+  /** Whether the signed-in user may change the plan (leadership and Nazeer). */
+  canEdit?: boolean;
   months: Array<{ month: string; latestVersion: number; versions: number; updatedAt: string }>;
 }
 

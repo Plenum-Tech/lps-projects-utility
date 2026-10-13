@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
+import { canEditManpower } from "../lib/manpowerAccess.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
@@ -18,7 +19,8 @@ import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 
 // /api/manpower — the manpower plan (replaces the planning Excel). Heads and
-// admins read it; only admins save, and every save writes a new version.
+// admins read it; leadership and Nazeer save (lib/manpowerAccess.ts), and
+// every save writes a new version.
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 
@@ -26,12 +28,13 @@ type Invalid = { status: number; error: string };
 const bad = (error: string, status = 400): Invalid => ({ status, error });
 
 /** GET /api/manpower — months with a plan, newest first, and the roles. */
-export async function listPlanMonths(_req: Request, res: Response): Promise<void> {
+export async function listPlanMonths(req: Request, res: Response): Promise<void> {
   const rows = await ManpowerPlan.aggregate<{ _id: string; latest: number; versions: number; updatedAt: Date }>([
     { $group: { _id: "$month", latest: { $max: "$version" }, versions: { $sum: 1 }, updatedAt: { $max: "$createdAt" } } },
     { $sort: { _id: -1 } },
   ]);
   res.json({
+    canEdit: canEditManpower(req.user!),
     roles: MANPOWER_ROLES,
     limits: MANPOWER_LIMITS,
     months: rows.map((r) => ({ month: r._id, latestVersion: r.latest, versions: r.versions, updatedAt: r.updatedAt })),

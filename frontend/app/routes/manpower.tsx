@@ -8,7 +8,7 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Manpower plan | LPS" }];
 }
 
-/** Heads and admins read the plan; admins edit it. */
+/** Heads and admins read the plan; leadership and Nazeer edit it. */
 export default function ManpowerRoute() {
   const { data: user } = useCurrentUser();
   if (!user) return null;
@@ -20,5 +20,5 @@ export default function ManpowerRoute() {
       />
     );
   }
-  return <ManpowerPage role={user.role} />;
+  return <ManpowerPage />;
 }
