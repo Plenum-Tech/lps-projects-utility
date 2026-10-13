@@ -58,6 +58,18 @@ export function rangeDays(start: string, end: string): number {
   return Math.round((day(b) - day(a)) / 86_400_000) + 1;
 }
 
+/** Working days (Mon–Fri) in the range; Saturday and Sunday aren't counted. */
+export function rangeWorkdays(start: string, end: string): number {
+  const days = rangeDays(start, end);
+  const first = new Date(start);
+  let count = 0;
+  for (let i = 0; i < days; i++) {
+    const d = new Date(first.getFullYear(), first.getMonth(), first.getDate() + i);
+    if (d.getDay() !== 0 && d.getDay() !== 6) count++;
+  }
+  return count;
+}
+
 function rangeMinutes(start: string, end: string): number {
   const diff = (new Date(end).getTime() - new Date(start).getTime()) / 60000;
   return Number.isFinite(diff) && diff > 0 ? diff : 0;
@@ -122,7 +134,8 @@ export function ManualTimeLogDialog({
   const rangeError = submitted ? validateTimeRange(start, end, true) : null;
   // Several dates: 8 h per date (one entry each); one date: the time entered.
   const days = rangeDays(start, end);
-  const minutes = days > 1 ? days * 8 * 60 : rangeMinutes(start, end);
+  const workdays = rangeWorkdays(start, end);
+  const minutes = days > 1 ? workdays * 8 * 60 : rangeMinutes(start, end);
 
   const userItems: Record<string, string> = { [ME]: "Myself" };
   for (const user of assignable.data ?? []) {
@@ -151,8 +164,8 @@ export function ManualTimeLogDialog({
         <DialogHeader>
           <DialogTitle>Log time</DialogTitle>
           <DialogDescription>
-            Add time you worked without the timer. Across several dates it counts 8 hours per date; within one day it
-            logs exactly the time entered.
+            Add time you worked without the timer. Across several dates it counts 8 hours per working day (Saturday
+            and Sunday skipped); within one day it logs exactly the time entered.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
@@ -229,7 +242,8 @@ export function ManualTimeLogDialog({
           ) : (
             <p id="manual-log-duration" className="-mt-2 text-xs text-muted-foreground">
               Duration: <span className="tabular-nums">{formatMinutes(minutes)}</span>
-              {days > 1 && ` — ${days} days × 8 h, logged as one entry per day`}
+              {days > 1 &&
+                ` — ${workdays} working day${workdays === 1 ? "" : "s"} × 8 h (Saturday and Sunday skipped), one entry per day`}
             </p>
           )}
 
