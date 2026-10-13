@@ -44,6 +44,7 @@ import {
 import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
 import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
+import { PearityJourney } from "@/components/tasks/task-history";
 import { TaskTimerAction } from "@/components/tasks/task-timer-button";
 import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -587,7 +588,10 @@ function TaskDetail({
           </div>
         </section>
 
-        {/* Below the task: only its rework history. Comments, files and time are in Edit / Update. */}
+        {/* Pearity generation / DAM / review steps (only when there are any). */}
+        <PearityJourney taskId={task._id} />
+
+        {/* Below the task: its rework history. Comments, files and time are in Edit / Update. */}
         <section className="space-y-4 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
           <ReworkHistory
             taskId={task._id}

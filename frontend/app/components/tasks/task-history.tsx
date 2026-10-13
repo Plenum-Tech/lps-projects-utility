@@ -19,6 +19,7 @@ import {
   LuPencil,
   LuRefreshCw,
   LuSend,
+  LuExternalLink,
   LuSparkles,
   LuTrash2,
   LuUsers,
@@ -217,6 +218,90 @@ function describe(entry: TaskHistoryEntry): string {
   }
 }
 
+/** A safe http(s) link from history details, else null. */
+function httpUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function HistoryItem({ entry }: { entry: TaskHistoryEntry }) {
+  const meta = ACTION_ICONS[entry.action] ?? ACTION_ICONS.updated;
+  const Icon = entry.action === "reviewed" && entry.details?.decision === "rejected" ? LuCircleX : meta.icon;
+  // Pearity entries link to the asset / the Pearity page they came from.
+  const links = entry.action.startsWith("pearity_")
+    ? [
+        { href: httpUrl(entry.details?.assetUrl), label: "Open asset" },
+        { href: httpUrl(entry.details?.pearityUrl), label: "Open in Pearity" },
+      ].filter((link): link is { href: string; label: string } => Boolean(link.href))
+    : [];
+  return (
+    <li className="relative flex gap-3">
+      <span
+        className={cn(
+          "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full ring-4 ring-popover",
+          meta.tone
+        )}
+      >
+        <Icon aria-hidden className="size-3.5" />
+      </span>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p className="text-sm text-foreground">
+          <span className="font-medium">{entry.actor?.name ?? "System"}</span>{" "}
+          <span className="text-muted-foreground">{describe(entry)}</span>
+        </p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <time dateTime={entry.createdAt} className="text-xs text-muted-foreground" title={formatDateTime(entry.createdAt)}>
+            {formatDistanceToNow(new Date(entry.createdAt), { addSuffix: true })}
+          </time>
+          {links.map((link) => (
+            <a
+              key={link.label}
+              href={link.href}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              className="inline-flex items-center gap-1 text-xs text-primary underline underline-offset-2"
+            >
+              {link.label}
+              <LuExternalLink aria-hidden className="size-3" />
+            </a>
+          ))}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+/**
+ * Task page: what happened in Pearity (generation jobs, DAM assets, reviews),
+ * newest first. Hidden on tasks with no Pearity activity.
+ */
+export function PearityJourney({ taskId }: { taskId: string }) {
+  const history = useTaskHistory(taskId, 100);
+  const entries = (history.data?.history ?? []).filter((entry) => entry.action.startsWith("pearity_"));
+  if (entries.length === 0) return null;
+  return (
+    <section aria-labelledby="pearity-journey-heading" className="space-y-4 rounded-xl border bg-card p-4 shadow-xs sm:p-6">
+      <h3
+        id="pearity-journey-heading"
+        className="flex items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+      >
+        <LuSparkles aria-hidden className="size-4" />
+        Pearity journey
+      </h3>
+      <ol className="relative space-y-4 before:absolute before:top-2 before:bottom-2 before:left-3.5 before:w-px before:bg-border">
+        {entries.map((entry) => (
+          <HistoryItem key={entry._id} entry={entry} />
+        ))}
+      </ol>
+    </section>
+  );
+}
+
 /** Timeline of everything that happened to a task (newest first). */
 export function TaskHistory({ taskId }: { taskId: string }) {
   const [limit, setLimit] = useState(PAGE);
@@ -270,38 +355,9 @@ export function TaskHistory({ taskId }: { taskId: string }) {
   return (
     <div className="space-y-3">
       <ol className="relative space-y-4 before:absolute before:top-2 before:bottom-2 before:left-3.5 before:w-px before:bg-border">
-        {entries.map((entry) => {
-          const meta = ACTION_ICONS[entry.action] ?? ACTION_ICONS.updated;
-          const Icon =
-            entry.action === "reviewed" && entry.details?.decision === "rejected"
-              ? LuCircleX
-              : meta.icon;
-          return (
-            <li key={entry._id} className="relative flex gap-3">
-              <span
-                className={cn(
-                  "relative z-10 flex size-7 shrink-0 items-center justify-center rounded-full ring-4 ring-popover",
-                  meta.tone
-                )}
-              >
-                <Icon aria-hidden className="size-3.5" />
-              </span>
-              <div className="min-w-0 flex-1 pt-0.5">
-                <p className="text-sm text-foreground">
-                  <span className="font-medium">{entry.actor?.name ?? "System"}</span>{" "}
-                  <span className="text-muted-foreground">{describe(entry)}</span>
-                </p>
-                <time
-                  dateTime={entry.createdAt}
-                  className="text-xs text-muted-foreground"
-                  title={formatDateTime(entry.createdAt)}
-                >
-                  {formatDistanceToNow(new Date(entry.createdAt), { addSuffix: true })}
-                </time>
-              </div>
-            </li>
-          );
-        })}
+        {entries.map((entry) => (
+          <HistoryItem key={entry._id} entry={entry} />
+        ))}
       </ol>
       {total > entries.length && (
         <Button
