@@ -18,6 +18,7 @@ import {
 import type { DeadlineReminderTarget, LogTimeFor } from "../models/ProjectSettings.js";
 import { PROJECT_STATUS_COLORS, ProjectStatus, seedProjectStatuses } from "../models/ProjectStatus.js";
 import type { ProjectStatusColor } from "../models/ProjectStatus.js";
+import { invalidateLeadership } from "../lib/leadership.js";
 
 function parseName(raw: unknown, max: number): string | { error: string } {
   if (typeof raw !== "string" || !raw.trim()) return { error: "name is required" };
@@ -342,6 +343,7 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
     return;
   }
   const settings = await getProjectSettings();
+  let leadershipChanged = false;
 
   if (body.logTimeFor !== undefined) {
     if (typeof body.logTimeFor !== "string" || !LOG_TIME_FOR.includes(body.logTimeFor as LogTimeFor)) {
@@ -362,6 +364,7 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
       return;
     }
     settings.projectApprovers = ids.map((id) => new mongoose.Types.ObjectId(id));
+    leadershipChanged = true;
   }
   for (const field of ["approvalRequired", "projectApprovalRequired", "dailyTimeLogReport"] as const) {
     if (body[field] === undefined) continue;
@@ -409,6 +412,7 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
     settings.projectTypes = types;
   }
   await settings.save();
+  if (leadershipChanged) invalidateLeadership();
 
   logActivity({
     action: "project_settings_updated",

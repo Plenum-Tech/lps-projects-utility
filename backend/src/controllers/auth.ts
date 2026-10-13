@@ -4,6 +4,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { expiresInToMs, signAccessToken, TOKEN_COOKIE, verifyAccessToken } from "../lib/jwt.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
+import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
 
 const DEFAULT_EXPIRES_IN = "7d";
 
@@ -61,7 +62,8 @@ export async function login(req: Request, res: Response): Promise<void> {
   logActivity({ action: "login", actor: user, ip: req.ip });
 
   issueSessionCookie(res, user);
-  res.json({ user: user.toJSON() });
+  const leadership = await applyLeadership(user);
+  res.json({ user: { ...user.toJSON(), leadership } });
 }
 
 /**
@@ -108,5 +110,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
 export async function me(req: Request, res: Response): Promise<void> {
   const user = req.user!;
   // What the menus may show (computed server-side).
-  res.json({ user: { ...user.toJSON(), access: { timeReport: await canViewTimeReport(user) } } });
+  res.json({
+    user: { ...user.toJSON(), leadership: isLeadershipUser(user), access: { timeReport: await canViewTimeReport(user) } },
+  });
 }

@@ -13,6 +13,8 @@ export interface User {
   role: Role;
   /** What menus may show (from /auth/me). */
   access?: { timeReport: boolean };
+  /** Leadership (project approvers): admin powers everywhere; `role` comes back as "admin". */
+  leadership?: boolean;
   /** Department id when assigned (single department per employee). */
   department?: string | null;
   /** Email notification switches (present on /auth/me and user responses). */

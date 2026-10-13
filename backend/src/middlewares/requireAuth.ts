@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import type { AccessTokenPayload } from "../lib/jwt.js";
 import { verifyAccessToken } from "../lib/jwt.js";
+import { applyLeadership } from "../lib/leadership.js";
 import { cached } from "../lib/refCache.js";
 import { User } from "../models/User.js";
 
@@ -68,6 +69,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  // Leadership acts as admin everywhere (lib/leadership.ts).
+  await applyLeadership(user);
   req.user = user;
   next();
 }
