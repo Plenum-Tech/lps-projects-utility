@@ -13,7 +13,15 @@ export const DELIVERY_DEFAULTS = {
   /** 0 = Sunday … 6 = Saturday. */
   briefingWeekday: 1,
   minLeadDays: 2,
-  finalAssetDomains: ["frame.io", "onedrive.live.com", "1drv.ms", "sharepoint.com"],
+  finalAssetDomains: [
+    "frame.io",
+    "onedrive.live.com",
+    "1drv.ms",
+    "sharepoint.com",
+    // Pearity media (ACA hosts); add custom domains in Delivery Pulse settings as needed.
+    "azurecontainerapps.io",
+    "blob.core.windows.net",
+  ],
   briefMinLength: 80,
   minCompletedToRank: 5,
   staleDays: 30,

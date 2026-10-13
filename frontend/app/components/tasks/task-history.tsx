@@ -59,6 +59,14 @@ const ACTION_ICONS: Record<TaskHistoryAction, { icon: IconType; tone: string }> 
   actual_dates_updated: { icon: LuCalendarClock, tone: "bg-chart-3/15 text-foreground" },
   subtask_actual_dates_updated: { icon: LuCalendarClock, tone: "bg-muted text-muted-foreground" },
   pearity_generated: { icon: LuSparkles, tone: "bg-chart-5/15 text-foreground" },
+  pearity_job_started: { icon: LuLoaderCircle, tone: "bg-chart-5/15 text-foreground" },
+  pearity_job_completed: { icon: LuCircleCheck, tone: "bg-primary/10 text-primary" },
+  pearity_job_failed: { icon: LuCircleX, tone: "bg-destructive/10 text-destructive" },
+  pearity_saved_to_dam: { icon: LuPaperclip, tone: "bg-chart-5/15 text-foreground" },
+  pearity_review_submitted: { icon: LuSend, tone: "bg-chart-4/15 text-foreground" },
+  pearity_review_approved: { icon: LuCircleCheck, tone: "bg-primary/10 text-primary" },
+  pearity_review_changes_requested: { icon: LuCircleAlert, tone: "bg-warn/10 text-foreground" },
+  pearity_review_rejected: { icon: LuCircleX, tone: "bg-destructive/10 text-destructive" },
   rework_added: { icon: LuRefreshCw, tone: "bg-warn/10 text-foreground" },
 };
 
@@ -164,6 +172,43 @@ function describe(entry: TaskHistoryEntry): string {
       const via = d.source === "pearity" ? " from Pearity" : "";
       if (d.created) return `created the Pearity tag ${tag} and opened the production engine${via}`;
       return `generated in Pearity with the tag ${tag}${via}`;
+    }
+    case "pearity_job_started": {
+      const tag = str(d.tagName) || (d.tagNo != null ? `Tag #${d.tagNo}` : "Pearity");
+      return `started Pearity generation for ${tag}`;
+    }
+    case "pearity_job_completed": {
+      const tag = str(d.tagName) || (d.tagNo != null ? `Tag #${d.tagNo}` : "Pearity");
+      return `completed Pearity generation for ${tag}`;
+    }
+    case "pearity_job_failed": {
+      const tag = str(d.tagName) || (d.tagNo != null ? `Tag #${d.tagNo}` : "Pearity");
+      const note = str(d.note);
+      return note ? `Pearity generation failed for ${tag}: ${note}` : `Pearity generation failed for ${tag}`;
+    }
+    case "pearity_saved_to_dam": {
+      const title = str(d.assetName) || str(d.title) || "an asset";
+      return `linked a DAM asset from Pearity (${title})`;
+    }
+    case "pearity_review_submitted": {
+      const stage = str(d.stage);
+      const label = stage === "program_review" ? "program review" : stage === "team_review" ? "internal review" : "review";
+      return `submitted the Pearity asset for ${label}`;
+    }
+    case "pearity_review_approved": {
+      const stage = str(d.stage);
+      const label = stage === "program_review" ? "program review" : stage === "team_review" ? "internal review" : "review";
+      return `approved the Pearity asset in ${label}`;
+    }
+    case "pearity_review_changes_requested": {
+      const stage = str(d.stage);
+      const label = stage === "program_review" ? "program review" : stage === "team_review" ? "internal review" : "review";
+      return `requested changes on the Pearity asset in ${label}`;
+    }
+    case "pearity_review_rejected": {
+      const stage = str(d.stage);
+      const label = stage === "program_review" ? "program review" : stage === "team_review" ? "internal review" : "review";
+      return `rejected the Pearity asset in ${label}`;
     }
     case "rework_added":
       return `added rework ${d.shortCode ? `${str(d.shortCode)} ` : ""}"${str(d.title)}" as a new task`;

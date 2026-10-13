@@ -313,6 +313,7 @@ function PearitySettingsCard() {
 const SCOPE_INFO: Record<PearityApiScope, string> = {
   "pearity:read": "Read users' tasks and tags",
   "pearity:tags": "Create tags (POST /tasks/:taskId/tag)",
+  "pearity:write": "Write journey events and DAM asset links back to tasks",
 };
 
 function PearityKeysCard() {
@@ -421,7 +422,7 @@ function CreateKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
   const create = useCreatePearityKey();
   const toast = useToast();
   const [name, setName] = useState("Pearity production");
-  const [scopes, setScopes] = useState<PearityApiScope[]>(["pearity:read", "pearity:tags"]);
+  const [scopes, setScopes] = useState<PearityApiScope[]>(["pearity:read", "pearity:tags", "pearity:write"]);
   const [copied, setCopied] = useState(false);
   const created = create.data;
 
@@ -433,7 +434,7 @@ function CreateKeyDialog({ open, onOpenChange }: { open: boolean; onOpenChange: 
       create.reset();
       setCopied(false);
       setName("Pearity production");
-      setScopes(["pearity:read", "pearity:tags"]);
+      setScopes(["pearity:read", "pearity:tags", "pearity:write"]);
     }, 200);
   }
 

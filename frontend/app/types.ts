@@ -1073,7 +1073,7 @@ export interface PearitySettingsResponse {
   apiBasePath: string;
 }
 
-export type PearityApiScope = "pearity:read" | "pearity:tags";
+export type PearityApiScope = "pearity:read" | "pearity:tags" | "pearity:write";
 
 export interface PearityApiKey {
   _id: string;
@@ -1419,6 +1419,14 @@ export type TaskHistoryAction =
   | "actual_dates_updated"
   | "subtask_actual_dates_updated"
   | "pearity_generated"
+  | "pearity_job_started"
+  | "pearity_job_completed"
+  | "pearity_job_failed"
+  | "pearity_saved_to_dam"
+  | "pearity_review_submitted"
+  | "pearity_review_approved"
+  | "pearity_review_changes_requested"
+  | "pearity_review_rejected"
   | "rework_added";
 
 export interface TaskHistoryEntry {

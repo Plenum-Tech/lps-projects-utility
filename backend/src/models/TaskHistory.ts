@@ -25,6 +25,14 @@ export const TASK_HISTORY_ACTIONS = [
   "actual_dates_updated",
   "subtask_actual_dates_updated",
   "pearity_generated",
+  "pearity_job_started",
+  "pearity_job_completed",
+  "pearity_job_failed",
+  "pearity_saved_to_dam",
+  "pearity_review_submitted",
+  "pearity_review_approved",
+  "pearity_review_changes_requested",
+  "pearity_review_rejected",
   "rework_added",
 ] as const;
 

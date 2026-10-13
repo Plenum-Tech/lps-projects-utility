@@ -17,6 +17,10 @@ import {
   apiListTags,
   apiListTasks,
   apiNotFound,
+  apiPostAsset,
+  apiPostAssetByNo,
+  apiPostEvent,
+  apiPostEventByNo,
   pearityApiAuth,
   pearityAudit,
   requireScope,
@@ -34,8 +38,12 @@ pearityApiRouter.get("/tasks", requireScope("pearity:read"), apiListTasks);
 // Lookup by the human task number ("GenAI Hub-65", "#56") — registered before /tasks/:taskId.
 pearityApiRouter.get("/tasks/by-no", requireScope("pearity:read"), apiGetTaskByNo);
 pearityApiRouter.post("/tasks/by-no/tag", requireScope("pearity:tags"), apiCreateTagByNo);
+pearityApiRouter.post("/tasks/by-no/events", requireScope("pearity:write"), apiPostEventByNo);
+pearityApiRouter.post("/tasks/by-no/assets", requireScope("pearity:write"), apiPostAssetByNo);
 pearityApiRouter.get("/tasks/:taskId", requireScope("pearity:read"), apiGetTask);
 pearityApiRouter.post("/tasks/:taskId/tag", requireScope("pearity:tags"), apiCreateTag);
+pearityApiRouter.post("/tasks/:taskId/events", requireScope("pearity:write"), apiPostEvent);
+pearityApiRouter.post("/tasks/:taskId/assets", requireScope("pearity:write"), apiPostAsset);
 pearityApiRouter.get("/tags", requireScope("pearity:read"), apiListTags);
 pearityApiRouter.get("/tags/by-no/:tagNo", requireScope("pearity:read"), apiGetTagByNo);
 pearityApiRouter.get("/tags/:tagId", requireScope("pearity:read"), apiGetTag);
