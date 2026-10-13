@@ -34,7 +34,7 @@ const ME = "me";
  * Start/end validation shared by the manual-entry and edit dialogs.
  * Returns an error message, or null when the range is valid.
  */
-export function validateTimeRange(start: string, end: string): string | null {
+export function validateTimeRange(start: string, end: string, allowMultiDay = false): string | null {
   if (!start || !end) return "Enter a start and an end time.";
   const startMs = new Date(start).getTime();
   const endMs = new Date(end).getTime();
@@ -42,9 +42,20 @@ export function validateTimeRange(start: string, end: string): string | null {
   if (endMs <= startMs) return "The end must be after the start.";
   const minutes = (endMs - startMs) / 60000;
   if (minutes < 1) return "Log at least one minute.";
-  if (minutes > 24 * 60) return "A single entry can't exceed 24 hours.";
+  // New entries may span several dates (8 h per date); an edited entry stays one entry.
+  if (!allowMultiDay && minutes > 24 * 60) return "A single entry can't exceed 24 hours.";
   if (endMs > Date.now() + 60_000) return "Time can't be logged in the future.";
   return null;
+}
+
+/** Calendar dates covered by the range (local), e.g. 05/10 → 13/10 = 9. */
+export function rangeDays(start: string, end: string): number {
+  if (!start || !end) return 0;
+  const a = new Date(start);
+  const b = new Date(end);
+  if (Number.isNaN(a.getTime()) || Number.isNaN(b.getTime()) || b <= a) return 0;
+  const day = (d: Date) => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
+  return Math.round((day(b) - day(a)) / 86_400_000) + 1;
 }
 
 function rangeMinutes(start: string, end: string): number {
@@ -108,8 +119,10 @@ export function ManualTimeLogDialog({
 
   const pending = createLog.isPending;
   const targetInvalid = submitted && !projectId && !taskId;
-  const rangeError = submitted ? validateTimeRange(start, end) : null;
-  const minutes = rangeMinutes(start, end);
+  const rangeError = submitted ? validateTimeRange(start, end, true) : null;
+  // Several dates: 8 h per date (one entry each); one date: the time entered.
+  const days = rangeDays(start, end);
+  const minutes = days > 1 ? days * 8 * 60 : rangeMinutes(start, end);
 
   const userItems: Record<string, string> = { [ME]: "Myself" };
   for (const user of assignable.data ?? []) {
@@ -119,7 +132,7 @@ export function ManualTimeLogDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if ((!projectId && !taskId) || validateTimeRange(start, end)) return;
+    if ((!projectId && !taskId) || validateTimeRange(start, end, true)) return;
     const input: ManualTimeLogInput = {
       ...(taskId ? { task: taskId } : { project: projectId }),
       startTime: fromDateTimeInput(start),
@@ -138,7 +151,8 @@ export function ManualTimeLogDialog({
         <DialogHeader>
           <DialogTitle>Log time</DialogTitle>
           <DialogDescription>
-            Add time you worked without the timer. Entries can&apos;t overlap your other logs.
+            Add time you worked without the timer. Across several dates it counts 8 hours per date; within one day it
+            logs exactly the time entered.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
@@ -215,6 +229,7 @@ export function ManualTimeLogDialog({
           ) : (
             <p id="manual-log-duration" className="-mt-2 text-xs text-muted-foreground">
               Duration: <span className="tabular-nums">{formatMinutes(minutes)}</span>
+              {days > 1 && ` — ${days} days × 8 h, logged as one entry per day`}
             </p>
           )}
 

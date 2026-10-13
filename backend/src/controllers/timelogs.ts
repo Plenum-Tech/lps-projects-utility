@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { addDays, appDayStart } from "../lib/appTime.js";
+import { addDays, appDayStart, appTimeOn } from "../lib/appTime.js";
+import { appDateKey } from "../lib/taskJobs.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { notifyUsers } from "../lib/notifications.js";
 import { parsePagination } from "../lib/pagination.js";
@@ -228,6 +229,32 @@ async function validateWindow(
   void userId;
   void excludeId;
   return minutes;
+}
+
+/** Hours counted for each day of a multi-day manual entry. */
+const HOURS_PER_DAY = 8;
+/** Where a whole working day starts (app timezone) for the days after the first. */
+const WORKDAY_START = "09:00";
+
+/**
+ * A manual entry across several dates becomes one 8-hour entry per date
+ * (first day from the given start, later days from 09:00; never past now).
+ * A same-day entry is logged as entered.
+ */
+function dailyWindows(start: Date, end: Date): Array<{ start: Date; end: Date }> {
+  const firstKey = appDateKey(start);
+  const lastKey = appDateKey(end);
+  if (firstKey === lastKey) return [{ start, end }];
+  const windows: Array<{ start: Date; end: Date }> = [];
+  const now = Date.now();
+  for (let key = firstKey, i = 0; key <= lastKey && i < 62; i++) {
+    const dayStart = key === firstKey ? start : appTimeOn(key, WORKDAY_START);
+    const dayEnd = new Date(Math.min(dayStart.getTime() + HOURS_PER_DAY * 3_600_000, now));
+    if (dayEnd.getTime() - dayStart.getTime() >= 60_000) windows.push({ start: dayStart, end: dayEnd });
+    const [y, m, d] = key.split("-").map(Number);
+    key = new Date(Date.UTC(y!, m! - 1, d! + 1)).toISOString().slice(0, 10);
+  }
+  return windows;
 }
 
 async function hourLimitError(project: IProject | null, minutes: number): Promise<Invalid | null> {
@@ -587,39 +614,52 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     return send(res, { status: 403, error: "Manual time entries are disabled for this project" });
   }
 
-  const minutes = await validateWindow(owner._id, start, end);
-  if (isInvalid(minutes)) return send(res, minutes);
-  const limitError = await hourLimitError(project, minutes);
+  if (end.getTime() <= start.getTime()) return send(res, { status: 400, error: "endTime must be after startTime" });
+  // Several dates → one 8-hour entry per date; a same-day entry as entered.
+  const windows = dailyWindows(start, end);
+  if (windows.length === 0) return send(res, { status: 400, error: "Nothing to log in this range" });
+  let totalMinutes = 0;
+  for (const w of windows) {
+    const minutes = await validateWindow(owner._id, w.start, w.end);
+    if (isInvalid(minutes)) return send(res, minutes);
+    totalMinutes += minutes;
+  }
+  const limitError = await hourLimitError(project, totalMinutes);
   if (limitError) return send(res, limitError);
 
   const hourlyRate = await resolveHourlyRate(owner._id, project);
-  const { durationMinutes } = computeDurations(start, end, []);
   const status = await initialStatus();
-  const log = await TimeLog.create({
-    user: owner._id,
-    project: project ? project._id : null,
-    task: task ? task._id : null,
-    subtask,
-    startTime: start,
-    endTime: end,
-    durationMinutes,
-    breakMinutes: 0,
-    memo: memo ?? "",
-    source: "manual",
-    hourlyRate,
-    earnings: computeEarnings(hourlyRate, durationMinutes),
-    status,
-    reviewedAt: status === "approved" ? new Date() : null,
-    addedBy: actor._id,
-  });
+  const logs = [];
+  for (const w of windows) {
+    const { durationMinutes } = computeDurations(w.start, w.end, []);
+    const created = await TimeLog.create({
+      user: owner._id,
+      project: project ? project._id : null,
+      task: task ? task._id : null,
+      subtask,
+      startTime: w.start,
+      endTime: w.end,
+      durationMinutes,
+      breakMinutes: 0,
+      memo: memo ?? "",
+      source: "manual",
+      hourlyRate,
+      earnings: computeEarnings(hourlyRate, durationMinutes),
+      status,
+      reviewedAt: status === "approved" ? new Date() : null,
+      addedBy: actor._id,
+    });
+    if (status === "pending") notifyTimeLogPending(created, actor);
+    pushTimeLogUpdate(created, "created");
+    logs.push(created);
+  }
+  const log = logs[0]!;
 
   // A manual log on a task fills its empty Actual start with the log's start.
   if (log.task) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
-  if (status === "pending") notifyTimeLogPending(log, actor);
-  pushTimeLogUpdate(log, "created");
   scheduleProgressRecalc(log.project ?? null);
   const populated = await loadPopulated(log._id as mongoose.Types.ObjectId);
-  res.status(201).json({ log: serializeLog(actor, populated!) });
+  res.status(201).json({ log: serializeLog(actor, populated!), count: logs.length, totalMinutes });
 }
 
 /** Edit/delete: approvers any time; the owner while pending. Timesheet logs are edited via the timesheet. */
