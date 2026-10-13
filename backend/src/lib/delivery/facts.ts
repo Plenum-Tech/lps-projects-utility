@@ -1,7 +1,7 @@
 import mongoose, { type PipelineStage } from "mongoose";
 import { Brand } from "../../models/Brand.js";
 import { Department } from "../../models/Department.js";
-import { Project } from "../../models/Project.js";
+import { archivedProjectIds, Project } from "../../models/Project.js";
 import { Task } from "../../models/Task.js";
 import { User } from "../../models/User.js";
 import { appTimeZone, zonedParts } from "../appTime.js";
@@ -194,6 +194,10 @@ async function queryFacts(
     const since = new Date((windowStartDay - 1) * 86_400_000);
     match.push({ $or: [{ status: { $ne: "completed" } }, { completedAt: { $gte: since } }, { createdAt: { $gte: since } }] });
   }
+  // Archived projects are read-only: their unfinished tasks aren't open or
+  // overdue work (same as the dashboard and task lists); completed ones stay in history.
+  const archived = await archivedProjectIds();
+  if (archived.length) match.push({ $or: [{ status: "completed" }, { project: { $nin: archived } }] });
   if (filters.person) match.push({ assignees: oid(filters.person) });
   if (scope.kind === "department") match.push({ assignees: { $in: usersOf(ref, scope.department!) } });
   if (filters.team && filters.team !== OTHER_TEAM) match.push({ assignees: { $in: usersOf(ref, filters.team) } });
