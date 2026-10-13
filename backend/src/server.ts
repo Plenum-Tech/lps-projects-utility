@@ -173,6 +173,29 @@ app.get("/api/health", async (_req, res) => {
 });
 
 // Built frontend (production container): static assets + SPA fallback.
+// Pages opened on the platform address (*.azurecontainerapps.io) redirect to
+// the app's own domain (APP_URL, e.g. app.lps-me.com). API calls still work there.
+const canonicalHost = (() => {
+  try {
+    return process.env.APP_URL ? new URL(process.env.APP_URL).host : null;
+  } catch {
+    return null;
+  }
+})();
+app.use((req, res, next) => {
+  if (
+    canonicalHost &&
+    (req.method === "GET" || req.method === "HEAD") &&
+    req.hostname.endsWith(".azurecontainerapps.io") &&
+    req.hostname !== canonicalHost &&
+    !req.path.startsWith("/api")
+  ) {
+    res.redirect(301, `https://${canonicalHost}${req.originalUrl}`);
+    return;
+  }
+  next();
+});
+
 if (spa) app.use(spa.router);
 app.use(
   cors({
