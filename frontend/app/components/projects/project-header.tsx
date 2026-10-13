@@ -6,6 +6,7 @@ import {
   LuArchiveRestore,
   LuArrowLeft,
   LuCalendar,
+  LuCalendarPlus,
   LuChevronDown,
   LuCopy,
   LuEllipsis,
@@ -72,7 +73,7 @@ import type { Project, ProjectPermissions } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
 import { ProjectPearityButton } from "@/components/projects/project-pearity-button";
 
-type DialogKind = "edit" | "duplicate" | "archive" | "restore" | "delete" | null;
+type DialogKind = "edit" | "continue" | "duplicate" | "archive" | "restore" | "delete" | null;
 
 /** Project title block + permission-driven actions. */
 export function ProjectHeader({
@@ -87,6 +88,8 @@ export function ProjectHeader({
   const changeStatus = useChangeProjectStatus();
   const togglePin = useTogglePin();
   const archived = Boolean(project.archivedAt);
+  // Closed at the end of its month: offer a project for the next month.
+  const canContinue = Boolean(project.expired) && !archived;
 
   const statusTargets = (statuses.data ?? []).filter(
     (status) => status.active && status._id !== project.status._id
@@ -228,8 +231,15 @@ export function ProjectHeader({
             </DropdownMenu>
           )}
 
+          {canContinue && (
+            <Button size="sm" onClick={() => setDialog("continue")}>
+              <LuCalendarPlus aria-hidden />
+              Continue in next month
+            </Button>
+          )}
+
           {permissions.canEdit && !archived && (
-            <Button size="sm" onClick={() => setDialog("edit")}>
+            <Button size="sm" variant={canContinue ? "outline" : "default"} onClick={() => setDialog("edit")}>
               <LuPencil aria-hidden />
               Edit
             </Button>
@@ -296,6 +306,13 @@ export function ProjectHeader({
           onOpenChange={(open) => !open && close()}
           project={project}
           canViewRates={permissions.canViewRates}
+        />
+      )}
+      {canContinue && (
+        <ProjectFormDialog
+          open={dialog === "continue"}
+          onOpenChange={(open) => !open && close()}
+          continueFrom={project}
         />
       )}
       {permissions.canDuplicate && (

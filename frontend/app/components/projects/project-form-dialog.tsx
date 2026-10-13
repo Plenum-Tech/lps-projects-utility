@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { LuInfo, LuLoaderCircle, LuPlus, LuSave, LuX } from "react-icons/lu";
+import { LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuX } from "react-icons/lu";
 
 import {
   ManageLink,
@@ -70,6 +70,7 @@ import {
   tidyNamePart,
 } from "@/lib/projects";
 import { currencySymbol } from "@/lib/format";
+import { shiftMonth } from "@/lib/manpower";
 import { LABEL_COLOR_META, toDateInput, todayKey } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type {
@@ -111,6 +112,45 @@ interface FormState {
 
 function numberText(value: number | null | undefined): string {
   return value === null || value === undefined ? "" : String(value);
+}
+
+/**
+ * Month for continuing `source` into: the month after it closed, or this month
+ * when that has already passed (a new project mustn't start closed).
+ */
+export function continueMonth(source: Project): string {
+  const current = todayKey().slice(0, 7);
+  const closed = source.closesOn?.slice(0, 7) ?? source.naming?.month ?? current;
+  const next = shiftMonth(closed, 1);
+  return next > current ? next : current;
+}
+
+/** Last day ("YYYY-MM-DD") of a "YYYY-MM" month. */
+function monthEnd(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+}
+
+/**
+ * "Continue in next month": a new project with the source's brand, type, name,
+ * scope, team and settings, in the next month (status, progress and dates start fresh).
+ */
+function continueState(source: Project): FormState {
+  const base = initialState(source);
+  const month = continueMonth(source);
+  const today = todayKey();
+  const firstDay = `${month}-01`;
+  return {
+    ...base,
+    month,
+    code: "",
+    title: source.naming?.title ?? source.name,
+    members: source.members.map((member) => member.user._id),
+    status: "",
+    startDate: firstDay > today ? firstDay : today,
+    deadline: monthEnd(month),
+    progress: "0",
+  };
 }
 
 function initialState(project?: Project | null): FormState {
@@ -170,6 +210,7 @@ export function ProjectFormDialog({
   onOpenChange,
   project,
   canViewRates = true,
+  continueFrom = null,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -177,8 +218,11 @@ export function ProjectFormDialog({
   project?: Project | null;
   /** Hide the budget field in edit mode when the caller can't see rates. */
   canViewRates?: boolean;
+  /** Create mode, pre-filled from this (closed) project for the next month. */
+  continueFrom?: Project | null;
 }) {
   const isEdit = Boolean(project);
+  const continuing = !project && Boolean(continueFrom);
   const navigate = useNavigate();
   const { data: user } = useCurrentUser();
   const isAdmin = user?.role === "admin";
@@ -201,18 +245,22 @@ export function ProjectFormDialog({
   useRefetchOnFocus(categories.refetch, open && isAdmin);
   useRefetchOnFocus(brands.refetch, open && isAdmin);
 
-  const [form, setForm] = useState<FormState>(() => initialState(project));
+  const freshState = () => (!project && continueFrom ? continueState(continueFrom) : initialState(project));
+  const [form, setForm] = useState<FormState>(freshState);
   const [submitted, setSubmitted] = useState(false);
+  // Continuing: the copied scope is shown read-only until "Edit scope".
+  const [scopeLocked, setScopeLocked] = useState(true);
   const pending = createProject.isPending || updateProject.isPending;
 
   useEffect(() => {
     if (open) {
-      setForm(initialState(project));
+      setForm(freshState());
+      setScopeLocked(true);
       setSubmitted(false);
       setNewBrand(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, project?._id]);
+  }, [open, project?._id, continueFrom?._id]);
 
   // Legacy project: pre-fill the four name fields once the detection arrives.
   const suggested = suggestion.data;
@@ -526,11 +574,13 @@ export function ProjectFormDialog({
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit project" : "New project"}</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit project" : continuing ? "Continue in next month" : "New project"}</DialogTitle>
           <DialogDescription>
             {isEdit
               ? "Update the project details and team. Status, rates and other members are managed from the project page."
-              : "Set up the project, its team and how progress is measured. Members are notified."}
+              : continuing
+                ? `A new project for ${continueFrom!.name}'s work, with its name, scope and team copied. Change anything before creating it. Tasks stay in the old project.`
+                : "Set up the project, its team and how progress is measured. Members are notified."}
           </DialogDescription>
         </DialogHeader>
 
@@ -756,7 +806,26 @@ export function ProjectFormDialog({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="project-summary">Summary</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="project-summary">{continuing ? "Scope" : "Summary"}</Label>
+              {continuing && scopeLocked && (
+                <Button type="button" variant="ghost" size="xs" onClick={() => setScopeLocked(false)}>
+                  <LuPencil aria-hidden />
+                  Edit scope
+                </Button>
+              )}
+            </div>
+            {continuing && scopeLocked ? (
+              <div className="space-y-1">
+                <p
+                  id="project-summary"
+                  className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 px-3 py-2 text-sm break-words whitespace-pre-wrap"
+                >
+                  {form.summary.trim() || <span className="text-muted-foreground">No scope written on {continueFrom!.name}.</span>}
+                </p>
+                <p className="text-xs text-muted-foreground">Copied from {continueFrom!.name}.</p>
+              </div>
+            ) : (
             <Textarea
               id="project-summary"
               value={form.summary}
@@ -765,6 +834,7 @@ export function ProjectFormDialog({
               placeholder="Goals, scope and anything the team should know."
               aria-invalid={show(summaryError) || undefined}
             />
+            )}
             {show(summaryError) && <FieldError>{summaryError}</FieldError>}
           </div>
 
