@@ -9,7 +9,7 @@ import { INTEGRATION_KEYS } from "./IntegrationSettings.js";
 // constant-time hash comparison (lib/apiKeys.ts).
 // ---------------------------------------------------------------------------
 
-export const API_KEY_SCOPES = ["pearity:read", "pearity:tags"] as const;
+export const API_KEY_SCOPES = ["pearity:read", "pearity:tags", "pearity:write"] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export interface IApiKey extends mongoose.Document {

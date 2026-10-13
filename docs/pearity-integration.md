@@ -109,6 +109,7 @@ task tag    = <project tag>-<UNIT><QUANTITY>   AJMA-OCT26-PRG-GH-VID3
 - **Scopes:**
   - `pearity:read`: every `GET` endpoint.
   - `pearity:tags`: `POST /tasks/by-no/tag` and `POST /tasks/:taskId/tag`.
+  - `pearity:write`: `POST …/events` (journey timeline) and `POST …/assets` (DAM asset URL links).
 - **Optional IP allowlist:** if the admin configures one, calls from any other IP get `403 ip_not_allowed`. Send Utility your egress IPs.
 - **Rate limit:** 600 requests per minute per key. The headers `X-RateLimit-Limit`, `X-RateLimit-Remaining` and `X-RateLimit-Reset` are sent on each response. Above the limit you get `429` with `Retry-After`. Repeated authentication failures from one IP (30 in 15 minutes) are blocked for the rest of that 15-minute window.
 - **Audit:** Utility audits every call (key prefix, path, email, status, IP).
@@ -341,6 +342,48 @@ curl -s "https://utility.example.com/api/integrations/pearity/v1/tags?updatedSin
 { "tags": [ { "tagNo": 12, "tagId": "pt_…", "tagName": "…", "taskId": "…", "taskNo": "GenAI Hub-65", "tagUrl": "…", "…": "…" } ], "nextCursor": null }
 ```
 
+### Journey events — `POST /tasks/:taskId/events` and `POST /tasks/by-no/events`
+
+Requires scope `pearity:write`. Records a Pearity journey step on the Utility task timeline (visible in the task history). Actor is the user matched by `email`.
+
+```json
+{
+  "email": "priya@example.com",
+  "taskNo": "GenAI Hub-65",
+  "action": "pearity_job_started",
+  "details": {
+    "tagNo": 12,
+    "tagName": "AJMA-OCT26-PRG-GH-VID3",
+    "jobId": "…",
+    "pearityUrl": "https://app.pearity.ai/production?job=…"
+  }
+}
+```
+
+Allowed `action` values: `pearity_job_started`, `pearity_job_completed`, `pearity_job_failed`, `pearity_saved_to_dam`, `pearity_review_submitted`, `pearity_review_approved`, `pearity_review_changes_requested`, `pearity_review_rejected`.
+
+Light status nudges only (never auto-complete/reject):
+- `pearity_job_started` → if status is `todo`, set `in_progress`
+- `pearity_review_submitted` → if not `completed`, set `in_review`
+
+### DAM asset links — `POST /tasks/:taskId/assets` and `POST /tasks/by-no/assets`
+
+Requires scope `pearity:write`. Stores a structured external URL (not a GridFS file), adds a short task comment with the link, and records `pearity_saved_to_dam` on the timeline.
+
+```json
+{
+  "email": "priya@example.com",
+  "taskNo": "GenAI Hub-65",
+  "url": "https://…/media/….mp4",
+  "title": "Launch teaser v1",
+  "damAssetId": "…",
+  "damFolderPath": "Production / Oct",
+  "tagNo": 12,
+  "jobId": "…",
+  "pearityUrl": "https://app.pearity.ai/dam?asset=…"
+}
+```
+
 ### Errors
 
 All errors are JSON: `{ "error": "<readable message>", "code": "<machine code>" }`.
@@ -348,6 +391,8 @@ All errors are JSON: `{ "error": "<readable message>", "code": "<machine code>" 
 | Status | `code` | When |
 |---|---|---|
 | 400 | `invalid_email`, `invalid_status`, `invalid_limit`, `invalid_updated_since`, `invalid_cursor` | Bad query or body |
+| 400 | `invalid_action` | `action` is not a known Pearity journey action |
+| 400 | `invalid_url` | Asset `url` missing or not http(s) |
 | 400 | `invalid_task_no` | `taskNo` is missing, empty, longer than 60 characters, or not a task number |
 | 400 | `invalid_tag_no` | `:tagNo` is not a positive whole number |
 | 401 | `missing_api_key` | No `Authorization: Bearer` header |
@@ -410,7 +455,7 @@ This is a page in Pearity that lists the signed-in user's Utility tasks so they 
 ## 5. Checklist for going live
 
 1. The Utility admin enables the integration and sets the production engine URL template. Optionally, the admin also sets the tag link URL (for example `https://app.pearity.ai/tags/{tagNo}`).
-2. The Utility admin creates an API key with both scopes and shares it securely. It is stored in Pearity's secret manager.
+2. The Utility admin creates an API key with `pearity:read`, `pearity:tags`, and `pearity:write`, and shares it securely. It is stored in Pearity's secret manager.
 3. Optionally, Pearity sends its egress IPs, and the Utility admin adds them as allowed IPs.
 4. Pearity users have the same email in both systems.
 5. Smoke test:

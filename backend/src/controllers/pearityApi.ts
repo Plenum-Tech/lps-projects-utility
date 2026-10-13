@@ -23,19 +23,39 @@ import { ApiAuditLog } from "../models/ApiKey.js";
 import type { ApiKeyScope, IApiKey } from "../models/ApiKey.js";
 import { PearityTag } from "../models/PearityTag.js";
 import type { IPearityTag } from "../models/PearityTag.js";
+import { PearityTaskAsset } from "../models/PearityTaskAsset.js";
 import { archivedProjectIds } from "../models/Project.js";
 import { Task } from "../models/Task.js";
 import type { ITask } from "../models/Task.js";
+import { TaskComment } from "../models/TaskComment.js";
+import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import { User } from "../models/User.js";
 import type { IUser } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
 // Pearity server-to-server API — /api/integrations/pearity/v1
-//   Authorization: Bearer <api key>   (scopes pearity:read / pearity:tags)
+//   Authorization: Bearer <api key>   (scopes pearity:read / pearity:tags / pearity:write)
 //   600 requests / minute per key, optional IP allowlist, every call audited.
 // Data is scoped to the `email` user's visible tasks (same rules as the UI) and
 // limited to codes, titles, status, dates, project / brand / category and the tag.
 // ---------------------------------------------------------------------------
+
+const PEARITY_JOURNEY_ACTIONS = [
+  "pearity_job_started",
+  "pearity_job_completed",
+  "pearity_job_failed",
+  "pearity_saved_to_dam",
+  "pearity_review_submitted",
+  "pearity_review_approved",
+  "pearity_review_changes_requested",
+  "pearity_review_rejected",
+] as const satisfies readonly TaskHistoryAction[];
+
+type PearityJourneyAction = (typeof PEARITY_JOURNEY_ACTIONS)[number];
+
+function isJourneyAction(value: unknown): value is PearityJourneyAction {
+  return typeof value === "string" && (PEARITY_JOURNEY_ACTIONS as readonly string[]).includes(value);
+}
 
 type ApiLocals = { pearityKey?: IApiKey; pearityKeyId?: string; errorCode?: string; auditEmail?: string };
 
@@ -561,6 +581,193 @@ export async function apiListTags(req: Request, res: Response): Promise<void> {
     ),
     nextCursor: rows.length > limit && last ? encodeCursor(last.updatedAt, last._id as mongoose.Types.ObjectId) : null,
   });
+}
+
+// --- Journey events + DAM asset links (pearity:write) ------------------------------
+
+function asDetails(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return { ...(raw as Record<string, unknown>), source: "pearity" };
+}
+
+async function nudgeStatusForEvent(task: ITask, action: PearityJourneyAction, user: IUser): Promise<void> {
+  const from = task.status;
+  let to: ITask["status"] | null = null;
+  if (action === "pearity_job_started" && from === "todo") to = "in_progress";
+  if (action === "pearity_review_submitted" && from !== "completed" && from !== "in_review") to = "in_review";
+  if (!to || to === from) return;
+  task.status = to;
+  await task.save();
+  recordTaskHistory(task._id as mongoose.Types.ObjectId, user, "status_changed", { from, to, source: "pearity" });
+}
+
+async function postEventForTask(
+  req: Request,
+  res: Response,
+  user: IUser,
+  task: ITask,
+  body: Record<string, unknown>
+): Promise<void> {
+  if (!isJourneyAction(body.action)) {
+    fail(
+      res,
+      400,
+      "invalid_action",
+      `action must be one of: ${PEARITY_JOURNEY_ACTIONS.join(", ")}`
+    );
+    return;
+  }
+  const context = (await taskContexts([task])).get((task._id as mongoose.Types.ObjectId).toString());
+  if (context?.project?.archived) {
+    fail(res, 409, "task_read_only", "This task belongs to an archived project.");
+    return;
+  }
+  const details = asDetails(body.details);
+  recordTaskHistory(task._id as mongoose.Types.ObjectId, user, body.action, details);
+  await nudgeStatusForEvent(task, body.action, user);
+  res.status(201).json({ ok: true, action: body.action, taskId: (task._id as mongoose.Types.ObjectId).toString() });
+}
+
+/** POST /tasks/:taskId/events { email, action, details? } */
+export async function apiPostEvent(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = await userForEmail(req, res, body.email);
+  if (!user) return;
+  const task = await visibleTask(req, res, user);
+  if (!task) return;
+  await postEventForTask(req, res, user, task, body);
+}
+
+/** POST /tasks/by-no/events { email, taskNo, action, details? } */
+export async function apiPostEventByNo(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = await userForEmail(req, res, body.email);
+  if (!user) return;
+  const task = await resolveTaskNo(res, body.taskNo, user);
+  if (!task) return;
+  await postEventForTask(req, res, user, task, body);
+}
+
+function parseHttpsUrl(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const url = raw.trim();
+  if (!url || url.length > 2000) return null;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+function optionalString(raw: unknown, max: number): string | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw !== "string") return null;
+  const s = raw.trim();
+  if (!s || s.length > max) return null;
+  return s;
+}
+
+async function postAssetForTask(
+  req: Request,
+  res: Response,
+  user: IUser,
+  task: ITask,
+  body: Record<string, unknown>
+): Promise<void> {
+  const url = parseHttpsUrl(body.url);
+  if (!url) {
+    fail(res, 400, "invalid_url", "Pass a valid http(s) asset url.");
+    return;
+  }
+  const context = (await taskContexts([task])).get((task._id as mongoose.Types.ObjectId).toString());
+  if (context?.project?.archived) {
+    fail(res, 409, "task_read_only", "This task belongs to an archived project.");
+    return;
+  }
+  const title = optionalString(body.title, 300);
+  const mimeType = optionalString(body.mimeType, 120);
+  const damAssetId = optionalString(body.damAssetId, 120);
+  const damFolderPath = optionalString(body.damFolderPath, 500);
+  const jobId = optionalString(body.jobId, 120);
+  const pearityUrl = parseHttpsUrl(body.pearityUrl);
+  const tagNo =
+    typeof body.tagNo === "number" && Number.isInteger(body.tagNo) && body.tagNo > 0
+      ? body.tagNo
+      : typeof body.tagNo === "string" && /^\d{1,9}$/.test(body.tagNo)
+        ? Number(body.tagNo)
+        : null;
+
+  const asset = await PearityTaskAsset.create({
+    task: task._id,
+    url,
+    title,
+    mimeType,
+    damAssetId,
+    damFolderPath,
+    tagNo,
+    jobId,
+    pearityUrl,
+    createdBy: user._id,
+  });
+
+  const label = title || "DAM asset";
+  const commentBody = `Pearity DAM asset: ${label}\n${url}${pearityUrl ? `\nOpen in Pearity: ${pearityUrl}` : ""}`;
+  const comment = await TaskComment.create({
+    task: task._id,
+    author: user._id,
+    body: commentBody.slice(0, 5000),
+    mentions: [],
+  });
+  recordTaskHistory(task._id as mongoose.Types.ObjectId, user, "comment_added", {
+    commentId: comment._id.toString(),
+    excerpt: commentBody.slice(0, 140),
+    source: "pearity",
+  });
+  recordTaskHistory(task._id as mongoose.Types.ObjectId, user, "pearity_saved_to_dam", {
+    source: "pearity",
+    assetUrl: url,
+    assetName: title,
+    title,
+    damAssetId,
+    damFolderPath,
+    tagNo,
+    jobId,
+    pearityUrl,
+    assetId: asset._id.toString(),
+  });
+
+  res.status(201).json({
+    asset: {
+      id: asset._id.toString(),
+      url: asset.url,
+      title: asset.title,
+      damAssetId: asset.damAssetId,
+      createdAt: asset.createdAt.toISOString(),
+    },
+    historyAction: "pearity_saved_to_dam",
+  });
+}
+
+/** POST /tasks/:taskId/assets { email, url, title?, … } */
+export async function apiPostAsset(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = await userForEmail(req, res, body.email);
+  if (!user) return;
+  const task = await visibleTask(req, res, user);
+  if (!task) return;
+  await postAssetForTask(req, res, user, task, body);
+}
+
+/** POST /tasks/by-no/assets { email, taskNo, url, title?, … } */
+export async function apiPostAssetByNo(req: Request, res: Response): Promise<void> {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const user = await userForEmail(req, res, body.email);
+  if (!user) return;
+  const task = await resolveTaskNo(res, body.taskNo, user);
+  if (!task) return;
+  await postAssetForTask(req, res, user, task, body);
 }
 
 /** JSON 404 inside the v1 API. */
