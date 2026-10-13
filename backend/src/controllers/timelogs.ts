@@ -160,7 +160,8 @@ async function canLogOn(user: IUser, project: IProject | null, task: ITask | nul
 async function resolveTarget(
   owner: IUser,
   rawProject: unknown,
-  rawTask: unknown
+  rawTask: unknown,
+  options: { allowCompletedProject?: boolean } = {}
 ): Promise<{ project: IProject | null; task: ITask | null } | Invalid> {
   const settings = await getProjectSettings();
   let task: ITask | null = null;
@@ -191,7 +192,11 @@ async function resolveTarget(
 
   if (project) {
     if (project.archivedAt) return { status: 409, error: "This project is archived" };
-    if (await isProjectStatusCompleted(project)) return { status: 409, error: "This project is completed" };
+    // Time spent entered while completing a task is accepted even when the
+    // project's status is Completed, so its last tasks can still be closed.
+    if (!options.allowCompletedProject && (await isProjectStatusCompleted(project))) {
+      return { status: 409, error: "This project is completed" };
+    }
   }
   if (!(await canLogOn(owner, project, task))) {
     return { status: 403, error: "Only project members or task assignees can log time here" };
@@ -588,7 +593,9 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
   const memo = parseMemo(body.memo);
   if (isInvalid(memo)) return send(res, memo);
 
-  const target = await resolveTarget(owner, body.project, body.task);
+  const target = await resolveTarget(owner, body.project, body.task, {
+    allowCompletedProject: body.completion === true,
+  });
   if (isInvalid(target)) return send(res, target);
   const { project, task } = target;
 

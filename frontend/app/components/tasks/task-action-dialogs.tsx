@@ -60,6 +60,9 @@ export function SubmitTaskDialog({
   const toast = useToast();
   const [notes, setNotes] = useState("");
   const [hours, setHours] = useState("");
+  // Or the actual start / end of the work (logged as that range).
+  const [actualStart, setActualStart] = useState("");
+  const [actualEnd, setActualEnd] = useState("");
   const [minutes, setMinutes] = useState("");
   const [logging, setLogging] = useState(false);
   const [mode, setMode] = useState<"file" | "link">("file");
@@ -75,6 +78,8 @@ export function SubmitTaskDialog({
       setFile(null);
       setHours("");
       setMinutes("");
+      setActualStart("");
+      setActualEnd("");
       setSubmitted(false);
     }
   }, [open, task.submissionNotes, task.finalFile?.url]);
@@ -89,9 +94,19 @@ export function SubmitTaskDialog({
   const m = minutes.trim() === "" ? 0 : Number(minutes);
   const timeInvalid = !Number.isInteger(h) || !Number.isInteger(m) || h < 0 || m < 0 || m > 59 || h > 23;
   const spent = timeInvalid ? 0 : h * 60 + m;
+  // Actual start / end: both or neither; end after start and not in the future.
+  const rangeSet = Boolean(actualStart && actualEnd);
+  const rangeError =
+    (actualStart && !actualEnd) || (!actualStart && actualEnd)
+      ? "Enter both the actual start and the actual end."
+      : rangeSet && new Date(actualEnd).getTime() <= new Date(actualStart).getTime()
+        ? "The actual end must be after the actual start."
+        : rangeSet && new Date(actualEnd).getTime() > Date.now() + 60_000
+          ? "The actual end can't be in the future."
+          : null;
   // Time spent is mandatory: required here unless time is already logged on the task.
   const alreadyLogged = (task.loggedMinutes ?? 0) > 0;
-  const timeMissing = !alreadyLogged && spent === 0;
+  const timeMissing = !alreadyLogged && spent === 0 && !rangeSet;
   // Outcome is mandatory too: a note, the final file or link, or a file already on the task.
   const outcomeMissing =
     !notes.trim() &&
@@ -105,23 +120,27 @@ export function SubmitTaskDialog({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing) return;
-    // Time spent is logged on the task first (ending now), then the task is completed.
-    if (spent > 0) {
+    if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing || rangeError) return;
+    // The time is logged on the task first — the actual start → end when given,
+    // else the time spent ending now — then the task is completed.
+    if (rangeSet || spent > 0) {
       setLogging(true);
       try {
-        const end = new Date();
+        const end = rangeSet ? new Date(actualEnd) : new Date();
+        const start = rangeSet ? new Date(actualStart) : new Date(end.getTime() - spent * 60_000);
         await api.post("/timelogs", {
           completion: true,
           task: task._id,
           project: task.project?._id,
-          startTime: new Date(end.getTime() - spent * 60_000).toISOString(),
+          startTime: start.toISOString(),
           endTime: end.toISOString(),
           memo: "Logged when completing the task",
         });
         void queryClient.invalidateQueries({ queryKey: ["timelogs"] });
         setHours("");
         setMinutes("");
+        setActualStart("");
+        setActualEnd("");
       } catch (error) {
         toast.error(getErrorMessage(error));
         return;
@@ -293,6 +312,41 @@ export function SubmitTaskDialog({
             {submitted && timeInvalid && (
               <p className="text-xs text-destructive">Enter whole hours (0–23) and minutes (0–59).</p>
             )}
+            <p className="pt-2 text-xs text-muted-foreground">Or enter when the work actually started and ended:</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              <div className="space-y-1">
+                <Label htmlFor="complete-actual-start" className="text-xs text-muted-foreground">
+                  Actual start
+                </Label>
+                <Input
+                  id="complete-actual-start"
+                  type="datetime-local"
+                  value={actualStart}
+                  onChange={(event) => setActualStart(event.target.value)}
+                  aria-invalid={(submitted && Boolean(rangeError)) || undefined}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="complete-actual-end" className="text-xs text-muted-foreground">
+                  Actual end
+                </Label>
+                <Input
+                  id="complete-actual-end"
+                  type="datetime-local"
+                  value={actualEnd}
+                  min={actualStart || undefined}
+                  onChange={(event) => setActualEnd(event.target.value)}
+                  aria-invalid={(submitted && Boolean(rangeError)) || undefined}
+                />
+              </div>
+            </div>
+            {rangeSet && !rangeError && (
+              <p className="text-xs text-muted-foreground">
+                Logged from the actual start to the actual end (several dates: 8 h per working day, Saturday and Sunday
+                skipped). The task&apos;s actual dates follow.
+              </p>
+            )}
+            {submitted && rangeError && <p className="text-xs text-destructive">{rangeError}</p>}
           </fieldset>
 
           <DialogFooter>
