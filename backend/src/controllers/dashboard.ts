@@ -615,7 +615,8 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
       isDate("$dueDate"),
       {
         $lte: [
-          { $dateToString: { format: "%Y-%m-%d", date: "$completedAt", timezone: appTimeZone() } },
+          // When the work actually ended (closing it later doesn't make it late).
+          { $dateToString: { format: "%Y-%m-%d", date: { $ifNull: ["$actualEndAt", "$completedAt"] }, timezone: appTimeZone() } },
           { $dateToString: { format: "%Y-%m-%d", date: "$dueDate" } },
         ],
       },

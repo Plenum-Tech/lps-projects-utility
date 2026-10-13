@@ -675,6 +675,7 @@ interface LeanTask {
   startDate?: Date | null;
   dueDate?: Date | null;
   completedAt?: Date | null;
+  actualEndAt?: Date | null;
   createdAt: Date;
 }
 
@@ -726,7 +727,7 @@ async function loadReportTasks(
   }
 
   const tasks = await Task.find(and.length > 0 ? { $and: and } : {})
-    .select("title shortCode status priority assignees department project startDate dueDate completedAt createdAt")
+    .select("title shortCode status priority assignees department project startDate dueDate completedAt actualEndAt createdAt")
     .populate("assignees", "name email")
     .populate("department", "name")
     .populate("project", "name code")
@@ -736,10 +737,13 @@ async function loadReportTasks(
   return { tasks, from: range.from, to: range.to, members };
 }
 
-/** "on_time" | "late" | null for a completed task with a due date (date-only, app timezone). */
+/**
+ * "on_time" | "late" | null for a completed task with a due date (date-only, app
+ * timezone) — judged by the actual end (when the work finished), else completion.
+ */
 function timeliness(task: LeanTask): "on_time" | "late" | null {
   if (task.status !== "completed" || !task.dueDate || !task.completedAt) return null;
-  return appDateKey(task.completedAt) <= dateKey(task.dueDate) ? "on_time" : "late";
+  return appDateKey(task.actualEndAt ?? task.completedAt) <= dateKey(task.dueDate) ? "on_time" : "late";
 }
 
 /** GET /api/reports/tasks/summary?from&to&project&user&department&priority */
