@@ -1,3 +1,4 @@
+import { richTextToPlain } from "../richText.js";
 import mongoose from "mongoose";
 import { Task } from "../../models/Task.js";
 import { TaskComment } from "../../models/TaskComment.js";
@@ -151,7 +152,7 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
   ]);
 
   const description = new Map(
-    descriptions.flatMap((d) => (wanted.has(String(d._id)) ? [[String(d._id), d.description ?? ""] as const] : []))
+    descriptions.flatMap((d) => (wanted.has(String(d._id)) ? [[String(d._id), richTextToPlain(d.description)] as const] : []))
   );
   const verdicts = new Map(
     descriptions.flatMap((d) =>

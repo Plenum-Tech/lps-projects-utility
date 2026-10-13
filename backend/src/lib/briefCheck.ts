@@ -1,3 +1,4 @@
+import { richTextToPlain } from "./richText.js";
 import crypto from "node:crypto";
 import mongoose from "mongoose";
 import { Task } from "../models/Task.js";
@@ -108,7 +109,7 @@ export async function checkTaskBrief(taskId: mongoose.Types.ObjectId | string, f
         briefCheck?: { hash?: string } | null;
       }>();
     if (!task) return null;
-    const brief = (task.description ?? "").trim();
+    const brief = richTextToPlain(task.description).trim();
     if (!brief) {
       if (task.briefCheck) await Task.updateOne({ _id: task._id }, { $unset: { briefCheck: 1 } });
       return null;

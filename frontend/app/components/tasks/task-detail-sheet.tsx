@@ -1,3 +1,4 @@
+import { RichText } from "@/components/globals/rich-text";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -544,9 +545,7 @@ function TaskDetail({
                 >
                   Description
                 </h3>
-                <p className="text-sm break-words whitespace-pre-wrap text-foreground">
-                  {task.description}
-                </p>
+                <RichText value={task.description} />
                 {typeof task.briefCheck?.score === "number" && (
                   <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span

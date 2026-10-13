@@ -17,7 +17,8 @@
     "mongoose": "^9.9.2",
     "morgan": "^1.11.0",
     "multer": "^2.4.0",
-    "nodemailer": "^10.0.15"
+    "nodemailer": "^10.0.15",
+    "sanitize-html": "2"
   },
   "devDependencies": {
     "@types/bcryptjs": "^3.0.0",
@@ -31,6 +32,7 @@
     "@types/multer": "^2.3.0",
     "@types/node": "^22.15.0",
     "@types/nodemailer": "^8.0.2",
+    "@types/sanitize-html": "2",
     "@vercel/node": "^5.10.1",
     "nodemon": "^3.1.14"
   },

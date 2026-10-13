@@ -1,3 +1,4 @@
+import { richTextToPlain, sanitizeRichText } from "../lib/richText.js";
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
@@ -1274,7 +1275,7 @@ export async function createTaskCore(
   // name the original task they rework.
   if (options.enforceRules) {
     if (!project) return { status: 400, error: "Every task must belong to a project (pick one)" };
-    const hasDescription = typeof description === "string" && description.trim().length > 0;
+    const hasDescription = typeof description === "string" && richTextToPlain(description).trim().length > 0;
     if (!hasDescription && body.hasAttachments !== true) {
       return { status: 400, error: "Add a brief: write a description or attach a file" };
     }
@@ -1331,7 +1332,7 @@ export async function createTaskCore(
     trafficVia: onlyTraffic ? assignees[0]!._id : null,
     assignedAt: onlyTraffic ? null : new Date(),
     title: String(title).trim(),
-    description: typeof description === "string" && description.trim() ? description.trim() : undefined,
+    description: typeof description === "string" && description.trim() ? sanitizeRichText(description.trim()) : undefined,
     assignees: assignees.map((u) => u._id),
     assignedBy: actor._id,
     department: assignees[0]!.department || project?.departments[0] || null,
@@ -1397,7 +1398,7 @@ export async function createTaskCore(
       subject: `📋 New Task Assigned: ${task.title}`,
       heading: "New Task Assigned",
       intro: `${actor.name} assigned a new task to you.`,
-      quote: task.description ?? null,
+      quote: richTextToPlain(task.description) || null,
     },
   });
 
@@ -1817,7 +1818,7 @@ async function applyTaskUpdate(
     if (description !== null && (typeof description !== "string" || description.trim().length > TASK_LIMITS.maxDescription)) {
       return { status: 400, error: `description must be ${TASK_LIMITS.maxDescription} characters or fewer` };
     }
-    const next = typeof description === "string" ? description.trim() || undefined : undefined;
+    const next = typeof description === "string" ? sanitizeRichText(description.trim()) || undefined : undefined;
     if ((task.description ?? undefined) !== next) {
       task.description = next;
       notable.push("description");
@@ -2052,7 +2053,7 @@ async function applyTaskUpdate(
         subject: `📋 New Task Assigned: ${task.title}`,
         heading: "New Task Assigned",
         intro: `${user.name} added you to this task.`,
-        quote: task.description ?? null,
+        quote: richTextToPlain(task.description) || null,
       },
     });
   }

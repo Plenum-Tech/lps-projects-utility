@@ -1,3 +1,4 @@
+import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
@@ -464,7 +465,9 @@ export function TaskFormDialog({
   const iterationInvalid = submitted && rulesApply && !form.iteration;
   const reworkMissing = !task && form.iteration === "rework" && !form.reworkOf;
   // New work and rework: a written brief or an attached file.
-  const briefMissing = !task && form.description.trim() === "" && attachments.length === 0;
+  // The brief may be formatted (HTML): count its text.
+  const descriptionText = richTextPlain(form.description);
+  const briefMissing = !task && descriptionText.trim() === "" && attachments.length === 0;
   const dueMissing = reworkCreate && form.dueDate === "";
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0;
@@ -473,7 +476,8 @@ export function TaskFormDialog({
     form.startDate !== "" &&
     form.dueDate !== "" &&
     form.startDate > form.dueDate;
-  const descriptionInvalid = submitted && form.description.length > 2000;
+  const descriptionTooLong = descriptionText.length > 2000 || form.description.length > 20000;
+  const descriptionInvalid = submitted && descriptionTooLong;
   const recurrenceInvalid = Boolean(recurrenceError(form.recurrence));
   const projectInvalid =
     submitted && (!task || Boolean(task.project)) && !projectId;
@@ -502,7 +506,7 @@ export function TaskFormDialog({
       ((!task || Boolean(task.project)) && !projectId) ||
       estimateMissing ||
       form.assignees.length === 0 ||
-      form.description.length > 2000 ||
+      descriptionTooLong ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
       recurrenceInvalid ||
       estimate === "invalid" ||
@@ -858,13 +862,12 @@ export function TaskFormDialog({
                     (a description or an attached file is required)
                   </span>
                 </Label>
-                <Textarea
+                <RichTextEditor
                   id="task-description"
                   value={form.description}
-                  onChange={(event) => set("description", event.target.value)}
-                  rows={3}
+                  onChange={(html) => set("description", html)}
                   placeholder="What needs to be done? Add context, links, acceptance criteria…"
-                  aria-invalid={descriptionInvalid || undefined}
+                  invalid={descriptionInvalid}
                 />
                 {descriptionInvalid && (
                   <p className="text-xs text-destructive">
