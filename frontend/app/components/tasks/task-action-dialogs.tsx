@@ -1,3 +1,4 @@
+import { toDateTimeInput } from "@/lib/time";
 import { useEffect, useState, type FormEvent } from "react";
 import {
   LuCircleCheck,
@@ -78,11 +79,13 @@ export function SubmitTaskDialog({
       setFile(null);
       setHours("");
       setMinutes("");
-      setActualStart("");
-      setActualEnd("");
+      // Pick up the task's actual start / end when both are already set.
+      const both = Boolean(task.actualStartAt && task.actualEndAt);
+      setActualStart(both ? toDateTimeInput(task.actualStartAt!) : "");
+      setActualEnd(both ? toDateTimeInput(task.actualEndAt!) : "");
       setSubmitted(false);
     }
-  }, [open, task.submissionNotes, task.finalFile?.url]);
+  }, [open, task.submissionNotes, task.finalFile?.url, task.actualStartAt, task.actualEndAt]);
 
   const direct = task.project?.requireTaskApproval === false;
   // Logged time is optional for completion.
@@ -106,6 +109,14 @@ export function SubmitTaskDialog({
           : null;
   // Time spent is mandatory: required here unless time is already logged on the task.
   const alreadyLogged = (task.loggedMinutes ?? 0) > 0;
+  // A range pre-filled from the task and left as is isn't logged again when the
+  // task already has time (it came from those logs).
+  const rangeUnchanged =
+    rangeSet &&
+    Boolean(task.actualStartAt && task.actualEndAt) &&
+    actualStart === toDateTimeInput(task.actualStartAt!) &&
+    actualEnd === toDateTimeInput(task.actualEndAt!);
+  const logRange = rangeSet && !(alreadyLogged && rangeUnchanged);
   const timeMissing = !alreadyLogged && spent === 0 && !rangeSet;
   // Outcome is mandatory too: a note, the final file or link, or a file already on the task.
   const outcomeMissing =
@@ -123,11 +134,11 @@ export function SubmitTaskDialog({
     if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing || rangeError) return;
     // The time is logged on the task first — the actual start → end when given,
     // else the time spent ending now — then the task is completed.
-    if (rangeSet || spent > 0) {
+    if (logRange || spent > 0) {
       setLogging(true);
       try {
-        const end = rangeSet ? new Date(actualEnd) : new Date();
-        const start = rangeSet ? new Date(actualStart) : new Date(end.getTime() - spent * 60_000);
+        const end = logRange ? new Date(actualEnd) : new Date();
+        const start = logRange ? new Date(actualStart) : new Date(end.getTime() - spent * 60_000);
         await api.post("/timelogs", {
           completion: true,
           task: task._id,
@@ -340,7 +351,12 @@ export function SubmitTaskDialog({
                 />
               </div>
             </div>
-            {rangeSet && !rangeError && (
+            {rangeSet && !rangeError && !logRange && (
+              <p className="text-xs text-muted-foreground">
+                Taken from the task&apos;s actual dates — this time is already logged, so nothing extra is added.
+              </p>
+            )}
+            {logRange && !rangeError && (
               <p className="text-xs text-muted-foreground">
                 Logged from the actual start to the actual end (several dates: 8 h per working day, Saturday and Sunday
                 skipped). The task&apos;s actual dates follow.
