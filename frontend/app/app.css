@@ -215,6 +215,23 @@ body {
   background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
 }
 
+/* The page itself (the browser window) keeps a visible scrollbar. */
+html {
+  scrollbar-width: auto;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 70%, transparent) var(--muted);
+}
+html::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+html::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+html::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+}
+
 /* Wide tables (manpower plan): clearly visible scrollbars in both directions. */
 .table-scrollbar {
   scrollbar-width: auto;
