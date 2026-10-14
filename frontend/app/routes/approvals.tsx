@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { LuCircleCheck, LuCircleX, LuClipboardCheck, LuLoaderCircle } from "react-icons/lu";
+import { LuCircleCheck, LuCircleX, LuClipboardCheck, LuEye, LuLoaderCircle } from "react-icons/lu";
 
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { RejectDialog } from "@/components/projects/project-approval";
@@ -74,7 +74,7 @@ export default function ApprovalsRoute() {
                   <li key={item._id} className="rounded-xl border bg-card p-4">
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div className="min-w-0 space-y-1">
-                        <Link to={`/projects/${item._id}`} className="font-medium break-words text-foreground hover:underline">
+                        <Link to={`/approvals/project/${item._id}`} className="font-medium break-words text-foreground hover:underline">
                           {item.name}
                         </Link>
                         <p className="flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
@@ -95,6 +95,10 @@ export default function ApprovalsRoute() {
                         {item.summary && <p className="pt-1 text-sm whitespace-pre-line text-muted-foreground">{item.summary}</p>}
                       </div>
                       <div className="flex gap-2">
+                        <Button size="sm" variant="outline" render={<Link to={`/approvals/project/${item._id}`} />}>
+                          <LuEye aria-hidden />
+                          Review
+                        </Button>
                         <Button size="sm" onClick={() => approve(item)} disabled={decide.isPending}>
                           {busy === item._id ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuCircleCheck aria-hidden />}
                           Approve
