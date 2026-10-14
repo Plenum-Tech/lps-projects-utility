@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { needsTimeEntry } from "./missingTime.js";
 import mongoose from "mongoose";
 import { cached } from "./refCache.js";
 import { Meeting } from "../models/Meeting.js";
@@ -498,6 +499,8 @@ export async function loadTaskDetail(
   if (!populated) return null;
   const [task] = await serializeTasks([populated], user);
   task!.sourceMeeting = await sourceMeetingDetail(raw);
+  // Completed with no time: the assignee is asked for the actual start and the time taken.
+  task!.needsTimeEntry = !permissions.readOnly && needsTimeEntry(raw, Number(task!.loggedMinutes ?? 0), user._id as mongoose.Types.ObjectId);
   return { task: task!, permissions };
 }
 

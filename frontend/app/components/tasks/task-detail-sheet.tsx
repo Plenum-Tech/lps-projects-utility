@@ -25,6 +25,7 @@ import { Link } from "react-router";
 import { ShortCode } from "@/components/projects/project-badges";
 import { ActualDatesBlock } from "@/components/tasks/actual-dates";
 import { TaskTimeEntries } from "@/components/tasks/task-time-entries";
+import { MissingTimePrompt } from "@/components/tasks/missing-time";
 import { EstimateEditor } from "@/components/tasks/estimate-field";
 import { LabelChip } from "@/components/tasks/label-chip";
 import {
@@ -532,6 +533,8 @@ function TaskDetail({
                 )}
               </Fact>
             </dl>
+
+            <MissingTimePrompt task={task} />
 
             <ActualDatesBlock task={task} permissions={permissions} />
 

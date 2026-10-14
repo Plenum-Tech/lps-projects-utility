@@ -39,6 +39,24 @@ export function openGridFsDownload(
   return getBucket(bucketName).openDownloadStream(id);
 }
 
+/** Copies a stored file (new id), e.g. a rework's copy of the original task's attachments. */
+export function copyGridFsFile(
+  id: mongoose.Types.ObjectId,
+  filename: string,
+  metadata: Record<string, unknown>,
+  bucketName: string = DEFAULT_BUCKET
+): Promise<mongoose.Types.ObjectId> {
+  return new Promise((resolve, reject) => {
+    const bucket = getBucket(bucketName);
+    const upload = bucket.openUploadStream(filename, { metadata });
+    const download = bucket.openDownloadStream(id);
+    download.once("error", reject);
+    upload.once("error", reject);
+    upload.once("finish", () => resolve(upload.id as mongoose.Types.ObjectId));
+    download.pipe(upload);
+  });
+}
+
 /** Deletes a file and its chunks. Missing files are ignored; never throws. */
 export async function deleteFromGridFs(
   id: mongoose.Types.ObjectId,

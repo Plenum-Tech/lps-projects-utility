@@ -1,6 +1,6 @@
 import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { fromDateTimeInput, toDateTimeInput } from "@/lib/time";
+import { addDaysKey, fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import {
@@ -105,6 +105,7 @@ import {
   parseEstimate,
   splitEstimate,
   toDateInput,
+  todayKey,
 } from "@/lib/tasks";
 import type {
   TaskIteration,
@@ -467,10 +468,11 @@ export function TaskFormDialog({
   // New work and rework: a written brief or an attached file.
   // The brief may be formatted (HTML): count its text.
   const descriptionText = richTextPlain(form.description);
-  const briefMissing = !task && descriptionText.trim() === "" && attachments.length === 0;
-  const dueMissing = reworkCreate && form.dueDate === "";
+  // Rework: left empty, the original task's brief and files are used (server side).
+  const briefMissing = !task && !reworkCreate && descriptionText.trim() === "" && attachments.length === 0;
+  const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
-  const assigneesInvalid = submitted && form.assignees.length === 0;
+  const assigneesInvalid = submitted && form.assignees.length === 0 && !reworkCreate;
   const datesInvalid =
     submitted &&
     form.startDate !== "" &&
@@ -480,7 +482,7 @@ export function TaskFormDialog({
   const descriptionInvalid = submitted && descriptionTooLong;
   const recurrenceInvalid = Boolean(recurrenceError(form.recurrence));
   const projectInvalid =
-    submitted && (!task || Boolean(task.project)) && !projectId;
+    submitted && (!task || Boolean(task.project)) && !projectId && !reworkCreate;
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
   // Estimated time is optional.
   const estimateMissing = false;
@@ -503,9 +505,9 @@ export function TaskFormDialog({
       (rulesApply && !form.iteration) ||
       reworkMissing ||
       briefMissing ||
-      ((!task || Boolean(task.project)) && !projectId) ||
+      ((!task || Boolean(task.project)) && !projectId && !reworkCreate) ||
       estimateMissing ||
-      form.assignees.length === 0 ||
+      (form.assignees.length === 0 && !reworkCreate) ||
       descriptionTooLong ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
       recurrenceInvalid ||
@@ -694,7 +696,7 @@ export function TaskFormDialog({
       <div className="space-y-4">
       <div className="space-y-1.5">
         <Label htmlFor="task-rework-project">
-          Project<span aria-hidden className="ml-0.5 text-destructive">*</span>
+          Project <span className="font-normal text-muted-foreground">(optional — narrows the task list)</span>
         </Label>
         <Combobox
           items={projectOptions}
@@ -729,7 +731,6 @@ export function TaskFormDialog({
             </ComboboxList>
           </ComboboxContent>
         </Combobox>
-        {projectInvalid && <p className="text-xs text-destructive">Choose the project first.</p>}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="task-rework-of">
@@ -737,10 +738,18 @@ export function TaskFormDialog({
         </Label>
         <ReworkTaskPicker
           id="task-rework-of"
-          requireProject
           projectId={projectId}
           value={form.reworkOf}
-          onChange={(value) => set("reworkOf", value)}
+          onChange={(value, option) =>
+            // The original task fills in the project, assignees and a due date (all editable).
+            setForm((current) => ({
+              ...current,
+              reworkOf: value,
+              project: option?.projectId ?? current.project,
+              assignees: current.assignees.length ? current.assignees : (option?.assigneeIds ?? []),
+              dueDate: current.dueDate || addDaysKey(todayKey(), 2),
+            }))
+          }
           initial={defaultReworkOf}
           invalid={submitted && reworkMissing}
         />
@@ -751,8 +760,8 @@ export function TaskFormDialog({
           <p className="text-xs text-destructive">You can't add tasks to this task's project.</p>
         )}
         <p className="text-xs text-muted-foreground">
-          The rework is a new task in the same project, named after the original with a version (R1, R2 …),
-          and appears in the original task&apos;s Rework tab.
+          That&apos;s all that&apos;s needed: the rework is a new task in the same project, named after the original
+          with a version (R1, R2 …). Its brief and files are copied over; change anything below if needed.
         </p>
       </div>
       </div>
@@ -857,9 +866,11 @@ export function TaskFormDialog({
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-description">
-                  Brief<span aria-hidden className="ml-0.5 text-destructive">*</span>{" "}
+                  Brief{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}{" "}
                   <span className="font-normal text-muted-foreground">
-                    (a description or an attached file is required)
+                    {reworkCreate
+                      ? "(leave empty to use the original task's brief and files)"
+                      : "(a description or an attached file is required)"}
                   </span>
                 </Label>
                 <RichTextEditor
@@ -890,7 +901,7 @@ export function TaskFormDialog({
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="task-project">Project<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
+                  <Label htmlFor="task-project">Project{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}</Label>
                   {/* Searchable: type part of the code or name. */}
                   <Combobox
                     items={projectOptions}
@@ -979,7 +990,7 @@ export function TaskFormDialog({
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="task-assignees">Assignees<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
+                <Label htmlFor="task-assignees">Assignees{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}</Label>
                 <MultiSelect
                   id="task-assignees"
                   options={assigneeOptions}
@@ -1076,7 +1087,6 @@ export function TaskFormDialog({
                 <div className="space-y-1.5">
                   <Label htmlFor="task-due">
                     Due date
-                    {reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}
                   </Label>
                   <Input
                     id="task-due"

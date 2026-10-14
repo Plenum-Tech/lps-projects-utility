@@ -22,6 +22,7 @@ import { ProfileCard } from "@/components/dashboard/my-dashboard/profile-card";
 import { ProjectsStatCard, TasksStatCard } from "@/components/dashboard/my-dashboard/stat-cards";
 import { WeekTimelogs } from "@/components/dashboard/my-dashboard/week-timelogs";
 import { WelcomeClock } from "@/components/dashboard/my-dashboard/welcome-clock";
+import { MissingTimeCard } from "@/components/tasks/missing-time";
 import { QueryError } from "@/components/globals/query-states";
 import { TaskDetailSheet } from "@/components/tasks/task-detail-sheet";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -54,6 +55,7 @@ export function MyDashboard({ toggle }: { toggle?: ReactNode }) {
     <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
       {toggle && <div className="mb-4">{toggle}</div>}
       <WelcomeClock name={firstName} extra={<MyPeriodPicker value={period} onChange={setPeriod} />} />
+      <MissingTimeCard onOpenTask={(id) => setOpenTask({ id })} />
 
       {query.isPending ? (
         <MyDashboardSkeleton />

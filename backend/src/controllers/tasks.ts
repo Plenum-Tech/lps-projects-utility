@@ -7,7 +7,7 @@ import { isProjectApproved, notApprovedMessage } from "../lib/projectApproval.js
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
-import { deleteFromGridFs } from "../lib/gridfs.js";
+import { copyGridFsFile, deleteFromGridFs } from "../lib/gridfs.js";
 import { notifyTask } from "../lib/notifications.js";
 import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import {
@@ -72,7 +72,7 @@ import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from ".
 import { TaskCategory } from "../models/TaskCategory.js";
 import { TaskComment } from "../models/TaskComment.js";
 import { scheduleBriefCheck } from "../lib/briefCheck.js";
-import { TaskFile } from "../models/TaskFile.js";
+import { TASK_FILE_LIMITS, TaskFile } from "../models/TaskFile.js";
 import { TaskHistory } from "../models/TaskHistory.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import { PearityTag } from "../models/PearityTag.js";
@@ -1143,6 +1143,24 @@ export async function createTaskCore(
   historyExtra: Record<string, unknown> = {},
   options: CreateTaskOptions = {}
 ): Promise<Invalid | { taskId: mongoose.Types.ObjectId; warnings: string[] }> {
+  // Rework: only the original task is needed. Project, assignees, brief and a due
+  // date come from it when not given; its files are copied after the task is created.
+  let reworkSourceFiles = 0;
+  if (body.iteration === "rework" && typeof body.reworkOf === "string" && mongoose.isValidObjectId(body.reworkOf)) {
+    const source = await Task.findById(body.reworkOf).select("project assignees description dueDate");
+    if (source && (await canViewTaskAsync(actor, source))) {
+      reworkSourceFiles = await TaskFile.countDocuments({ task: source._id, subtask: null });
+      const blank = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);
+      body = {
+        ...body,
+        ...(blank(body.project) && source.project ? { project: source.project.toString() } : {}),
+        ...(blank(body.assignees) ? { assignees: source.assignees.map(String) } : {}),
+        ...(blank(body.description) && source.description ? { description: source.description } : {}),
+        ...(blank(body.dueDate) ? { dueDate: addDays(appToday(), 2).toISOString().slice(0, 10) } : {}),
+        ...(reworkSourceFiles > 0 ? { hasAttachments: true } : {}),
+      };
+    }
+  }
   const { description, priority } = body;
   let titleParts = parseTitleParts(body.titleParts);
   if (isInvalid(titleParts)) return titleParts;
@@ -1359,6 +1377,26 @@ export async function createTaskCore(
     sourceMeeting: options.sourceMeeting ?? null,
   });
   const taskId = task._id as mongoose.Types.ObjectId;
+
+  // Rework: the original task's files carry over as attachments (own copies).
+  if (task.reworkOf && reworkSourceFiles > 0) {
+    const files = await TaskFile.find({ task: task.reworkOf, subtask: null }).sort({ createdAt: 1 }).limit(TASK_FILE_LIMITS.maxFilesPerTask);
+    for (const file of files) {
+      try {
+        const gridFsId = await copyGridFsFile(file.gridFsId, file.filename, { taskId: taskId.toString(), copiedFrom: file._id.toString() });
+        await TaskFile.create({
+          task: taskId,
+          uploadedBy: file.uploadedBy,
+          filename: file.filename,
+          mimeType: file.mimeType,
+          size: file.size,
+          gridFsId,
+        });
+      } catch (err) {
+        console.error("[tasks] rework file copy failed", file._id.toString(), err);
+      }
+    }
+  }
 
   if (task.reworkOf) {
     recordTaskHistory(task.reworkOf, actor, "rework_added", {

@@ -24,6 +24,8 @@ export interface ReworkTaskOption {
   /** The task's project (rework is created in the same project). */
   projectId?: string;
   projectLabel?: string;
+  /** The original task's assignees (pre-filled on the rework). */
+  assigneeIds?: string[];
 }
 
 /** "RWT-3 · Post 1 – Teaser" (code, else #number). */
@@ -84,6 +86,7 @@ export function ReworkTaskPicker({
       label: projectId || !t.project ? reworkTaskLabel(t) : `${reworkTaskLabel(t)} (${t.project.code})`,
       projectId: t.project?._id,
       projectLabel: t.project ? `${t.project.code} · ${t.project.name}` : undefined,
+      assigneeIds: t.assignees.map((a) => a._id),
     }));
     if (initial && !list.some((o) => o.value === initial.value)) list.unshift(initial);
     return list;
@@ -109,7 +112,9 @@ export function ReworkTaskPicker({
             ? "Choose the project first"
             : tasks.isPending
               ? "Loading tasks…"
-              : "Search the project's tasks by code or name…"
+              : projectId
+                ? "Search the project's tasks by code or name…"
+                : "Search all tasks by code or name…"
         }
         aria-invalid={invalid || undefined}
         className="w-full"

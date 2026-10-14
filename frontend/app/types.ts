@@ -994,6 +994,8 @@ export interface Task {
   estimateMinutes?: number | null;
   /** Finished pending + approved time logs (running / rejected excluded). */
   loggedMinutes?: number;
+  /** Completed with no time: the assignee is asked for the actual start and time taken (task detail only). */
+  needsTimeEntry?: boolean;
   /** Pinned by the caller. */
   pinned?: boolean;
   /** Only on GET /api/tasks?recurring=true: generated copies. */
@@ -2177,6 +2179,8 @@ export interface ManualTimeLogInput {
   endTime: string;
   memo?: string;
   user?: string;
+  /** Time added when completing (or after completing) the task. */
+  completion?: boolean;
 }
 
 export interface TimeLogUpdateInput {

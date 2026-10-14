@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { missingTimeTasks } from "../lib/missingTime.js";
 import {
   approvalsCount,
   assignableUsers,
@@ -61,6 +62,10 @@ router.get("/subtasks/mine", mySubtasks);
 
 // Head/admin: tasks they created (kept for compatibility).
 router.get("/created", requireRole("head", "admin"), createdTasks);
+// My completed tasks (since the move to Utility) with no time logged.
+router.get("/missing-time", async (req, res) => {
+  res.json(await missingTimeTasks(req.user!._id as never));
+});
 
 // Head/admin: users the caller may assign (head: own department).
 // People pickers (task assignees, project team, report filters): any signed-in user.
