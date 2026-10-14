@@ -89,8 +89,8 @@ export function PlanTable({
     requestAnimationFrame(() => (syncing.current = false));
   };
   const nudge = (direction: 1 | -1) => box.current?.scrollBy({ left: direction * 480, behavior: "smooth" });
-  const bar =
-    "[scrollbar-color:#8a8a85_#e9e8e4] dark:[scrollbar-color:#8a8a85_#262624] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-muted [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/60";
+  // The app hides scrollbars by default; this table shows them (app.css .table-scrollbar).
+  const bar = "table-scrollbar";
   return (
     <div className="space-y-1.5">
       {overflow && (
@@ -100,7 +100,7 @@ export function PlanTable({
           </Button>
           <div
             ref={top}
-            className={cn("h-4 flex-1 overflow-x-auto overflow-y-hidden rounded", bar)}
+            className={cn("h-[18px] flex-1 overflow-x-auto overflow-y-hidden rounded", bar)}
             onScroll={() => follow(top.current, box.current)}
             aria-hidden
           >

@@ -214,3 +214,20 @@ body {
   border-radius: 9999px;
   background: color-mix(in oklab, var(--muted-foreground) 45%, transparent);
 }
+
+/* Wide tables (manpower plan): clearly visible scrollbars in both directions. */
+.table-scrollbar {
+  scrollbar-width: auto;
+  scrollbar-color: color-mix(in oklab, var(--muted-foreground) 70%, transparent) var(--muted);
+}
+.table-scrollbar::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+.table-scrollbar::-webkit-scrollbar-track {
+  background: var(--muted);
+}
+.table-scrollbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--muted-foreground) 70%, transparent);
+}
