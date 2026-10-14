@@ -273,13 +273,13 @@ export async function taskVisibilityFilter(user: AccessUser): Promise<Record<str
   return { $or: or };
 }
 
-/** Transitions an assignee may make on their own task (no skipping review). */
+/** Transitions an assignee may make on their own task (no skipping review; completed tasks can be reopened). */
 export const ASSIGNEE_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
   todo: ["in_progress"],
   in_progress: ["todo", "in_review"],
   in_review: ["in_progress"],
   rejected: ["in_progress"],
-  completed: [],
+  completed: ["in_progress", "todo"],
 };
 
 export interface TransitionOptions {
@@ -456,7 +456,8 @@ export function taskPermissions(
   const manageSubtasks = canManageSubtasks(user, task, flags) && !flags.archived;
   const subtaskAssignee = isSubtaskAssignee(user, task) && !flags.archived;
   return {
-    canEdit: manage,
+    // Everyone who can open the task may edit it (delete stays with its managers).
+    canEdit: !flags.archived,
     canDelete: manage,
     canReview: manage && task.status === "in_review",
     canRemind: manage,
