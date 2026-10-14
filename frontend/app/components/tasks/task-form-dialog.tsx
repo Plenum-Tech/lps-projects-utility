@@ -469,7 +469,10 @@ export function TaskFormDialog({
   // The brief may be formatted (HTML): count its text.
   const descriptionText = richTextPlain(form.description);
   // Rework: left empty, the original task's brief and files are used (server side).
-  const briefMissing = !task && !reworkCreate && descriptionText.trim() === "" && attachments.length === 0;
+  // New work needs a written brief AND at least one file.
+  const briefTextMissing = !task && !reworkCreate && descriptionText.trim() === "";
+  const briefFilesMissing = !task && !reworkCreate && attachments.length === 0;
+  const briefMissing = briefTextMissing || briefFilesMissing;
   const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0 && !reworkCreate;
@@ -870,7 +873,7 @@ export function TaskFormDialog({
                   <span className="font-normal text-muted-foreground">
                     {reworkCreate
                       ? "(leave empty to use the original task's brief and files)"
-                      : "(a description or an attached file is required)"}
+                      : "(a description and at least one attached file are required)"}
                   </span>
                 </Label>
                 <RichTextEditor
@@ -885,10 +888,8 @@ export function TaskFormDialog({
                     Keep the description under 2000 characters.
                   </p>
                 )}
-                {briefInvalid && (
-                  <p className="text-xs text-destructive">
-                    Add the brief: write a description or attach a file.
-                  </p>
+                {briefInvalid && briefTextMissing && (
+                  <p className="text-xs text-destructive">Write the brief: describe the work.</p>
                 )}
               </div>
 
@@ -898,6 +899,9 @@ export function TaskFormDialog({
                 disabled={pending}
                 existingCount={task?.fileCount ?? 0}
               />
+              {briefInvalid && briefFilesMissing && (
+                <p className="-mt-2 text-xs text-destructive">Attach at least one brief file.</p>
+              )}
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
