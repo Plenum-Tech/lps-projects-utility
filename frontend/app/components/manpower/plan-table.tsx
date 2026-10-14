@@ -62,18 +62,24 @@ export function PlanTable({
 }) {
   const sections: ManpowerSection[] = ["active", "pitch"];
   return (
-    <div className="overflow-x-auto rounded-xl border bg-card">
+    // Its own scroll area (both directions, scrollbars always in view); the header
+    // row and the brand column stay put while scrolling.
+    <div
+      className="max-h-[calc(100dvh-13rem)] min-h-64 overflow-auto rounded-xl border bg-card [scrollbar-color:var(--color-muted-foreground)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:size-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40"
+      tabIndex={0}
+      aria-label="Manpower plan table (scroll sideways and down)"
+    >
       <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
-            <th className="sticky left-0 z-20 min-w-56 border-b bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
+            <th className="sticky top-0 left-0 z-30 min-w-56 border-b bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
               Brand / project
             </th>
             {roles.map((role) => (
               <th
                 key={role.key}
                 scope="col"
-                className="min-w-28 border-b border-l bg-muted px-2 py-2 text-left align-bottom text-xs font-medium text-muted-foreground"
+                className="sticky top-0 z-20 min-w-28 border-b border-l bg-muted px-2 py-2 text-left align-bottom text-xs font-medium text-muted-foreground"
               >
                 {role.label}
               </th>
