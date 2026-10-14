@@ -533,6 +533,15 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
               className="max-w-56"
             />
           )}
+          <FilterSelect
+            label="Work"
+            value={filters.iteration}
+            onChange={(iteration) => table.setFilters({ iteration })}
+            options={[
+              { value: "new", label: "New work" },
+              { value: "rework", label: "Rework" },
+            ]}
+          />
         </FiltersBar>
 
         {tableView && (
@@ -688,16 +697,6 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
             onChange={(department) => table.setFilters({ department })}
           />
         )}
-        <SheetSelect
-          label="Work type"
-          value={filters.iteration}
-          onChange={(iteration) => table.setFilters({ iteration })}
-          anyLabel="New work and rework"
-          options={[
-            { value: "new", label: "New work" },
-            { value: "rework", label: "Rework" },
-          ]}
-        />
         {pearityOn && (
           <SheetSelect
             label="Pearity tag"
