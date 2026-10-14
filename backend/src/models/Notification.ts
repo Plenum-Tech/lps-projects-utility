@@ -27,6 +27,8 @@ export const NOTIFICATION_TYPES = [
   "project_member_added",
   "project_approval_requested",
   "brand_approval_requested",
+  "change_approval_requested",
+  "change_decided",
   "brand_approved",
   "brand_rejected",
   "project_approved",

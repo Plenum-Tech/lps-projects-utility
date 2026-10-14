@@ -44,6 +44,8 @@ export interface IManpowerPlan extends mongoose.Document {
   /** People on more rows than this are flagged as over-allocated. */
   maxProjectsPerPerson: number;
   source: ManpowerSource;
+  /** Leadership approval: only approved versions are used (older versions have none = approved). */
+  status: "approved" | "pending" | "rejected" | "superseded";
   createdBy: mongoose.Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
@@ -85,6 +87,7 @@ const manpowerPlanSchema = new Schema<IManpowerPlan>(
       max: MANPOWER_LIMITS.maxProjectsPerPersonMax,
     },
     source: { type: String, enum: MANPOWER_SOURCES, default: "edit" },
+    status: { type: String, enum: ["approved", "pending", "rejected", "superseded"], default: "approved" },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
@@ -96,7 +99,10 @@ deliveryInvalidateOnWrite(manpowerPlanSchema);
 
 export const ManpowerPlan = mongoose.model<IManpowerPlan>("ManpowerPlan", manpowerPlanSchema);
 
-/** Latest version of a month, or null. */
+/** Versions in use: approved ones (versions saved before approvals existed have no status). */
+export const APPROVED_PLAN = { status: { $nin: ["pending", "rejected", "superseded"] } } as const;
+
+/** Latest approved version of a month, or null. */
 export async function latestPlan(month: string): Promise<IManpowerPlan | null> {
-  return ManpowerPlan.findOne({ month }).sort({ version: -1 });
+  return ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 });
 }

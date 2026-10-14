@@ -66,6 +66,20 @@ interface Draft {
   dirty: boolean;
 }
 
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: "Waiting for approval",
+  rejected: "Not approved",
+  superseded: "Replaced",
+  approved: "Approved",
+};
+
+/** " · latest" / " · waiting for approval" … after "Version N". */
+function versionSuffix(v: { version: number; status?: string }, latest: number | null): string {
+  if (v.status && v.status !== "approved") return ` · ${STATUS_LABEL[v.status]?.toLowerCase() ?? v.status}`;
+  return v.version === latest ? " · latest" : "";
+}
+
 /**
  * Manpower plan: all brands × roles for a month, each person's allocation
  * (clashes and availability), and the version history. Admins and heads read; leadership and Nazeer edit,
@@ -236,7 +250,7 @@ export function ManpowerPage() {
                   value={String(data.version)}
                   onValueChange={(v) => setParam({ v: Number(v) === data.latestVersion ? null : String(v) })}
                   items={Object.fromEntries(
-                    data.versions.map((v) => [String(v.version), `Version ${v.version}${v.version === data.latestVersion ? " · latest" : ""}`]),
+                    data.versions.map((v) => [String(v.version), `Version ${v.version}${versionSuffix(v, data.latestVersion)}`]),
                   )}
                 >
                   <SelectTrigger size="sm" aria-label="Version" className="min-w-40">
@@ -246,7 +260,7 @@ export function ManpowerPage() {
                     {data.versions.map((v) => (
                       <SelectItem key={v.version} value={String(v.version)}>
                         Version {v.version}
-                        {v.version === data.latestVersion ? " · latest" : ""}
+                        {versionSuffix(v, data.latestVersion)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -389,6 +403,29 @@ export function ManpowerPage() {
           </div>
 
           <TabsContent value="plan" className="mt-4 space-y-2">
+            {data && !editing && data.pendingVersion != null && (
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
+                {data.version === data.pendingVersion ? (
+                  <>
+                    This version is <span className="font-medium">waiting for leadership approval</span>.{" "}
+                    {data.latestVersion != null
+                      ? `The plan keeps using version ${data.latestVersion} until it's approved.`
+                      : "It's used once it's approved."}
+                  </>
+                ) : (
+                  <>
+                    Version {data.pendingVersion} is <span className="font-medium">waiting for leadership approval</span>.{" "}
+                    <button
+                      type="button"
+                      className="text-primary underline underline-offset-2"
+                      onClick={() => setParam({ v: String(data.pendingVersion) })}
+                    >
+                      View it
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
             {data && !editing && (
               <p className="text-xs text-muted-foreground">
                 Version {data.version} · {SOURCE_LABEL[data.plan.source]} {formatDateTime(data.plan.createdAt)}
@@ -451,6 +488,11 @@ export function ManpowerPage() {
                           {v.version === data.latestVersion && (
                             <Badge variant="secondary" className="ml-2">
                               Latest
+                            </Badge>
+                          )}
+                          {v.status && v.status !== "approved" && (
+                            <Badge variant={v.status === "rejected" ? "destructive" : "outline"} className="ml-2">
+                              {STATUS_LABEL[v.status]}
                             </Badge>
                           )}
                         </td>

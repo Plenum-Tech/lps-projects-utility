@@ -71,6 +71,25 @@ export function useDecideByLink(token: string) {
   });
 }
 
+/** Leadership: approve / reject a scope / team, brand or manpower plan change. */
+export function useDecideChange() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ id, decision, reason }: { id: string; decision: "approve" | "reject"; reason?: string }) =>
+      (await api.post(`/projects/approvals/changes/${id}`, { decision, reason })).data,
+    onSuccess: (_data, { decision }) => {
+      void queryClient.invalidateQueries({ queryKey: approvalQueueKey });
+      // The approved change is now live: projects, brands and the plan refresh.
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      void queryClient.invalidateQueries({ queryKey: ["brands"] });
+      void queryClient.invalidateQueries({ queryKey: ["manpower"] });
+      toast.success(decision === "approve" ? "Change approved and applied" : "Change rejected");
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
 /** Leadership: approve / reject a proposed brand. */
 export function useDecideBrand() {
   const queryClient = useQueryClient();

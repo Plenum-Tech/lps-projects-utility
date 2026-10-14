@@ -1928,6 +1928,8 @@ export interface ProjectDetailResponse {
   project: Project;
   permissions: ProjectPermissions;
   stats: ProjectStats;
+  /** Set when scope / team changes were sent to leadership instead of saved. */
+  pendingApproval?: string;
 }
 
 export interface ProjectListResponse {
@@ -3634,10 +3636,14 @@ export interface ManpowerRow {
   cells: ManpowerCell[];
 }
 
+export type ManpowerVersionStatus = "approved" | "pending" | "rejected" | "superseded";
+
 export interface ManpowerVersionSummary {
   version: number;
   note: string;
   source: "import" | "edit" | "copy";
+  /** Leadership approval (saves by non-leadership editors wait for it). */
+  status?: ManpowerVersionStatus;
   createdAt: string;
   createdBy: { _id: string; name: string } | null;
   rowCount: number;
@@ -3665,7 +3671,12 @@ export interface ManpowerMonthsResponse {
 export interface ManpowerPlanResponse {
   month: string;
   version: number;
-  latestVersion: number;
+  /** Latest approved version (edits start from it); null while only a pending one exists. */
+  latestVersion: number | null;
+  /** A version waiting for leadership approval, if any. */
+  pendingVersion?: number | null;
+  /** Status of the version shown. */
+  status?: ManpowerVersionStatus;
   versions: ManpowerVersionSummary[];
   plan: {
     _id: string;
@@ -3763,6 +3774,26 @@ export interface ProjectApprovalQueue {
   recent: ProjectApprovalLinkResponse["project"][];
   /** New brands waiting for leadership (same approvers). */
   brands?: { pending: BrandApprovalItem[]; recent: BrandApprovalItem[] };
+  /** Scope / team, brand and manpower plan changes waiting for leadership. */
+  changes?: { pending: ChangeRequestItem[]; recent: ChangeRequestItem[] };
+}
+
+/** A change waiting for (or decided by) leadership. */
+export interface ChangeRequestItem {
+  _id: string;
+  kind: "project_change" | "brand_edit" | "manpower_plan";
+  status: "pending" | "approved" | "rejected" | "superseded";
+  title: string;
+  brand: { _id: string; name: string } | null;
+  project: { _id: string; name: string; code: string } | null;
+  month: string | null;
+  version: number | null;
+  changes: Array<{ label: string; before: string; after: string }>;
+  requestedBy: { _id: string; name: string; email?: string } | null;
+  decidedBy: { _id: string; name: string } | null;
+  decidedAt: string | null;
+  reason: string;
+  createdAt: string;
 }
 
 /** GET /analytics/delivery/traffic — the traffic desk. */

@@ -2,7 +2,8 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { approvalView, isProjectApprover, requestProjectApproval } from "../lib/projectApproval.js";
 import { scheduleProjectTag } from "../lib/tagAssign.js";
-import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
+import { MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
+import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -444,13 +445,19 @@ export async function loadProjectDetail(projectId: mongoose.Types.ObjectId, user
   return { project: project!, permissions: { ...permissions, canApprove }, stats };
 }
 
-async function respondDetail(res: Response, projectId: mongoose.Types.ObjectId, user: IUser, status = 200): Promise<void> {
+async function respondDetail(
+  res: Response,
+  projectId: mongoose.Types.ObjectId,
+  user: IUser,
+  status = 200,
+  pendingApproval?: string
+): Promise<void> {
   const detail = await loadProjectDetail(projectId, user);
   if (!detail) {
     res.status(404).json({ error: "Project not found" });
     return;
   }
-  res.status(status).json(detail);
+  res.status(status).json(pendingApproval ? { ...detail, pendingApproval } : detail);
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +967,8 @@ export interface ProjectWriteOptions {
   allowLegacyName?: boolean;
   /** Excel import: keep the sheet's project code (create) and allow changing it (update). */
   keepCode?: boolean;
+  /** Apply scope / team changes directly (leadership approving a request, imports). */
+  skipApproval?: boolean;
 }
 
 /**
@@ -1213,11 +1222,64 @@ export async function updateProjectCore(
   body: ProjectBody,
   ip: string | undefined,
   options: ProjectWriteOptions = {}
-): Promise<Invalid | { changed: string[] }> {
+): Promise<Invalid | { changed: string[]; pendingApproval?: string }> {
   if (!canManageProject(actor, project)) {
     return bad("Only the project manager, its creator or an admin can edit this project", 403);
   }
   if (project.archivedAt) return bad("This project is archived and read-only. Restore it first.", 409);
+
+  // Scope (summary) and team changes by anyone but leadership wait for approval;
+  // everything else in the same save applies now.
+  let pendingApproval: string | undefined;
+  if (!options.skipApproval && (body.summary !== undefined || body.team !== undefined) && !(await isLeadershipActor(actor))) {
+    const held: Record<string, unknown> = {};
+    const lines: Array<{ label: string; before: string; after: string }> = [];
+    if (body.summary !== undefined) {
+      const summary = parseSummary(body.summary);
+      if (isInvalid(summary)) return summary;
+      if ((summary ?? "") !== (project.summary ?? "")) {
+        held.summary = summary ?? "";
+        lines.push({ label: "Scope", before: clip(project.summary), after: clip(summary) });
+      }
+    }
+    if (body.team !== undefined) {
+      const team = await parseTeam(body.team);
+      if (isInvalid(team)) return team;
+      const key = (t: IProjectTeamEntry[]) =>
+        JSON.stringify(t.filter((e) => e.users.length).map((e) => [e.role, e.users.map(String).sort()]).sort());
+      if (key(team) !== key(project.team ?? [])) {
+        held.team = team.map((e) => ({ role: e.role, users: e.users.map(String) }));
+        const ids = [...new Set([...team, ...(project.team ?? [])].flatMap((e) => e.users.map(String)))];
+        const names = new Map((await User.find({ _id: { $in: ids } }).select("name").lean()).map((u) => [String(u._id), u.name]));
+        const label = new Map<string, string>([...MANPOWER_ROLES.map((r) => [r.key, r.label] as [string, string]), ["others", "Others"]]);
+        const usersOf = (t: IProjectTeamEntry[] | undefined, role: string) =>
+          (t ?? []).find((e) => e.role === role)?.users.map((u) => names.get(String(u)) ?? "?").join(", ") || "—";
+        for (const role of new Set([...team, ...(project.team ?? [])].map((e) => e.role))) {
+          const before = usersOf(project.team, role);
+          const after = usersOf(team, role);
+          if (before !== after) lines.push({ label: `Team · ${label.get(role) ?? role}`, before, after });
+        }
+      }
+    }
+    body = { ...body };
+    delete body.summary;
+    delete body.team;
+    if (lines.length > 0) {
+      const brand = project.naming?.brand ?? project.brand ?? null;
+      await requestChange({
+        kind: "project_change",
+        actor,
+        title: `${project.name} — ${held.summary !== undefined && held.team ? "scope and team" : held.team ? "team" : "scope"}`,
+        changes: lines,
+        payload: held,
+        project: project._id as mongoose.Types.ObjectId,
+        brand,
+        ip,
+      });
+      pendingApproval = "Scope and team changes were sent to leadership for approval.";
+    }
+  }
+
   const changed: string[] = [];
   let newManager: mongoose.Types.ObjectId | null = null;
   const newTeamMembers: mongoose.Types.ObjectId[] = [];
@@ -1411,7 +1473,7 @@ export async function updateProjectCore(
     }
   }
 
-  if (changed.length === 0) return bad("At least one field to update is required");
+  if (changed.length === 0) return pendingApproval ? { changed, pendingApproval } : bad("At least one field to update is required");
 
   try {
     await project.save();
@@ -1439,7 +1501,7 @@ export async function updateProjectCore(
   if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
   if (changed.some((f) => f === "naming" || f === "name" || f === "brand")) scheduleProjectTag(projectId, true);
-  return { changed };
+  return { changed, ...(pendingApproval ? { pendingApproval } : {}) };
 }
 
 /** PATCH /api/projects/:id — manager/creator/admin. Status uses PATCH /:id/status. */
@@ -1454,7 +1516,7 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
   if (!ensureNotArchived(project, res)) return;
   const result = await updateProjectCore(actor, project, (req.body ?? {}) as ProjectBody, req.ip);
   if (isInvalid(result)) return send(res, result);
-  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor);
+  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor, 200, result.pendingApproval);
 }
 
 const ARCHIVED_READ_ONLY = "This project is archived and read-only. Restore it first.";

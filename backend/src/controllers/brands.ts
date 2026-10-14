@@ -7,6 +7,7 @@ import { Brand, BRAND_COLORS, BRAND_LIMITS, type BrandColor, type IBrand } from 
 import { DeliverySettings } from "../models/DeliverySettings.js";
 import { Project } from "../models/Project.js";
 import { isProjectApprover, projectApproverIds } from "../lib/projectApproval.js";
+import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { notifyUsers } from "../lib/notifications.js";
 
 // ---------------------------------------------------------------------------
@@ -156,42 +157,57 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const brand = await findBrandOr404(req, res);
   if (!brand) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
-  const changed: string[] = [];
+  // The requested values (validated), then: leadership applies them, anyone else
+  // sends them to leadership for approval (one request per brand, emailed now).
+  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean } = {};
   try {
     if ("name" in body) {
       const name = parseName(body.name);
-      if (name !== brand.name) {
-        brand.name = name;
-        changed.push("name");
-      }
+      if (name !== brand.name) next.name = name;
     }
     if ("shortName" in body) {
       const shortName = parseShortName(body.shortName);
-      if (shortName !== (brand.shortName ?? "")) {
-        brand.shortName = shortName;
-        changed.push("shortName");
-      }
+      if (shortName !== (brand.shortName ?? "")) next.shortName = shortName;
     }
     if ("color" in body) {
       const color = parseColor(body.color);
-      if (color !== brand.color) {
-        brand.color = color;
-        changed.push("color");
-      }
+      if (color !== brand.color) next.color = color;
     }
     if ("active" in body) {
       const active = parseActive(body.active);
-      if (active !== brand.active) {
-        brand.active = active;
-        changed.push("active");
-      }
+      if (active !== brand.active) next.active = active;
     }
-    if (changed.length > 0) await brand.save();
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
   }
-  if (changed.length > 0) {
+  const changed = Object.keys(next);
+  let pendingApproval: string | undefined;
+  if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
+    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active" };
+    const show = (key: string, value: unknown) => (key === "active" ? (value ? "Active" : "Inactive") : String(value ?? "") || "—");
+    await requestChange({
+      kind: "brand_edit",
+      actor: req.user!,
+      title: `Brand ${brand.name}`,
+      changes: changed.map((key) => ({
+        label: label[key] ?? key,
+        before: show(key, (brand as unknown as Record<string, unknown>)[key]),
+        after: show(key, (next as Record<string, unknown>)[key]),
+      })),
+      payload: next,
+      brand: brand._id as mongoose.Types.ObjectId,
+      ip: req.ip,
+    });
+    pendingApproval = "Brand changes were sent to leadership for approval.";
+  } else if (changed.length > 0) {
+    try {
+      Object.assign(brand, next);
+      await brand.save();
+    } catch (err) {
+      if (!sendFieldError(res, err)) throw err;
+      return;
+    }
     logActivity({
       action: "settings_updated",
       actor: req.user,
@@ -203,7 +219,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     });
   }
   const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
-  res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed });
+  res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed, ...(pendingApproval ? { pendingApproval } : {}) });
 }
 
 /** DELETE /api/brands/:id — admin; 409 while projects use it (deactivate instead). */

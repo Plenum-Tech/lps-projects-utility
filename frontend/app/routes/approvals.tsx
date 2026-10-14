@@ -4,6 +4,7 @@ import { LuCircleCheck, LuCircleX, LuClipboardCheck, LuLoaderCircle } from "reac
 
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { RejectDialog } from "@/components/projects/project-approval";
+import { ChangeApprovals } from "@/components/approvals/change-approvals";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -36,7 +37,7 @@ export default function ApprovalsRoute() {
     <div className="mx-auto w-full max-w-5xl space-y-6 px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Approvals"
-        description="Leadership approvals: new brands wait here until you approve them. Projects and tasks need no approval."
+        description="Leadership approvals: scope and team changes, brand changes, manpower plan versions and new brands wait here until you approve them."
       />
 
       {queue.isPending && <Skeleton className="h-60 w-full rounded-xl" />}
@@ -47,6 +48,10 @@ export default function ApprovalsRoute() {
           title="You're not in leadership"
           description="Admins choose leadership (the approvers) in Settings → Projects → Project approval."
         />
+      )}
+
+      {queue.data?.isApprover && (
+        <ChangeApprovals pending={queue.data.changes?.pending ?? []} recent={queue.data.changes?.recent ?? []} />
       )}
 
       {queue.data?.isApprover && (

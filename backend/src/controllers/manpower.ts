@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
+import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { projectMonth } from "../lib/projectExpiry.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
@@ -15,6 +16,7 @@ import {
   type IManpowerPlan,
   type IManpowerRow,
   type ManpowerSection,
+  APPROVED_PLAN,
 } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
@@ -30,15 +32,38 @@ const bad = (error: string, status = 400): Invalid => ({ status, error });
 
 /** GET /api/manpower — months with a plan, newest first, and the roles. */
 export async function listPlanMonths(req: Request, res: Response): Promise<void> {
-  const rows = await ManpowerPlan.aggregate<{ _id: string; latest: number; versions: number; updatedAt: Date }>([
-    { $group: { _id: "$month", latest: { $max: "$version" }, versions: { $sum: 1 }, updatedAt: { $max: "$createdAt" } } },
+  const approved = { $not: { $in: ["$status", ["pending", "rejected", "superseded"]] } };
+  const rows = await ManpowerPlan.aggregate<{
+    _id: string;
+    latest: number | null;
+    any: number;
+    pending: number | null;
+    versions: number;
+    updatedAt: Date;
+  }>([
+    {
+      $group: {
+        _id: "$month",
+        latest: { $max: { $cond: [approved, "$version", null] } },
+        any: { $max: "$version" },
+        pending: { $max: { $cond: [{ $eq: ["$status", "pending"] }, "$version", null] } },
+        versions: { $sum: 1 },
+        updatedAt: { $max: "$createdAt" },
+      },
+    },
     { $sort: { _id: -1 } },
   ]);
   res.json({
     canEdit: canEditManpower(req.user!),
     roles: MANPOWER_ROLES,
     limits: MANPOWER_LIMITS,
-    months: rows.map((r) => ({ month: r._id, latestVersion: r.latest, versions: r.versions, updatedAt: r.updatedAt })),
+    months: rows.map((r) => ({
+      month: r._id,
+      latestVersion: r.latest ?? r.any,
+      pendingVersion: r.pending ?? null,
+      versions: r.versions,
+      updatedAt: r.updatedAt,
+    })),
   });
 }
 
@@ -121,7 +146,7 @@ export async function listPlanRows(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "month must be YYYY-MM" });
     return;
   }
-  const plan = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).populate("rows.brand", "name").select("version rows.key rows.name rows.type rows.brand rows.section").lean();
+  const plan = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).populate("rows.brand", "name").select("version rows.key rows.name rows.type rows.brand rows.section").lean();
   if (!plan) {
     res.json({ month, version: null, rows: [] });
     return;
@@ -149,14 +174,18 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
   }
   const versions = await ManpowerPlan.find({ month })
     .sort({ version: -1 })
-    .select("version note source createdAt createdBy rows.key")
+    .select("version note source status createdAt createdBy rows.key")
     .populate("createdBy", "name")
     .lean();
   if (versions.length === 0) {
     res.status(404).json({ error: "No plan for this month yet" });
     return;
   }
-  const wanted = req.query.version !== undefined ? Number(req.query.version) : versions[0]!.version;
+  // Default: the latest approved version (a pending one only when nothing is approved yet).
+  const live = (v: { status?: string }) => !v.status || v.status === "approved";
+  const latestApproved = versions.find(live) ?? null;
+  const pendingVersion = versions.find((v) => v.status === "pending")?.version ?? null;
+  const wanted = req.query.version !== undefined ? Number(req.query.version) : (latestApproved ?? versions[0]!).version;
   if (!Number.isInteger(wanted) || !versions.some((v) => v.version === wanted)) {
     res.status(404).json({ error: `Version ${String(req.query.version)} not found` });
     return;
@@ -220,11 +249,15 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
   res.json({
     month,
     version: plan.version,
-    latestVersion: versions[0]!.version,
+    // The version edits start from (the latest approved one).
+    latestVersion: latestApproved?.version ?? null,
+    pendingVersion,
+    status: plan.status ?? "approved",
     versions: versions.map((v) => ({
       version: v.version,
       note: v.note,
       source: v.source,
+      status: v.status ?? "approved",
       createdAt: v.createdAt,
       createdBy: v.createdBy ? { _id: String((v.createdBy as { _id: unknown })._id), name: (v.createdBy as { name?: string }).name ?? "" } : null,
       rowCount: v.rows?.length ?? 0,
@@ -328,6 +361,56 @@ async function parseRows(raw: unknown): Promise<IManpowerRow[] | Invalid> {
  * `baseVersion` is the version the editor started from (null for a new month);
  * a newer save in between returns 409 so nobody overwrites someone else.
  */
+/** Every difference between two versions' rows, as lines for the approval email. */
+async function planChanges(before: IManpowerRow[], after: IManpowerRow[]): Promise<Array<{ label: string; before: string; after: string }>> {
+  const ids = new Set<string>();
+  const brandIds = new Set<string>();
+  for (const r of [...before, ...after]) {
+    if (r.brand) brandIds.add(String(r.brand));
+    for (const c of r.cells) for (const u of c.users ?? []) ids.add(String(u));
+  }
+  const [users, brands] = await Promise.all([
+    User.find({ _id: { $in: [...ids] } }).select("name").lean(),
+    Brand.find({ _id: { $in: [...brandIds] } }).select("name").lean(),
+  ]);
+  const name = new Map(users.map((u) => [String(u._id), u.name]));
+  const brandName = new Map(brands.map((b) => [String(b._id), b.name]));
+  const role = new Map(MANPOWER_ROLES.map((r) => [r.key as string, r.label as string]));
+  const cellText = (row: IManpowerRow | undefined, key: string) => {
+    const cell = row?.cells.find((c) => c.role === key);
+    if (!cell) return "—";
+    if (cell.notNeeded) return "not needed";
+    const people = [...(cell.users ?? []).map((u) => name.get(String(u)) ?? "?"), ...(cell.placeholders ?? [])];
+    return people.join(", ") || "—";
+  };
+  const people = (row: IManpowerRow) =>
+    row.cells
+      .filter((c) => (c.users ?? []).length || (c.placeholders ?? []).length)
+      .map((c) => `${role.get(c.role) ?? c.role}: ${cellText(row, c.role)}`)
+      .join("; ") || "no people";
+  const lineName = (row: IManpowerRow) => (row.brand ? `${row.name} (${brandName.get(String(row.brand)) ?? "brand"})` : row.name);
+  const old = new Map(before.map((r) => [r.key, r]));
+  const now = new Map(after.map((r) => [r.key, r]));
+  const out: Array<{ label: string; before: string; after: string }> = [];
+  for (const r of after) {
+    const prev = old.get(r.key);
+    if (!prev) {
+      out.push({ label: `Added line: ${lineName(r)}`, before: "—", after: people(r) });
+      continue;
+    }
+    if (prev.name !== r.name || String(prev.brand ?? "") !== String(r.brand ?? "") || (prev.type ?? "") !== (r.type ?? "")) {
+      out.push({ label: "Line renamed", before: `${lineName(prev)}${prev.type ? ` · ${prev.type}` : ""}`, after: `${lineName(r)}${r.type ? ` · ${r.type}` : ""}` });
+    }
+    for (const key of new Set([...prev.cells, ...r.cells].map((c) => c.role))) {
+      const b = cellText(prev, key);
+      const a = cellText(r, key);
+      if (b !== a) out.push({ label: `${r.name} · ${role.get(key) ?? key}`, before: b, after: a });
+    }
+  }
+  for (const r of before) if (!now.has(r.key)) out.push({ label: `Removed line: ${lineName(r)}`, before: people(r), after: "—" });
+  return out;
+}
+
 export async function savePlan(req: Request, res: Response): Promise<void> {
   const month = param(req, "month") ?? "";
   if (!MONTH.test(month)) {
@@ -351,7 +434,11 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "Version note is too long" });
     return;
   }
-  const latest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version maxProjectsPerPerson").lean();
+  // Edits start from the latest approved version; numbering continues after any pending one.
+  const [latest, highest] = await Promise.all([
+    ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean(),
+    ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean(),
+  ]);
   const base = body.baseVersion === null || body.baseVersion === undefined ? null : Number(body.baseVersion);
   if ((latest?.version ?? null) !== base) {
     res.status(409).json({
@@ -372,16 +459,39 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     maxProjects = n;
   }
   const source = body.source === "copy" ? "copy" : "edit";
+  // Leadership's saves are live at once; others wait for leadership approval.
+  const needsApproval = !(await isLeadershipActor(req.user!));
   try {
     const plan = await ManpowerPlan.create({
       month,
-      version: (latest?.version ?? 0) + 1,
+      version: (highest?.version ?? 0) + 1,
       rows,
       note,
       maxProjectsPerPerson: maxProjects,
       source,
+      status: needsApproval ? "pending" : "approved",
       createdBy: req.user!._id,
     });
+    // One pending version per month: a newer save replaces the previous one.
+    await ManpowerPlan.updateMany(
+      { month, status: "pending", version: { $ne: plan.version } },
+      { $set: { status: "superseded" } }
+    );
+    let pendingApproval: string | undefined;
+    if (needsApproval) {
+      const changes = await planChanges((latest?.rows ?? []) as IManpowerRow[], rows);
+      await requestChange({
+        kind: "manpower_plan",
+        actor: req.user!,
+        title: `Manpower plan ${month} — version ${plan.version}`,
+        changes: changes.length ? changes : [{ label: "Plan", before: "—", after: "Saved with no line changes" }],
+        payload: { month, version: plan.version },
+        month,
+        version: plan.version,
+        ip: req.ip,
+      });
+      pendingApproval = `Version ${plan.version} was sent to leadership for approval. The plan keeps using version ${latest?.version ?? "—"} until then.`;
+    }
     logActivity({
       action: "settings_updated",
       actor: req.user,
@@ -391,7 +501,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
       details: { month, version: plan.version, rows: rows.length, source },
       ip: req.ip,
     });
-    res.status(201).json({ month, version: plan.version });
+    res.status(201).json({ month, version: plan.version, ...(pendingApproval ? { pendingApproval } : {}) });
   } catch (err) {
     if ((err as { code?: number }).code === 11000) {
       res.status(409).json({ error: "Someone saved this month at the same moment. Reload and try again." });
@@ -412,7 +522,7 @@ export async function suggestTeam(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "brand (or row) and month (YYYY-MM) are required" });
     return;
   }
-  const plan = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).populate("rows.cells.users", "name");
+  const plan = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).populate("rows.cells.users", "name");
   const empty = { row: null, team: [] as Array<{ role: string; users: Array<{ _id: string; name: string }> }> };
   if (!plan) {
     res.json(empty);

@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { generateProjectPearity } from "../controllers/pearity.js";
 import { decideInApp, listApprovals, requestAgain } from "../controllers/projectApproval.js";
+import { decideChangeRequest } from "../controllers/changeRequests.js";
 import {
   deleteProjectFile,
   downloadProjectFile,
@@ -55,6 +56,7 @@ router.get("/export", exportProjects);
 router.post("/bulk", bulkProjects);
 
 router.get("/approvals", listApprovals);
+router.post("/approvals/changes/:id", decideChangeRequest);
 router.get("/unbranded", listUnbrandedProjects);
 router.get("/:id", getProject);
 router.get("/:id/naming-suggestion", getNamingSuggestion);

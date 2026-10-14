@@ -262,7 +262,10 @@ export function AppSidebar() {
     {
       isApprover: Boolean(approvals.data?.isApprover),
       // Projects and new brands waiting for leadership.
-      pending: (approvals.data?.pending.length ?? 0) + (approvals.data?.brands?.pending.length ?? 0),
+      pending:
+        (approvals.data?.pending.length ?? 0) +
+        (approvals.data?.brands?.pending.length ?? 0) +
+        (approvals.data?.changes?.pending.length ?? 0),
     },
     { timeReport: user.access?.timeReport ?? user.role !== "employee" },
   );

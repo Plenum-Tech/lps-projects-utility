@@ -348,7 +348,7 @@ export function useUpdateProject() {
   return useDetailMutation(async ({ id, input }: { id: string; input: ProjectUpdateInput }) => {
     const { data } = await api.patch<ProjectDetailResponse>(`/projects/${id}`, input);
     return data;
-  }, "Project updated");
+  }, (data) => data.pendingApproval ?? "Project updated");
 }
 
 export function useChangeProjectStatus() {

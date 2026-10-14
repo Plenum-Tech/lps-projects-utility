@@ -70,15 +70,16 @@ export function useUpdateBrand() {
   return useMutation({
     mutationFn: async ({ id, ...input }: BrandInput & { id: string }) => {
       try {
-        const { data } = await api.patch<{ brand: Brand; changed: string[] }>(`/brands/${id}`, input);
-        return data.brand;
+        const { data } = await api.patch<{ brand: Brand; changed: string[]; pendingApproval?: string }>(`/brands/${id}`, input);
+        return data;
       } catch (error) {
         throw toFieldError(error);
       }
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       invalidate();
-      toast.success("Brand updated");
+      // Non-leadership edits wait for leadership approval.
+      toast.success(data.pendingApproval ?? "Brand updated");
     },
   });
 }

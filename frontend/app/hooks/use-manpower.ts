@@ -50,11 +50,11 @@ export function useSaveManpowerPlan() {
   const toast = useToast();
   return useMutation({
     mutationFn: async ({ month, ...body }: ManpowerSaveInput) =>
-      (await api.post<{ month: string; version: number }>(`/manpower/${month}`, body)).data,
+      (await api.post<{ month: string; version: number; pendingApproval?: string }>(`/manpower/${month}`, body)).data,
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
-      toast.success(`Saved as version ${data.version}`);
+      toast.success(data.pendingApproval ?? `Saved as version ${data.version}`);
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });

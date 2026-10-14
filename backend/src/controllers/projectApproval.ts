@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { changeRequestsForApprovals } from "./changeRequests.js";
 import mongoose from "mongoose";
 import { canManageProject, isInvalidObjectId, param } from "../lib/projectAccess.js";
 import {
@@ -160,7 +161,7 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
  */
 export async function listApprovals(req: Request, res: Response): Promise<void> {
   if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
-    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] } });
+    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] }, changes: { pending: [], recent: [] } });
     return;
   }
   const since = new Date(Date.now() - 30 * 86_400_000);
@@ -201,5 +202,7 @@ export async function listApprovals(req: Request, res: Response): Promise<void> 
     pending: await Promise.all(pending.map(summary)),
     recent: await Promise.all(recent.map(summary)),
     brands: { pending: brandPending.map(brandRow), recent: brandRecent.map(brandRow) },
+    // Scope / team, brand and manpower plan changes waiting for leadership.
+    changes: await changeRequestsForApprovals(),
   });
 }

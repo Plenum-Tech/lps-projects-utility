@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { Brand } from "../models/Brand.js";
-import { ManpowerPlan } from "../models/ManpowerPlan.js";
+import { ManpowerPlan, APPROVED_PLAN } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
 import { Task } from "../models/Task.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
@@ -703,7 +703,7 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
       _id: string;
       rows: Array<{ key: string; brand: mongoose.Types.ObjectId | null; type: string | null; name: string; cells: Array<{ users: mongoose.Types.ObjectId[] }> }>;
     }>([
-      { $match: { month: { $gte: fromMonth, $lte: toMonth } } },
+      { $match: { month: { $gte: fromMonth, $lte: toMonth }, ...APPROVED_PLAN } },
       { $sort: { month: 1, version: -1 } },
       { $group: { _id: "$month", rows: { $first: "$rows" } } },
     ]),
