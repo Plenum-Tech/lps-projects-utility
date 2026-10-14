@@ -1,4 +1,5 @@
-import { LuFolderKanban, LuPencil, LuPlus } from "react-icons/lu";
+import { useEffect, useRef, useState } from "react";
+import { LuChevronLeft, LuChevronRight, LuFolderKanban, LuPencil, LuPlus } from "react-icons/lu";
 import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
@@ -61,11 +62,60 @@ export function PlanTable({
   onAddRow?: (section: ManpowerSection) => void;
 }) {
   const sections: ManpowerSection[] = ["active", "pitch"];
+  // Sideways scrolling is always visible: ‹ › buttons and a bar above the table
+  // (kept in step with the table's own scrollbars).
+  const box = useRef<HTMLDivElement>(null);
+  const top = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [overflow, setOverflow] = useState(false);
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const measure = () => {
+      setWidth(el.scrollWidth);
+      setOverflow(el.scrollWidth > el.clientWidth + 1);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    if (el.firstElementChild) observer.observe(el.firstElementChild);
+    return () => observer.disconnect();
+  }, [rows.length, roles.length]);
+  const syncing = useRef(false);
+  const follow = (from: HTMLDivElement | null, to: HTMLDivElement | null) => {
+    if (!from || !to || syncing.current) return;
+    syncing.current = true;
+    to.scrollLeft = from.scrollLeft;
+    requestAnimationFrame(() => (syncing.current = false));
+  };
+  const nudge = (direction: 1 | -1) => box.current?.scrollBy({ left: direction * 480, behavior: "smooth" });
+  const bar =
+    "[scrollbar-color:#8a8a85_#e9e8e4] dark:[scrollbar-color:#8a8a85_#262624] [&::-webkit-scrollbar]:h-3 [&::-webkit-scrollbar]:w-3 [&::-webkit-scrollbar-track]:bg-muted [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/60";
   return (
-    // Its own scroll area (both directions, scrollbars always in view); the header
-    // row and the brand column stay put while scrolling.
+    <div className="space-y-1.5">
+      {overflow && (
+        <div className="flex items-center gap-2">
+          <Button type="button" variant="outline" size="icon-sm" onClick={() => nudge(-1)} aria-label="Scroll the plan left">
+            <LuChevronLeft aria-hidden />
+          </Button>
+          <div
+            ref={top}
+            className={cn("h-4 flex-1 overflow-x-auto overflow-y-hidden rounded", bar)}
+            onScroll={() => follow(top.current, box.current)}
+            aria-hidden
+          >
+            <div style={{ width, height: 1 }} />
+          </div>
+          <Button type="button" variant="outline" size="icon-sm" onClick={() => nudge(1)} aria-label="Scroll the plan right">
+            <LuChevronRight aria-hidden />
+          </Button>
+        </div>
+      )}
+    {/* Its own scroll area (both directions); the header row and the brand column stay put. */}
     <div
-      className="max-h-[calc(100dvh-13rem)] min-h-64 overflow-auto rounded-xl border bg-card [scrollbar-color:var(--color-muted-foreground)_transparent] [scrollbar-width:thin] [&::-webkit-scrollbar]:size-2.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-muted-foreground/40"
+      ref={box}
+      onScroll={() => follow(box.current, top.current)}
+      className={cn("max-h-[calc(100dvh-13rem)] min-h-64 overflow-auto rounded-xl border bg-card", bar)}
       tabIndex={0}
       aria-label="Manpower plan table (scroll sideways and down)"
     >
@@ -160,6 +210,7 @@ export function PlanTable({
           );
         })}
       </table>
+    </div>
     </div>
   );
 }
