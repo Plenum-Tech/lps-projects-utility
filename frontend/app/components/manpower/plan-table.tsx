@@ -115,7 +115,7 @@ export function PlanTable({
     <div
       ref={box}
       onScroll={() => follow(box.current, top.current)}
-      className={cn("max-h-[calc(100dvh-13rem)] min-h-64 overflow-auto rounded-xl border bg-card", bar)}
+      className={cn("max-h-[calc(100dvh-13rem)] min-h-64 overflow-x-auto overflow-y-scroll rounded-xl border bg-card", bar)}
       tabIndex={0}
       aria-label="Manpower plan table (scroll sideways and down)"
     >
