@@ -901,6 +901,7 @@ export interface ProjectBody {
   naming?: unknown;
   code?: unknown;
   summary?: unknown;
+  manpowerRow?: unknown;
   category?: unknown;
   brand?: unknown;
   departments?: unknown;
@@ -934,6 +935,14 @@ function parseSummary(raw: unknown): string | undefined | Invalid {
     return bad(`summary must be ${PROJECT_LIMITS.summaryMax} characters or fewer`);
   }
   return raw.trim();
+}
+
+/** Manpower plan row key; null/"" = automatic match. */
+function parseManpowerRow(raw: unknown): string | null | undefined | Invalid {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") return null;
+  if (typeof raw !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(raw)) return bad("manpowerRow must be a plan row key");
+  return raw;
 }
 
 function parseProgress(raw: unknown): number | undefined | Invalid {
@@ -992,6 +1001,8 @@ export async function createProjectCore(
   }
   const summary = parseSummary(body.summary);
   if (isInvalid(summary)) return summary;
+  const manpowerRow = parseManpowerRow(body.manpowerRow);
+  if (isInvalid(manpowerRow)) return manpowerRow;
 
   let category: mongoose.Types.ObjectId | null = null;
   if (body.category !== undefined) {
@@ -1090,6 +1101,7 @@ export async function createProjectCore(
       naming,
       code,
       summary: summary || undefined,
+      manpowerRow: manpowerRow ?? null,
       category,
       brand,
       departments,
@@ -1272,6 +1284,12 @@ export async function updateProjectCore(
     if (isInvalid(summary)) return summary;
     project.summary = summary || undefined;
     changed.push("summary");
+  }
+  if (body.manpowerRow !== undefined) {
+    const manpowerRow = parseManpowerRow(body.manpowerRow);
+    if (isInvalid(manpowerRow)) return manpowerRow;
+    project.manpowerRow = manpowerRow ?? null;
+    changed.push("manpowerRow");
   }
   if (body.category !== undefined) {
     const category = await parseCategory(body.category);

@@ -64,6 +64,8 @@ export interface IProject extends mongoose.Document {
   naming?: IProjectNaming | null;
   code: string;
   summary?: string;
+  /** Manpower plan row (key) this project belongs to, in the plan of its month; null = automatic match. */
+  manpowerRow?: string | null;
   category?: mongoose.Types.ObjectId | null;
   /** Brand (client); a task's brand is its project's brand. */
   brand?: mongoose.Types.ObjectId | null;
@@ -123,6 +125,7 @@ const projectSchema = new Schema<IProject>(
     naming: { type: namingSchema, default: null },
     code: { type: String, required: true, trim: true, uppercase: true, match: PROJECT_CODE_REGEX },
     summary: { type: String, trim: true, maxlength: PROJECT_LIMITS.summaryMax },
+    manpowerRow: { type: String, default: null, maxlength: 64 },
     category: { type: Schema.Types.ObjectId, ref: "ProjectCategory", default: null },
     brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
     departments: { type: [{ type: Schema.Types.ObjectId, ref: "Department" }], default: [] },

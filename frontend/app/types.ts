@@ -1840,6 +1840,8 @@ export interface Project {
   /** First "Generate on Pearity" for the project (its tag is frozen from then on). */
   pearityGeneratedAt?: string | null;
   summary?: string;
+  /** Manpower plan row key chosen on the project; null = automatic match. */
+  manpowerRow?: string | null;
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */
   brand?: ProjectBrandRef | null;
@@ -1941,6 +1943,8 @@ export interface ProjectInput {
   /** Ignored by the server: codes are generated (fixed, unique). */
   code?: string;
   summary?: string;
+  /** Manpower plan row key; null = automatic match. */
+  manpowerRow?: string | null;
   category?: string | null;
   /** Brand id; null / "" clears it. */
   brand?: string | null;
@@ -3672,6 +3676,8 @@ export interface ManpowerPlanResponse {
   };
   /** Projects of the month linked to each row (by row key). */
   links: Record<string, Array<{ _id: string; code: string; name: string }>>;
+  /** The month's projects that match no row. */
+  unlinkedProjects?: Array<{ _id: string; code: string; name: string }>;
   people: ManpowerPersonAllocation[];
   available: Array<ManpowerPersonRef & { leaveDays: number }>;
 }

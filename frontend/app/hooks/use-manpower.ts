@@ -62,14 +62,34 @@ export function useSaveManpowerPlan() {
 
 /** The plan row a project matches (brand + month + type + name), as a team by role. */
 export function useManpowerTeamSuggestion(
-  params: { brand: string; month: string; type: string; title: string },
+  params: { brand: string; month: string; type: string; title: string; row?: string },
   enabled: boolean,
 ) {
-  const query = { brand: params.brand, month: params.month, type: params.type, title: params.title };
+  const query: Record<string, string> = { brand: params.brand, month: params.month, type: params.type, title: params.title };
+  if (params.row) query.row = params.row;
   return useQuery({
     queryKey: manpowerKeys.suggest(query),
     queryFn: async () => (await api.get<ManpowerTeamSuggestion>("/manpower/suggest", { params: query })).data,
-    enabled: enabled && Boolean(params.brand) && /^\d{4}-\d{2}$/.test(params.month),
+    enabled: enabled && Boolean(params.brand || params.row) && /^\d{4}-\d{2}$/.test(params.month),
+    staleTime: 30_000,
+  });
+}
+
+export interface ManpowerPlanRowRef {
+  key: string;
+  name: string;
+  type: string | null;
+  section: string;
+  brand: { _id: string; name: string } | null;
+}
+
+/** The rows of a month's latest plan (project form "Manpower plan line" picker). */
+export function useManpowerRows(month: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["manpower", "rows", month] as const,
+    queryFn: async () =>
+      (await api.get<{ month: string; version: number | null; rows: ManpowerPlanRowRef[] }>("/manpower/rows", { params: { month } })).data,
+    enabled: enabled && /^\d{4}-\d{2}$/.test(month),
     staleTime: 30_000,
   });
 }

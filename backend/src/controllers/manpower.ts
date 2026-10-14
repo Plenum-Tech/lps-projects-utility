@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
+import { projectMonth } from "../lib/projectExpiry.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
@@ -72,10 +73,15 @@ function refId(ref: unknown): string | null {
   return String(id);
 }
 
-/** The month's projects linked to each row: { rowKey: [{ _id, code, name }] }. */
-async function rowLinks(plan: IManpowerPlan): Promise<Record<string, Array<{ _id: string; code: string; name: string }>>> {
+type ProjectLink = { _id: string; code: string; name: string };
+
+/**
+ * The month's projects linked to each row ({ rowKey: [{ _id, code, name }] }),
+ * plus the month's projects that match no row (to link from the plan page).
+ */
+async function rowLinks(plan: IManpowerPlan): Promise<{ links: Record<string, ProjectLink[]>; unlinked: ProjectLink[] }> {
   const [projects, brands] = await Promise.all([
-    Project.find({}).select("name code brand naming deadline").lean(),
+    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow").lean(),
     Brand.find({}).select("name").lean(),
   ]);
   const links = linkProjectsToRows(
@@ -87,17 +93,47 @@ async function rowLinks(plan: IManpowerPlan): Promise<Record<string, Array<{ _id
       brand: p.brand ? String(p.brand) : p.naming?.brand ? String(p.naming.brand) : null,
       naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
       deadline: p.deadline ?? null,
+      manpowerRow: p.manpowerRow ?? null,
     })),
     new Map(brands.map((b) => [String(b._id), b.name]))
   );
   const byId = new Map(projects.map((p) => [String(p._id), p]));
-  const out: Record<string, Array<{ _id: string; code: string; name: string }>> = {};
+  const out: Record<string, ProjectLink[]> = {};
   for (const [projectId, rowKey] of links) {
     const p = byId.get(projectId)!;
     (out[rowKey] ??= []).push({ _id: projectId, code: p.code, name: p.name });
   }
   for (const list of Object.values(out)) list.sort((a, b) => a.name.localeCompare(b.name));
-  return out;
+  const unlinked = projects
+    .filter((p) => !links.has(String(p._id)) && projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null }) === plan.month)
+    .map((p) => ({ _id: String(p._id), code: p.code, name: p.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { links: out, unlinked };
+}
+
+/**
+ * GET /api/manpower/rows?month=YYYY-MM — the rows of the month's latest plan
+ * (for the project form's "Manpower plan row" picker). Everyone.
+ */
+export async function listPlanRows(req: Request, res: Response): Promise<void> {
+  const month = typeof req.query.month === "string" ? req.query.month : "";
+  if (!MONTH.test(month)) {
+    res.status(400).json({ error: "month must be YYYY-MM" });
+    return;
+  }
+  const plan = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).populate("rows.brand", "name").select("version rows.key rows.name rows.type rows.brand rows.section").lean();
+  if (!plan) {
+    res.json({ month, version: null, rows: [] });
+    return;
+  }
+  res.json({
+    month,
+    version: plan.version,
+    rows: plan.rows.map((r) => {
+      const brand = r.brand as unknown as { _id: mongoose.Types.ObjectId; name: string } | null;
+      return { key: r.key, name: r.name, type: r.type ?? null, section: r.section, brand: brand ? { _id: String(brand._id), name: brand.name } : null };
+    }),
+  });
 }
 
 /**
@@ -134,7 +170,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const [links, leaveDays, allUsers] = await Promise.all([
+  const [{ links, unlinked }, leaveDays, allUsers] = await Promise.all([
     rowLinks(plan),
     leaveDaysByUser(month),
     User.find({}).select("name designation role").sort({ name: 1 }).lean(),
@@ -195,6 +231,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     })),
     plan: plan.toJSON(),
     links,
+    unlinkedProjects: unlinked,
     people: personRows,
     available,
   });
@@ -370,14 +407,32 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
  * the project's team step can be filled from the plan.
  */
 export async function suggestTeam(req: Request, res: Response): Promise<void> {
-  const { brand, month, type, title } = req.query as Record<string, string | undefined>;
-  if (!brand || isInvalidObjectId(brand) || !month || !MONTH.test(month)) {
-    res.status(400).json({ error: "brand and month (YYYY-MM) are required" });
+  const { brand, month, type, title, row: chosen } = req.query as Record<string, string | undefined>;
+  if (!month || !MONTH.test(month) || (!chosen && (!brand || isInvalidObjectId(brand)))) {
+    res.status(400).json({ error: "brand (or row) and month (YYYY-MM) are required" });
     return;
   }
   const plan = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).populate("rows.cells.users", "name");
   const empty = { row: null, team: [] as Array<{ role: string; users: Array<{ _id: string; name: string }> }> };
   if (!plan) {
+    res.json(empty);
+    return;
+  }
+  // A row chosen on the project wins over the automatic match.
+  const picked = chosen ? plan.rows.find((r) => r.key === chosen) : undefined;
+  if (picked) {
+    res.json({
+      row: { key: picked.key, name: picked.name, version: plan.version, month },
+      team: picked.cells
+        .filter((c) => c.users.length > 0)
+        .map((c) => ({
+          role: c.role,
+          users: (c.users as unknown as Array<{ _id: mongoose.Types.ObjectId; name: string }>).map((u) => ({ _id: String(u._id), name: u.name })),
+        })),
+    });
+    return;
+  }
+  if (!brand || isInvalidObjectId(brand)) {
     res.json(empty);
     return;
   }

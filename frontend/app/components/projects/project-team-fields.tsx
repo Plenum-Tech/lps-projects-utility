@@ -1,13 +1,17 @@
 import { LuSparkles } from "react-icons/lu";
 
 import { MultiSelect, type MultiSelectOption } from "@/components/globals/multi-select";
+import { OptionSelect } from "@/components/projects/project-fields";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { useManpowerMonths, useManpowerTeamSuggestion } from "@/hooks/use-manpower";
+import { useManpowerMonths, useManpowerRows, useManpowerTeamSuggestion } from "@/hooks/use-manpower";
 import { MANPOWER_ROLE_FALLBACK, TEAM_OTHERS } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 
 export type TeamValue = Record<string, string[]>;
+
+/** "Manpower plan line" picker value for "use the automatic match". */
+export const AUTO_ROW = "auto";
 
 /** Project team ↔ the API shape ([{ role, users }], empty roles dropped). */
 export function teamToInput(team: TeamValue): Array<{ role: string; users: string[] }> {
@@ -45,6 +49,8 @@ export function ProjectTeamFields({
   loading,
   naming,
   enabled,
+  planRow,
+  onPlanRowChange,
 }: {
   value: TeamValue;
   onChange: (value: TeamValue) => void;
@@ -52,11 +58,33 @@ export function ProjectTeamFields({
   loading: boolean;
   naming: { brand: string; month: string; type: string; title: string };
   enabled: boolean;
+  /** Manpower plan line chosen for the project (AUTO_ROW = automatic match). */
+  planRow: string;
+  onPlanRowChange: (key: string) => void;
 }) {
   const months = useManpowerMonths(enabled);
   const roles = [...(months.data?.roles ?? MANPOWER_ROLE_FALLBACK), TEAM_OTHERS];
-  const suggestion = useManpowerTeamSuggestion(naming, enabled);
+  const planRows = useManpowerRows(naming.month, enabled);
+  const rows = planRows.data?.rows ?? [];
+  const chosen = planRow !== AUTO_ROW && rows.some((r) => r.key === planRow) ? planRow : "";
+  const auto = useManpowerTeamSuggestion(naming, enabled);
+  const picked = useManpowerTeamSuggestion({ ...naming, row: chosen }, enabled && Boolean(chosen));
+  const suggestion = chosen ? picked : auto;
   const row = suggestion.data?.row ?? null;
+  // The project's brand first, then the rest of the month's plan.
+  const rowOptions = [
+    {
+      value: AUTO_ROW,
+      label: auto.data?.row ? `Automatic: ${auto.data.row.name}` : "Automatic (no matching line)",
+    },
+    ...[...rows]
+      .sort((a, b) => Number(b.brand?._id === naming.brand) - Number(a.brand?._id === naming.brand))
+      .map((r) => ({
+        value: r.key,
+        label: r.name,
+        description: [r.brand?.name ?? "No brand", r.type].filter(Boolean).join(" · "),
+      })),
+  ];
   const known = new Set(options.map((o) => o.value));
 
   function fillFromPlan() {
@@ -84,10 +112,20 @@ export function ProjectTeamFields({
           </Button>
         )}
       </div>
-      {row && (
-        <p className="text-xs text-muted-foreground">
-          Matches “{row.name}” in the {namingMonthLabel(row.month)} plan (version {row.version}).
-        </p>
+      {rows.length > 0 ? (
+        <div className="space-y-1">
+          <Label htmlFor="project-plan-row" className="text-xs">
+            Manpower plan line ({namingMonthLabel(naming.month)})
+          </Label>
+          <OptionSelect id="project-plan-row" value={chosen || AUTO_ROW} onChange={onPlanRowChange} options={rowOptions} />
+          <p className="text-xs text-muted-foreground">
+            Links this project to its brand line in the plan (used by Delivery Pulse on-map / off-map).
+          </p>
+        </div>
+      ) : (
+        naming.month && (
+          <p className="text-xs text-muted-foreground">No manpower plan for {namingMonthLabel(naming.month)} yet.</p>
+        )
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {roles.map((role) => (

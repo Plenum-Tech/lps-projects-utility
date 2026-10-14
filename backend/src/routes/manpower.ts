@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getPlan, listPlanMonths, savePlan, suggestTeam } from "../controllers/manpower.js";
+import { getPlan, listPlanMonths, listPlanRows, savePlan, suggestTeam } from "../controllers/manpower.js";
 import { requireManpowerEditor } from "../lib/manpowerAccess.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
@@ -10,7 +10,9 @@ const router = Router();
 router.use(requireAuth);
 
 router.get("/", requireRole("admin", "head"), listPlanMonths);
-router.get("/suggest", requireRole("admin", "head"), suggestTeam);
+// Project form (everyone): the month's rows and the team of the matched / chosen row.
+router.get("/rows", listPlanRows);
+router.get("/suggest", suggestTeam);
 router.get("/:month", requireRole("admin", "head"), getPlan);
 router.post("/:month", requireRole("admin", "head"), requireManpowerEditor, savePlan);
 

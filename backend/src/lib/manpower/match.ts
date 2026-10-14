@@ -193,6 +193,8 @@ export interface LinkProject {
   brand: string | null;
   naming?: { type?: string; month?: string; title?: string } | null;
   deadline?: Date | null;
+  /** Row chosen on the project (wins over the automatic match). */
+  manpowerRow?: string | null;
 }
 
 const STOP = new Set([
@@ -229,6 +231,7 @@ export function linkProjectsToRows(
   brandNames: Map<string, string>
 ): Map<string, string> {
   const links = new Map<string, string>();
+  const rowKeys = new Set(rows.map((r) => r.key));
   const brandSquashes = new Set([...brandNames.values()].map(squash).filter((x) => x.length >= 3));
   const rowsByBrand = new Map<string, LinkRow[]>();
   for (const r of rows) {
@@ -236,10 +239,15 @@ export function linkProjectsToRows(
     rowsByBrand.set(r.brand, [...(rowsByBrand.get(r.brand) ?? []), r]);
   }
   for (const p of projects) {
+    if (projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null }) !== month) continue;
+    // Chosen on the project: always that row.
+    if (p.manpowerRow && rowKeys.has(p.manpowerRow)) {
+      links.set(p._id, p.manpowerRow);
+      continue;
+    }
     if (!p.brand) continue;
     const candidates = rowsByBrand.get(p.brand);
     if (!candidates?.length) continue;
-    if (projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null }) !== month) continue;
     const brandName = brandNames.get(p.brand) ?? "";
     const projectWords = new Set([...words(p.name), ...words(p.naming?.title ?? ""), ...words(p.naming?.type ?? "")].map(norm));
     let best: { key: string; score: number } | null = null;

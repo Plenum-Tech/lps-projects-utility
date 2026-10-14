@@ -14,6 +14,7 @@ import {
   ProjectTeamFields,
   sameTeam,
   teamFromProject,
+  AUTO_ROW,
   teamToInput,
   type TeamValue,
 } from "@/components/projects/project-team-fields";
@@ -98,6 +99,8 @@ interface FormState {
   members: string[];
   /** Role → user ids (manpower plan roles + "others"). */
   team: TeamValue;
+  /** Manpower plan row key, or AUTO_ROW. */
+  manpowerRow: string;
   status: string;
   startDate: string;
   deadline: string;
@@ -147,6 +150,7 @@ function continueState(source: Project): FormState {
     title: source.naming?.title ?? source.name,
     members: source.members.map((member) => member.user._id),
     status: "",
+    manpowerRow: AUTO_ROW,
     startDate: firstDay > today ? firstDay : today,
     deadline: monthEnd(month),
     progress: "0",
@@ -166,6 +170,7 @@ function initialState(project?: Project | null): FormState {
     manager: project?.manager?._id ?? NONE,
     members: [],
     team: teamFromProject(project?.team),
+    manpowerRow: project?.manpowerRow || AUTO_ROW,
     status: project?.status._id ?? "",
     startDate: project ? toDateInput(project.startDate) : todayKey(),
     deadline: toDateInput(project?.deadline),
@@ -512,6 +517,7 @@ export function ProjectFormDialog({
         manager,
         members: form.members,
         team: teamToInput(form.team),
+        manpowerRow: form.manpowerRow === AUTO_ROW ? null : form.manpowerRow,
         status: form.status || undefined,
         progressMode: form.progressMode,
         hoursAllocated: hours,
@@ -540,6 +546,8 @@ export function ProjectFormDialog({
     if (form.summary.trim() !== original.summary.trim())
       input.summary = form.summary.trim();
     if (form.category !== original.category) input.category = category;
+    if (form.manpowerRow !== original.manpowerRow)
+      input.manpowerRow = form.manpowerRow === AUTO_ROW ? null : form.manpowerRow;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -882,6 +890,8 @@ export function ProjectFormDialog({
               title,
             }}
             enabled={open}
+            planRow={form.manpowerRow}
+            onPlanRowChange={(key) => set("manpowerRow", key)}
           />
 
           <Separator />

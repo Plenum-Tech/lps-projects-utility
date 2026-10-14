@@ -692,6 +692,7 @@ type PlanProject = {
   manager?: mongoose.Types.ObjectId | null;
   naming?: { brand?: mongoose.Types.ObjectId; type?: string; month?: string; title?: string } | null;
   deadline?: Date | null;
+  manpowerRow?: string | null;
 };
 type PlanMonthMaps = { projectRow: Map<string, string>; rowUsers: Map<string, Set<string>>; brandUsers: Map<string, Set<string>> };
 
@@ -717,6 +718,7 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
     brand: p.brand ? String(p.brand) : p.naming?.brand ? String(p.naming.brand) : null,
     naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
     deadline: p.deadline ?? null,
+    manpowerRow: p.manpowerRow ?? null,
   }));
   for (const plan of plans) {
     const rowUsers = new Map<string, Set<string>>();
@@ -750,7 +752,7 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
  */
 export async function getTeamMap(req: Request, res: Response): Promise<void> {
   const projects = await Project.find({})
-    .select("brand members.user manager name naming deadline")
+    .select("brand members.user manager name naming deadline manpowerRow")
     .lean<PlanProject[]>();
   const settingsNow = await getDeliverySettings();
   const plans = await planMapsFor(settingsNow.teamMapStartDate.slice(0, 7), appDateKey().slice(0, 7), projects);

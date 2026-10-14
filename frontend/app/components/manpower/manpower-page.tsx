@@ -25,6 +25,7 @@ import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/
 import { CellDialog, RowDialog } from "./plan-editors";
 import { PeopleView } from "./people-view";
 import { PlanTable, type TableRow } from "./plan-table";
+import { UnlinkedProjects } from "./unlinked-projects";
 
 const SOURCE_LABEL = { import: "Imported", edit: "Edited", copy: "Copied" } as const;
 
@@ -409,6 +410,9 @@ export function ManpowerPage() {
             <p className="text-xs text-muted-foreground">
               Dashed chips are open slots or names that don&apos;t match anyone in the app. “—” means the role isn&apos;t needed.
             </p>
+            {data && !editing && data.version === data.latestVersion && (
+              <UnlinkedProjects projects={data.unlinkedProjects ?? []} rows={data.plan.rows} canEdit={canEdit} />
+            )}
           </TabsContent>
 
           {data && (
