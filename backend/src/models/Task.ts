@@ -178,6 +178,17 @@ export interface ITask extends mongoose.Document {
   actualEndSource?: ActualDateSource | null;
   /** Set when the task was created from a meeting action item; unset when the meeting is deleted. */
   sourceMeeting?: ITaskSourceMeeting | null;
+  /** Created beyond its project's approved scope: blocked until an admin decides. */
+  overScope?: {
+    status: "pending" | "approved" | "rejected";
+    unit: string;
+    allowed: number;
+    used: number;
+    requested: number;
+    decidedBy?: mongoose.Types.ObjectId | null;
+    decidedAt?: Date | null;
+    reason?: string;
+  } | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -338,6 +349,22 @@ const taskSchema = new Schema<ITask>(
     actualStartSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
     actualEndSource: { type: String, enum: [...ACTUAL_DATE_SOURCES, null], default: null },
     sourceMeeting: { type: sourceMeetingSchema, default: null },
+    overScope: {
+      type: new Schema(
+        {
+          status: { type: String, enum: ["pending", "approved", "rejected"], required: true },
+          unit: { type: String, required: true },
+          allowed: { type: Number, required: true },
+          used: { type: Number, required: true },
+          requested: { type: Number, required: true },
+          decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+          decidedAt: { type: Date, default: null },
+          reason: { type: String, default: "", maxlength: 500 },
+        },
+        { _id: false }
+      ),
+      default: null,
+    },
   },
   { timestamps: true }
 );

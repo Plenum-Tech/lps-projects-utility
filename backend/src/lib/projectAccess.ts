@@ -273,6 +273,7 @@ export const PROJECT_POPULATE = [
   { path: "status", select: "name color isDefault isCompleted order" },
   { path: "category", select: "name" },
   { path: "brand", select: "name shortName color active" },
+  { path: "campaign", select: "name startMonth endMonth status" },
   { path: "departments", select: "name" },
   { path: "manager", select: "name email" },
   { path: "members.user", select: "name email role department" },

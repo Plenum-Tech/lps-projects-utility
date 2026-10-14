@@ -37,6 +37,7 @@ import { listUnbrandedProjects,
   updateMember,
   updateProject,
   updateProjectStatus,
+  teamLoad,
 } from "../controllers/projects.js";
 import { uploadTaskFilesMiddleware } from "../controllers/taskFiles.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
@@ -56,6 +57,7 @@ router.get("/export", exportProjects);
 router.post("/bulk", bulkProjects);
 
 router.get("/approvals", listApprovals);
+router.get("/team-load", teamLoad);
 router.get("/approvals/changes/:id", getChangeRequest);
 router.post("/approvals/changes/:id", decideChangeRequest);
 router.get("/unbranded", listUnbrandedProjects);

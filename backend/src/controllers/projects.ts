@@ -2,8 +2,11 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { approvalView, isProjectApprover, requestProjectApproval } from "../lib/projectApproval.js";
 import { scheduleProjectTag } from "../lib/tagAssign.js";
-import { MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
+import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
+import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
+import { parseScopeItems, scopeText, type ScopeItem } from "../lib/scopeUnits.js";
+import { Campaign } from "../models/Campaign.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -909,6 +912,8 @@ export interface ProjectBody {
   code?: unknown;
   summary?: unknown;
   manpowerRow?: unknown;
+  campaign?: unknown;
+  scopeItems?: unknown;
   category?: unknown;
   brand?: unknown;
   departments?: unknown;
@@ -950,6 +955,18 @@ function parseManpowerRow(raw: unknown): string | null | undefined | Invalid {
   if (raw === null || raw === "") return null;
   if (typeof raw !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(raw)) return bad("manpowerRow must be a plan row key");
   return raw;
+}
+
+/** A campaign of the project's brand (approved); null / "" = none. */
+async function parseCampaign(raw: unknown, brand: mongoose.Types.ObjectId | null | undefined): Promise<mongoose.Types.ObjectId | null | undefined | Invalid> {
+  if (raw === undefined) return undefined;
+  if (raw === null || raw === "") return null;
+  if (typeof raw !== "string" || isInvalidObjectId(raw)) return bad("campaign must be a campaign ID");
+  const campaign = await Campaign.findById(raw).select("brand status").lean();
+  if (!campaign) return bad("Campaign not found", 404);
+  if (!brand || !campaign.brand.equals(brand)) return bad("The campaign belongs to another brand");
+  if (campaign.status !== "approved") return bad("This campaign is waiting for leadership approval");
+  return campaign._id as mongoose.Types.ObjectId;
 }
 
 function parseProgress(raw: unknown): number | undefined | Invalid {
@@ -1012,6 +1029,14 @@ export async function createProjectCore(
   if (isInvalid(summary)) return summary;
   const manpowerRow = parseManpowerRow(body.manpowerRow);
   if (isInvalid(manpowerRow)) return manpowerRow;
+  const campaign = await parseCampaign(body.campaign, naming?.brand ?? null);
+  if (isInvalid(campaign)) return campaign;
+  let scopeItems: ScopeItem[] = [];
+  if (body.scopeItems !== undefined) {
+    const parsed = parseScopeItems(body.scopeItems);
+    if (typeof parsed === "string") return bad(parsed);
+    scopeItems = parsed;
+  }
 
   let category: mongoose.Types.ObjectId | null = null;
   if (body.category !== undefined) {
@@ -1111,6 +1136,8 @@ export async function createProjectCore(
       code,
       summary: summary || undefined,
       manpowerRow: manpowerRow ?? null,
+      campaign: campaign ?? null,
+      scopeItems,
       category,
       brand,
       departments,
@@ -1231,7 +1258,11 @@ export async function updateProjectCore(
   // Scope (summary) and team changes by anyone but leadership wait for approval;
   // everything else in the same save applies now.
   let pendingApproval: string | undefined;
-  if (!options.skipApproval && (body.summary !== undefined || body.team !== undefined) && !(await isLeadershipActor(actor))) {
+  if (
+    !options.skipApproval &&
+    (body.summary !== undefined || body.team !== undefined || body.scopeItems !== undefined) &&
+    !(await isLeadershipActor(actor))
+  ) {
     const held: Record<string, unknown> = {};
     const lines: Array<{ label: string; before: string; after: string }> = [];
     if (body.summary !== undefined) {
@@ -1240,6 +1271,14 @@ export async function updateProjectCore(
       if ((summary ?? "") !== (project.summary ?? "")) {
         held.summary = summary ?? "";
         lines.push({ label: "Scope", before: clip(project.summary), after: clip(summary) });
+      }
+    }
+    if (body.scopeItems !== undefined) {
+      const parsed = parseScopeItems(body.scopeItems);
+      if (typeof parsed === "string") return bad(parsed);
+      if (scopeText(parsed) !== scopeText(project.scopeItems)) {
+        held.scopeItems = parsed;
+        lines.push({ label: "Scope rows", before: scopeText(project.scopeItems), after: scopeText(parsed) });
       }
     }
     if (body.team !== undefined) {
@@ -1264,12 +1303,13 @@ export async function updateProjectCore(
     body = { ...body };
     delete body.summary;
     delete body.team;
+    delete body.scopeItems;
     if (lines.length > 0) {
       const brand = project.naming?.brand ?? project.brand ?? null;
       await requestChange({
         kind: "project_change",
         actor,
-        title: `${project.name} — ${held.summary !== undefined && held.team ? "scope and team" : held.team ? "team" : "scope"}`,
+        title: `${project.name} — ${(held.summary !== undefined || held.scopeItems) && held.team ? "scope and team" : held.team ? "team" : "scope"}`,
         changes: lines,
         payload: held,
         project: project._id as mongoose.Types.ObjectId,
@@ -1352,6 +1392,19 @@ export async function updateProjectCore(
     if (isInvalid(manpowerRow)) return manpowerRow;
     project.manpowerRow = manpowerRow ?? null;
     changed.push("manpowerRow");
+  }
+  if (body.campaign !== undefined) {
+    const campaign = await parseCampaign(body.campaign, project.naming?.brand ?? project.brand ?? null);
+    if (isInvalid(campaign)) return campaign;
+    project.campaign = campaign ?? null;
+    changed.push("campaign");
+  }
+  if (body.scopeItems !== undefined) {
+    const parsed = parseScopeItems(body.scopeItems);
+    if (typeof parsed === "string") return bad(parsed);
+    project.scopeItems = parsed;
+    project.markModified("scopeItems");
+    changed.push("scopeItems");
   }
   if (body.category !== undefined) {
     const category = await parseCategory(body.category);
@@ -2179,5 +2232,29 @@ export async function listUnbrandedProjects(req: Request, res: Response): Promis
     deadline: BRAND_MAPPING_DEADLINE,
     total: mine.length,
     projects: mine.slice(0, 100).map((p) => ({ _id: p._id.toString(), code: p.code, name: p.name })),
+  });
+}
+
+/**
+ * GET /api/projects/team-load?month=YYYY-MM — how many of the month's projects
+ * each person is on (team roles), for the new-project team step.
+ */
+export async function teamLoad(req: Request, res: Response): Promise<void> {
+  const month = typeof req.query.month === "string" ? req.query.month : "";
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    res.status(400).json({ error: "month must be YYYY-MM" });
+    return;
+  }
+  const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId; projects: number }>([
+    { $match: { "naming.month": month, archivedAt: null } },
+    { $project: { users: { $setUnion: [{ $reduce: { input: "$team.users", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } }, []] } } },
+    { $unwind: "$users" },
+    { $group: { _id: "$users", projects: { $sum: 1 } } },
+  ]);
+  const settings = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("maxProjectsPerPerson").lean();
+  res.json({
+    month,
+    max: settings?.maxProjectsPerPerson ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson,
+    load: Object.fromEntries(rows.map((r) => [String(r._id), r.projects])),
   });
 }

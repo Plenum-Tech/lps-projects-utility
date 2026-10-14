@@ -13,6 +13,8 @@ import {
   getTask,
   listReworkTasks,
   listHistory,
+  overScopeTasks,
+  decideOverScope,
   loggedTimeSummary,
   listTasks,
   mentionableUsers,
@@ -63,6 +65,9 @@ router.get("/subtasks/mine", mySubtasks);
 // Head/admin: tasks they created (kept for compatibility).
 router.get("/created", requireRole("head", "admin"), createdTasks);
 // My completed tasks (since the move to Utility) with no time logged.
+// Admins: tasks over their project's approved scope, and the decision.
+router.get("/over-scope", overScopeTasks);
+router.post("/:id/scope-approval", decideOverScope);
 router.get("/missing-time", async (req, res) => {
   res.json(await missingTimeTasks(req.user!._id as never));
 });

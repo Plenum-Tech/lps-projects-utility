@@ -6,11 +6,12 @@ import mongoose, { Schema } from "mongoose";
 //  - project_change: a project's scope (summary) and / or team
 //  - brand_edit:     a brand's name, short name, colour or active flag
 //  - manpower_plan:  a saved manpower plan version (all its changes at once)
+//  - campaign_new:   a new campaign for a brand
 // Leadership's own changes apply straight away and never create one.
 // A newer request for the same target replaces the pending one ("superseded").
 // ---------------------------------------------------------------------------
 
-export const CHANGE_KINDS = ["project_change", "brand_edit", "manpower_plan"] as const;
+export const CHANGE_KINDS = ["project_change", "brand_edit", "manpower_plan", "campaign_new"] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 export const CHANGE_STATUSES = ["pending", "approved", "rejected", "superseded"] as const;
 export type ChangeStatus = (typeof CHANGE_STATUSES)[number];

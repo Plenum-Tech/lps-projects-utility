@@ -8,6 +8,7 @@ import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
 import { copyGridFsFile, deleteFromGridFs } from "../lib/gridfs.js";
+import { scopeTotals } from "../lib/scopeUnits.js";
 import { notifyTask } from "../lib/notifications.js";
 import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import {
@@ -45,7 +46,7 @@ import {
 } from "../lib/taskAccess.js";
 import { addDays, appDateKey, appToday, nextRunAfter } from "../lib/taskJobs.js";
 import { appDayStart } from "../lib/appTime.js";
-import { notifyUsers } from "../lib/notifications.js";
+import { notifyUsers, taskLink } from "../lib/notifications.js";
 import {
   canCreateProjectTasks,
   canManageProject,
@@ -55,6 +56,7 @@ import {
   projectVisibilityFilter,
   pushProjectUpdate,
   recordProjectActivity,
+  adminIds,
 } from "../lib/projectAccess.js";
 import { scheduleProgressRecalc } from "../lib/projectProgress.js";
 import { nextShortCode, nextTaskNumber } from "../lib/taskNumbers.js";
@@ -883,6 +885,17 @@ async function completionBlocker(task: ITask): Promise<string | null> {
   return null;
 }
 
+/** Tasks over their project's approved scope can't move until an admin approves them. */
+function overScopeBlock(task: ITask): Invalid | null {
+  if (task.overScope?.status === "pending") {
+    return { status: 409, error: `This task goes over the approved scope (${task.overScope.unit}). It's blocked until an admin approves it.` };
+  }
+  if (task.overScope?.status === "rejected") {
+    return { status: 409, error: "An admin didn't approve this task beyond the scope, so it can't be worked on." };
+  }
+  return null;
+}
+
 async function applyStatusChange(
   user: IUser,
   task: ITask,
@@ -890,6 +903,8 @@ async function applyStatusChange(
   position: number | undefined,
   ip: string | undefined
 ): Promise<Invalid | { changed: boolean }> {
+  const blocked = overScopeBlock(task);
+  if (blocked) return blocked;
   const flags = await taskProjectFlags(task, user);
   const manager = canManageTask(user, task, flags);
 
@@ -1321,6 +1336,30 @@ export async function createTaskCore(
     }
   }
 
+  // Scoped projects: new work beyond a unit's approved total is flagged and
+  // blocked until an admin approves the extra (reworks don't count).
+  let overScope: ITask["overScope"] = null;
+  if (options.enforceRules && project && project.scopeItems?.length && iteration !== "rework" && titleParts) {
+    const totals = scopeTotals(project.scopeItems);
+    const key = titleParts.unit.trim().toLowerCase();
+    const allowed = totals.get(key)?.total ?? 0;
+    const [usage] = await Task.aggregate<{ used: number }>([
+      {
+        $match: {
+          project: project._id,
+          iteration: { $ne: "rework" },
+          "overScope.status": { $ne: "rejected" },
+          "titleParts.unit": { $regex: `^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
+        },
+      },
+      { $group: { _id: null, used: { $sum: "$titleParts.quantity" } } },
+    ]);
+    const used = usage?.used ?? 0;
+    if (used + titleParts.quantity > allowed) {
+      overScope = { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: titleParts.quantity };
+    }
+  }
+
   // Recurrence
   let recurrence: ITaskRecurrence | null = null;
   if (body.recurrence !== undefined) {
@@ -1386,10 +1425,37 @@ export async function createTaskCore(
     ...(initialStatus === "in_review" ? { submittedAt: createdAt } : {}),
     ...actual,
     sourceMeeting: options.sourceMeeting ?? null,
+    overScope,
   });
   const taskId = task._id as mongoose.Types.ObjectId;
 
   // Rework: the original task's files carry over as attachments (own copies).
+  // Over the approved scope: admins are asked to approve the extra.
+  if (task.overScope?.status === "pending" && project) {
+    notifyUsers({
+      recipients: await adminIds(),
+      actor,
+      type: "task_over_scope",
+      title: "Task over the approved scope",
+      message: `${actor.name} added "${task.title}" to ${project.name}: ${task.overScope.used + task.overScope.requested} ${task.overScope.unit} against ${task.overScope.allowed} approved.`,
+      link: "/approvals",
+      email: {
+        subject: `Over scope: ${task.title}`,
+        heading: "Task Over The Approved Scope",
+        intro: `${actor.name} added a task beyond the project's approved scope. It's blocked until an admin approves it.`,
+        cardTitle: task.title,
+        rows: [
+          ["Project", project.name],
+          ["Unit", task.overScope.unit],
+          ["Approved", String(task.overScope.allowed)],
+          ["Already used", String(task.overScope.used)],
+          ["This task", String(task.overScope.requested)],
+        ],
+        buttonLabel: "Review in Approvals",
+      },
+    });
+  }
+
   if (task.reworkOf && reworkSourceFiles > 0) {
     const files = await TaskFile.find({ task: task.reworkOf, subtask: null }).sort({ createdAt: 1 }).limit(TASK_FILE_LIMITS.maxFilesPerTask);
     for (const file of files) {
@@ -1620,6 +1686,11 @@ export async function moveTask(req: Request, res: Response): Promise<void> {
 export async function submitTask(req: Request, res: Response): Promise<void> {
   const task = await getTaskOr404(req, res);
   if (!task) return;
+  const blocked = overScopeBlock(task);
+  if (blocked) {
+    res.status(blocked.status).json({ error: blocked.error });
+    return;
+  }
 
   const user = req.user!;
   if (!isAssignee(user, task)) {
@@ -2851,4 +2922,77 @@ export async function unpinTask(req: Request, res: Response): Promise<void> {
   }
   await User.updateOne({ _id: req.user!._id }, { $pull: { pinnedTasks: new mongoose.Types.ObjectId(id) } });
   res.json({ pinned: false });
+}
+
+// ---------------------------------------------------------------------------
+// Over-scope tasks: admins approve or reject the extra.
+// ---------------------------------------------------------------------------
+
+/** GET /api/tasks/over-scope — admins: tasks waiting for a scope decision. */
+export async function overScopeTasks(req: Request, res: Response): Promise<void> {
+  if (req.user!.role !== "admin") {
+    res.json({ tasks: [] });
+    return;
+  }
+  const tasks = await Task.find({ "overScope.status": "pending" })
+    .sort({ createdAt: 1 })
+    .limit(200)
+    .populate("project", "name code")
+    .populate("assignedBy", "name")
+    .populate("assignees", "name")
+    .select("title shortCode project assignedBy assignees overScope createdAt")
+    .lean();
+  res.json({ tasks });
+}
+
+/** POST /api/tasks/:id/scope-approval — admins; `{ decision: "approve" | "reject", reason? }`. */
+export async function decideOverScope(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  if (user.role !== "admin") {
+    res.status(403).json({ error: "Only admins can approve work beyond the scope" });
+    return;
+  }
+  const task = await getTaskOr404(req, res);
+  if (!task) return;
+  const body = (req.body ?? {}) as { decision?: unknown; reason?: unknown };
+  if (body.decision !== "approve" && body.decision !== "reject") {
+    res.status(400).json({ error: 'decision must be "approve" or "reject"' });
+    return;
+  }
+  if (task.overScope?.status !== "pending") {
+    res.status(409).json({ error: "This task isn't waiting for a scope decision" });
+    return;
+  }
+  const approve = body.decision === "approve";
+  const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 500) : "";
+  task.overScope = {
+    ...task.overScope,
+    status: approve ? "approved" : "rejected",
+    decidedBy: user._id as mongoose.Types.ObjectId,
+    decidedAt: new Date(),
+    reason,
+  };
+  task.markModified("overScope");
+  await task.save();
+  recordTaskHistory(task._id as mongoose.Types.ObjectId, user, "updated", {
+    fields: [approve ? `extra ${task.overScope.unit} approved beyond the scope` : `extra ${task.overScope.unit} not approved${reason ? `: ${reason}` : ""}`],
+  });
+  notifyUsers({
+    recipients: [task.assignedBy, ...task.assignees].filter(Boolean) as mongoose.Types.ObjectId[],
+    actor: user,
+    type: "task_over_scope",
+    title: approve ? "Extra work approved" : "Extra work not approved",
+    message: `${user.name} ${approve ? "approved" : "didn't approve"} "${task.title}" beyond the scope${reason ? `: ${reason}` : "."}`,
+    link: taskLink(task._id as mongoose.Types.ObjectId),
+    email: {
+      subject: approve ? `Extra work approved: ${task.title}` : `Extra work not approved: ${task.title}`,
+      heading: approve ? "Extra Work Approved" : "Extra Work Not Approved",
+      intro: `${user.name} ${approve ? "approved" : "didn't approve"} this task beyond the project's scope.`,
+      cardTitle: task.title,
+      rows: reason ? [["Reason", reason]] : [],
+      buttonLabel: "Open task",
+    },
+  });
+  pushTaskUpdate(task, "updated");
+  res.json({ overScope: task.overScope });
 }
