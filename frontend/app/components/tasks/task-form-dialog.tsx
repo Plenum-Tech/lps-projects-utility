@@ -469,9 +469,11 @@ export function TaskFormDialog({
   // The brief may be formatted (HTML): count its text.
   const descriptionText = richTextPlain(form.description);
   // Rework: left empty, the original task's brief and files are used (server side).
-  // New work needs a written brief AND at least one file.
+  // New work needs a written brief AND a file or a link.
   const briefTextMissing = !task && !reworkCreate && descriptionText.trim() === "";
-  const briefFilesMissing = !task && !reworkCreate && attachments.length === 0;
+  // A link in the brief counts like a file.
+  const briefHasLink = /https?:\/\/\S+/i.test(form.description);
+  const briefFilesMissing = !task && !reworkCreate && attachments.length === 0 && !briefHasLink;
   const briefMissing = briefTextMissing || briefFilesMissing;
   const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
@@ -873,7 +875,7 @@ export function TaskFormDialog({
                   <span className="font-normal text-muted-foreground">
                     {reworkCreate
                       ? "(leave empty to use the original task's brief and files)"
-                      : "(a description and at least one attached file are required)"}
+                      : "(a description, plus a file or a link, is required)"}
                   </span>
                 </Label>
                 <RichTextEditor
@@ -900,7 +902,7 @@ export function TaskFormDialog({
                 existingCount={task?.fileCount ?? 0}
               />
               {briefInvalid && briefFilesMissing && (
-                <p className="-mt-2 text-xs text-destructive">Attach at least one brief file.</p>
+                <p className="-mt-2 text-xs text-destructive">Attach a brief file or add a link to the brief.</p>
               )}
 
               <div className="grid gap-4 sm:grid-cols-2">

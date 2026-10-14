@@ -103,6 +103,9 @@ export function ReworkTaskPicker({
         if (!selected || text !== selected.label) setTyped(text);
       }}
       isItemEqualToValue={(a: ReworkTaskOption, b: ReworkTaskOption) => a.value === b.value}
+      itemToStringLabel={(option: ReworkTaskOption) => option.label}
+      // The server already searched (code or name): don't filter its results again.
+      filter={null}
       disabled={requireProject && !projectId}
     >
       <ComboboxInput
