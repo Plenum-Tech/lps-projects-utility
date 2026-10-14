@@ -1,5 +1,5 @@
 import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { addDaysKey, fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
@@ -95,7 +95,10 @@ import {
   uploadTaskFilesNow,
   taskKeys,
   useCreateTask,
+  useTask,
+  useTaskFiles,
   useUpdateTask,
+  viewTaskFile,
 } from "@/hooks/use-tasks";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -444,6 +447,25 @@ export function TaskFormDialog({
 
   // New rework: only the original task is asked for; the name is versioned by the server.
   const reworkCreate = !task && form.iteration === "rework";
+  // The original task's brief fills the editor and its files are listed (copied on save).
+  const reworkSourceId = reworkCreate && form.reworkOf ? form.reworkOf : null;
+  const reworkSource = useTask(reworkSourceId, Boolean(reworkSourceId));
+  const reworkSourceFiles = useTaskFiles(reworkSourceId);
+  const filledBrief = useRef<{ id: string; html: string } | null>(null);
+  useEffect(() => {
+    const source = reworkSource.data?.task;
+    if (!reworkSourceId || !source || source._id !== reworkSourceId) return;
+    if (filledBrief.current?.id === reworkSourceId) return;
+    const html = source.description ?? "";
+    setForm((current) =>
+      // Only replace an empty brief or the brief copied from a previously picked task.
+      current.description.trim() === "" || current.description === filledBrief.current?.html
+        ? { ...current, description: html }
+        : current,
+    );
+    filledBrief.current = { id: reworkSourceId, html };
+  }, [reworkSourceId, reworkSource.data]);
+  const sourceFiles = reworkSourceId ? (reworkSourceFiles.data?.files ?? []).filter((f) => !f.subtask) : [];
   // New tasks and rules-era tasks use the controlled name; older tasks keep a free title.
   const controlledName = (!task || Boolean(task.titleParts)) && !reworkCreate;
   const quantityNumber = Number(form.quantity);
@@ -901,6 +923,26 @@ export function TaskFormDialog({
                 disabled={pending}
                 existingCount={task?.fileCount ?? 0}
               />
+              {sourceFiles.length > 0 && (
+                <div className="-mt-2 space-y-1 rounded-md border border-dashed bg-muted/30 p-2.5 text-sm">
+                  <p className="text-xs text-muted-foreground">
+                    From the original task — copied to the rework when you save:
+                  </p>
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                    {sourceFiles.map((file) => (
+                      <li key={file._id}>
+                        <button
+                          type="button"
+                          className="text-primary underline underline-offset-2"
+                          onClick={() => void viewTaskFile(reworkSourceId!, file)}
+                        >
+                          {file.filename}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
               {briefInvalid && briefFilesMissing && (
                 <p className="-mt-2 text-xs text-destructive">Attach a brief file or add a link to the brief.</p>
               )}
