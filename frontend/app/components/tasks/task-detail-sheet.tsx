@@ -24,6 +24,7 @@ import { Link } from "react-router";
 
 import { ShortCode } from "@/components/projects/project-badges";
 import { ActualDatesBlock } from "@/components/tasks/actual-dates";
+import { TaskTimeEntries } from "@/components/tasks/task-time-entries";
 import { EstimateEditor } from "@/components/tasks/estimate-field";
 import { LabelChip } from "@/components/tasks/label-chip";
 import {
@@ -533,6 +534,9 @@ function TaskDetail({
             </dl>
 
             <ActualDatesBlock task={task} permissions={permissions} />
+
+            {/* Every time entry on the task, row by row. */}
+            <TaskTimeEntries taskId={task._id} />
 
             <PearityTagSection task={task} />
 
