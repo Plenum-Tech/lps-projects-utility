@@ -40,6 +40,7 @@ export function PlanTable({
   links,
   highlight,
   changedRows,
+  scope,
   editing = false,
   onEditCell,
   onEditRow,
@@ -52,6 +53,8 @@ export function PlanTable({
   highlight?: string | null;
   /** Row keys to mark as changed (approval review). */
   changedRows?: ReadonlySet<string>;
+  /** Each line's scope (its linked projects' scope rows added up). */
+  scope?: Record<string, Array<{ unit: string; total: number }>>;
   editing?: boolean;
   onEditCell?: (rowKey: string, role: string) => void;
   onEditRow?: (rowKey: string) => void;
@@ -102,6 +105,11 @@ export function PlanTable({
                     )}
                   >
                     <RowHeader row={row} links={links?.[row.key]} editing={editing} onEdit={() => onEditRow?.(row.key)} />
+                    {scope?.[row.key]?.length ? (
+                      <p className="mt-0.5 text-xs text-muted-foreground" title="Scope of the linked projects">
+                        Scope: {scope[row.key]!.map((t) => `${t.total} ${t.unit}`).join(" · ")}
+                      </p>
+                    ) : null}
                   </th>
                   {roles.map((role) => {
                     const cell = row.cells.find((c) => c.role === role.key);

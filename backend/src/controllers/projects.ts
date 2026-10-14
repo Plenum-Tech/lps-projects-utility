@@ -5,6 +5,7 @@ import { scheduleProjectTag } from "../lib/tagAssign.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
+import { syncProjectTeamToPlan } from "../lib/manpowerSync.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
@@ -972,6 +973,8 @@ export interface ProjectWriteOptions {
   keepCode?: boolean;
   /** Apply scope / team changes directly (leadership approving a request, imports). */
   skipApproval?: boolean;
+  /** Don't copy the team onto the manpower plan (the plan is the source of this change). */
+  skipPlanSync?: boolean;
 }
 
 /**
@@ -1158,6 +1161,7 @@ export async function createProjectCore(
   });
   notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
+  if ((project.team ?? []).length && !options.skipPlanSync) await syncProjectTeamToPlan(project, actor);
   scheduleProjectTag(projectId);
   await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false });
   return { project };
@@ -1530,6 +1534,8 @@ export async function updateProjectCore(
   const added = [...(newManager ? [newManager] : []), ...newTeamMembers.filter((u) => !newManager?.equals(u))];
   if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
+  // The team is also the project's line in the month's manpower plan.
+  if (changed.includes("team") && !options.skipPlanSync) await syncProjectTeamToPlan(project, actor);
   if (changed.some((f) => f === "naming" || f === "name" || f === "brand")) scheduleProjectTag(projectId, true);
   return { changed, ...(pendingApproval ? { pendingApproval } : {}) };
 }

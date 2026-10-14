@@ -5,6 +5,10 @@ import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
 import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
+import { rowPeopleKey } from "../lib/manpowerSync.js";
+import { scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
+import { updateProjectCore } from "./projects.js";
+import type { IUser } from "../models/User.js";
 import { projectMonth } from "../lib/projectExpiry.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
@@ -104,9 +108,11 @@ type ProjectLink = { _id: string; code: string; name: string };
  * The month's projects linked to each row ({ rowKey: [{ _id, code, name }] }),
  * plus the month's projects that match no row (to link from the plan page).
  */
-async function rowLinks(plan: IManpowerPlan): Promise<{ links: Record<string, ProjectLink[]>; unlinked: ProjectLink[] }> {
+async function rowLinks(
+  plan: IManpowerPlan
+): Promise<{ links: Record<string, ProjectLink[]>; unlinked: ProjectLink[]; scope: Record<string, Array<{ unit: string; total: number }>> }> {
   const [projects, brands] = await Promise.all([
-    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow").lean(),
+    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow scopeItems").lean(),
     Brand.find({}).select("name").lean(),
   ]);
   const links = linkProjectsToRows(
@@ -129,11 +135,23 @@ async function rowLinks(plan: IManpowerPlan): Promise<{ links: Record<string, Pr
     (out[rowKey] ??= []).push({ _id: projectId, code: p.code, name: p.name });
   }
   for (const list of Object.values(out)) list.sort((a, b) => a.name.localeCompare(b.name));
+  // Each line's scope: the linked projects' scope rows added up per unit.
+  const scope: Record<string, Array<{ unit: string; total: number }>> = {};
+  for (const [projectId, rowKey] of links) {
+    const items = (byId.get(projectId)?.scopeItems ?? []) as ScopeItem[];
+    if (!items.length) continue;
+    const merged = new Map((scope[rowKey] ?? []).map((t) => [t.unit.toLowerCase(), { ...t }]));
+    for (const t of scopeTotals(items).values()) {
+      const key = t.unit.toLowerCase();
+      merged.set(key, { unit: merged.get(key)?.unit ?? t.unit, total: (merged.get(key)?.total ?? 0) + t.total });
+    }
+    scope[rowKey] = [...merged.values()];
+  }
   const unlinked = projects
     .filter((p) => !links.has(String(p._id)) && projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null }) === plan.month)
     .map((p) => ({ _id: String(p._id), code: p.code, name: p.name }))
     .sort((a, b) => a.name.localeCompare(b.name));
-  return { links: out, unlinked };
+  return { links: out, unlinked, scope };
 }
 
 /**
@@ -199,7 +217,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const [{ links, unlinked }, leaveDays, allUsers] = await Promise.all([
+  const [{ links, unlinked, scope }, leaveDays, allUsers] = await Promise.all([
     rowLinks(plan),
     leaveDaysByUser(month),
     User.find({}).select("name designation role").sort({ name: 1 }).lean(),
@@ -264,6 +282,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     })),
     plan: plan.toJSON(),
     links,
+    scope,
     unlinkedProjects: unlinked,
     people: personRows,
     available,
@@ -478,6 +497,9 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
       { $set: { status: "superseded" } }
     );
     let pendingApproval: string | undefined;
+    if (!needsApproval) {
+      await syncPlanToProjects(month, (latest?.rows ?? []) as IManpowerRow[], rows, req.user!, req.ip);
+    }
     if (needsApproval) {
       const changes = await planChanges((latest?.rows ?? []) as IManpowerRow[], rows);
       await requestChange({
@@ -569,4 +591,59 @@ export async function suggestTeam(req: Request, res: Response): Promise<void> {
         users: (c.users as unknown as Array<{ _id: mongoose.Types.ObjectId; name: string }>).map((u) => ({ _id: String(u._id), name: u.name })),
       })),
   });
+}
+
+/**
+ * Plan → projects: after an approved plan change, the projects linked to each
+ * changed line get that line's people as their team (plan roles; "Others"
+ * stays as it is on the project).
+ */
+export async function syncPlanToProjects(
+  month: string,
+  before: IManpowerRow[],
+  after: IManpowerRow[],
+  actor: IUser,
+  ip?: string
+): Promise<number> {
+  try {
+    const old = new Map(before.map((r) => [r.key, rowPeopleKey(r.cells)]));
+    const changed = new Map(after.filter((r) => old.get(r.key) !== rowPeopleKey(r.cells)).map((r) => [r.key, r]));
+    if (changed.size === 0) return 0;
+    const [projects, brands] = await Promise.all([
+      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow team"),
+      Brand.find({}).select("name").lean(),
+    ]);
+    const links = linkProjectsToRows(
+      month,
+      after.map((r) => ({ key: r.key, brand: r.brand ? String(r.brand) : null, type: r.type, name: r.name })),
+      projects.map((p) => ({
+        _id: String(p._id),
+        name: p.name,
+        brand: p.brand ? String(p.brand) : p.naming?.brand ? String(p.naming.brand) : null,
+        naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
+        deadline: p.deadline ?? null,
+        manpowerRow: p.manpowerRow ?? null,
+      })),
+      new Map(brands.map((b) => [String(b._id), b.name]))
+    );
+    let updated = 0;
+    for (const light of projects) {
+      const rowKey = links.get(String(light._id));
+      const row = rowKey ? changed.get(rowKey) : undefined;
+      if (!row) continue;
+      const project = await Project.findById(light._id);
+      if (!project) continue;
+      const others = (project.team ?? []).filter((t) => !MANPOWER_ROLE_KEYS.includes(t.role));
+      const team = [
+        ...row.cells.filter((c) => (c.users ?? []).length).map((c) => ({ role: c.role, users: c.users.map(String) })),
+        ...others.map((t) => ({ role: t.role, users: t.users.map(String) })),
+      ];
+      const result = await updateProjectCore(actor, project, { team } as never, ip, { skipApproval: true, skipPlanSync: true });
+      if (!("error" in result)) updated += 1;
+    }
+    return updated;
+  } catch (err) {
+    console.error("[manpower] plan → projects sync failed", month, err);
+    return 0;
+  }
 }

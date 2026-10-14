@@ -438,6 +438,7 @@ export function ManpowerPage() {
               rows={shownRows}
               roles={roles}
               links={editing ? undefined : data?.links}
+              scope={editing ? undefined : data?.scope}
               highlight={editing ? null : highlight}
               editing={editing}
               onEditCell={(rowKey, roleKey) => setCellEdit({ rowKey, role: roleKey })}
@@ -457,6 +458,12 @@ export function ManpowerPage() {
               <PeopleView
                 data={data}
                 roles={roles}
+                rows={planRowsToTable(data)}
+                canEdit={canEdit && !editing && data.version === data.latestVersion}
+                saving={save.isPending}
+                onSave={(next, note, done) =>
+                  save.mutate({ month, baseVersion: data.latestVersion, rows: tableToInput(next), note }, { onSuccess: done })
+                }
                 onHighlight={(id) => {
                   setHighlight(id);
                   setParam({ tab: null });

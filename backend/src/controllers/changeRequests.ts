@@ -11,6 +11,7 @@ import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 import { MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { updateProjectCore, type ProjectBody } from "./projects.js";
+import { syncPlanToProjects } from "./manpower.js";
 
 // ---------------------------------------------------------------------------
 // Leadership approvals of scope / team, brand and manpower plan changes
@@ -62,8 +63,11 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   const plan = await ManpowerPlan.findOne({ month: request.month, version: request.version });
   if (!plan) return "That plan version no longer exists";
   if (plan.status !== "pending") return `That plan version is ${plan.status}`;
+  const live = await ManpowerPlan.findOne({ month: request.month, ...APPROVED_PLAN }).sort({ version: -1 }).select("rows").lean();
   plan.status = "approved";
   await plan.save();
+  // The approved lines' people become the linked projects' teams.
+  await syncPlanToProjects(plan.month, (live?.rows ?? []) as IManpowerRow[], plan.rows as IManpowerRow[], decider, ip);
   return null;
 }
 

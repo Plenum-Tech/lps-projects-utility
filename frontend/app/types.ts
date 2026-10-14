@@ -3706,6 +3706,8 @@ export interface ManpowerPlanResponse {
   links: Record<string, Array<{ _id: string; code: string; name: string }>>;
   /** The month's projects that match no row. */
   unlinkedProjects?: Array<{ _id: string; code: string; name: string }>;
+  /** Each line's scope (linked projects' scope rows added up per unit). */
+  scope?: Record<string, Array<{ unit: string; total: number }>>;
   people: ManpowerPersonAllocation[];
   available: Array<ManpowerPersonRef & { leaveDays: number }>;
 }
