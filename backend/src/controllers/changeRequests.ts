@@ -5,7 +5,6 @@ import { notifyDecision } from "../lib/changeRequests.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
-import { Campaign } from "../models/Campaign.js";
 import { ChangeRequest, type IChangeRequest } from "../models/ChangeRequest.js";
 import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
@@ -60,15 +59,6 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     await brand.save();
     return null;
   }
-  if (request.kind === "campaign_new") {
-    const campaign = await Campaign.findById(payload.campaign);
-    if (!campaign) return "The campaign no longer exists";
-    campaign.status = "approved";
-    campaign.decidedBy = decider._id as mongoose.Types.ObjectId;
-    campaign.decidedAt = new Date();
-    await campaign.save();
-    return null;
-  }
   const plan = await ManpowerPlan.findOne({ month: request.month, version: request.version });
   if (!plan) return "That plan version no longer exists";
   if (plan.status !== "pending") return `That plan version is ${plan.status}`;
@@ -106,8 +96,6 @@ export async function decideChangeRequest(req: Request, res: Response): Promise<
       res.status(409).json({ error: failed });
       return;
     }
-  } else if (request.kind === "campaign_new") {
-    await Campaign.updateOne({ _id: String((request.payload ?? {}).campaign ?? ""), status: "pending" }, { $set: { status: "rejected", decidedBy: user._id, decidedAt: new Date() } });
   } else if (request.kind === "manpower_plan") {
     await ManpowerPlan.updateOne({ month: request.month, version: request.version, status: "pending" }, { $set: { status: "rejected" } });
   }
@@ -197,6 +185,11 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
           members: (project.members ?? []).length,
           archived: Boolean(project.archivedAt),
         },
+        scopeRows: {
+          changed: Array.isArray(payload.scopeItems),
+          current: project.scopeItems ?? [],
+          proposed: Array.isArray(payload.scopeItems) ? payload.scopeItems : (project.scopeItems ?? []),
+        },
         scope: {
           changed: typeof payload.summary === "string",
           current: project.summary ?? "",
@@ -216,19 +209,6 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
       const current = { name: brand.name, shortName: brand.shortName ?? "", color: brand.color, active: brand.active };
       context = { brand: { _id: String(brand._id), projects, current, proposed: { ...current, ...payload } } };
     }
-  } else if (request.kind === "campaign_new" && brandId) {
-    const [campaign, others, projects] = await Promise.all([
-      Campaign.findById(payload.campaign).lean(),
-      Campaign.find({ brand: brandId, status: "approved", active: true }).sort({ name: 1 }).select("name startMonth endMonth").lean(),
-      Project.countDocuments({ $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null }),
-    ]);
-    context = {
-      campaign: campaign
-        ? { name: campaign.name, startMonth: campaign.startMonth, endMonth: campaign.endMonth, status: campaign.status }
-        : null,
-      brandCampaigns: others.map((c) => ({ name: c.name, startMonth: c.startMonth, endMonth: c.endMonth })),
-      brandProjects: projects,
-    };
   } else if (request.kind === "manpower_plan" && request.month) {
     const [proposed, live] = await Promise.all([
       ManpowerPlan.findOne({ month: request.month, version: request.version }).select("version status rows.key rows.name").lean(),

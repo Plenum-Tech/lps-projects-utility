@@ -5,6 +5,7 @@ import { LuCircleCheck, LuCircleX, LuClipboardCheck, LuLoaderCircle } from "reac
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { RejectDialog } from "@/components/projects/project-approval";
 import { ChangeApprovals } from "@/components/approvals/change-approvals";
+import { OverScopeApprovals } from "@/components/tasks/over-scope";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -42,6 +43,9 @@ export default function ApprovalsRoute() {
 
       {queue.isPending && <Skeleton className="h-60 w-full rounded-xl" />}
       {queue.isError && <QueryError title="Couldn't load approvals" error={queue.error} onRetry={() => void queue.refetch()} />}
+      {/* Admins: tasks over their project's approved scope. */}
+      <OverScopeApprovals />
+
       {queue.data && !queue.data.isApprover && (
         <EmptyState
           icon={LuClipboardCheck}

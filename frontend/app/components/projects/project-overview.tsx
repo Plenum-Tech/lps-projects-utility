@@ -240,6 +240,30 @@ export function ProjectOverview({ detail }: { detail: ProjectDetailResponse }) {
           ) : (
             <p className="mb-4 text-sm text-muted-foreground">No summary.</p>
           )}
+          {(project.scopeItems?.length ?? 0) > 0 && (
+            <div className="mb-4 rounded-lg border">
+              <table className="w-full text-sm">
+                <thead className="text-xs text-muted-foreground">
+                  <tr className="border-b">
+                    <th className="px-3 py-1.5 text-left font-medium">Scope</th>
+                    <th className="px-3 py-1.5 text-right font-medium">Qty × Lang × Sizes</th>
+                    <th className="px-3 py-1.5 text-right font-medium">Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {project.scopeItems!.map((row, index) => (
+                    <tr key={index} className="border-b last:border-0">
+                      <td className="px-3 py-1.5">{row.unit}</td>
+                      <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
+                        {row.quantity} × {row.languages} × {row.sizes}
+                      </td>
+                      <td className="px-3 py-1.5 text-right font-medium tabular-nums">{row.quantity * row.languages * row.sizes}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Fact label="Start date">{formatDateOnly(project.startDate, true)}</Fact>
             <Fact label="Deadline">

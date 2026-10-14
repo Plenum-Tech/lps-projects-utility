@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
+import { ScopeItemsEditor } from "@/components/projects/scope-items-editor";
+import { namingMonthLabel } from "@/lib/projects";
+import { useTeamLoad } from "@/hooks/use-team-load";
+import type { ScopeItem } from "@/types";
 
 import {
   ManageLink,
@@ -101,6 +105,8 @@ interface FormState {
   team: TeamValue;
   /** Manpower plan row key, or AUTO_ROW. */
   manpowerRow: string;
+  /** Structured scope rows. */
+  scopeItems: ScopeItem[];
   status: string;
   startDate: string;
   deadline: string;
@@ -171,6 +177,7 @@ function initialState(project?: Project | null): FormState {
     members: [],
     team: teamFromProject(project?.team),
     manpowerRow: project?.manpowerRow || AUTO_ROW,
+    scopeItems: (project?.scopeItems ?? []).map((row) => ({ ...row })),
     status: project?.status._id ?? "",
     startDate: project ? toDateInput(project.startDate) : todayKey(),
     deadline: toDateInput(project?.deadline),
@@ -253,6 +260,10 @@ export function ProjectFormDialog({
   const freshState = () => (!project && continueFrom ? continueState(continueFrom) : initialState(project));
   const [form, setForm] = useState<FormState>(freshState);
   const [submitted, setSubmitted] = useState(false);
+  // New projects: four steps (brand, project, scope, team). Editing shows everything.
+  const [step, setStep] = useState(1);
+  const wizard = !project;
+  const showStep = (n: number) => !wizard || step === n;
   // Continuing: the copied scope is shown read-only until "Edit scope".
   const [scopeLocked, setScopeLocked] = useState(true);
   const pending = createProject.isPending || updateProject.isPending;
@@ -262,6 +273,7 @@ export function ProjectFormDialog({
       setForm(freshState());
       setScopeLocked(true);
       setSubmitted(false);
+      setStep(1);
       setNewBrand(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -314,16 +326,23 @@ export function ProjectFormDialog({
     );
   }
 
+  const teamLoad = useTeamLoad(form.month, open);
   const memberOptions = useMemo<MultiSelectOption[]>(
     () =>
-      (assignable.data ?? []).map((person) => ({
-        value: person._id,
-        label: person.name,
-        description: [person.email, person.department?.name]
-          .filter(Boolean)
-          .join(" · "),
-      })),
-    [assignable.data],
+      (assignable.data ?? []).map((person) => {
+        // This month's load (projects with them on the team) — more than the plan's limit is flagged.
+        const load = teamLoad.data?.load[person._id] ?? 0;
+        const max = teamLoad.data?.max ?? 0;
+        const loadText = teamLoad.data
+          ? `${load}/${max} projects in ${namingMonthLabel(form.month)}${max && load >= max ? " — full" : ""}`
+          : null;
+        return {
+          value: person._id,
+          label: person.name,
+          description: [loadText, person.department?.name].filter(Boolean).join(" · "),
+        };
+      }),
+    [assignable.data, teamLoad.data, form.month],
   );
 
   const managerOptions = useMemo<OptionItem[]>(() => {
@@ -451,6 +470,7 @@ export function ProjectFormDialog({
       : title.includes(NAMING_SEPARATOR)
         ? "Underscores separate the parts — use a space or dash instead."
         : null;
+  const scopeError = !project && form.scopeItems.length === 0 ? "Add at least one scope row." : null;
   const preview = composeProjectName({
     brand: selectedBrand?.name ?? "",
     type: form.type,
@@ -483,13 +503,33 @@ export function ProjectFormDialog({
     codeError ||
     progressError ||
     summaryError ||
+    scopeError ||
     hours === "invalid" ||
     budget === "invalid",
   );
   const show = (error: string | null | boolean) => submitted && Boolean(error);
+  // Per wizard step: what must be right before moving on.
+  const stepErrors: Record<number, unknown[]> = {
+    1: [brandError],
+    2: [typeError, monthError, nameError, summaryError, progressError, hours === "invalid", budget === "invalid"],
+    3: [scopeError],
+    4: [],
+  };
+  function nextStep() {
+    if (stepErrors[step]!.some(Boolean)) {
+      setSubmitted(true);
+      return;
+    }
+    setSubmitted(false);
+    setStep((s) => Math.min(4, s + 1));
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
+    if (wizard && step < 4) {
+      nextStep();
+      return;
+    }
     setSubmitted(true);
     if (
       hasErrors ||
@@ -518,6 +558,7 @@ export function ProjectFormDialog({
         members: form.members,
         team: teamToInput(form.team),
         manpowerRow: form.manpowerRow === AUTO_ROW ? null : form.manpowerRow,
+        scopeItems: form.scopeItems,
         status: form.status || undefined,
         progressMode: form.progressMode,
         hoursAllocated: hours,
@@ -548,6 +589,7 @@ export function ProjectFormDialog({
     if (form.category !== original.category) input.category = category;
     if (form.manpowerRow !== original.manpowerRow)
       input.manpowerRow = form.manpowerRow === AUTO_ROW ? null : form.manpowerRow;
+    if (JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -593,6 +635,32 @@ export function ProjectFormDialog({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} noValidate className="space-y-5">
+          {wizard && (
+            <ol className="grid grid-cols-4 gap-1.5 text-xs" aria-label="Steps">
+              {["Brand", "Project", "Scope", "Team"].map((label, index) => {
+                const n = index + 1;
+                return (
+                  <li key={label}>
+                    <button
+                      type="button"
+                      onClick={() => (n < step ? setStep(n) : n === step + 1 ? nextStep() : undefined)}
+                      aria-current={n === step ? "step" : undefined}
+                      className={cn(
+                        "w-full rounded-md border px-2 py-1.5 text-left",
+                        n === step
+                          ? "border-primary bg-primary/10 font-medium text-primary"
+                          : n < step
+                            ? "text-foreground hover:bg-muted"
+                            : "text-muted-foreground",
+                      )}
+                    >
+                      {n} · {label}
+                    </button>
+                  </li>
+                );
+              })}
+            </ol>
+          )}
           {legacy && project && (
             <div className="flex gap-2.5 rounded-lg border border-dashed bg-muted/40 px-3 py-2.5 text-sm">
               <LuInfo
@@ -618,7 +686,8 @@ export function ProjectFormDialog({
 
           <fieldset className="space-y-4" disabled={namingLoading}>
             <legend className="sr-only">Project name</legend>
-            <div className="grid gap-4 sm:grid-cols-3">
+            <div className={cn("grid gap-4", (!wizard || step === 2) && "sm:grid-cols-3")}>
+              {showStep(1) && (
               <div className="space-y-1.5">
                 <Label htmlFor="project-brand">Brand<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 {newBrand === null ? (
@@ -728,6 +797,9 @@ export function ProjectFormDialog({
                   </button>
                 )}
               </div>
+              )}
+              {showStep(2) && (
+              <>
               <div className="space-y-1.5">
                 <Label htmlFor="project-type">Type<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <OptionSelect
@@ -756,7 +828,13 @@ export function ProjectFormDialog({
                 />
                 {show(monthError) && <FieldError>{monthError}</FieldError>}
               </div>
+              </>
+              )}
             </div>
+
+
+            {showStep(2) && (
+            <>
 
             <div className="space-y-1.5">
               <Label htmlFor="project-name">Name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
@@ -792,7 +870,12 @@ export function ProjectFormDialog({
                 {namingLoading ? "Detecting from the old name…" : preview}
               </code>
             </div>
+            </>
+            )}
           </fieldset>
+
+          {showStep(2) && (
+          <>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -878,6 +961,26 @@ export function ProjectFormDialog({
 
           </div>
 
+          </>
+          )}
+
+          {showStep(3) && (
+            <fieldset className="space-y-2">
+              <legend className="text-sm font-medium text-foreground">Scope</legend>
+              <p className="text-xs text-muted-foreground">
+                Deliverables as rows: unit, quantity and the language / size multipliers (3 videos × 2 languages × 2
+                sizes = 12). Tasks beyond a unit&apos;s total are flagged for an admin.
+              </p>
+              <ScopeItemsEditor
+                value={form.scopeItems}
+                onChange={(rows) => set("scopeItems", rows)}
+                invalid={show(scopeError)}
+              />
+              {show(scopeError) && <FieldError>{scopeError}</FieldError>}
+            </fieldset>
+          )}
+
+          {showStep(4) && (
           <ProjectTeamFields
             value={form.team}
             onChange={(team) => set("team", team)}
@@ -893,7 +996,10 @@ export function ProjectFormDialog({
             planRow={form.manpowerRow}
             onPlanRowChange={(key) => set("manpowerRow", key)}
           />
+          )}
 
+          {showStep(2) && (
+          <>
           <Separator />
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -947,26 +1053,42 @@ export function ProjectFormDialog({
               onCheckedChange={(value) => set("requireTaskApproval", value)}
             />
           </div>
+          </>
+          )}
 
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => onOpenChange(false)}
-              disabled={pending}
-            >
-              Cancel
-            </Button>
-            <Button type="submit" disabled={pending}>
-              {pending ? (
-                <LuLoaderCircle aria-hidden className="animate-spin" />
-              ) : isEdit ? (
-                <LuSave aria-hidden />
-              ) : (
-                <LuPlus aria-hidden />
-              )}
-              {pending ? "Saving…" : isEdit ? "Save changes" : "Create project"}
-            </Button>
+            {wizard && step > 1 ? (
+              <Button type="button" variant="outline" onClick={() => setStep((s) => s - 1)} disabled={pending}>
+                <LuArrowLeft aria-hidden />
+                Back
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => onOpenChange(false)}
+                disabled={pending}
+              >
+                Cancel
+              </Button>
+            )}
+            {wizard && step < 4 ? (
+              <Button type="button" onClick={nextStep}>
+                Next: {["", "project", "scope", "team"][step]}
+                <LuArrowRight aria-hidden />
+              </Button>
+            ) : (
+              <Button type="submit" disabled={pending}>
+                {pending ? (
+                  <LuLoaderCircle aria-hidden className="animate-spin" />
+                ) : isEdit ? (
+                  <LuSave aria-hidden />
+                ) : (
+                  <LuSend aria-hidden />
+                )}
+                {pending ? "Saving…" : isEdit ? "Save changes" : "Create project"}
+              </Button>
+            )}
           </DialogFooter>
         </form>
       </DialogContent>

@@ -21,7 +21,6 @@ const KIND_LABEL: Record<ChangeKind, string> = {
   project_change: "Project scope / team change",
   brand_edit: "Brand change",
   manpower_plan: "Manpower plan change",
-  campaign_new: "New campaign",
 };
 
 /** Short text for list / email cells. */
@@ -53,8 +52,7 @@ export async function requestChange(params: {
       : params.kind === "brand_edit"
         ? { brand: params.brand }
         : { month: params.month };
-  // Each new campaign is its own request; other kinds replace the pending one for their target.
-  const previous = params.kind === "campaign_new" ? null : await ChangeRequest.findOne({ kind: params.kind, status: "pending", ...target });
+  const previous = await ChangeRequest.findOne({ kind: params.kind, status: "pending", ...target });
   let payload = params.payload;
   let changes = params.changes;
   if (previous && params.kind !== "manpower_plan") {

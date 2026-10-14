@@ -56,6 +56,7 @@ import {
 } from "@/components/ui/sidebar";
 import { useCurrentUser, useLogout } from "@/hooks/use-auth";
 import { useApprovalQueue } from "@/hooks/use-project-approval";
+import { useOverScopeTasks } from "@/components/tasks/over-scope";
 import { FEATURES, type FeatureName } from "@/lib/features";
 import type { Role } from "@/types";
 
@@ -254,18 +255,21 @@ export function AppSidebar() {
   const navigate = useNavigate();
   const brand = useBrand();
   const approvals = useApprovalQueue(Boolean(user));
+  // Admins approve tasks that go over a project's scope.
+  const overScope = useOverScopeTasks(user?.role === "admin");
 
   if (!user) return null;
 
   const groups = resolveGroups(
     user.role,
     {
-      isApprover: Boolean(approvals.data?.isApprover),
-      // Projects and new brands waiting for leadership.
+      isApprover: Boolean(approvals.data?.isApprover) || user.role === "admin",
+      // Leadership: projects, brands and changes; admins: tasks over scope.
       pending:
         (approvals.data?.pending.length ?? 0) +
         (approvals.data?.brands?.pending.length ?? 0) +
-        (approvals.data?.changes?.pending.length ?? 0),
+        (approvals.data?.changes?.pending.length ?? 0) +
+        (overScope.data?.length ?? 0),
     },
     { timeReport: user.access?.timeReport ?? user.role !== "employee" },
   );

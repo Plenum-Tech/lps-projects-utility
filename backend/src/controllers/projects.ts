@@ -5,8 +5,7 @@ import { scheduleProjectTag } from "../lib/tagAssign.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
-import { parseScopeItems, scopeText, type ScopeItem } from "../lib/scopeUnits.js";
-import { Campaign } from "../models/Campaign.js";
+import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -912,7 +911,6 @@ export interface ProjectBody {
   code?: unknown;
   summary?: unknown;
   manpowerRow?: unknown;
-  campaign?: unknown;
   scopeItems?: unknown;
   category?: unknown;
   brand?: unknown;
@@ -955,18 +953,6 @@ function parseManpowerRow(raw: unknown): string | null | undefined | Invalid {
   if (raw === null || raw === "") return null;
   if (typeof raw !== "string" || !/^[A-Za-z0-9-]{1,64}$/.test(raw)) return bad("manpowerRow must be a plan row key");
   return raw;
-}
-
-/** A campaign of the project's brand (approved); null / "" = none. */
-async function parseCampaign(raw: unknown, brand: mongoose.Types.ObjectId | null | undefined): Promise<mongoose.Types.ObjectId | null | undefined | Invalid> {
-  if (raw === undefined) return undefined;
-  if (raw === null || raw === "") return null;
-  if (typeof raw !== "string" || isInvalidObjectId(raw)) return bad("campaign must be a campaign ID");
-  const campaign = await Campaign.findById(raw).select("brand status").lean();
-  if (!campaign) return bad("Campaign not found", 404);
-  if (!brand || !campaign.brand.equals(brand)) return bad("The campaign belongs to another brand");
-  if (campaign.status !== "approved") return bad("This campaign is waiting for leadership approval");
-  return campaign._id as mongoose.Types.ObjectId;
 }
 
 function parseProgress(raw: unknown): number | undefined | Invalid {
@@ -1029,8 +1015,6 @@ export async function createProjectCore(
   if (isInvalid(summary)) return summary;
   const manpowerRow = parseManpowerRow(body.manpowerRow);
   if (isInvalid(manpowerRow)) return manpowerRow;
-  const campaign = await parseCampaign(body.campaign, naming?.brand ?? null);
-  if (isInvalid(campaign)) return campaign;
   let scopeItems: ScopeItem[] = [];
   if (body.scopeItems !== undefined) {
     const parsed = parseScopeItems(body.scopeItems);
@@ -1136,7 +1120,6 @@ export async function createProjectCore(
       code,
       summary: summary || undefined,
       manpowerRow: manpowerRow ?? null,
-      campaign: campaign ?? null,
       scopeItems,
       category,
       brand,
@@ -1392,12 +1375,6 @@ export async function updateProjectCore(
     if (isInvalid(manpowerRow)) return manpowerRow;
     project.manpowerRow = manpowerRow ?? null;
     changed.push("manpowerRow");
-  }
-  if (body.campaign !== undefined) {
-    const campaign = await parseCampaign(body.campaign, project.naming?.brand ?? project.brand ?? null);
-    if (isInvalid(campaign)) return campaign;
-    project.campaign = campaign ?? null;
-    changed.push("campaign");
   }
   if (body.scopeItems !== undefined) {
     const parsed = parseScopeItems(body.scopeItems);
@@ -2257,4 +2234,21 @@ export async function teamLoad(req: Request, res: Response): Promise<void> {
     max: settings?.maxProjectsPerPerson ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson,
     load: Object.fromEntries(rows.map((r) => [String(r._id), r.projects])),
   });
+}
+
+/** GET /api/projects/:id/scope-usage — per scope unit: approved total and used (new work tasks). */
+export async function scopeUsage(req: Request, res: Response): Promise<void> {
+  const id = param(req, "id");
+  const project = id && !isInvalidObjectId(id) ? await Project.findById(id).select("scopeItems").lean() : null;
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const totals = scopeTotals(project.scopeItems as ScopeItem[]);
+  const used = await Task.aggregate<{ _id: string; used: number }>([
+    { $match: { project: project._id, iteration: { $ne: "rework" }, "overScope.status": { $ne: "rejected" }, "titleParts.unit": { $type: "string" } } },
+    { $group: { _id: { $toLower: "$titleParts.unit" }, used: { $sum: "$titleParts.quantity" } } },
+  ]);
+  const usedBy = new Map(used.map((u) => [u._id.trim(), u.used]));
+  res.json({ units: [...totals.entries()].map(([key, t]) => ({ unit: t.unit, total: t.total, used: usedBy.get(key) ?? 0 })) });
 }

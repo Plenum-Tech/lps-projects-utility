@@ -19,7 +19,7 @@ import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { LABEL_COLOR_META } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { ChangeRequestItem } from "@/types";
+import type { ChangeRequestItem, ScopeItem } from "@/types";
 
 import type { Route } from "./+types/approvals.change";
 
@@ -48,6 +48,7 @@ interface ChangeReview {
       archived: boolean;
     };
     scope?: { changed: boolean; current: string; proposed: string };
+    scopeRows?: { changed: boolean; current: ScopeItem[]; proposed: ScopeItem[] };
     team?: { changed: boolean; current: TeamView; proposed: TeamView };
     brand?: {
       _id: string;
@@ -147,6 +148,27 @@ function TeamCompare({ current, proposed }: { current: TeamView; proposed: TeamV
         </tbody>
       </table>
     </div>
+  );
+}
+
+function ScopeRowsView({ rows }: { rows: ScopeItem[] }) {
+  if (rows.length === 0) return <span className="text-muted-foreground">No scope rows</span>;
+  const total = rows.reduce((n, r) => n + r.quantity * r.languages * r.sizes, 0);
+  return (
+    <ul className="space-y-0.5">
+      {rows.map((r, i) => (
+        <li key={i} className="flex justify-between gap-3 tabular-nums">
+          <span>{r.unit}</span>
+          <span className="text-muted-foreground">
+            {r.quantity} × {r.languages} × {r.sizes} = <span className="font-medium text-foreground">{r.quantity * r.languages * r.sizes}</span>
+          </span>
+        </li>
+      ))}
+      <li className="flex justify-between border-t pt-1 font-medium">
+        <span>Total</span>
+        <span>{total}</span>
+      </li>
+    </ul>
   );
 }
 
@@ -317,6 +339,15 @@ export default function ChangeReviewRoute() {
           {ctx.scope && (
             <Section title="Scope">
               <Compare render="text" changed={ctx.scope.changed} before={ctx.scope.current || "No scope written"} after={ctx.scope.proposed || "No scope written"} />
+            </Section>
+          )}
+          {ctx.scopeRows && (ctx.scopeRows.current.length > 0 || ctx.scopeRows.proposed.length > 0) && (
+            <Section title={ctx.scopeRows.changed ? "Scope rows" : "Scope rows (unchanged)"}>
+              <Compare
+                changed={ctx.scopeRows.changed}
+                before={<ScopeRowsView rows={ctx.scopeRows.current} />}
+                after={<ScopeRowsView rows={ctx.scopeRows.proposed} />}
+              />
             </Section>
           )}
           {ctx.team && (

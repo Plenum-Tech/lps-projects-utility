@@ -1005,6 +1005,15 @@ export interface Task {
    * detail (GET /api/tasks/:id) populates `{ _id, title }` and the line's `start`.
    */
   sourceMeeting?: TaskSourceMeeting | null;
+  /** Created beyond its project's approved scope: blocked until an admin decides. */
+  overScope?: {
+    status: "pending" | "approved" | "rejected";
+    unit: string;
+    allowed: number;
+    used: number;
+    requested: number;
+    reason?: string;
+  } | null;
   /** The task's Pearity tag (one per task), null until someone clicks Generate. */
   pearityTag?: PearityTagRef | null;
 }
@@ -1844,6 +1853,8 @@ export interface Project {
   summary?: string;
   /** Manpower plan row key chosen on the project; null = automatic match. */
   manpowerRow?: string | null;
+  /** Structured scope: deliverables per unit. */
+  scopeItems?: ScopeItem[];
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */
   brand?: ProjectBrandRef | null;
@@ -1949,6 +1960,8 @@ export interface ProjectInput {
   summary?: string;
   /** Manpower plan row key; null = automatic match. */
   manpowerRow?: string | null;
+  /** Structured scope rows. */
+  scopeItems?: ScopeItem[];
   category?: string | null;
   /** Brand id; null / "" clears it. */
   brand?: string | null;
@@ -3811,4 +3824,12 @@ export interface DeliveryTrafficResponse {
     dueDate: string | null;
   }>;
   totals: { waiting: number; routed: number; avgHours: number | null; medianHours: number | null };
+}
+
+/** A project scope row: quantity × languages × sizes of one unit. */
+export interface ScopeItem {
+  unit: string;
+  quantity: number;
+  languages: number;
+  sizes: number;
 }

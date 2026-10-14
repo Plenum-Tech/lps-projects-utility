@@ -1,7 +1,8 @@
 import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { addDaysKey, fromDateTimeInput, toDateTimeInput } from "@/lib/time";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api } from "@/lib/api";
 import { useNavigate } from "react-router";
 import {
   LuCalendar,
@@ -271,6 +272,17 @@ export function TaskFormDialog({
   );
   const [submitted, setSubmitted] = useState(false);
   const queryClient = useQueryClient();
+  // Scoped projects: the unit comes from the project's scope (with what's used so far).
+  const scopeProjectId = form.project === NO_PROJECT ? null : form.project;
+  const scopeUsage = useQuery({
+    queryKey: ["projects", "scope-usage", scopeProjectId],
+    queryFn: async () =>
+      (await api.get<{ units: Array<{ unit: string; total: number; used: number }> }>(`/projects/${scopeProjectId}/scope-usage`)).data
+        .units,
+    enabled: open && Boolean(scopeProjectId),
+    staleTime: 15_000,
+  });
+  const scopeUnits = scopeUsage.data ?? [];
   const navigate = useNavigate();
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
@@ -820,6 +832,20 @@ export function TaskFormDialog({
                 <div className="space-y-1.5">
                   <Label htmlFor="task-unit">Task name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
+                    {scopeUnits.length > 0 ? (
+                      <Select value={form.unit || null} onValueChange={(value) => set("unit", (value as string) ?? "")}>
+                        <SelectTrigger id="task-unit" className="w-full" aria-label="Scope unit" aria-invalid={titleInvalid || undefined}>
+                          <SelectValue placeholder="Scope unit" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {scopeUnits.map((u) => (
+                            <SelectItem key={u.unit} value={u.unit}>
+                              {u.unit} · {u.used}/{u.total} used
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    ) : (
                     <Input
                       id="task-unit"
                       value={form.unit}
@@ -830,6 +856,7 @@ export function TaskFormDialog({
                       aria-invalid={titleInvalid || undefined}
                       autoFocus
                     />
+                    )}
                     <Input
                       type="number"
                       min={1}
@@ -855,6 +882,19 @@ export function TaskFormDialog({
                     </span>{" "}
                     — brand and month come from the project.
                   </p>
+                  {!task && scopeUnits.length > 0 && (() => {
+                    const unit = scopeUnits.find((u) => u.unit.toLowerCase() === form.unit.trim().toLowerCase());
+                    const qty = Number(form.quantity) || 0;
+                    const over = !unit ? Boolean(form.unit.trim()) : unit.used + qty > unit.total;
+                    return over ? (
+                      <p className="rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
+                        {unit
+                          ? `This goes over the approved scope (${unit.used + qty} of ${unit.total} ${unit.unit}).`
+                          : `${form.unit.trim()} isn't in this project's scope.`}{" "}
+                        The task is saved but blocked until an admin approves it.
+                      </p>
+                    ) : null;
+                  })()}
                   {titleInvalid && partsError && (
                     <p
                       id="task-title-error"
