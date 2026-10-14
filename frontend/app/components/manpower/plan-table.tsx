@@ -39,6 +39,7 @@ export function PlanTable({
   roles,
   links,
   highlight,
+  changedRows,
   editing = false,
   onEditCell,
   onEditRow,
@@ -49,6 +50,8 @@ export function PlanTable({
   links?: Record<string, Array<{ _id: string; code: string; name: string }>>;
   /** Person id to highlight (their cells get a ring). */
   highlight?: string | null;
+  /** Row keys to mark as changed (approval review). */
+  changedRows?: ReadonlySet<string>;
   editing?: boolean;
   onEditCell?: (rowKey: string, role: string) => void;
   onEditRow?: (rowKey: string) => void;
@@ -90,10 +93,13 @@ export function PlanTable({
                 </th>
               </tr>
               {list.map((row) => (
-                <tr key={row.key} className="group">
+                <tr key={row.key} className={changedRows?.has(row.key) ? "group bg-amber-500/10" : "group"}>
                   <th
                     scope="row"
-                    className="sticky left-0 z-10 border-b bg-card px-3 py-2 text-left align-top font-normal group-hover:bg-muted/40"
+                    className={cn(
+                      "sticky left-0 z-10 border-b px-3 py-2 text-left align-top font-normal group-hover:bg-muted/40",
+                      changedRows?.has(row.key) ? "border-l-4 border-l-amber-500 bg-amber-50 dark:bg-amber-950" : "bg-card",
+                    )}
                   >
                     <RowHeader row={row} links={links?.[row.key]} editing={editing} onEdit={() => onEditRow?.(row.key)} />
                   </th>

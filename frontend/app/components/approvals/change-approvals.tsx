@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router";
-import { LuCircleCheck, LuCircleX, LuLoaderCircle } from "react-icons/lu";
+import { LuCircleCheck, LuCircleX, LuEye, LuLoaderCircle } from "react-icons/lu";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,16 +9,36 @@ import { useDecideChange } from "@/hooks/use-project-approval";
 import { formatDateTime } from "@/lib/format";
 import type { ChangeRequestItem } from "@/types";
 
-const KIND: Record<ChangeRequestItem["kind"], string> = {
+export const KIND_LABEL: Record<ChangeRequestItem["kind"], string> = {
   project_change: "Scope / team",
   brand_edit: "Brand",
   manpower_plan: "Manpower plan",
 };
 
-function targetLink(item: ChangeRequestItem): string | null {
-  if (item.project?._id) return `/projects/${item.project._id}`;
-  if (item.kind === "manpower_plan" && item.month) return `/manpower?month=${item.month}&v=${item.version ?? ""}`;
-  return null;
+/** Before → after table of a request's changes. */
+export function ChangeTable({ lines }: { lines: ChangeRequestItem["changes"] }) {
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[32rem] text-left text-sm">
+        <thead className="text-xs text-muted-foreground">
+          <tr>
+            <th className="py-1 pr-3 font-medium">Change</th>
+            <th className="py-1 pr-3 font-medium">Before</th>
+            <th className="py-1 font-medium">After</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y align-top">
+          {lines.map((line, index) => (
+            <tr key={index}>
+              <td className="py-1.5 pr-3 font-medium text-foreground">{line.label}</td>
+              <td className="py-1.5 pr-3 break-words text-muted-foreground line-through decoration-muted-foreground/40">{line.before}</td>
+              <td className="py-1.5 break-words text-foreground">{line.after}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
 }
 
 /** One request: what changed (before → after), with Approve / Reject. */
@@ -27,7 +47,7 @@ function ChangeCard({ item }: { item: ChangeRequestItem }) {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const link = targetLink(item);
+  const link = `/approvals/${item._id}`;
   const lines = showAll ? item.changes : item.changes.slice(0, 12);
 
   return (
@@ -35,14 +55,10 @@ function ChangeCard({ item }: { item: ChangeRequestItem }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 space-y-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant="outline">{KIND[item.kind]}</Badge>
-            {link ? (
-              <Link to={link} className="font-medium break-words text-foreground hover:underline">
-                {item.title}
-              </Link>
-            ) : (
-              <span className="font-medium break-words text-foreground">{item.title}</span>
-            )}
+            <Badge variant="outline">{KIND_LABEL[item.kind]}</Badge>
+            <Link to={link} className="font-medium break-words text-foreground hover:underline">
+              {item.title}
+            </Link>
           </div>
           <p className="text-xs text-muted-foreground">
             {item.brand?.name ? `${item.brand.name} · ` : ""}
@@ -51,6 +67,10 @@ function ChangeCard({ item }: { item: ChangeRequestItem }) {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" render={<Link to={link} />}>
+            <LuEye aria-hidden />
+            Review
+          </Button>
           <Button size="sm" onClick={() => decide.mutate({ id: item._id, decision: "approve" })} disabled={decide.isPending}>
             {decide.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuCircleCheck aria-hidden />}
             Approve
@@ -69,28 +89,7 @@ function ChangeCard({ item }: { item: ChangeRequestItem }) {
           </Button>
         </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[32rem] text-left text-sm">
-          <thead className="text-xs text-muted-foreground">
-            <tr>
-              <th className="py-1 pr-3 font-medium">Change</th>
-              <th className="py-1 pr-3 font-medium">Before</th>
-              <th className="py-1 font-medium">After</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y align-top">
-            {lines.map((line, index) => (
-              <tr key={index}>
-                <td className="py-1.5 pr-3 font-medium text-foreground">{line.label}</td>
-                <td className="py-1.5 pr-3 break-words text-muted-foreground line-through decoration-muted-foreground/40">
-                  {line.before}
-                </td>
-                <td className="py-1.5 break-words text-foreground">{line.after}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <ChangeTable lines={lines} />
       {item.changes.length > 12 && (
         <Button size="sm" variant="ghost" onClick={() => setShowAll((v) => !v)}>
           {showAll ? "Show fewer" : `Show all ${item.changes.length} changes`}
@@ -154,7 +153,7 @@ export function ChangeApprovals({ pending, recent }: { pending: ChangeRequestIte
           <ul className="divide-y rounded-xl border bg-card text-sm">
             {recent.map((item) => (
               <li key={item._id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-                <Badge variant="outline">{KIND[item.kind]}</Badge>
+                <Badge variant="outline">{KIND_LABEL[item.kind]}</Badge>
                 <span className="font-medium">{item.title}</span>
                 {item.status === "approved" ? <Badge variant="secondary">Approved</Badge> : <Badge variant="destructive">Rejected</Badge>}
                 <span className="text-xs text-muted-foreground">

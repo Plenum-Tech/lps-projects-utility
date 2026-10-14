@@ -185,7 +185,9 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   let pendingApproval: string | undefined;
   if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
     const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active" };
-    const show = (key: string, value: unknown) => (key === "active" ? (value ? "Active" : "Inactive") : String(value ?? "") || "—");
+    const colourName: Record<string, string> = { "chart-1": "Teal", "chart-2": "Sky", "chart-3": "Indigo", "chart-4": "Amber", "chart-5": "Coral" };
+    const show = (key: string, value: unknown) =>
+      key === "active" ? (value ? "Active" : "Inactive") : key === "color" ? (colourName[String(value)] ?? String(value)) : String(value ?? "") || "—";
     await requestChange({
       kind: "brand_edit",
       actor: req.user!,

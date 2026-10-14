@@ -6,8 +6,10 @@ import { isProjectApprover } from "../lib/projectApproval.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
 import { ChangeRequest, type IChangeRequest } from "../models/ChangeRequest.js";
-import { ManpowerPlan } from "../models/ManpowerPlan.js";
+import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
+import { User } from "../models/User.js";
+import { MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { updateProjectCore, type ProjectBody } from "./projects.js";
 
 // ---------------------------------------------------------------------------
@@ -113,4 +115,122 @@ export async function decideChangeRequest(req: Request, res: Response): Promise<
   });
   notifyDecision(request, user, approve);
   res.json({ change: request.toJSON() });
+}
+
+// ---------------------------------------------------------------------------
+// Review page: GET /api/projects/approvals/changes/:id — the request plus the
+// full context needed to decide (whole project / brand / plan version).
+// ---------------------------------------------------------------------------
+
+const ROLE_LABEL = new Map<string, string>([...MANPOWER_ROLES.map((r) => [r.key as string, r.label as string] as [string, string]), ["others", "Others"]]);
+
+type TeamView = Array<{ role: string; label: string; people: string[] }>;
+
+async function teamView(team: Array<{ role: string; users: Array<mongoose.Types.ObjectId | string> }>): Promise<TeamView> {
+  const ids = [...new Set(team.flatMap((e) => e.users.map(String)))];
+  const names = new Map((await User.find({ _id: { $in: ids } }).select("name").lean()).map((u) => [String(u._id), u.name]));
+  return team
+    .filter((e) => e.users.length)
+    .map((e) => ({ role: e.role, label: ROLE_LABEL.get(e.role) ?? e.role, people: e.users.map((u) => names.get(String(u)) ?? "Unknown") }));
+}
+
+export async function getChangeRequest(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  if (!(await isProjectApprover(user._id as mongoose.Types.ObjectId))) {
+    res.status(403).json({ error: "Only leadership can review changes" });
+    return;
+  }
+  const id = param(req, "id");
+  const request =
+    id && !isInvalidObjectId(id)
+      ? await ChangeRequest.findById(id).populate([
+          { path: "requestedBy", select: "name email" },
+          { path: "decidedBy", select: "name" },
+          { path: "brand", select: "name" },
+          { path: "project", select: "name code" },
+        ])
+      : null;
+  if (!request) {
+    res.status(404).json({ error: "Change request not found" });
+    return;
+  }
+  const payload = (request.payload ?? {}) as Record<string, unknown>;
+  const projectId = (request.project as unknown as { _id?: mongoose.Types.ObjectId } | null)?._id ?? null;
+  const brandId = (request.brand as unknown as { _id?: mongoose.Types.ObjectId } | null)?._id ?? null;
+  let context: Record<string, unknown> = {};
+
+  if (request.kind === "project_change" && projectId) {
+    const project = await Project.findById(projectId)
+      .populate("manager", "name")
+      .populate("status", "name")
+      .populate("brand", "name")
+      .populate("category", "name")
+      .lean();
+    if (project) {
+      const proposedTeam = Array.isArray(payload.team) ? (payload.team as Array<{ role: string; users: string[] }>) : null;
+      const p = project as unknown as Record<string, any>;
+      context = {
+        project: {
+          _id: String(project._id),
+          name: project.name,
+          code: project.code,
+          brand: p.brand?.name ?? null,
+          type: project.naming?.type ?? null,
+          month: project.naming?.month ?? null,
+          manager: p.manager?.name ?? null,
+          status: p.status?.name ?? null,
+          category: p.category?.name ?? null,
+          startDate: project.startDate ?? null,
+          deadline: project.deadline ?? null,
+          members: (project.members ?? []).length,
+          archived: Boolean(project.archivedAt),
+        },
+        scope: {
+          changed: typeof payload.summary === "string",
+          current: project.summary ?? "",
+          proposed: typeof payload.summary === "string" ? (payload.summary as string) : (project.summary ?? ""),
+        },
+        team: {
+          changed: Boolean(proposedTeam),
+          current: await teamView((project.team ?? []) as never),
+          proposed: proposedTeam ? await teamView(proposedTeam) : await teamView((project.team ?? []) as never),
+        },
+      };
+    }
+  } else if (request.kind === "brand_edit" && brandId) {
+    const brand = await Brand.findById(brandId).lean();
+    if (brand) {
+      const projects = await Project.countDocuments({ $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null });
+      const current = { name: brand.name, shortName: brand.shortName ?? "", color: brand.color, active: brand.active };
+      context = { brand: { _id: String(brand._id), projects, current, proposed: { ...current, ...payload } } };
+    }
+  } else if (request.kind === "manpower_plan" && request.month) {
+    const [proposed, live] = await Promise.all([
+      ManpowerPlan.findOne({ month: request.month, version: request.version }).select("version status rows.key rows.name").lean(),
+      ManpowerPlan.findOne({ month: request.month, ...APPROVED_PLAN, version: { $lt: request.version ?? 0 } })
+        .sort({ version: -1 })
+        .select("version rows")
+        .lean(),
+    ]);
+    if (proposed) {
+      const before = new Map(((live?.rows ?? []) as IManpowerRow[]).map((r) => [r.key, JSON.stringify(r)]));
+      const full = await ManpowerPlan.findOne({ month: request.month, version: request.version }).select("rows").lean();
+      const changedKeys = ((full?.rows ?? []) as IManpowerRow[])
+        .filter((r) => before.get(r.key) !== JSON.stringify(r))
+        .map((r) => r.key);
+      const nowKeys = new Set(((full?.rows ?? []) as IManpowerRow[]).map((r) => r.key));
+      context = {
+        plan: {
+          month: request.month,
+          version: proposed.version,
+          status: proposed.status ?? "approved",
+          liveVersion: live?.version ?? null,
+          lines: (full?.rows ?? []).length,
+          changedKeys,
+          removed: ((live?.rows ?? []) as IManpowerRow[]).filter((r) => !nowKeys.has(r.key)).map((r) => r.name),
+        },
+      };
+    }
+  }
+  res.json({ change: request.toJSON(), context });
 }

@@ -29,7 +29,7 @@ import { UnlinkedProjects } from "./unlinked-projects";
 
 const SOURCE_LABEL = { import: "Imported", edit: "Edited", copy: "Copied" } as const;
 
-function planRowsToTable(data: ManpowerPlanResponse): TableRow[] {
+export function planRowsToTable(data: ManpowerPlanResponse): TableRow[] {
   return data.plan.rows.map((r) => ({
     key: r.key,
     section: r.section,
