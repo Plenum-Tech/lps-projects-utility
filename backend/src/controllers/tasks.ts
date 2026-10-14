@@ -1775,9 +1775,9 @@ async function applyTaskUpdate(
   body: UpdateTaskBody,
   ip: string | undefined
 ): Promise<Invalid | { warnings: string[] }> {
-  // Everyone who can open the task may edit it (employees see only their own tasks).
-  if (!(await canManageTaskAsync(user, task)) && !(await canViewTaskAsync(user, task))) {
-    return { status: 403, error: "You can't edit this task" };
+  // The task's managers (creator, admin, project manager) and its assignees edit it.
+  if (!isAssignee(user, task) && !(await canManageTaskAsync(user, task))) {
+    return { status: 403, error: "Only the task's assignees, its creator or an admin can edit it" };
   }
 
   const { description, priority } = body;

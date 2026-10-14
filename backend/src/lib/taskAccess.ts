@@ -456,8 +456,8 @@ export function taskPermissions(
   const manageSubtasks = canManageSubtasks(user, task, flags) && !flags.archived;
   const subtaskAssignee = isSubtaskAssignee(user, task) && !flags.archived;
   return {
-    // Everyone who can open the task may edit it (delete stays with its managers).
-    canEdit: !flags.archived,
+    // Its managers and assignees edit it (delete stays with its managers).
+    canEdit: manage || assignee,
     canDelete: manage,
     canReview: manage && task.status === "in_review",
     canRemind: manage,
