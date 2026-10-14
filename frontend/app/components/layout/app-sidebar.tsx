@@ -80,7 +80,7 @@ interface NavItem {
   feature?: FeatureName;
   /** Shown only to project approvers, with the number of projects waiting. */
   approvers?: boolean;
-  /** Shown only to people who may see the Time Log Report (admins, heads, Finance). */
+  /** Shown only to people who may see the Time Log Report (admins, leadership, heads). */
   timeReport?: boolean;
 }
 
