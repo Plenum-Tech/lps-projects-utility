@@ -2202,12 +2202,57 @@ export async function remindTask(req: Request, res: Response): Promise<void> {
  * Creator or admin: deletes a task with its comments, files (GridFS), history,
  * notifications and pins (DELETE /:id and the bulk "delete" action).
  */
-export async function applyTaskDelete(user: IUser, task: ITask, ip: string | undefined): Promise<Invalid | null> {
+export interface TaskDeleteOptions {
+  /** Move the task's time logs (incl. a running timer) to this task first. */
+  moveTimeTo?: string | null;
+  /** Keep the time on the project with no task (imports only). */
+  keepTimeOnProject?: boolean;
+}
+
+export async function applyTaskDelete(
+  user: IUser,
+  task: ITask,
+  ip: string | undefined,
+  options: TaskDeleteOptions = {}
+): Promise<Invalid | null> {
   if (!(await canManageTaskAsync(user, task))) {
     return { status: 403, error: "Only the task creator or an admin can delete tasks" };
   }
 
   const taskId = task._id as mongoose.Types.ObjectId;
+  // Logged time must not silently drop off the task: it moves to another task
+  // (e.g. the duplicate being kept), or the delete is refused.
+  const timeEntries = await TimeLog.countDocuments({ task: taskId });
+  let timeTarget: ITask | null = null;
+  if (timeEntries > 0 && !options.keepTimeOnProject) {
+    const targetId = options.moveTimeTo;
+    if (!targetId) {
+      return {
+        status: 409,
+        error: `This task has ${timeEntries} time ${timeEntries === 1 ? "entry" : "entries"}. Choose a task to move the time to before deleting it.`,
+      };
+    }
+    if (!mongoose.isValidObjectId(targetId) || taskId.equals(targetId)) {
+      return { status: 400, error: "Choose another task to move the time to" };
+    }
+    timeTarget = await Task.findById(targetId);
+    if (!timeTarget) return { status: 404, error: "The task to move the time to wasn't found" };
+    if (task.project && !(timeTarget.project && timeTarget.project.equals(task.project))) {
+      return { status: 400, error: "Move the time to a task in the same project" };
+    }
+    if (timeTarget.project && (await archivedProjectIds()).some((id) => id.equals(timeTarget!.project!))) {
+      return { status: 400, error: "That task's project is archived" };
+    }
+  }
+  if (timeTarget) {
+    const targetId = timeTarget._id as mongoose.Types.ObjectId;
+    await TimeLog.updateMany({ task: taskId }, { $set: { task: targetId, project: timeTarget.project ?? null } });
+    recordTaskHistory(targetId, user, "updated", {
+      fields: [`time logs (${timeEntries} moved from deleted task "${task.title.slice(0, 80)}")`],
+    });
+    void syncActualDatesFromLogs(targetId);
+  }
+
   const files = await TaskFile.find({ task: taskId }).select("gridFsId");
 
   await Task.findByIdAndDelete(taskId);
@@ -2235,10 +2280,14 @@ export async function applyTaskDelete(user: IUser, task: ITask, ip: string | und
     targetType: "task",
     targetId: taskId,
     targetName: task.title,
-    details: { files: files.length },
+    details: {
+      files: files.length,
+      ...(timeTarget ? { timeEntriesMovedTo: timeTarget.title, timeEntries } : timeEntries ? { timeEntriesKeptOnProject: timeEntries } : {}),
+    },
     ip,
   });
 
+  if (timeTarget) pushTaskUpdate(timeTarget, "updated");
   pushTaskUpdate(task, "deleted");
   scheduleProgressRecalc(task.project ?? null);
   return null;
@@ -2248,12 +2297,41 @@ export async function applyTaskDelete(user: IUser, task: ITask, ip: string | und
 export async function deleteTask(req: Request, res: Response): Promise<void> {
   const task = await getTaskOr404(req, res);
   if (!task) return;
-  const result = await applyTaskDelete(req.user!, task, req.ip);
+  const moveTimeTo = typeof req.query.moveTimeTo === "string" ? req.query.moveTimeTo : null;
+  const result = await applyTaskDelete(req.user!, task, req.ip, { moveTimeTo });
   if (result) {
     res.status(result.status).json({ error: result.error });
     return;
   }
   res.json({ success: true });
+}
+
+/** GET /api/tasks/:id/logged-time — who logged how much (shown before deleting). */
+export async function loggedTimeSummary(req: Request, res: Response): Promise<void> {
+  const task = await getViewableTaskOr404(req, res);
+  if (!task) return;
+  const rows = await TimeLog.aggregate<{ _id: mongoose.Types.ObjectId; minutes: number; entries: number; running: number }>([
+    { $match: { task: task._id } },
+    {
+      $group: {
+        _id: "$user",
+        minutes: { $sum: { $ifNull: ["$durationMinutes", 0] } },
+        entries: { $sum: 1 },
+        running: { $sum: { $cond: [{ $eq: [{ $ifNull: ["$endTime", null] }, null] }, 1, 0] } },
+      },
+    },
+  ]);
+  const names = new Map(
+    (await User.find({ _id: { $in: rows.map((r) => r._id) } }).select("name").lean()).map((u) => [u._id.toString(), u.name])
+  );
+  res.json({
+    entries: rows.reduce((n, r) => n + r.entries, 0),
+    minutes: rows.reduce((n, r) => n + r.minutes, 0),
+    running: rows.reduce((n, r) => n + r.running, 0),
+    people: rows
+      .map((r) => ({ name: names.get(r._id.toString()) ?? "Unknown", minutes: r.minutes, entries: r.entries, running: r.running > 0 }))
+      .sort((a, b) => b.minutes - a.minutes),
+  });
 }
 
 /** Anyone who can view the task: history timeline, newest first. */

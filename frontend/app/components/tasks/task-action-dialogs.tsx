@@ -30,11 +30,14 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useDeleteTask,
+  useTaskLoggedTime,
   useReviewTask,
   useSubmitTask,
   useUploadTaskFiles,
 } from "@/hooks/use-tasks";
 import { ACCEPT } from "@/components/tasks/task-files";
+import { ReworkTaskPicker } from "@/components/tasks/rework-panel";
+import { formatEffort } from "@/lib/tasks";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
@@ -505,6 +508,18 @@ export function DeleteTaskDialog({
   onDeleted: () => void;
 }) {
   const remove = useDeleteTask();
+  // Logged time moves to another task (e.g. the duplicate being kept) instead of disappearing.
+  const logged = useTaskLoggedTime(open ? task._id : null);
+  const hasTime = (logged.data?.entries ?? 0) > 0;
+  const [moveTo, setMoveTo] = useState("");
+  const [tried, setTried] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setMoveTo("");
+      setTried(false);
+    }
+  }, [open]);
+  const moveError = hasTime && (!moveTo || moveTo === task._id) ? "Choose the task to move the time to." : null;
 
   return (
     <AlertDialog
@@ -519,21 +534,64 @@ export function DeleteTaskDialog({
             be removed for everyone. This can&apos;t be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {logged.isPending ? (
+          <p className="flex items-center gap-2 text-sm text-muted-foreground">
+            <LuLoaderCircle aria-hidden className="size-4 animate-spin" />
+            Checking logged time…
+          </p>
+        ) : hasTime && logged.data ? (
+          <div className="space-y-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+            <p className="font-medium text-foreground">
+              {formatEffort(logged.data.minutes)} of time is logged on this task
+              {logged.data.running > 0 ? " (a timer is running)" : ""}
+            </p>
+            <ul className="space-y-0.5 text-muted-foreground">
+              {logged.data.people.map((person) => (
+                <li key={person.name} className="flex justify-between gap-3">
+                  <span>
+                    {person.name}
+                    {person.running ? " · timer running" : ""}
+                  </span>
+                  <span className="tabular-nums">{formatEffort(person.minutes)}</span>
+                </li>
+              ))}
+            </ul>
+            <div className="space-y-1.5">
+              <Label htmlFor="delete-move-time">Move the time to</Label>
+              <ReworkTaskPicker
+                id="delete-move-time"
+                projectId={task.project?._id ?? null}
+                value={moveTo}
+                onChange={(value) => setMoveTo(value)}
+                invalid={tried && Boolean(moveError)}
+              />
+              {tried && moveError && <p className="text-xs text-destructive">{moveError}</p>}
+              <p className="text-xs text-muted-foreground">
+                Pick the task the work belongs to, for example the copy you&apos;re keeping. Nobody&apos;s time is lost.
+              </p>
+            </div>
+          </div>
+        ) : null}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={remove.isPending}>
             Cancel
           </AlertDialogCancel>
           <Button
             variant="destructive"
-            disabled={remove.isPending}
-            onClick={() =>
-              remove.mutate(task._id, {
-                onSuccess: () => {
-                  onOpenChange(false);
-                  onDeleted();
+            disabled={remove.isPending || logged.isPending}
+            onClick={() => {
+              setTried(true);
+              if (moveError) return;
+              remove.mutate(
+                { id: task._id, moveTimeTo: hasTime ? moveTo : null },
+                {
+                  onSuccess: () => {
+                    onOpenChange(false);
+                    onDeleted();
+                  },
                 },
-              })
-            }
+              );
+            }}
           >
             {remove.isPending ? (
               <LuLoaderCircle aria-hidden className="animate-spin" />

@@ -392,7 +392,7 @@ async function performUndo(job: IImportJob, actor: IUser, ip: string | undefined
       skip(item.id, edited);
       continue;
     }
-    const failed = await applyTaskDelete(actor, task, ip);
+    const failed = await applyTaskDelete(actor, task, ip, { keepTimeOnProject: true });
     if (failed) skip(item.id, failed.error);
     else deleted += 1;
   }

@@ -733,16 +733,36 @@ export function useRemindTask() {
 }
 
 /** Creator/admin: delete a task (comments, files and history go with it). */
+/** Who logged time on a task (shown before deleting it). */
+export function useTaskLoggedTime(id: string | null) {
+  return useQuery({
+    queryKey: ["tasks", "logged-time", id],
+    queryFn: async () => {
+      const { data } = await api.get<{
+        entries: number;
+        minutes: number;
+        running: number;
+        people: Array<{ name: string; minutes: number; entries: number; running: boolean }>;
+      }>(`/tasks/${id}/logged-time`);
+      return data;
+    },
+    enabled: Boolean(id),
+    staleTime: 0,
+  });
+}
+
 export function useDeleteTask() {
   const queryClient = useQueryClient();
   const toast = useToast();
 
   return useMutation({
-    mutationFn: async (id: string) => {
-      await api.delete(`/tasks/${id}`);
+    mutationFn: async ({ id, moveTimeTo }: { id: string; moveTimeTo?: string | null }) => {
+      await api.delete(`/tasks/${id}`, { params: moveTimeTo ? { moveTimeTo } : undefined });
     },
-    onSuccess: (_data, id) => {
+    onSuccess: (_data, { id, moveTimeTo }) => {
       queryClient.removeQueries({ queryKey: taskKeys.detail(id) });
+      if (moveTimeTo) void queryClient.invalidateQueries({ queryKey: taskKeys.detail(moveTimeTo) });
+      void queryClient.invalidateQueries({ queryKey: ["timelogs"] });
       invalidateTaskCollections(queryClient);
       toast.success("Task deleted");
     },
