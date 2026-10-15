@@ -1754,8 +1754,20 @@ async function deleteProjectCascade(
   ip: string | undefined
 ): Promise<Invalid | { tasks: number; timeLogs: number; files: number }> {
   if (actor.role !== "admin") return bad("Only admins can delete projects", 403);
-  if (!project.archivedAt) return bad("Archive the project before deleting it", 409);
   const projectId = project._id as mongoose.Types.ObjectId;
+  // Empty projects (no tasks, no time) can go at once; anything with work is archived first.
+  if (!project.archivedAt) {
+    const [taskCount, logCount] = await Promise.all([
+      Task.countDocuments({ project: projectId }),
+      TimeLog.countDocuments({ project: projectId }),
+    ]);
+    if (taskCount > 0 || logCount > 0) {
+      return bad(
+        `This project has ${taskCount} task${taskCount === 1 ? "" : "s"} and ${logCount} time entr${logCount === 1 ? "y" : "ies"}. Archive it first, then delete it from the Archived view.`,
+        409
+      );
+    }
+  }
   const audience = { ...project.toObject(), _id: projectId } as unknown as IProject;
 
   const tasks = await Task.find({ project: projectId }).select("_id");
@@ -1788,7 +1800,7 @@ async function deleteProjectCascade(
   return { tasks: tasks.length, timeLogs: logs.deletedCount, files: files.length };
 }
 
-/** DELETE /api/projects/:id — admin only, archived projects only. Cascades everything. */
+/** DELETE /api/projects/:id — admin only; archived projects, or empty ones (no tasks / time). Cascades everything. */
 export async function deleteProject(req: Request, res: Response): Promise<void> {
   const project = await getProjectOr404(req, res);
   if (!project) return;

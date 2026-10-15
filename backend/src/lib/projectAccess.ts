@@ -143,7 +143,8 @@ export function projectPermissions(
     canManageMilestones: manage && !archived,
     canArchive: manage && !archived,
     canRestore: manage && archived,
-    canDelete: user.role === "admin" && archived,
+    // Admins: archived projects, or empty ones (the server checks there are no tasks / time).
+    canDelete: user.role === "admin",
     // Copying needs create rights and management of the source (heads: their own projects).
     canDuplicate: canCreateProject(user) && manage,
     canCreateTasks:

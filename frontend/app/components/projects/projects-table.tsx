@@ -162,7 +162,8 @@ export function ProjectsTable({
     if (manage && archived) {
       list.push({ label: "Restore", icon: LuArchiveRestore, onSelect: () => onDialog("restore", project) });
     }
-    if (me.role === "admin" && archived) {
+    // Admins: archived projects, or empty ones (the server refuses projects with tasks / time).
+    if (me.role === "admin") {
       list.push({
         label: "Delete",
         icon: LuTrash2,
