@@ -17,6 +17,7 @@ import {
   pearityActive,
   pearityGenerateUrl,
   pearitySettings,
+  pearityTrailCounts,
   readOnlyTagRef,
   recordPearityUsage,
   tagRefs,
@@ -29,7 +30,6 @@ import type { ApiKeyScope } from "../models/ApiKey.js";
 import { INTEGRATION_LIMITS, IntegrationSettings } from "../models/IntegrationSettings.js";
 import { PearityTag, PearityTagUsage } from "../models/PearityTag.js";
 import { PearityTaskAsset } from "../models/PearityTaskAsset.js";
-import { TaskHistory } from "../models/TaskHistory.js";
 import { User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
@@ -76,36 +76,15 @@ async function generatedBy(taskId: mongoose.Types.ObjectId) {
 
 /** Aggregate journey counts + recent outcome / DAM links for the task detail trail. */
 async function pearityTrail(taskId: mongoose.Types.ObjectId) {
-  const [historyCounts, assets] = await Promise.all([
-    TaskHistory.aggregate<{ _id: string; count: number }>([
-      {
-        $match: {
-          task: taskId,
-          action: {
-            $in: [
-              "pearity_generated",
-              "pearity_job_started",
-              "pearity_job_completed",
-              "pearity_job_failed",
-              "pearity_saved_to_dam",
-            ],
-          },
-        },
-      },
-      { $group: { _id: "$action", count: { $sum: 1 } } },
-    ]),
+  const [counts, assets] = await Promise.all([
+    pearityTrailCounts([taskId]),
     PearityTaskAsset.find({ task: taskId })
       .sort({ createdAt: -1 })
       .limit(40)
       .select("url title mimeType damAssetId damFolderPath tagNo jobId pearityUrl createdAt")
       .lean(),
   ]);
-  const byAction = Object.fromEntries(historyCounts.map((r) => [r._id, r.count])) as Record<string, number>;
-  const jobsStarted = byAction.pearity_job_started ?? 0;
-  const jobsCompleted = byAction.pearity_job_completed ?? 0;
-  const jobsFailed = byAction.pearity_job_failed ?? 0;
-  const savedToDam = byAction.pearity_saved_to_dam ?? 0;
-  const generateClicks = byAction.pearity_generated ?? 0;
+  const { generateClicks, jobsStarted, jobsCompleted, jobsFailed, savedToDam } = counts.get(taskId.toString())!;
   return {
     generateClicks,
     jobsStarted,

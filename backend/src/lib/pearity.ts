@@ -9,6 +9,7 @@ import type { IPearityTag, PearityUsageSource } from "../models/PearityTag.js";
 import { Project } from "../models/Project.js";
 import { Task } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
+import { TaskHistory } from "../models/TaskHistory.js";
 import { User } from "../models/User.js";
 import { settingsAppUrl } from "./companySettings.js";
 import { isDuplicateKeyError } from "./errors.js";
@@ -708,4 +709,55 @@ export async function pearityTagsByTask(tasks: TaskLike[]): Promise<Map<string, 
   if (tasks.length === 0) return new Map();
   const tags = await PearityTag.find({ task: { $in: tasks.map((t) => t._id) } }).lean();
   return tagRefs(tags, { tasks });
+}
+
+// ---------------------------------------------------------------------------
+// Generation trail counts (task history): shared by the task detail trail
+// (controllers/pearity.ts) and the Pearity stats report (controllers/pearityReport.ts).
+// ---------------------------------------------------------------------------
+
+/** History actions that make up a task's Pearity generation trail. */
+export const PEARITY_TRAIL_ACTIONS = [
+  "pearity_generated",
+  "pearity_job_started",
+  "pearity_job_completed",
+  "pearity_job_failed",
+  "pearity_saved_to_dam",
+] as const;
+
+export interface PearityTrailCounts {
+  /** "Generate on Pearity" clicks (pearity_generated). */
+  generateClicks: number;
+  jobsStarted: number;
+  jobsCompleted: number;
+  jobsFailed: number;
+  savedToDam: number;
+}
+
+export function emptyTrailCounts(): PearityTrailCounts {
+  return { generateClicks: 0, jobsStarted: 0, jobsCompleted: 0, jobsFailed: 0, savedToDam: 0 };
+}
+
+const TRAIL_FIELD: Record<(typeof PEARITY_TRAIL_ACTIONS)[number], keyof PearityTrailCounts> = {
+  pearity_generated: "generateClicks",
+  pearity_job_started: "jobsStarted",
+  pearity_job_completed: "jobsCompleted",
+  pearity_job_failed: "jobsFailed",
+  pearity_saved_to_dam: "savedToDam",
+};
+
+/** Trail counts per task id (every requested task gets an entry, zeros when it has no history). */
+export async function pearityTrailCounts(taskIds: mongoose.Types.ObjectId[]): Promise<Map<string, PearityTrailCounts>> {
+  const out = new Map<string, PearityTrailCounts>(taskIds.map((id) => [id.toString(), emptyTrailCounts()]));
+  if (taskIds.length === 0) return out;
+  const rows = await TaskHistory.aggregate<{ _id: { task: mongoose.Types.ObjectId; action: (typeof PEARITY_TRAIL_ACTIONS)[number] }; count: number }>([
+    { $match: { task: { $in: taskIds }, action: { $in: [...PEARITY_TRAIL_ACTIONS] } } },
+    { $group: { _id: { task: "$task", action: "$action" }, count: { $sum: 1 } } },
+  ]);
+  for (const row of rows) {
+    const counts = out.get(row._id.task.toString());
+    const field = TRAIL_FIELD[row._id.action];
+    if (counts && field) counts[field] += row.count;
+  }
+  return out;
 }

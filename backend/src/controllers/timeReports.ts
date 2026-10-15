@@ -22,12 +22,12 @@ import { canReviewTimesheet, timesheetTotalMinutes } from "./timesheets.js";
 // Shared helpers — head = own department only; admin = everything
 // ---------------------------------------------------------------------------
 
-interface Invalid {
+export interface Invalid {
   status: number;
   error: string;
 }
 
-function isInvalid(value: unknown): value is Invalid {
+export function isInvalid(value: unknown): value is Invalid {
   return typeof value === "object" && value !== null && "error" in value && "status" in value;
 }
 
@@ -38,7 +38,7 @@ function dateKey(date: Date): string {
 }
 
 /** `from`/`to` (YYYY-MM-DD, inclusive). Defaults: first of the current month → today. */
-function parseRange(req: Request, defaults = true): { from: Date | null; to: Date | null } | Invalid {
+export function parseRange(req: Request, defaults = true): { from: Date | null; to: Date | null } | Invalid {
   const today = appToday();
   let from: Date | null = defaults ? new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)) : null;
   let to: Date | null = defaults ? today : null;
@@ -54,7 +54,7 @@ function parseRange(req: Request, defaults = true): { from: Date | null; to: Dat
   return { from, to };
 }
 
-function optionalId(req: Request, name: string): mongoose.Types.ObjectId | null | Invalid {
+export function optionalId(req: Request, name: string): mongoose.Types.ObjectId | null | Invalid {
   const raw = req.query[name];
   if (raw === undefined || raw === "") return null;
   if (typeof raw !== "string" || isInvalidObjectId(raw)) return { status: 400, error: `${name} must be a valid ID` };
