@@ -4,7 +4,7 @@ import { canViewTimeReport } from "../lib/reportAccess.js";
 import type { Request, Response } from "express";
 import { logActivity } from "../lib/activityLog.js";
 import { expiresInToMs, signAccessToken, TOKEN_COOKIE, verifyAccessToken } from "../lib/jwt.js";
-import { clearLoginFailures, loginLockRemainingMs, recordLoginFailure } from "../lib/loginLock.js";
+import { loginAttemptFailed, loginSucceeded, startLoginAttempt } from "../lib/loginLock.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
@@ -47,6 +47,12 @@ function sendSignInLocked(res: Response, ms: number): void {
   });
 }
 
+/** Audits and refuses a sign-in to a locked email. */
+function refuseLockedSignIn(req: Request, res: Response, emailLower: string, ms: number): void {
+  logActivity({ action: "login_failed", actorEmail: emailLower, details: { reason: "too_many_attempts" }, ip: req.ip });
+  sendSignInLocked(res, ms);
+}
+
 /** Authenticates credentials and sets the JWT as an httpOnly cookie to maintain the session. */
 export async function login(req: Request, res: Response): Promise<void> {
   const { email, password } = (req.body ?? {}) as { email?: unknown; password?: unknown };
@@ -58,10 +64,11 @@ export async function login(req: Request, res: Response): Promise<void> {
   const emailLower = email.trim().toLowerCase();
 
   // Per-email lock after repeated failures (every replica): refused even with the right password.
-  const lockedMs = await loginLockRemainingMs(emailLower);
-  if (lockedMs > 0) {
-    logActivity({ action: "login_failed", actorEmail: emailLower, details: { reason: "too_many_attempts" }, ip: req.ip });
-    sendSignInLocked(res, lockedMs);
+  // Counted before the password check (so parallel guesses can't outrun the limit), and for
+  // every email, account or not, so the lock reveals nothing either.
+  const attempt = await startLoginAttempt(emailLower);
+  if (attempt.lockedMs > 0) {
+    refuseLockedSignIn(req, res, emailLower, attempt.lockedMs);
     return;
   }
 
@@ -83,8 +90,7 @@ export async function login(req: Request, res: Response): Promise<void> {
       details: { reason: account?.passwordSetupRequired ? "password_setup_required" : "invalid_credentials" },
       ip: req.ip,
     });
-    // Counted for every email, account or not, so the lock reveals nothing either.
-    const nowLockedMs = await recordLoginFailure(emailLower);
+    const nowLockedMs = await loginAttemptFailed(emailLower, attempt);
     if (nowLockedMs > 0) {
       sendSignInLocked(res, nowLockedMs);
       return;
@@ -93,7 +99,13 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  await clearLoginFailures(emailLower);
+  // Locked by parallel guesses while this password was checked: refused like a wrong one.
+  const lockedMs = await loginSucceeded(emailLower);
+  if (lockedMs > 0) {
+    refuseLockedSignIn(req, res, emailLower, lockedMs);
+    return;
+  }
+
   logActivity({ action: "login", actor: user, ip: req.ip });
 
   issueSessionCookie(res, user);

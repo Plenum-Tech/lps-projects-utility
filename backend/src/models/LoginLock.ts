@@ -13,7 +13,9 @@ export const LOGIN_LOCK_LIMITS = {
  * login limit is per process). Counted whether or not an account has the
  * email, so a lock reveals nothing. A successful sign-in, a password reset or
  * a set-password link removes the document; otherwise a TTL index purges it
- * once its window and lock are over.
+ * once its window and lock are over. Attempts are counted before their
+ * password is checked (lib/loginLock.ts), so `failures` includes attempts
+ * still in progress.
  */
 export interface ILoginLock {
   /** The normalised (trimmed, lower-case) email. */
