@@ -42,6 +42,8 @@ async function byToken(token: string | undefined) {
   }
   const approver = await User.findById(entry.user).select("name email role").lean();
   if (!approver) return { error: "This approval link isn't valid.", status: 404 } as const;
+  // Links sent before the approvers changed stop working for anyone no longer an approver.
+  if (!(await isProjectApprover(approver._id))) return { error: "This approval link isn't valid.", status: 404 } as const;
   return { project, approver } as const;
 }
 
