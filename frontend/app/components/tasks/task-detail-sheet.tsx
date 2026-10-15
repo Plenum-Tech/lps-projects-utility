@@ -574,7 +574,7 @@ function TaskDetail({
             {/* Every time entry on the task, row by row. */}
             <TaskTimeEntries taskId={task._id} />
 
-            <PearityTagSection task={task} />
+            <PearityTagSection task={task} readOnly={viewOnly} />
 
             {task.description && (
               <section

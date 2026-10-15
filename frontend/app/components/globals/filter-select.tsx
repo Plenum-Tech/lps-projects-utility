@@ -145,6 +145,7 @@ function SearchableFilterSelect({
       <ComboboxContent className="min-w-60">
         <ComboboxInput
           showTrigger={false}
+          autoFocus
           placeholder={searchPlaceholder ?? `Search ${label.toLowerCase()}…`}
           aria-label={`Search ${label.toLowerCase()}`}
         />

@@ -439,7 +439,16 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
 
   return (
     <div className={project ? "w-full" : "mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8"}>
-      {!project && <PageHeader title="Tasks" description={SUBTITLES[role]} />}
+      {!project && (
+        <PageHeader
+          title="Tasks"
+          description={
+            filters.assignee && filters.assignee !== me._id
+              ? `Tasks of ${assignable.data?.find((person) => person._id === filters.assignee)?.name ?? "the selected employee"}. Ones you aren't on open view only.`
+              : SUBTITLES[role]
+          }
+        />
+      )}
 
       <div className={project ? "space-y-4" : "mt-6 space-y-4"}>
         {!project && user && <MySubtasksStrip onOpen={openTask} />}
