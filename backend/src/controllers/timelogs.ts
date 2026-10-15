@@ -306,6 +306,15 @@ function isApprover(actor: IUser, owner: IUser, project: IProject | null): boole
   return actor.role === "admin" || isHeadOfUser(actor, owner) || Boolean(project && isProjectManager(actor, project));
 }
 
+/**
+ * An admin may log on any project/task, so logging (or moving) an admin's time
+ * is kept to admins: otherwise a head or project manager could reach tasks they
+ * can't open through "Log for".
+ */
+function adminTargetDenied(actor: IUser, owner: IUser): boolean {
+  return owner.role === "admin" && actor.role !== "admin";
+}
+
 // ---------------------------------------------------------------------------
 // List / active
 // ---------------------------------------------------------------------------
@@ -590,6 +599,9 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     if (!found) return send(res, { status: 404, error: "User not found" });
     owner = found;
   }
+  if (adminTargetDenied(actor, owner)) {
+    return send(res, { status: 403, error: "Only an admin can log time for an admin" });
+  }
 
   const start = parseInstant(body.startTime, "startTime");
   if (isInvalid(start)) return send(res, start);
@@ -716,15 +728,20 @@ export async function updateTimeLog(req: Request, res: Response): Promise<void> 
       body.task !== undefined ? body.task : log.task?.toString()
     );
     if (isInvalid(target)) return send(res, target);
+    const newProjectId = target.project ? (target.project._id as mongoose.Types.ObjectId) : null;
+    const newTaskId = target.task ? (target.task._id as mongoose.Types.ObjectId) : null;
+    const moves = String(newProjectId) !== String(log.project ?? null) || String(newTaskId) !== String(log.task ?? null);
+    if (moves && adminTargetDenied(actor, owner)) {
+      return send(res, { status: 403, error: "Only an admin can move an admin's time to another project or task" });
+    }
     if (target.project && !target.project.manualTimeLogs && !canManageProject(actor, target.project) && log.source === "manual") {
       return send(res, { status: 403, error: "Manual time entries are disabled for this project" });
     }
-    const newProjectId = target.project ? (target.project._id as mongoose.Types.ObjectId) : null;
     if (String(newProjectId) !== String(log.project ?? null)) {
       log.hourlyRate = await resolveHourlyRate(owner._id, target.project);
     }
     log.project = newProjectId;
-    log.task = target.task ? (target.task._id as mongoose.Types.ObjectId) : null;
+    log.task = newTaskId;
   }
 
   if (changesWindow) {
