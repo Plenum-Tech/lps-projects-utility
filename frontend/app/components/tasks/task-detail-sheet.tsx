@@ -19,6 +19,8 @@ import {
   LuRepeat,
   LuSend,
   LuTrash2,
+  LuMessageSquare,
+  LuPaperclip,
 } from "react-icons/lu";
 import { Link } from "react-router";
 
@@ -49,7 +51,9 @@ import { TaskSubtasks } from "@/components/tasks/task-subtasks";
 import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
 import { PearityJourney } from "@/components/tasks/task-history";
 import { TaskTimerAction } from "@/components/tasks/task-timer-button";
-import { TaskWorkSections, type WorkTab } from "@/components/tasks/task-work-sections";
+import type { WorkTab } from "@/components/tasks/task-work-sections";
+import { TaskComments } from "@/components/tasks/task-comments";
+import { TaskFiles } from "@/components/tasks/task-files";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -578,6 +582,35 @@ function TaskDetail({
               </section>
             )}
 
+            {/* The brief's files and the comments, as boxes like Time entries (also in Edit / Update). */}
+            <section aria-labelledby="task-files-heading" className="space-y-2 rounded-lg border bg-muted/20 p-3 sm:p-4">
+              <h3
+                id="task-files-heading"
+                className="flex flex-wrap items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+              >
+                <LuPaperclip aria-hidden className="size-4" />
+                Files
+                <span className="font-normal tracking-normal normal-case">· {task.fileCount}</span>
+              </h3>
+              <TaskFiles
+                taskId={task._id}
+                me={{ _id: me._id, role: me.role }}
+                canManageAll={permissions.canDelete || me.role === "admin"}
+                subtasks={task.subtasks}
+              />
+            </section>
+            <section aria-labelledby="task-comments-heading" className="space-y-2 rounded-lg border bg-muted/20 p-3 sm:p-4">
+              <h3
+                id="task-comments-heading"
+                className="flex flex-wrap items-center gap-2 text-xs font-medium tracking-wide text-muted-foreground uppercase"
+              >
+                <LuMessageSquare aria-hidden className="size-4" />
+                Comments
+                <span className="font-normal tracking-normal normal-case">· {task.commentCount}</span>
+              </h3>
+              <TaskComments taskId={task._id} me={{ _id: me._id, role: me.role }} />
+            </section>
+
             {/* What was entered when the task was completed. */}
             <CompletionSummary task={task} />
 
@@ -597,9 +630,6 @@ function TaskDetail({
             )}
           </div>
         </section>
-
-        {/* Comments, the brief's files and time — visible on the task page (also in Edit / Update). */}
-        <TaskWorkSections task={task} permissions={permissions} me={{ _id: me._id, role: me.role }} />
 
         {/* Pearity generation / DAM / review steps (only when there are any). */}
         <PearityJourney taskId={task._id} />
