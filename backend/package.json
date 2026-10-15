@@ -65,7 +65,8 @@
     "build": "tsc --project tsconfig.build.json",
     "vercel-build": "tsc --project tsconfig.build.json",
     "manpower:import": "bun src/scripts/manpowerImport.ts",
-    "tags:backfill": "bun src/scripts/tagsBackfill.ts"
+    "tags:backfill": "bun src/scripts/tagsBackfill.ts",
+    "scrub:anonymous-feedback-logs": "bun src/scripts/scrubAnonymousFeedbackLogs.ts"
   },
   "type": "module"
 }

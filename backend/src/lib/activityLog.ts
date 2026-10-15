@@ -12,6 +12,8 @@ export interface ActivityLogEntry {
   actor?: IUser | null;
   /** Email snapshot — used when `actor` is unknown (failed logins). */
   actorEmail?: string;
+  /** Name snapshot — used when `actor` is withheld (e.g. "Anonymous" feedback). */
+  actorName?: string;
   targetType?: string;
   targetId?: IActivityLog["targetId"];
   targetName?: string;
@@ -24,12 +26,12 @@ export interface ActivityLogEntry {
  * the primary request, so failures are swallowed.
  */
 export function logActivity(entry: ActivityLogEntry): void {
-  const { actor, actorEmail, ...rest } = entry;
+  const { actor, actorEmail, actorName, ...rest } = entry;
 
   const doc = {
     ...rest,
     actor: actor ? actor._id : null,
-    actorName: actor?.name,
+    actorName: actor?.name ?? actorName,
     actorEmail: actor?.email ?? actorEmail,
     actorRole: actor?.role,
   };

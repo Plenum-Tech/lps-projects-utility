@@ -105,14 +105,14 @@ export async function createFeedback(req: Request, res: Response): Promise<void>
     status: "open",
   });
 
+  // Anonymous: nothing in the log may lead back to the author — no actor, email,
+  // role or IP, and no feedback id (the feedback record itself stores its author).
   logActivity({
     action: "feedback_created",
-    actor: user,
+    ...(anonymous ? { actorName: "Anonymous" } : { actor: user, targetId: feedback._id, ip: req.ip }),
     targetType: "feedback",
-    targetId: feedback._id,
     targetName: `${category} feedback`,
     details: { category, isAnonymous: anonymous },
-    ip: req.ip,
   });
 
   const populated = await feedback.populate(POPULATE);
