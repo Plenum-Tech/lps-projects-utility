@@ -192,7 +192,9 @@ export async function setDefaultPassword(req: Request, res: Response): Promise<v
   } else {
     filter = scope === "pending" ? { passwordSetupRequired: true } : { _id: { $ne: actor._id } };
   }
-  const users = await User.find(filter).select("_id");
+  // tokenVersion must be loaded: incrementing an unloaded value would reset it to 1
+  // (and could make an older session valid again).
+  const users = await User.find(filter).select("_id tokenVersion");
   let updated = 0;
   for (const user of users) {
     // save() runs the hashing hook; bumping tokenVersion signs out other sessions.
@@ -294,6 +296,8 @@ export async function completePasswordSetup(req: Request, res: Response): Promis
   }
   user.password = password; // hashed by the model's pre-save hook
   user.passwordSetupRequired = false;
+  // Admins also use these links as a reset: sign out every other session (the cookie below is new).
+  user.tokenVersion = (user.tokenVersion ?? 0) + 1;
   await user.save();
   await PasswordSetupToken.updateMany(
     { user: user._id, usedAt: null, revokedAt: null },

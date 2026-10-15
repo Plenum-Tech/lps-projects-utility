@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import type { AccessTokenPayload } from "../lib/jwt.js";
 import { verifyAccessToken } from "../lib/jwt.js";
 import { applyLeadership } from "../lib/leadership.js";
-import { cached } from "../lib/refCache.js";
+import { cached, invalidate } from "../lib/refCache.js";
 import { User } from "../models/User.js";
 
 const { BSON } = mongoose.mongo;
@@ -24,8 +24,9 @@ const UNSELECTED = Object.fromEntries(
     .map(([name]) => [name, 0])
 );
 
-async function loadUser(id: string): Promise<InstanceType<typeof User> | null> {
+async function loadUser(id: string, fresh = false): Promise<InstanceType<typeof User> | null> {
   if (!mongoose.isValidObjectId(id)) return null;
+  if (fresh) invalidate(`user:${id}`);
   const bytes = await cached(`user:${id}`, USER_CACHE_MS, async () => {
     const raw = await User.findById(id).lean();
     return raw ? BSON.serialize(raw) : null;
@@ -55,14 +56,17 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 
   // Re-load the user (briefly cached, see above) so deleted/disabled users lose access.
   // DB errors intentionally propagate to the global error handler (500), not a 401.
-  const user = await loadUser(payload.sub);
+  let user = await loadUser(payload.sub);
+  // A token newer than the cached copy was issued after a password change on
+  // another replica (the new session cookie): re-read rather than refuse it for up to USER_CACHE_MS.
+  if (user && payload.tv > (user.tokenVersion ?? 0)) user = await loadUser(payload.sub, true);
 
   if (!user) {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }
 
-  // A password reset bumps tokenVersion: sessions signed before it are rejected.
+  // A password change or reset bumps tokenVersion: sessions signed before it are rejected.
   // Users and tokens from before the field existed both count as version 0.
   if (payload.tv !== (user.tokenVersion ?? 0)) {
     res.status(401).json({ error: "Not authenticated" });

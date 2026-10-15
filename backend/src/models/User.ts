@@ -63,7 +63,8 @@ export interface IUser extends mongoose.Document {
   mustChangePassword: boolean;
   /**
    * Session generation: JWTs carry it as `tv` and requireAuth rejects older
-   * ones. Bumped by a password reset to sign out every other session.
+   * ones. Bumped by every password change (own, admin-set, reset, set-password
+   * link, default password) to sign out every other session.
    */
   tokenVersion: number;
   /** Single department per employee (null until assigned). */

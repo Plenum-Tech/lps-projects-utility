@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { issueSessionCookie } from "./auth.js";
 import { deleteUserDocuments } from "./documents.js";
 import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
@@ -37,6 +38,14 @@ interface UpdateMeBody {
   name?: string;
   currentPassword?: string;
   password?: string;
+}
+
+/**
+ * A password change bumps tokenVersion, which signs out every session — give
+ * the caller's own device a fresh cookie so only the OTHER sessions end.
+ */
+function keepSession(res: Response, user: IUser): void {
+  issueSessionCookie(res, { id: String(user._id), role: user.role, tokenVersion: user.tokenVersion });
 }
 
 function isInvalidObjectId(id: string): boolean {
@@ -259,6 +268,8 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     // The model's pre-save hook rehashes whenever password is modified.
     user.password = password;
     user.passwordSetupRequired = false;
+    // Signs the user out everywhere (an admin editing themselves keeps this session, below).
+    user.tokenVersion = (user.tokenVersion ?? 0) + 1;
     changed.push("password");
   }
   if (rate !== undefined) {
@@ -280,6 +291,7 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     }
     throw error;
   }
+  if (password !== undefined && actor?._id.equals(user._id)) keepSession(res, user);
 
   logActivity({
     action: "user_updated",
@@ -380,10 +392,14 @@ export async function updateMe(req: Request, res: Response): Promise<void> {
     }
     user.password = password;
     user.mustChangePassword = false;
+    // Signs out every other session (version read fresh, not from the cached req.user);
+    // this device gets a new cookie below.
+    user.tokenVersion = (stored.tokenVersion ?? 0) + 1;
     changed.push("password");
   }
 
   await user.save();
+  if (changed.includes("password")) keepSession(res, user);
 
   logActivity({
     action: "profile_updated",
