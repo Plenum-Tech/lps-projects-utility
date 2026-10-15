@@ -1006,7 +1006,7 @@ export function ProjectFormDialog({
 
           {!project && (
             <div className="space-y-1.5">
-              <Label htmlFor="project-attachments">Files (brief, deck, references)</Label>
+              <p className="text-xs text-muted-foreground">Brief, deck or references — uploaded when the project is created.</p>
               <AttachmentsField id="project-attachments" files={files} onChange={setFiles} disabled={pending} />
             </div>
           )}
