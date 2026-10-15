@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { nextEmployeeId } from "../lib/employeeIds.js";
 import { invalidateOnWrite } from "../lib/refCache.js";
 import { deliveryInvalidateOnWrite } from "../lib/delivery/cache.js";
+import { endStreamsBefore } from "../lib/sse.js";
 import { addLegacyRef } from "./legacy.js";
 
 /** Per-employee annual leave balance for the tracked leave types. */
@@ -170,6 +171,16 @@ userSchema.pre("save", async function () {
   if (!this.isModified("password")) return;
   const salt = await bcrypt.genSalt(10);
   this.password = await bcrypt.hash(this.password, salt);
+});
+
+// A tokenVersion bump (password change or reset) signs out older sessions:
+// end their open real-time streams in this process now (other replicas end
+// theirs on the next heartbeat check, lib/sse.ts).
+userSchema.pre("save", function () {
+  this.$locals.tokenVersionBumped = this.isModified("tokenVersion");
+});
+userSchema.post("save", function (doc) {
+  if (doc.$locals.tokenVersionBumped) endStreamsBefore(String(doc._id), doc.tokenVersion ?? 0);
 });
 
 userSchema.methods.comparePassword = function (candidate: string): Promise<boolean> {

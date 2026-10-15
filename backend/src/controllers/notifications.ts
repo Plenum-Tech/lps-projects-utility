@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { parsePagination } from "../lib/pagination.js";
 import { registerSSEClient } from "../lib/notifications.js";
+import { isSessionCurrent } from "../middlewares/requireAuth.js";
 import { Notification } from "../models/Notification.js";
 
 const ACTOR_SELECT = "name";
@@ -116,8 +117,14 @@ export function streamNotifications(req: Request, res: Response): void {
   // Initial comment establishes the stream; `retry` sets the browser's reconnect delay.
   res.write("retry: 5000\n:ok\n\n");
 
-  // Register this client for push updates (lib/sse.ts sends the shared 25 s heartbeat).
-  const unregister = registerSSEClient(user._id.toString(), res);
+  // Register this client for push updates (lib/sse.ts sends the shared 25 s heartbeat,
+  // and ends the stream once this session is signed out, e.g. by a password change).
+  const userId = user._id.toString();
+  const tokenVersion = user.tokenVersion ?? 0; // = the cookie's (requireAuth checked)
+  const unregister = registerSSEClient(userId, res, {
+    tokenVersion,
+    isCurrent: () => isSessionCurrent(userId, tokenVersion),
+  });
 
   // Clean up on client disconnect.
   req.on("close", unregister);

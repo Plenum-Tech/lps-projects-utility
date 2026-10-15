@@ -34,6 +34,20 @@ export interface SSEEvent {
 const clients = new Map<string, Set<Response>>();
 
 /**
+ * The session a stream was opened with. A stream is authenticated once, when
+ * it connects, so it's re-checked: a password change/reset signs out older
+ * sessions (tokenVersion) and must end their streams too, or a signed-out
+ * device would keep receiving the user's events.
+ */
+export interface StreamSession {
+  /** The session token's version (requireAuth checked it against the user's). */
+  tokenVersion: number;
+  /** Whether that session is still signed in (user exists, version unchanged). */
+  isCurrent: () => Promise<boolean>;
+}
+const sessions = new WeakMap<Response, StreamSession>();
+
+/**
  * Max concurrent streams per user. The SPA shares one EventSource per browser
  * (see frontend use-sse.ts), so 5 covers several browsers/devices; past that
  * the oldest stream is closed (the browser that owned it reconnects on demand).
@@ -50,8 +64,60 @@ function ensureHeartbeat(): void {
     for (const set of clients.values()) {
       for (const res of set) res.write(":heartbeat\n\n");
     }
+    void endSignedOutStreams();
   }, HEARTBEAT_MS);
   heartbeatTimer.unref?.();
+}
+
+/** Ends one stream (its browser reconnects with whatever cookie it has now). */
+function endStream(userId: string, res: Response): void {
+  const set = clients.get(userId);
+  if (set) {
+    set.delete(res);
+    if (set.size === 0) clients.delete(userId);
+  }
+  try {
+    res.end();
+  } catch {
+    // Socket already gone.
+  }
+}
+
+/**
+ * Every heartbeat: ends the streams whose session has been signed out since
+ * they connected — on any replica (within requireAuth's short user cache) —
+ * or whose user is gone. A database error keeps the stream until the next beat.
+ */
+async function endSignedOutStreams(): Promise<void> {
+  const checks: Promise<void>[] = [];
+  for (const [userId, set] of clients) {
+    for (const res of set) {
+      const session = sessions.get(res);
+      if (!session) continue;
+      checks.push(
+        session.isCurrent().then(
+          (current) => {
+            if (!current) endStream(userId, res);
+          },
+          () => undefined
+        )
+      );
+    }
+  }
+  await Promise.all(checks);
+}
+
+/**
+ * A password change/reset in this process (models/User.ts): ends the user's
+ * streams opened with an older token version at once. The device that changed
+ * its password reconnects with its new cookie.
+ */
+export function endStreamsBefore(userId: string, tokenVersion: number): void {
+  const set = clients.get(userId);
+  if (!set) return;
+  for (const res of [...set]) {
+    if ((sessions.get(res)?.tokenVersion ?? 0) < tokenVersion) endStream(userId, res);
+  }
 }
 
 /**
@@ -60,9 +126,11 @@ function ensureHeartbeat(): void {
  */
 export function registerClient(
   userId: string,
-  res: Response
+  res: Response,
+  session: StreamSession
 ): () => void {
   ensureHeartbeat();
+  sessions.set(res, session);
   let set = clients.get(userId);
   if (!set) {
     set = new Set();

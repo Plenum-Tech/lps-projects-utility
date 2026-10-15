@@ -36,6 +36,28 @@ async function loadUser(id: string, fresh = false): Promise<InstanceType<typeof 
   return bytes ? User.hydrate(BSON.deserialize(bytes), UNSELECTED) : null;
 }
 
+/**
+ * The user behind a session token, or null when that session has ended: the
+ * user is gone, or a password change or reset bumped tokenVersion since it was signed.
+ */
+async function sessionUser(payload: Pick<AccessTokenPayload, "sub" | "tv">) {
+  let user = await loadUser(payload.sub);
+  // A token newer than the cached copy was issued after a password change on
+  // another replica (the new session cookie): re-read rather than refuse it for up to USER_CACHE_MS.
+  if (user && payload.tv > (user.tokenVersion ?? 0)) user = await loadUser(payload.sub, true);
+  // Sessions signed before the bump are rejected.
+  // Users and tokens from before the field existed both count as version 0.
+  return user && payload.tv === (user.tokenVersion ?? 0) ? user : null;
+}
+
+/**
+ * For connections authenticated once and kept open (the SSE stream, lib/sse.ts):
+ * is the session they were opened with still signed in?
+ */
+export async function isSessionCurrent(userId: string, tokenVersion: number): Promise<boolean> {
+  return (await sessionUser({ sub: userId, tv: tokenVersion })) !== null;
+}
+
 /** Reads the JWT from the httpOnly cookie, verifies it, and attaches the current user to the request. */
 export async function requireAuth(req: Request, res: Response, next: NextFunction): Promise<void> {
   const token = req.cookies.token as string | undefined;
@@ -54,21 +76,11 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  // Re-load the user (briefly cached, see above) so deleted/disabled users lose access.
+  // Re-load the user (briefly cached, see above) so deleted/disabled users lose access,
+  // and sessions signed out by a password change or reset (tokenVersion) are rejected.
   // DB errors intentionally propagate to the global error handler (500), not a 401.
-  let user = await loadUser(payload.sub);
-  // A token newer than the cached copy was issued after a password change on
-  // another replica (the new session cookie): re-read rather than refuse it for up to USER_CACHE_MS.
-  if (user && payload.tv > (user.tokenVersion ?? 0)) user = await loadUser(payload.sub, true);
-
+  const user = await sessionUser(payload);
   if (!user) {
-    res.status(401).json({ error: "Not authenticated" });
-    return;
-  }
-
-  // A password change or reset bumps tokenVersion: sessions signed before it are rejected.
-  // Users and tokens from before the field existed both count as version 0.
-  if (payload.tv !== (user.tokenVersion ?? 0)) {
     res.status(401).json({ error: "Not authenticated" });
     return;
   }

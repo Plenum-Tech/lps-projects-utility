@@ -19,7 +19,7 @@ import {
   taskEmailTemplate,
   genericEmailTemplate,
 } from "./email.js";
-import { pushToClient, createEvent, registerClient } from "./sse.js";
+import { pushToClient, createEvent, registerClient, type StreamSession } from "./sse.js";
 
 export interface NotifyParams {
   recipient: mongoose.Types.ObjectId;
@@ -39,9 +39,10 @@ export interface NotifyParams {
 /** Register an SSE client for a user. Returns a cleanup function. */
 export function registerSSEClient(
   userId: string,
-  res: Response
+  res: Response,
+  session: StreamSession
 ): () => void {
-  return registerClient(userId, res);
+  return registerClient(userId, res, session);
 }
 
 /** Push a notification to connected SSE clients for a given user. */
