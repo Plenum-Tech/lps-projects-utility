@@ -1000,6 +1000,8 @@ export interface Task {
   pinned?: boolean;
   /** Only on GET /api/tasks?recurring=true: generated copies. */
   copyCount?: number;
+  /** Only on GET /api/tasks?assignee=: "read" when the caller can only view the task (view only). */
+  access?: TaskAccess;
   /**
    * Meeting the task was created from. Lists carry the meeting id; the task
    * detail (GET /api/tasks/:id) populates `{ _id, title }` and the line's `start`.
@@ -1138,10 +1140,17 @@ export interface TaskPermissions {
   readOnly?: boolean;
 }
 
+/**
+ * How the caller opened a task: "full" (view access) or "read" — any other
+ * signed-in user, view only (every permission off; task notes stay hidden).
+ */
+export type TaskAccess = "full" | "read";
+
 /** GET /api/tasks/:id and every task mutation. */
 export interface TaskDetailResponse {
   task: Task;
   permissions: TaskPermissions;
+  access?: TaskAccess;
   /** Non-blocking warnings on create/update (e.g. due date after milestone end). */
   warnings?: string[];
   /** Subtask mutations: the subtask that was added/updated. */

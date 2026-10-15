@@ -8,6 +8,7 @@ import {
   LuCircleAlert,
   LuCircleCheck,
   LuClipboardCheck,
+  LuEye,
   LuFolder,
   LuFolderKanban,
   LuFlag,
@@ -97,7 +98,8 @@ const TAB_VALUES: TabValue[] = [
 
 /**
  * Task detail side sheet — opened by the `?task=<id>` search param. Full
- * screen on mobile. Actions are driven by the server-computed permissions.
+ * screen on mobile. Actions are driven by the server-computed permissions;
+ * `access: "read"` (anyone else's task) opens it view only.
  */
 export function TaskDetailSheet({
   taskId,
@@ -150,6 +152,7 @@ export function TaskDetailSheet({
             key={query.data.task._id}
             task={query.data.task}
             permissions={query.data.permissions}
+            viewOnly={query.data.access === "read"}
             me={me}
             onClose={onClose}
             subtaskId={subtaskId ?? null}
@@ -170,6 +173,7 @@ export function TaskDetailSheet({
 function TaskDetail({
   task,
   permissions,
+  viewOnly,
   me,
   onClose,
   subtaskId,
@@ -177,6 +181,8 @@ function TaskDetail({
 }: {
   task: Task;
   permissions: TaskPermissions;
+  /** Opened without view access (server `access: "read"`): no actions at all. */
+  viewOnly: boolean;
   me: { _id: string; role: Role };
   onClose: () => void;
   subtaskId: string | null;
@@ -189,7 +195,8 @@ function TaskDetail({
   const workTab: WorkTab | undefined =
     initialTab === "comments" || initialTab === "files" || initialTab === "time" ? initialTab : undefined;
   const isWorker = task.assignees.some((a) => a._id === me._id);
-  const canWork = !permissions.readOnly && (permissions.canEdit || Boolean(permissions.canLogTime) || isWorker);
+  const canWork =
+    !permissions.readOnly && !viewOnly && (permissions.canEdit || Boolean(permissions.canLogTime) || isWorker);
   useEffect(() => {
     // Links to ?tab=comments|files|time open the form on that section.
     if (workTab && canWork) setDialog(permissions.canEdit ? "edit" : "update");
@@ -202,7 +209,8 @@ function TaskDetail({
   );
   const canReviewNow = permissions.canReview && task.status === "in_review";
   // Rework is a new task in the same project, so it needs task-create rights there.
-  const canAddRework = Boolean(task.project) && !permissions.readOnly && Boolean(permissions.canDuplicate);
+  const canAddRework =
+    Boolean(task.project) && !permissions.readOnly && !viewOnly && Boolean(permissions.canDuplicate);
 
   return (
     <>
@@ -280,7 +288,7 @@ function TaskDetail({
                 Review
               </Button>
             )}
-            <TaskTimerAction task={task} me={me} />
+            {!viewOnly && <TaskTimerAction task={task} me={me} />}
             {moveTargets.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -325,7 +333,7 @@ function TaskDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            <PearityGenerateButton task={task} />
+            {!viewOnly && <PearityGenerateButton task={task} />}
             {canAddRework && (
               <Button variant="outline" size="sm" onClick={() => setDialog("rework")}>
                 <LuRefreshCw aria-hidden />
@@ -376,11 +384,18 @@ function TaskDetail({
               </Button>
             )}
           </div>
-          {permissions.readOnly && (
+          {permissions.readOnly ? (
             <p className="flex items-center gap-1.5 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
               <LuLock aria-hidden className="size-3.5" />
               This task belongs to an archived project and is read-only.
             </p>
+          ) : (
+            viewOnly && (
+              <p className="flex items-center gap-1.5 rounded-lg border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
+                <LuEye aria-hidden className="size-3.5" />
+                View only — you aren&apos;t on this task, so you can read it but not change it.
+              </p>
+            )
           )}
           {task.lastManualReminderAt && permissions.canRemind && (
             <p className="text-xs text-muted-foreground">
@@ -417,16 +432,27 @@ function TaskDetail({
               </Fact>
               {task.project && (
                 <Fact label="Project">
-                  <Link
-                    to={`/projects/${task.project._id}`}
-                    className="inline-flex items-center gap-1.5 rounded-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
-                  >
-                    <LuFolderKanban
-                      aria-hidden
-                      className="size-3.5 text-muted-foreground"
-                    />
-                    {task.project.code} · {task.project.name}
-                  </Link>
+                  {viewOnly ? (
+                    // View only: the caller can't open the project itself.
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <LuFolderKanban
+                        aria-hidden
+                        className="size-3.5 text-muted-foreground"
+                      />
+                      {task.project.code} · {task.project.name}
+                    </span>
+                  ) : (
+                    <Link
+                      to={`/projects/${task.project._id}`}
+                      className="inline-flex items-center gap-1.5 rounded-sm font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
+                    >
+                      <LuFolderKanban
+                        aria-hidden
+                        className="size-3.5 text-muted-foreground"
+                      />
+                      {task.project.code} · {task.project.name}
+                    </Link>
+                  )}
                 </Fact>
               )}
               {task.project && (
@@ -597,6 +623,7 @@ function TaskDetail({
                 me={{ _id: me._id, role: me.role }}
                 canManageAll={permissions.canDelete || me.role === "admin"}
                 subtasks={task.subtasks}
+                readOnly={viewOnly}
               />
             </section>
             <section aria-labelledby="task-comments-heading" className="space-y-2 rounded-lg border bg-muted/20 p-3 sm:p-4">
@@ -608,7 +635,7 @@ function TaskDetail({
                 Comments
                 <span className="font-normal tracking-normal normal-case">· {task.commentCount}</span>
               </h3>
-              <TaskComments taskId={task._id} me={{ _id: me._id, role: me.role }} />
+              <TaskComments taskId={task._id} me={{ _id: me._id, role: me.role }} readOnly={viewOnly} />
             </section>
 
             {/* What was entered when the task was completed. */}

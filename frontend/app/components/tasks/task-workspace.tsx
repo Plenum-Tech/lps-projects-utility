@@ -247,7 +247,8 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const tableView = view === "list" || view === "pinned" || view === "approvals";
 
   // --- Query params -----------------------------------------------------------
-  const mine = filters.mine === "on";
+  // A picked employee wins over "My tasks" (e.g. a shared `?assignee=` link).
+  const mine = filters.mine === "on" && !filters.assignee;
   const scope: TaskScope = view === "approvals" ? "approvals" : mine ? "assigned" : "all";
   const status = (filters.status || "all") as TaskStatusFilter;
   const sort = (SORT_FIELDS as string[]).includes(table.sort) ? (table.sort as TaskSortField) : "";
@@ -291,9 +292,21 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const selection = useRowSelection();
   const { clear: clearSelection } = selection;
   const selectionKey = JSON.stringify({ ...filters, sort: table.sort, dir: table.dir });
+  // View-only rows (another person's tasks via the Employee filter) on the pages
+  // seen since the selection was cleared: only "Export selected" works on them.
+  const [readOnlySeen, setReadOnlySeen] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     clearSelection();
+    setReadOnlySeen(new Set());
   }, [selectionKey, clearSelection]);
+  const pageReadOnly = useMemo(
+    () => (list.data?.tasks ?? []).filter((task) => task.access === "read").map((task) => task._id),
+    [list.data]
+  );
+  useEffect(() => {
+    if (pageReadOnly.length > 0) setReadOnlySeen((current) => new Set([...current, ...pageReadOnly]));
+  }, [pageReadOnly]);
+  const canWriteSelection = selection.ids.some((id) => !readOnlySeen.has(id) && !pageReadOnly.includes(id));
 
   const bulk = useBulkTasks();
   const exporter = useExportTasks();
@@ -316,7 +329,10 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
 
   function exportCsv(ids?: string[]) {
     exporter.mutate(
-      ids ? { ids: ids.join(",") } : taskQueryParams({ ...taskFilters, status, sort, dir: table.dir })
+      ids
+        ? // The employee lets the server export their view-only rows too.
+          { ids: ids.join(","), ...(taskFilters.assignee ? { assignee: taskFilters.assignee } : {}) }
+        : taskQueryParams({ ...taskFilters, status, sort, dir: table.dir })
     );
   }
 
@@ -328,7 +344,8 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   // --- Filter options ---------------------------------------------------------------
   const labels = useTaskLabels();
   const categories = useTaskCategories();
-  const assignable = useAssignableUsers(Boolean(user) && isManager);
+  // Employee filter: everyone, for every role (other people's tasks open view only).
+  const assignable = useAssignableUsers(Boolean(user));
   const projectOptions = useProjectOptions(Boolean(user) && !project);
   // Everyone gets "Add task" (the form lists the projects they can add to, or
   // explains how to get one); inside a project it follows its permissions.
@@ -352,6 +369,21 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
     ],
     [projectOptions.data]
   );
+  const employeeOptions = useMemo(() => {
+    const options = (assignable.data ?? []).map((person) => ({
+      value: person._id,
+      label: person._id === me._id ? `${person.name} (you)` : person.name,
+    }));
+    // Keep an employee from the URL labelled while the people load.
+    if (filters.assignee && !options.some((option) => option.value === filters.assignee)) {
+      options.push({ value: filters.assignee, label: assignable.isPending ? "Loading…" : "Selected employee" });
+    }
+    return options;
+  }, [assignable.data, assignable.isPending, filters.assignee, me._id]);
+  // Picking someone turns "My tasks" off (both together would match only shared
+  // tasks); turning "My tasks" on clears the employee.
+  const selectEmployee = (assignee: string) =>
+    table.setFilters(assignee ? { assignee, mine: "off" } : { assignee });
 
   const tasks = list.data?.tasks;
   const total = list.data?.total ?? 0;
@@ -427,7 +459,9 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
                     id="tasks-mine"
                     size="sm"
                     checked={mine}
-                    onCheckedChange={(checked) => table.setFilters({ mine: checked ? "on" : "off" })}
+                    onCheckedChange={(checked) =>
+                      table.setFilters(checked ? { mine: "on", assignee: "" } : { mine: "off" })
+                    }
                   />
                   <Label htmlFor="tasks-mine" className="cursor-pointer text-sm font-medium">
                     My tasks
@@ -542,29 +576,42 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
               { value: "rework", label: "Rework" },
             ]}
           />
+          <FilterSelect
+            label="Employee"
+            value={filters.assignee}
+            onChange={selectEmployee}
+            options={employeeOptions}
+            anyLabel="Everyone"
+            className="max-w-56"
+            searchable
+            searchPlaceholder="Search people…"
+          />
         </FiltersBar>
 
         {tableView && (
           <BulkBar count={selection.count} onClear={selection.clear} pending={bulk.isPending}>
-            <BulkMenu
-              label="Change status"
-              icon={<LuCircleDot aria-hidden />}
-              heading="Set status to"
-              options={TASK_STATUSES.map((value) => ({
-                value,
-                label: STATUS_META[value].label,
-                dot: STATUS_META[value].dot,
-              }))}
-              onSelect={(value) => runBulk({ action: "status", status: value as TaskStatus })}
-              disabled={bulk.isPending}
-            />
-            {isManager && (
+            {/* Only view-only rows selected: nothing to change, just export. */}
+            {canWriteSelection && (
+              <BulkMenu
+                label="Change status"
+                icon={<LuCircleDot aria-hidden />}
+                heading="Set status to"
+                options={TASK_STATUSES.map((value) => ({
+                  value,
+                  label: STATUS_META[value].label,
+                  dot: STATUS_META[value].dot,
+                }))}
+                onSelect={(value) => runBulk({ action: "status", status: value as TaskStatus })}
+                disabled={bulk.isPending}
+              />
+            )}
+            {isManager && canWriteSelection && (
               <Button variant="outline" size="sm" onClick={() => setAssignOpen(true)} disabled={bulk.isPending}>
                 <LuUserCheck aria-hidden />
                 Assign to
               </Button>
             )}
-            {isManager && (
+            {isManager && canWriteSelection && (
               <Button variant="destructive" size="sm" onClick={() => setDeleteOpen(true)} disabled={bulk.isPending}>
                 <LuTrash2 aria-hidden />
                 Delete
@@ -668,14 +715,13 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
           onChange={(category) => table.setFilters({ category })}
           options={(categories.data ?? []).map((category) => ({ value: category._id, label: category.name }))}
         />
-        {isManager && (
-          <SheetSelect
-            label="Assignee"
-            value={filters.assignee}
-            onChange={(assignee) => table.setFilters({ assignee })}
-            options={(assignable.data ?? []).map((person) => ({ value: person._id, label: person.name }))}
-          />
-        )}
+        <SheetSelect
+          label="Employee"
+          value={filters.assignee}
+          onChange={selectEmployee}
+          options={employeeOptions}
+          anyLabel="Everyone"
+        />
         {milestoneProject ? (
           <SheetSelect
             label="Milestone"

@@ -49,8 +49,9 @@ export function TaskTimerButton({
   const timeSettings = useTimeLogSettings();
 
   const runningHere = Boolean(active.data && active.data.task?._id === task._id);
-  // Archived projects are read-only: no timer button at all (unless one is somehow running here).
-  if (task.project?.archivedAt && !runningHere) return null;
+  // Archived projects and view-only rows (another person's task) are read-only:
+  // no timer button at all (unless one is somehow running here).
+  if ((task.project?.archivedAt || task.access === "read") && !runningHere) return null;
   const blocked = runningHere ? null : timerBlockedReason(task, me, timeSettings.data?.logTimeFor);
   const pending = start.isPending || stop.isPending;
   const code = taskCode(task) || task.title;

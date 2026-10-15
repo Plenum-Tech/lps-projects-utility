@@ -97,14 +97,19 @@ function TaskCell({ task, onOpen, showProject }: { task: Task; onOpen: (id: stri
       </div>
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <PriorityIndicator priority={task.priority} />
-        {showProject && task.project && (
-          <Link
-            to={`/projects/${task.project._id}`}
-            className="max-w-48 truncate text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:underline"
-          >
-            {task.project.name}
-          </Link>
-        )}
+        {showProject &&
+          task.project &&
+          (task.access === "read" ? (
+            // View only: the caller can't open the project itself.
+            <span className="max-w-48 truncate text-xs text-muted-foreground">{task.project.name}</span>
+          ) : (
+            <Link
+              to={`/projects/${task.project._id}`}
+              className="max-w-48 truncate text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:underline"
+            >
+              {task.project.name}
+            </Link>
+          ))}
         {task.labels.slice(0, 3).map((label) => (
           <LabelChip key={label._id} name={label.name} color={label.color} />
         ))}
@@ -152,7 +157,9 @@ function TaskStatusCell({ task, me }: { task: Task; me: Me }) {
   const [completing, setCompleting] = useState(false);
   const updateStatus = useUpdateTaskStatus();
   const clientAllowed = allowedDropStatuses(task, me).filter((status) => status !== task.status);
-  const mayBeManager = clientAllowed.length === 0 && Boolean(task.project) && !task.project?.archivedAt;
+  // View-only rows (another person's task) never get any status moves.
+  const mayBeManager =
+    clientAllowed.length === 0 && Boolean(task.project) && !task.project?.archivedAt && task.access !== "read";
   const detail = useTask(task._id, opened && mayBeManager);
   const allowed = mayBeManager
     ? detail.data?.permissions.allowedStatuses
@@ -202,6 +209,8 @@ function TaskRowMenu({
 
   // From the row's detail (fetched when the menu opens) — employees only in projects they manage.
   const canDuplicate = Boolean(permissions?.canDuplicate);
+  // View-only rows (another person's task): no Generate / Pin — the server refuses both.
+  const viewOnly = task.access === "read" || detail.data?.access === "read";
   const actions: RowAction[] = [
     { label: "View", icon: LuEye, onSelect: () => onOpen(task._id) },
   ];
@@ -216,7 +225,7 @@ function TaskRowMenu({
       onSelect: () => duplicate.mutate(task._id),
     });
   }
-  if (pearity.visible) {
+  if (pearity.visible && !viewOnly) {
     actions.push({
       label: "Generate on Pearity",
       icon: LuSparkles,
@@ -224,11 +233,13 @@ function TaskRowMenu({
       onSelect: pearity.onSelect,
     });
   }
-  actions.push({
-    label: task.pinned ? "Unpin" : "Pin",
-    icon: task.pinned ? LuPinOff : LuPin,
-    onSelect: () => pin.mutate({ id: task._id, pinned: !task.pinned }),
-  });
+  if (task.pinned || !viewOnly) {
+    actions.push({
+      label: task.pinned ? "Unpin" : "Pin",
+      icon: task.pinned ? LuPinOff : LuPin,
+      onSelect: () => pin.mutate({ id: task._id, pinned: !task.pinned }),
+    });
+  }
   if (permissions?.canRemind && task.status !== "completed") {
     actions.push({
       label: "Send reminder",

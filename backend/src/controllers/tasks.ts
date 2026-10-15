@@ -28,6 +28,7 @@ import {
   canManageTaskAsync,
   canTransition,
   canViewTaskAsync,
+  getReadableTaskOr404,
   getTaskOr404,
   getViewableTaskOr404,
   isAssignee,
@@ -58,6 +59,8 @@ import {
   recordProjectActivity,
   adminIds,
 } from "../lib/projectAccess.js";
+import { pearitySettings, readOnlyTagRef } from "../lib/pearity.js";
+import type { PearityTagRefJson } from "../lib/pearity.js";
 import { scheduleProgressRecalc } from "../lib/projectProgress.js";
 import { nextShortCode, nextTaskNumber } from "../lib/taskNumbers.js";
 import { Milestone } from "../models/Milestone.js";
@@ -431,9 +434,46 @@ interface ListFilterOptions {
 }
 
 /**
+ * `?assignee=<id>` (null when absent or invalid — invalid ids 400 in
+ * buildListFilter). Lists that person's tasks company-wide: any signed-in user
+ * may open any task read-only, so the role-scoped visibility is skipped.
+ */
+function listAssigneeId(req: Request): string | null {
+  const raw = req.query.assignee;
+  return typeof raw === "string" && raw !== "" && !isInvalidObjectId(raw) ? raw : null;
+}
+
+/**
+ * Marks company-wide (`?assignee=`) rows: `access` "full" when the caller can
+ * view the task (mirrors `canViewTaskAsync` via `extendedVisibilityFilter`),
+ * else "read" — the list then hides the row timer / Pin for them, and the
+ * Pearity engine link is dropped (see readOnlyTagRef).
+ */
+async function markRowAccess(user: IUser, tasks: Record<string, unknown>[]): Promise<void> {
+  if (tasks.length === 0) return;
+  let viewable: Set<string> | null = null;
+  if (user.role !== "admin") {
+    const rows = await Task.find({
+      $and: [{ _id: { $in: tasks.map((t) => t._id) } }, await extendedVisibilityFilter(user)],
+    })
+      .select("_id")
+      .lean();
+    viewable = new Set(rows.map((row) => String(row._id)));
+  }
+  const settings = viewable ? await pearitySettings() : null;
+  for (const task of tasks) {
+    task.access = !viewable || viewable.has(String(task._id)) ? "full" : "read";
+    if (task.access === "read" && task.pearityTag) {
+      task.pearityTag = readOnlyTagRef(settings!, task.pearityTag as PearityTagRefJson);
+    }
+  }
+}
+
+/**
  * Adds the scope / filter query params shared by the list, board, calendar and export.
  * `forProject` (GET /api/projects/:id/tasks, or ?project= the caller can view)
- * shows every task of the project instead of the role-scoped visibility.
+ * shows every task of the project instead of the role-scoped visibility, and so
+ * does `?assignee=` for everything (see `listAssigneeId`).
  */
 async function buildListFilter(
   req: Request,
@@ -449,6 +489,7 @@ async function buildListFilter(
   }
   const approvals = scope === "approvals";
   const pinnedOnly = req.query.pinned === "true";
+  const byAssignee = listAssigneeId(req) !== null;
 
   let project = forProject ?? null;
   const rawProject = req.query.project;
@@ -459,14 +500,20 @@ async function buildListFilter(
     }
     const found = await Project.findById(rawProject);
     if (found && canViewProject(user, found)) project = found;
-    else and.push(await taskVisibilityFilter(user), { project: new mongoose.Types.ObjectId(rawProject) });
+    else if (byAssignee) {
+      // That person's tasks in the project — unless it is archived.
+      and.push({ project: new mongoose.Types.ObjectId(rawProject) });
+      if (found?.archivedAt) and.push({ project: { $nin: [found._id] } });
+    } else and.push(await taskVisibilityFilter(user), { project: new mongoose.Types.ObjectId(rawProject) });
   }
   if (project) {
     and.push({ project: project._id });
   } else if (rawProject === undefined || rawProject === "" || noProject) {
     // Reviewers see what they may review (approvalsFilter); pinned tasks include
-    // project tasks visible through the project.
-    if (!approvals) and.push(pinnedOnly ? await extendedVisibilityFilter(user) : await taskVisibilityFilter(user));
+    // project tasks visible through the project; `?assignee=` is company-wide.
+    if (!approvals && !byAssignee) {
+      and.push(pinnedOnly ? await extendedVisibilityFilter(user) : await taskVisibilityFilter(user));
+    }
     if (noProject) {
       and.push({ project: null });
     } else {
@@ -769,7 +816,8 @@ async function copyCounts(ids: mongoose.Types.ObjectId[]): Promise<Map<string, n
 async function respondWithList(
   req: Request,
   res: Response,
-  and: Record<string, unknown>[]
+  and: Record<string, unknown>[],
+  options: { markAccess?: boolean } = {}
 ): Promise<void> {
   const { limit, offset } = parsePagination(req);
   const statusError = applyStatusFilter(req, and);
@@ -786,6 +834,7 @@ async function respondWithList(
   const filter = { $and: and };
   const [ids, total] = await Promise.all([sortedTaskIds(filter, sort, limit, offset), Task.countDocuments(filter)]);
   const tasks = await serializeTasks(await loadTasksInOrder(ids), req.user);
+  if (options.markAccess) await markRowAccess(req.user!, tasks);
 
   if (req.query.recurring === "true") {
     const counts = await copyCounts(ids);
@@ -1569,7 +1618,7 @@ async function respondTasks(req: Request, res: Response, project?: IProject): Pr
   }
 
   if (req.query.view !== "board") {
-    await respondWithList(req, res, and);
+    await respondWithList(req, res, and, { markAccess: listAssigneeId(req) !== null });
     return;
   }
 
@@ -1586,6 +1635,7 @@ async function respondTasks(req: Request, res: Response, project?: IProject): Pr
 
   // One serialization pass (3 count aggregations) for the whole board, not one per column.
   const serialized = await serializeTasks(results.flatMap((r) => r.tasks), req.user);
+  if (listAssigneeId(req) !== null) await markRowAccess(req.user!, serialized);
   const columns: Record<string, unknown[]> = {};
   const totals: Record<string, number> = {};
   let offset = 0;
@@ -1619,9 +1669,12 @@ export async function createdTasks(req: Request, res: Response): Promise<void> {
   await respondWithList(req, res, and);
 }
 
-/** Task detail — populated, with subtasks and the caller's permissions. */
+/**
+ * Task detail — populated, with subtasks, the caller's permissions and
+ * `access` ("full", or "read" for any other signed-in user: view only).
+ */
 export async function getTask(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
 
   const detail = await loadTaskDetail(task._id as mongoose.Types.ObjectId, req.user!);
@@ -1630,7 +1683,7 @@ export async function getTask(req: Request, res: Response): Promise<void> {
 
 /** GET /api/tasks/:id/reworks — rework tasks made from this task (its rework history). */
 export async function listReworkTasks(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
   const reworks = await Task.find({ reworkOf: task._id })
     .select("title shortCode number status priority assignees assignedBy dueDate completedAt createdAt")
@@ -2429,7 +2482,7 @@ export async function deleteTask(req: Request, res: Response): Promise<void> {
 
 /** GET /api/tasks/:id/logged-time — who logged how much (shown before deleting). */
 export async function loggedTimeSummary(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
   const rows = await TimeLog.aggregate<{ _id: mongoose.Types.ObjectId; minutes: number; entries: number; running: number }>([
     { $match: { task: task._id } },
@@ -2455,13 +2508,18 @@ export async function loggedTimeSummary(req: Request, res: Response): Promise<vo
   });
 }
 
-/** Anyone who can view the task: history timeline, newest first. */
+/** Any signed-in user: history timeline, newest first (read-only viewers: no note rows). */
 export async function listHistory(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
 
   const { limit, offset } = parsePagination(req);
-  const filter = { task: task._id };
+  const filter: Record<string, unknown> = { task: task._id };
+  // Team-note rows carry note titles, and notes stay with the task's own viewers.
+  const readOnly = !(await canViewTaskAsync(req.user!, task));
+  if (readOnly) {
+    filter.action = { $nin: ["note_added", "note_updated", "note_removed"] };
+  }
 
   let query = TaskHistory.find(filter).populate("actor", "name email").sort({ createdAt: -1 });
   if (limit !== null) {
@@ -2469,12 +2527,25 @@ export async function listHistory(req: Request, res: Response): Promise<void> {
   }
 
   const [history, total] = await Promise.all([query, TaskHistory.countDocuments(filter)]);
-  res.json({ history: history.map((h) => h.toJSON()), total, limit, offset });
+  const rows: Record<string, unknown>[] = history.map((h) => ({ ...h.toJSON() }));
+  // The source meeting may be private (as in loadTaskDetail): read-only viewers
+  // get "created the task from a meeting" without its id / title.
+  if (readOnly) {
+    for (const row of rows) {
+      if (row.action !== "created_from_meeting" || !row.details || typeof row.details !== "object") continue;
+      const details = { ...(row.details as Record<string, unknown>) };
+      delete details.meeting;
+      delete details.meetingTitle;
+      delete details.segmentIdx;
+      row.details = details;
+    }
+  }
+  res.json({ history: rows, total, limit, offset });
 }
 
 /**
- * Head/admin: users the caller may assign tasks to (admin: everyone; head: their
- * department). Supports ?search= and pagination.
+ * Any signed-in user: every user (task assignee pickers, the Tasks "Employee"
+ * filter). Supports ?search= and pagination.
  */
 export async function assignableUsers(req: Request, res: Response): Promise<void> {
   const user = req.user!;
@@ -2624,8 +2695,9 @@ type ExportRow = Omit<ITask, "project" | "assignees" | "labels" | "category" | "
 
 /**
  * GET /api/tasks/export — CSV of the current list filters + sort, or of
- * `?ids=a,b,c` (still limited to tasks the caller can open). UTF-8 BOM, capped
- * at 5000 rows (`X-Export-Truncated: true` when capped).
+ * `?ids=a,b,c` (still limited to tasks the caller can open, plus — with
+ * `?assignee=` — that person's listed tasks). UTF-8 BOM, capped at 5000 rows
+ * (`X-Export-Truncated: true` when capped).
  */
 export async function exportTasks(req: Request, res: Response): Promise<void> {
   const user = req.user!;
@@ -2646,7 +2718,21 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: `At most ${EXPORT_ROW_LIMIT} ids can be exported` });
       return;
     }
-    and = [await extendedVisibilityFilter(user), { _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } }];
+    const byIds = { _id: { $in: ids.map((id) => new mongoose.Types.ObjectId(id)) } };
+    const assignee = listAssigneeId(req);
+    if (assignee) {
+      // "Export selected" from the Employee filter: also that person's tasks
+      // company-wide, as listed (archived projects' tasks stay out).
+      and = [
+        byIds,
+        {
+          $or: [
+            await extendedVisibilityFilter(user),
+            { assignees: new mongoose.Types.ObjectId(assignee), project: { $nin: await archivedProjectIds() } },
+          ],
+        },
+      ];
+    } else and = [await extendedVisibilityFilter(user), byIds];
   } else {
     const built = await buildListFilter(req);
     if (isInvalid(built)) {

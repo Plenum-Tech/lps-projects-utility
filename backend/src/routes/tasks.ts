@@ -72,8 +72,8 @@ router.get("/missing-time", async (req, res) => {
   res.json(await missingTimeTasks(req.user!._id as never));
 });
 
-// Head/admin: users the caller may assign (head: own department).
-// People pickers (task assignees, project team, report filters): any signed-in user.
+// People pickers (task assignees, project team, report filters, the Tasks
+// "Employee" filter): any signed-in user.
 router.get("/assignable-users", assignableUsers);
 
 // Any authenticated user: lean month/week calendar rows (?from&to + list filters, max 500).
@@ -88,13 +88,16 @@ router.get("/approvals/count", approvalsCount);
 // Bulk status / assign (head/admin) / delete — per-item permission checks, { updated, skipped }.
 router.post("/bulk", bulkTasks);
 
-// Any authenticated user: role-scoped list (?view=board for kanban columns).
+// Any authenticated user: role-scoped list (?view=board for kanban columns);
+// `?assignee=` lists that person's tasks company-wide.
 router.get("/", listTasks);
 
 // Head/admin (any task) or a project manager (tasks in their project): create a task.
 router.post("/", createTask);
 
-// Any authenticated user (with access): task detail.
+// Any authenticated user: task detail (`access: "read"` — view only — without
+// view access). Comments, files, history, reworks, logged time and the Pearity
+// tag are readable the same way; notes and every write still need view access.
 router.get("/:id", getTask);
 router.get("/:id/reworks", listReworkTasks);
 

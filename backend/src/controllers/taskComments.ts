@@ -5,6 +5,7 @@ import { parsePagination } from "../lib/pagination.js";
 import {
   canManageTaskAsync,
   canViewTask,
+  getReadableTaskOr404,
   getViewableTaskOr404,
   isInvalidObjectId,
   param,
@@ -143,9 +144,9 @@ interface CommentBody {
 // Controllers
 // ---------------------------------------------------------------------------
 
-/** Anyone who can view the task: comments oldest first, with pagination. */
+/** Any signed-in user (read-only viewers too): comments oldest first, with pagination. */
 export async function listComments(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
 
   const { limit, offset } = parsePagination(req);

@@ -35,16 +35,19 @@ import type { MentionableUser, Role, TaskComment } from "@/types";
 
 const MAX_BODY = 5000;
 
-/** Comment thread (oldest first) with an @mention composer. */
+/** Comment thread (oldest first) with an @mention composer (none when `readOnly`). */
 export function TaskComments({
   taskId,
   me,
+  readOnly = false,
 }: {
   taskId: string;
   me: { _id: string; role: Role };
+  /** View-only task: just the thread (the server refuses mentions and writes). */
+  readOnly?: boolean;
 }) {
   const comments = useTaskComments(taskId);
-  const mentionable = useMentionableUsers(taskId);
+  const mentionable = useMentionableUsers(readOnly ? null : taskId);
   const addComment = useAddComment(taskId);
   const [draft, setDraft] = useState<MentionDraft>(EMPTY_DRAFT);
   const endRef = useRef<HTMLDivElement>(null);
@@ -97,7 +100,7 @@ export function TaskComments({
           </span>
           <p className="text-sm font-medium text-foreground">No comments yet</p>
           <p className="text-xs text-muted-foreground">
-            Start the conversation — mention a teammate with @.
+            {readOnly ? "Nobody has commented on this task." : "Start the conversation — mention a teammate with @."}
           </p>
         </div>
       ) : (
@@ -109,38 +112,40 @@ export function TaskComments({
               comment={comment}
               me={me}
               users={users}
+              readOnly={readOnly}
             />
           ))}
         </ol>
       )}
       <div ref={endRef} aria-hidden />
 
-
-      <div className="space-y-2 border-t pt-4">
-        <MentionTextarea
-          id="task-comment"
-          value={draft}
-          onChange={setDraft}
-          users={users}
-          onSubmit={submit}
-          placeholder="Write a comment…"
-          aria-label="Write a comment"
-          disabled={addComment.isPending}
-        />
-        <div className="flex items-center justify-between gap-2">
-          <span className={`text-xs ${tooLong ? "text-destructive" : "text-muted-foreground"}`}>
-            {tooLong ? `Too long (${body.length}/${MAX_BODY})` : ""}
-          </span>
-          <Button onClick={submit} disabled={!body || tooLong || addComment.isPending} size="sm">
-            {addComment.isPending ? (
-              <LuLoaderCircle aria-hidden className="animate-spin" />
-            ) : (
-              <LuSend aria-hidden />
-            )}
-            Comment
-          </Button>
+      {!readOnly && (
+        <div className="space-y-2 border-t pt-4">
+          <MentionTextarea
+            id="task-comment"
+            value={draft}
+            onChange={setDraft}
+            users={users}
+            onSubmit={submit}
+            placeholder="Write a comment…"
+            aria-label="Write a comment"
+            disabled={addComment.isPending}
+          />
+          <div className="flex items-center justify-between gap-2">
+            <span className={`text-xs ${tooLong ? "text-destructive" : "text-muted-foreground"}`}>
+              {tooLong ? `Too long (${body.length}/${MAX_BODY})` : ""}
+            </span>
+            <Button onClick={submit} disabled={!body || tooLong || addComment.isPending} size="sm">
+              {addComment.isPending ? (
+                <LuLoaderCircle aria-hidden className="animate-spin" />
+              ) : (
+                <LuSend aria-hidden />
+              )}
+              Comment
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -150,11 +155,13 @@ function CommentItem({
   comment,
   me,
   users,
+  readOnly,
 }: {
   taskId: string;
   comment: TaskComment;
   me: { _id: string; role: Role };
   users: MentionableUser[];
+  readOnly: boolean;
 }) {
   const update = useUpdateComment(taskId);
   const remove = useDeleteComment(taskId);
@@ -162,8 +169,9 @@ function CommentItem({
   const [draft, setDraft] = useState<MentionDraft>(EMPTY_DRAFT);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
-  const isAuthor = comment.author?._id === me._id;
-  const canDelete = isAuthor || me.role === "admin";
+  // View-only tasks: no edits or deletes, even on the caller's own older comments.
+  const isAuthor = !readOnly && comment.author?._id === me._id;
+  const canDelete = !readOnly && (isAuthor || me.role === "admin");
 
   function save() {
     const body = draftToBody(draft);

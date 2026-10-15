@@ -17,12 +17,13 @@ import {
   pearityActive,
   pearityGenerateUrl,
   pearitySettings,
+  readOnlyTagRef,
   recordPearityUsage,
   tagRefs,
   taskContexts,
   templateError,
 } from "../lib/pearity.js";
-import { getViewableTaskOr404, param, recordTaskHistory } from "../lib/taskAccess.js";
+import { canViewTaskAsync, getReadableTaskOr404, getViewableTaskOr404, param, recordTaskHistory } from "../lib/taskAccess.js";
 import { API_KEY_SCOPES, ApiKey } from "../models/ApiKey.js";
 import type { ApiKeyScope } from "../models/ApiKey.js";
 import { INTEGRATION_LIMITS, IntegrationSettings } from "../models/IntegrationSettings.js";
@@ -71,21 +72,26 @@ async function generatedBy(taskId: mongoose.Types.ObjectId) {
   }));
 }
 
-/** GET /api/tasks/:id/pearity */
+/**
+ * GET /api/tasks/:id/pearity — any signed-in user; read-only viewers get no
+ * engine link (neither `generateUrl` nor a `tagUrl` that falls back to it).
+ */
 export async function getTaskPearity(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
   const settings = await pearitySettings();
   const taskId = task._id as mongoose.Types.ObjectId;
+  const canGenerate = await canViewTaskAsync(req.user!, task);
   const [tag, contexts] = await Promise.all([PearityTag.findOne({ task: taskId }), taskContexts([task])]);
   const context = contexts.get(taskId.toString())!;
-  const ref = tag ? (await tagRefs([tag], { contexts })).get(taskId.toString()) ?? null : null;
+  const fullRef = tag ? (await tagRefs([tag], { contexts })).get(taskId.toString()) ?? null : null;
+  const ref = canGenerate ? fullRef : readOnlyTagRef(settings, fullRef);
   res.json({
     enabled: pearityActive(settings),
     tag: ref,
     tagUrl: ref?.tagUrl ?? null,
     proposedTagName: tag ? tag.tagName : context.fields.taskTag || buildTagName(context),
-    generateUrl: tag ? pearityGenerateUrl(settings, tag, taskId, context) : null,
+    generateUrl: tag && canGenerate ? pearityGenerateUrl(settings, tag, taskId, context) : null,
     usageCount: tag?.usageCount ?? 0,
     generatedBy: tag ? await generatedBy(taskId) : [],
   });

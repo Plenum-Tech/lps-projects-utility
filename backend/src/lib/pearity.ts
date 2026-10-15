@@ -557,6 +557,19 @@ export function pearityTagUrl(
   return fillPearityUrl(settings.tagUrlTemplate || settings.engineUrlTemplate, tag, taskId, context);
 }
 
+/**
+ * A tag ref as shown to a read-only viewer (no view access to the task): without
+ * a tag link template `tagUrl` is the engine URL — an action, not a view — so
+ * it is dropped.
+ */
+export function readOnlyTagRef<T extends { tagUrl: string | null }>(
+  settings: PearitySettingsSnapshot,
+  ref: T | null
+): T | null {
+  if (!ref || settings.tagUrlTemplate) return ref;
+  return { ...ref, tagUrl: null };
+}
+
 function fillPearityUrl(
   template: string,
   tag: Pick<IPearityTag, "tagId" | "tagName" | "tagNo">,

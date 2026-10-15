@@ -73,13 +73,14 @@ function iconFor(file: TaskFile): IconType {
 
 /**
  * Attachments: drag-and-drop upload zone + list with download/delete, grouped
- * into task files and one group per subtask.
+ * into task files and one group per subtask. `readOnly`: list + view/download only.
  */
 export function TaskFiles({
   taskId,
   me,
   canManageAll,
   subtasks = [],
+  readOnly = false,
 }: {
   taskId: string;
   me: { _id: string; role: Role };
@@ -87,6 +88,8 @@ export function TaskFiles({
   canManageAll: boolean;
   /** For "Subtask: {title}" group headings. */
   subtasks?: Subtask[];
+  /** View-only task: no upload zone and no deletes (the server refuses them). */
+  readOnly?: boolean;
 }) {
   const files = useTaskFiles(taskId);
   const upload = useUploadTaskFiles(taskId);
@@ -125,70 +128,72 @@ export function TaskFiles({
 
   return (
     <div className="space-y-4">
-      <div
-        onDragOver={(event) => {
-          event.preventDefault();
-          if (!full) setDragOver(true);
-        }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        className={cn(
-          "flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-center transition-colors duration-150 ease-out",
-          dragOver ? "border-ring bg-primary/5" : "bg-muted/30",
-          full && "opacity-60"
-        )}
-      >
-        {upload.isPending ? (
-          <>
-            <LuLoaderCircle aria-hidden className="size-5 animate-spin text-muted-foreground" />
-            <p className="text-sm font-medium text-foreground">Uploading… {progress ?? 0}%</p>
-            <div className="h-1.5 w-40 overflow-hidden rounded-full bg-muted" aria-hidden>
-              <div
-                className="h-full bg-primary transition-[width] duration-150"
-                style={{ width: `${progress ?? 0}%` }}
-              />
-            </div>
-          </>
-        ) : (
-          <>
-            <span className="flex size-9 items-center justify-center rounded-lg bg-background text-muted-foreground ring-1 ring-border">
-              <LuUpload aria-hidden className="size-4" />
-            </span>
-            <p className="text-sm text-foreground">
-              {full ? (
-                "This task has reached the 20-file limit."
-              ) : (
-                <>
-                  Drag files here or{" "}
-                  <button
-                    type="button"
-                    className="font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
-                    onClick={() => inputRef.current?.click()}
-                  >
-                    browse
-                  </button>
-                </>
-              )}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Images, PDF, Office docs, TXT, CSV or ZIP · up to 10 MB each
-            </p>
-          </>
-        )}
-        <input
-          ref={inputRef}
-          type="file"
-          multiple
-          accept={ACCEPT}
-          className="sr-only"
-          tabIndex={-1}
-          aria-label="Upload files"
-          onChange={(event) => {
-            handleFiles(event.target.files);
-            event.target.value = "";
+      {!readOnly && (
+        <div
+          onDragOver={(event) => {
+            event.preventDefault();
+            if (!full) setDragOver(true);
           }}
-        />
-      </div>
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={cn(
+            "flex flex-col items-center gap-2 rounded-lg border border-dashed px-4 py-6 text-center transition-colors duration-150 ease-out",
+            dragOver ? "border-ring bg-primary/5" : "bg-muted/30",
+            full && "opacity-60"
+          )}
+        >
+          {upload.isPending ? (
+            <>
+              <LuLoaderCircle aria-hidden className="size-5 animate-spin text-muted-foreground" />
+              <p className="text-sm font-medium text-foreground">Uploading… {progress ?? 0}%</p>
+              <div className="h-1.5 w-40 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div
+                  className="h-full bg-primary transition-[width] duration-150"
+                  style={{ width: `${progress ?? 0}%` }}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <span className="flex size-9 items-center justify-center rounded-lg bg-background text-muted-foreground ring-1 ring-border">
+                <LuUpload aria-hidden className="size-4" />
+              </span>
+              <p className="text-sm text-foreground">
+                {full ? (
+                  "This task has reached the 20-file limit."
+                ) : (
+                  <>
+                    Drag files here or{" "}
+                    <button
+                      type="button"
+                      className="font-medium text-primary underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+                      onClick={() => inputRef.current?.click()}
+                    >
+                      browse
+                    </button>
+                  </>
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Images, PDF, Office docs, TXT, CSV or ZIP · up to 10 MB each
+              </p>
+            </>
+          )}
+          <input
+            ref={inputRef}
+            type="file"
+            multiple
+            accept={ACCEPT}
+            className="sr-only"
+            tabIndex={-1}
+            aria-label="Upload files"
+            onChange={(event) => {
+              handleFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+        </div>
+      )}
 
       {files.isPending ? (
         <div className="space-y-2" aria-busy="true" aria-label="Loading files">
@@ -227,7 +232,7 @@ export function TaskFiles({
                     key={file._id}
                     taskId={taskId}
                     file={file}
-                    canDelete={canManageAll || file.uploadedBy?._id === me._id}
+                    canDelete={!readOnly && (canManageAll || file.uploadedBy?._id === me._id)}
                   />
                 ))}
               </ul>

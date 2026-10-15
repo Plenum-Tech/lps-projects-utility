@@ -6,6 +6,7 @@ import { deleteFromGridFs, openGridFsDownload, uploadToGridFs } from "../lib/gri
 import { parsePagination } from "../lib/pagination.js";
 import {
   canManageTaskAsync,
+  getReadableTaskOr404,
   getViewableTaskOr404,
   isInvalidObjectId,
   param,
@@ -106,9 +107,9 @@ function contentDisposition(filename: string): string {
 // Controllers
 // ---------------------------------------------------------------------------
 
-/** Anyone who can view the task: attachments newest first (`?subtask=<id>|none` filters). */
+/** Any signed-in user (read-only viewers too): attachments newest first (`?subtask=<id>|none` filters). */
 export async function listFiles(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
 
   const { limit, offset } = parsePagination(req);
@@ -218,9 +219,9 @@ async function storeFiles(
   res.status(201).json({ files: populated.map((f) => f.toJSON()) });
 }
 
-/** Anyone who can view the task: streams the file as an attachment. */
+/** Any signed-in user (read-only viewers too): streams the file as an attachment. */
 export async function downloadFile(req: Request, res: Response): Promise<void> {
-  const task = await getViewableTaskOr404(req, res);
+  const task = await getReadableTaskOr404(req, res);
   if (!task) return;
 
   const file = await getFileOr404(req, res, task);

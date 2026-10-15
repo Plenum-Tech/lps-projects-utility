@@ -205,7 +205,7 @@ export function useUpdateTaskSettings() {
 }
 
 // ---------------------------------------------------------------------------
-// Assignable users (head: own department, admin: everyone)
+// Assignable users (everyone, for any signed-in user)
 // ---------------------------------------------------------------------------
 
 export function useAssignableUsers(enabled = true, search = "") {

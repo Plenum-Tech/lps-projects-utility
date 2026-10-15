@@ -14,8 +14,8 @@ import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { canCreateProjectTasks, canManageProject, canViewProject, departmentUserIds } from "./projectAccess.js";
-import { pearityTagsByTask } from "./pearity.js";
-import type { TaskLike } from "./pearity.js";
+import { pearitySettings, pearityTagsByTask, readOnlyTagRef } from "./pearity.js";
+import type { PearityTagRefJson, TaskLike } from "./pearity.js";
 import { createEvent, pushToUsers } from "./sse.js";
 
 // ---------------------------------------------------------------------------
@@ -85,6 +85,35 @@ export async function getViewableTaskOr404(
   const task = await getTaskOr404(req, res);
   if (!task) return undefined;
   if (!(await canViewTaskAsync(req.user!, task))) {
+    res.status(403).json({ error: "You don't have access to this task" });
+    return undefined;
+  }
+  return task;
+}
+
+/**
+ * Read-only opening: any signed-in user may open any task (e.g. from another
+ * person's tasks via the Employee filter). A named seam for future rules —
+ * acting on the task (comments, files, notes, time, status …) still needs
+ * `canViewTaskAsync`.
+ */
+export async function canReadTaskAsync(user: AccessUser | undefined, _task: AccessTask): Promise<boolean> {
+  return Boolean(user);
+}
+
+/**
+ * Loads `:id` and enforces read access (404 / 403). GET endpoints only — writes
+ * use `getViewableTaskOr404`; anything else is refused so a misuse fails closed.
+ * Handlers that show less to read-only viewers check `canViewTaskAsync`.
+ */
+export async function getReadableTaskOr404(req: Request, res: Response): Promise<ITask | undefined> {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.status(403).json({ error: "You don't have access to this task" });
+    return undefined;
+  }
+  const task = await getTaskOr404(req, res);
+  if (!task) return undefined;
+  if (!(await canReadTaskAsync(req.user, task))) {
     res.status(403).json({ error: "You don't have access to this task" });
     return undefined;
   }
@@ -487,21 +516,61 @@ export function taskPermissions(
   };
 }
 
-/** Loads a populated task detail for `user`: `{ task, permissions }`. */
+/** Permissions of a read-only viewer (`access: "read"`): every action is off. */
+function readOnlyPermissions(flags: { skipReview?: boolean; archived?: boolean }): ReturnType<typeof taskPermissions> {
+  return {
+    canEdit: false,
+    canDelete: false,
+    canReview: false,
+    canRemind: false,
+    canManageSubtasks: false,
+    canAddSubtasks: false,
+    canToggleSubtasks: false,
+    canSubmit: false,
+    allowedStatuses: [],
+    canDuplicate: false,
+    canLogTime: false,
+    canEditActualDates: false,
+    skipsReview: Boolean(flags.skipReview),
+    readOnly: Boolean(flags.archived),
+  };
+}
+
+/**
+ * How the caller opened a task: "full" (view access — `canViewTaskAsync`) or
+ * "read" (any other signed-in user: read-only, no actions).
+ */
+export type TaskAccessLevel = "full" | "read";
+
+/** Loads a populated task detail for `user`: `{ task, permissions, access }`. */
 export async function loadTaskDetail(
   taskId: mongoose.Types.ObjectId,
   user: AccessUser & { pinnedTasks?: mongoose.Types.ObjectId[] }
-): Promise<{ task: Record<string, unknown>; permissions: ReturnType<typeof taskPermissions> } | null> {
+): Promise<{
+  task: Record<string, unknown>;
+  permissions: ReturnType<typeof taskPermissions>;
+  access: TaskAccessLevel;
+} | null> {
   const raw = await Task.findById(taskId);
   if (!raw) return null;
-  const permissions = taskPermissions(user, raw, await taskProjectFlags(raw, user));
+  const access: TaskAccessLevel = (await canViewTaskAsync(user, raw)) ? "full" : "read";
+  const flags = await taskProjectFlags(raw, user);
+  const permissions = access === "full" ? taskPermissions(user, raw, flags) : readOnlyPermissions(flags);
   const populated = await Task.findById(taskId).populate(TASK_POPULATE);
   if (!populated) return null;
   const [task] = await serializeTasks([populated], user);
-  task!.sourceMeeting = await sourceMeetingDetail(raw);
+  // The source meeting may be private: read-only viewers don't get its title / link.
+  task!.sourceMeeting = access === "full" ? await sourceMeetingDetail(raw) : null;
+  // Nor the Pearity engine link (see readOnlyTagRef).
+  if (access === "read" && task!.pearityTag) {
+    task!.pearityTag = readOnlyTagRef(await pearitySettings(), task!.pearityTag as PearityTagRefJson);
+  }
   // Completed with no time: the assignee is asked for the actual start and the time taken.
-  task!.needsTimeEntry = !permissions.readOnly && needsTimeEntry(raw, Number(task!.loggedMinutes ?? 0), user._id as mongoose.Types.ObjectId);
-  return { task: task!, permissions };
+  task!.needsTimeEntry =
+    access === "full" &&
+    !permissions.readOnly &&
+    needsTimeEntry(raw, Number(task!.loggedMinutes ?? 0), user._id as mongoose.Types.ObjectId);
+  return { task: task!, permissions, access };
 }
 
 /**
