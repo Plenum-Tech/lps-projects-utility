@@ -49,7 +49,7 @@ import { TaskSubtasks } from "@/components/tasks/task-subtasks";
 import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
 import { PearityJourney } from "@/components/tasks/task-history";
 import { TaskTimerAction } from "@/components/tasks/task-timer-button";
-import type { WorkTab } from "@/components/tasks/task-work-sections";
+import { TaskWorkSections, type WorkTab } from "@/components/tasks/task-work-sections";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -597,6 +597,9 @@ function TaskDetail({
             )}
           </div>
         </section>
+
+        {/* Comments, the brief's files and time — visible on the task page (also in Edit / Update). */}
+        <TaskWorkSections task={task} permissions={permissions} me={{ _id: me._id, role: me.role }} />
 
         {/* Pearity generation / DAM / review steps (only when there are any). */}
         <PearityJourney taskId={task._id} />
