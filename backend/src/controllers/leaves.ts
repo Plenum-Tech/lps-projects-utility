@@ -531,13 +531,14 @@ export async function cancelLeave(req: Request, res: Response): Promise<void> {
   const owner = own ? user : await User.findById(leave.user);
   const reviewer = owner ? canReviewLeavesOf(user, owner) : user.role === "admin";
   const started = leave.status === "approved" && leave.startDate.getTime() <= appToday().getTime();
+  // Already cancelled / rejected: say so to the owner and their reviewers.
+  if ((own || reviewer) && leave.status !== "pending" && leave.status !== "approved") {
+    res.status(400).json({ error: "Only pending or approved requests can be cancelled" });
+    return;
+  }
   // Reviewers only step in for a started leave; the rest stays with the owner.
   if (!own && !(reviewer && started)) {
     res.status(403).json({ error: "You can only cancel your own leave requests" });
-    return;
-  }
-  if (leave.status !== "pending" && leave.status !== "approved") {
-    res.status(400).json({ error: "Only pending or approved requests can be cancelled" });
     return;
   }
   if (started && !reviewer) {
