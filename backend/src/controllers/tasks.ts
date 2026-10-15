@@ -2411,8 +2411,16 @@ export async function applyTaskDelete(
     }
     timeTarget = await Task.findById(targetId);
     if (!timeTarget) return { status: 404, error: "The task to move the time to wasn't found" };
+    // Only onto a task you can open, in the same project (a task without a
+    // project → another task without one; admins may still pick any task there).
+    if (!(await canViewTaskAsync(user, timeTarget))) {
+      return { status: 403, error: "You don't have access to the task you chose to move the time to" };
+    }
     if (task.project && !(timeTarget.project && timeTarget.project.equals(task.project))) {
       return { status: 400, error: "Move the time to a task in the same project" };
+    }
+    if (!task.project && timeTarget.project && user.role !== "admin") {
+      return { status: 400, error: "Move the time to another task without a project" };
     }
     if (timeTarget.project && (await archivedProjectIds()).some((id) => id.equals(timeTarget!.project!))) {
       return { status: 400, error: "That task's project is archived" };

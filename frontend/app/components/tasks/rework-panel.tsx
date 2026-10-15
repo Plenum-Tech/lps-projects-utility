@@ -47,10 +47,13 @@ export function ReworkTaskPicker({
   initial,
   invalid,
   requireProject = false,
+  standaloneOnly = false,
 }: {
   id: string;
   /** Pick the project first: no tasks until one is chosen. */
   requireProject?: boolean;
+  /** Without a `projectId`: only tasks that have no project (not every project's). */
+  standaloneOnly?: boolean;
   projectId: string | null;
   value: string;
   onChange: (value: string, option: ReworkTaskOption | null) => void;
@@ -64,13 +67,15 @@ export function ReworkTaskPicker({
     const timer = setTimeout(() => setSearch(typed.trim().length >= 2 ? typed.trim() : ""), 250);
     return () => clearTimeout(timer);
   }, [typed]);
+  // The list API's project "none" = tasks without a project.
+  const projectParam = projectId ?? (standaloneOnly ? "none" : null);
   const tasks = useQuery({
-    queryKey: ["tasks", "rework-picker", projectId ?? "all", search],
+    queryKey: ["tasks", "rework-picker", projectParam ?? "all", search],
     queryFn: async () =>
       (
         await api.get<TaskListResponse>("/tasks", {
           params: {
-            ...(projectId ? { project: projectId } : { scope: "all" }),
+            ...(projectParam ? { project: projectParam } : { scope: "all" }),
             ...(search ? { search } : {}),
             limit: 200,
           },
@@ -117,7 +122,9 @@ export function ReworkTaskPicker({
               ? "Loading tasks…"
               : projectId
                 ? "Search the project's tasks by code or name…"
-                : "Search all tasks by code or name…"
+                : standaloneOnly
+                  ? "Search tasks without a project by code or name…"
+                  : "Search all tasks by code or name…"
         }
         aria-invalid={invalid || undefined}
         className="w-full"

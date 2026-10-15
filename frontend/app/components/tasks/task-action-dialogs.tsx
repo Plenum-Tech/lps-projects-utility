@@ -40,6 +40,7 @@ import { ReworkTaskPicker } from "@/components/tasks/rework-panel";
 import { formatEffort } from "@/lib/tasks";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { api, getErrorMessage } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
@@ -508,6 +509,7 @@ export function DeleteTaskDialog({
   onDeleted: () => void;
 }) {
   const remove = useDeleteTask();
+  const { data: me } = useCurrentUser();
   // Logged time moves to another task (e.g. the duplicate being kept) instead of disappearing.
   const logged = useTaskLoggedTime(open ? task._id : null);
   const hasTime = (logged.data?.entries ?? 0) > 0;
@@ -561,6 +563,8 @@ export function DeleteTaskDialog({
               <ReworkTaskPicker
                 id="delete-move-time"
                 projectId={task.project?._id ?? null}
+                // Time on a task without a project stays off projects (admins may pick any task).
+                standaloneOnly={me?.role !== "admin"}
                 value={moveTo}
                 onChange={(value) => setMoveTo(value)}
                 invalid={tried && Boolean(moveError)}
