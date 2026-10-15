@@ -42,6 +42,7 @@ import { listUnbrandedProjects,
   summaryCheck,
 } from "../controllers/projects.js";
 import { uploadTaskFilesMiddleware } from "../controllers/taskFiles.js";
+import { summaryCheckRateLimit } from "../middlewares/rateLimit.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
@@ -50,6 +51,9 @@ import { requireRole } from "../middlewares/requireRole.js";
 const router = Router();
 
 router.use(requireAuth);
+// AI summary score (one OpenAI call per check): 20 per hour per user. Runs ahead of
+// the summary-check handler and passes the request on while under the limit.
+router.post("/summary-check", summaryCheckRateLimit);
 
 router.get("/", listProjects);
 router.post("/", createProject);

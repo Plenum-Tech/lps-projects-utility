@@ -227,3 +227,15 @@ export const inviteAcceptRateLimit = rateLimit({
   max: 10,
   message: "Too many attempts. Please wait a few minutes and try again.",
 });
+
+/**
+ * AI summary score on the new-project form (POST /api/projects/summary-check,
+ * one OpenAI call each): 20 checks per hour per signed-in user, in its own
+ * store. Every attempt counts, failed ones too.
+ */
+export const summaryCheckRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 20,
+  keyGenerator: userOrIpKey,
+  message: "You've checked a lot of summaries in the last hour. Try again later.",
+});
