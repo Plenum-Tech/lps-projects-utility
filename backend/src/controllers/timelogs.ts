@@ -137,7 +137,9 @@ async function timerJson(actor: IUser, id: mongoose.Types.ObjectId | null): Prom
 /**
  * Whether `user` may log time on the project/task:
  * admin; project manager/member or a head who can view the project; for tasks
- * without a project the assignees/creator (and heads who can view it).
+ * without a project the assignees (incl. rework items)/creator (and heads who
+ * can view it). `project` is always the task's own project when a task is
+ * given (resolveTarget), so project rights never reach another project's task.
  */
 async function canLogOn(user: IUser, project: IProject | null, task: ITask | null): Promise<boolean> {
   if (user.role === "admin") return true;
@@ -147,7 +149,7 @@ async function canLogOn(user: IUser, project: IProject | null, task: ITask | nul
     if (canManageProject(user, project)) return true;
   }
   if (task) {
-    if (isAssignee(user, task) || task.assignedBy.equals(user._id)) return true;
+    if (isAssignee(user, task) || isSubtaskAssignee(user, task) || task.assignedBy.equals(user._id)) return true;
     if (user.role === "head" && (await canViewTaskAsync(user, task))) return true;
   }
   return false;
@@ -155,7 +157,8 @@ async function canLogOn(user: IUser, project: IProject | null, task: ITask | nul
 
 /**
  * Resolves `{ project?, task? }` for a log owned by `owner` per settings.logTimeFor.
- * A task's project wins; archived / completed projects are refused.
+ * A task's project wins (a different project, or any project on a project-less
+ * task, is refused); archived / completed projects are refused.
  */
 async function resolveTarget(
   owner: IUser,
@@ -176,6 +179,8 @@ async function resolveTarget(
     if (typeof rawProject !== "string" || isInvalidObjectId(rawProject)) {
       return { status: 400, error: "project must be a valid project ID" };
     }
+    // A task decides its own project: a project-less task can't take one.
+    if (task && !task.project) return { status: 400, error: "This task isn't on that project" };
     if (task?.project && task.project.toString() !== rawProject) {
       return { status: 400, error: "The task belongs to a different project" };
     }
