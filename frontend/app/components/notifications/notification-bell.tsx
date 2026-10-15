@@ -42,6 +42,13 @@ import {
   LuCalendarRange,
   LuGraduationCap,
   LuCalendarPlus,
+  LuShieldCheck,
+  LuShieldQuestion,
+  LuShieldX,
+  LuTags,
+  LuGitPullRequestArrow,
+  LuScale,
+  LuTriangleAlert,
 } from "react-icons/lu";
 import { Link, useNavigate } from "react-router";
 
@@ -107,6 +114,15 @@ const NOTIFICATION_ICONS: Record<NotificationType, NotificationIcon> = {
   hr_date_upcoming: LuCalendarRange,
   training_assigned: LuGraduationCap,
   training_reminder: LuGraduationCap,
+  project_approval_requested: LuShieldQuestion,
+  project_approved: LuShieldCheck,
+  project_rejected: LuShieldX,
+  brand_approval_requested: LuTags,
+  brand_approved: LuTags,
+  brand_rejected: LuTags,
+  change_approval_requested: LuGitPullRequestArrow,
+  change_decided: LuScale,
+  task_over_scope: LuTriangleAlert,
 };
 
 /** Theme tokens only — no palette colours. */
@@ -151,6 +167,15 @@ const NOTIFICATION_ICON_COLORS: Record<NotificationType, string> = {
   hr_date_upcoming: "text-chart-4",
   training_assigned: "text-chart-2",
   training_reminder: "text-chart-4",
+  project_approval_requested: "text-chart-4",
+  project_approved: "text-primary",
+  project_rejected: "text-destructive",
+  brand_approval_requested: "text-chart-4",
+  brand_approved: "text-primary",
+  brand_rejected: "text-destructive",
+  change_approval_requested: "text-chart-4",
+  change_decided: "text-chart-2",
+  task_over_scope: "text-destructive",
 };
 
 /**
@@ -276,8 +301,9 @@ function NotificationItem({
   notification: Notification;
   onClick: () => void;
 }) {
-  const Icon = NOTIFICATION_ICONS[notification.type];
-  const iconColor = NOTIFICATION_ICON_COLORS[notification.type];
+  // A type this build doesn't know yet (newer server) still renders.
+  const Icon = NOTIFICATION_ICONS[notification.type] ?? Bell;
+  const iconColor = NOTIFICATION_ICON_COLORS[notification.type] ?? "text-muted-foreground";
 
   const relativeTime = useMemo(
     () => formatDistanceToNow(new Date(notification.createdAt), { addSuffix: true }),

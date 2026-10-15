@@ -502,7 +502,16 @@ export type NotificationType =
   | "document_expiring"
   | "hr_date_upcoming"
   | "training_assigned"
-  | "training_reminder";
+  | "training_reminder"
+  | "project_approval_requested"
+  | "project_approved"
+  | "project_rejected"
+  | "brand_approval_requested"
+  | "brand_approved"
+  | "brand_rejected"
+  | "change_approval_requested"
+  | "change_decided"
+  | "task_over_scope";
 
 /** Mirrors the backend Notification model as returned by the API. */
 export interface Notification {
