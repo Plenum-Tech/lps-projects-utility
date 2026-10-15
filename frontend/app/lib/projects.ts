@@ -53,7 +53,7 @@ export function suggestCode(name: string): string {
 
 export const NAMING_SEPARATOR = "_";
 export const NAMING_TITLE_MAX = 80;
-export const DEFAULT_PROJECT_TYPES = ["Campaign", "Program", "Project"];
+export const DEFAULT_PROJECT_TYPES = ["Campaign", "Program", "Project", "Pitch"];
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const MONTH_LONG = [

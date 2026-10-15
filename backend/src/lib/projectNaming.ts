@@ -9,7 +9,7 @@ import { cleanSegment, isDateToken, normaliseKey, splitSegments } from "./worksu
 export const PROJECT_NAMING_LIMITS = { titleMax: 80, typeMax: 30, maxTypes: 30 } as const;
 
 /** Default Type list (admins manage it in Settings → Projects). */
-export const DEFAULT_PROJECT_TYPES = ["Campaign", "Program", "Project"] as const;
+export const DEFAULT_PROJECT_TYPES = ["Campaign", "Program", "Project", "Pitch"] as const;
 
 /** Parts are joined with this; it is not allowed inside any part. */
 export const NAMING_SEPARATOR = "_";
