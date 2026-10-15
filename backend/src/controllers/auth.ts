@@ -4,6 +4,7 @@ import { canViewTimeReport } from "../lib/reportAccess.js";
 import type { Request, Response } from "express";
 import { logActivity } from "../lib/activityLog.js";
 import { expiresInToMs, signAccessToken, TOKEN_COOKIE, verifyAccessToken } from "../lib/jwt.js";
+import { clearLoginFailures, loginLockRemainingMs, recordLoginFailure } from "../lib/loginLock.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
@@ -37,6 +38,15 @@ const INVALID_LOGIN = "Invalid email or password. First time here or forgot it? 
  */
 const dummyHash = bcrypt.hash(crypto.randomBytes(16).toString("base64url"), 10);
 
+/** 429 for an email locked by repeated failed sign-ins (lib/loginLock.ts). */
+function sendSignInLocked(res: Response, ms: number): void {
+  const minutes = Math.max(1, Math.ceil(ms / 60_000));
+  res.setHeader("Retry-After", Math.ceil(ms / 1000));
+  res.status(429).json({
+    error: `Too many sign-in attempts. Try again in ${minutes} ${minutes === 1 ? "minute" : "minutes"}, or reset your password.`,
+  });
+}
+
 /** Authenticates credentials and sets the JWT as an httpOnly cookie to maintain the session. */
 export async function login(req: Request, res: Response): Promise<void> {
   const { email, password } = (req.body ?? {}) as { email?: unknown; password?: unknown };
@@ -46,6 +56,14 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
   const emailLower = email.trim().toLowerCase();
+
+  // Per-email lock after repeated failures (every replica): refused even with the right password.
+  const lockedMs = await loginLockRemainingMs(emailLower);
+  if (lockedMs > 0) {
+    logActivity({ action: "login_failed", actorEmail: emailLower, details: { reason: "too_many_attempts" }, ip: req.ip });
+    sendSignInLocked(res, lockedMs);
+    return;
+  }
 
   const account = await User.findOne({ email: emailLower }).select("+password");
 
@@ -65,10 +83,17 @@ export async function login(req: Request, res: Response): Promise<void> {
       details: { reason: account?.passwordSetupRequired ? "password_setup_required" : "invalid_credentials" },
       ip: req.ip,
     });
+    // Counted for every email, account or not, so the lock reveals nothing either.
+    const nowLockedMs = await recordLoginFailure(emailLower);
+    if (nowLockedMs > 0) {
+      sendSignInLocked(res, nowLockedMs);
+      return;
+    }
     res.status(401).json({ error: INVALID_LOGIN });
     return;
   }
 
+  await clearLoginFailures(emailLower);
   logActivity({ action: "login", actor: user, ip: req.ip });
 
   issueSessionCookie(res, user);

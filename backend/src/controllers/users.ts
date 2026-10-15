@@ -4,6 +4,7 @@ import { issueSessionCookie } from "./auth.js";
 import { deleteUserDocuments } from "./documents.js";
 import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
+import { clearLoginFailures } from "../lib/loginLock.js";
 import { applyHrFields, isEmployeeIdConflict, parseHrFields } from "../lib/hr.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
 import type { EmailPreferences, IUser } from "../models/User.js";
@@ -291,7 +292,10 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     }
     throw error;
   }
-  if (password !== undefined && actor?._id.equals(user._id)) keepSession(res, user);
+  if (password !== undefined) {
+    if (actor?._id.equals(user._id)) keepSession(res, user);
+    await clearLoginFailures(user.email); // they can sign in with it right away, even if locked out
+  }
 
   logActivity({
     action: "user_updated",

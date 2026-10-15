@@ -3,6 +3,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { appUrl, emailConfigured, passwordSetupTemplate, sendEmail } from "../lib/email.js";
+import { clearLoginFailures } from "../lib/loginLock.js";
 import type { IPasswordSetupToken } from "../models/PasswordSetupToken.js";
 import { PASSWORD_SETUP_LIMITS, PasswordSetupToken } from "../models/PasswordSetupToken.js";
 import type { IUser } from "../models/User.js";
@@ -193,8 +194,8 @@ export async function setDefaultPassword(req: Request, res: Response): Promise<v
     filter = scope === "pending" ? { passwordSetupRequired: true } : { _id: { $ne: actor._id } };
   }
   // tokenVersion must be loaded: incrementing an unloaded value would reset it to 1
-  // (and could make an older session valid again).
-  const users = await User.find(filter).select("_id tokenVersion");
+  // (and could make an older session valid again). email: to clear sign-in locks.
+  const users = await User.find(filter).select("_id tokenVersion email");
   let updated = 0;
   for (const user of users) {
     // save() runs the hashing hook; bumping tokenVersion signs out other sessions.
@@ -210,6 +211,8 @@ export async function setDefaultPassword(req: Request, res: Response): Promise<v
       { user: { $in: users.map((u) => u._id) }, usedAt: null, revokedAt: null },
       { $set: { revokedAt: new Date() } }
     ).catch(() => undefined);
+    // They can sign in with it right away, even if they were locked out.
+    await clearLoginFailures(...users.map((u) => u.email));
   }
   logActivity({
     action: "user_updated",
@@ -303,6 +306,7 @@ export async function completePasswordSetup(req: Request, res: Response): Promis
     { user: user._id, usedAt: null, revokedAt: null },
     { $set: { revokedAt: now } }
   );
+  await clearLoginFailures(user.email); // a sign-in lock ends with the new password
 
   logActivity({
     action: "user_updated",

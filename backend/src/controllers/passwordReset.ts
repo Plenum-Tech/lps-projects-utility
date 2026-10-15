@@ -5,6 +5,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { appTimeZone } from "../lib/appTime.js";
 import { emailConfigured, passwordChangedTemplate, passwordResetCodeTemplate, sendEmail } from "../lib/email.js";
 import { isProduction } from "../lib/env.js";
+import { clearLoginFailures } from "../lib/loginLock.js";
 import { PASSWORD_RESET_LIMITS, PasswordResetCode } from "../models/PasswordResetCode.js";
 import { PasswordSetupToken } from "../models/PasswordSetupToken.js";
 import { User } from "../models/User.js";
@@ -268,6 +269,7 @@ export async function completePasswordReset(req: Request, res: Response): Promis
   await Promise.all([
     PasswordResetCode.updateMany({ user: user._id, revokedAt: null }, { $set: { revokedAt: now } }),
     PasswordSetupToken.updateMany({ user: user._id, usedAt: null, revokedAt: null }, { $set: { revokedAt: now } }),
+    clearLoginFailures(user.email), // a sign-in lock ends with the reset
   ]);
 
   logActivity({
