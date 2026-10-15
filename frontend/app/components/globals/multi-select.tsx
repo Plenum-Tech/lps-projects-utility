@@ -58,6 +58,8 @@ export function MultiSelect({
     <Combobox
       multiple
       autoHighlight
+      // Clicking the box lists everyone (typing narrows it).
+      openOnInputClick
       items={options}
       value={selected}
       onValueChange={(next: MultiSelectOption[]) => {

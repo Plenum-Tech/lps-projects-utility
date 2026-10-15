@@ -121,6 +121,15 @@ export function ProjectTeamFields({
           <p className="text-xs text-muted-foreground">
             Links this project to its brand line in the plan (used by Delivery Pulse on-map / off-map).
           </p>
+          {!row && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              No line matched automatically: pick this brand&apos;s line above to fill the team from the plan, or add people
+              to each role below.
+            </p>
+          )}
+          {row && (suggestion.data?.team.length ?? 0) === 0 && (
+            <p className="text-xs text-muted-foreground">“{row.name}” has nobody planned yet: add people to each role below.</p>
+          )}
         </div>
       ) : (
         naming.month && (
