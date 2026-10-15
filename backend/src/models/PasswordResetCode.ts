@@ -19,9 +19,14 @@ export const PASSWORD_RESET_LIMITS = {
  * One forgot-password attempt: a 6-digit code emailed to the user and, once
  * the code is verified, a short-lived reset token. Only HMAC/SHA-256 hashes are
  * stored. Requesting a new code revokes the user's older records.
+ *
+ * A request for an email with no account stores a decoy (user null, a code
+ * nobody receives) under the same throttles, so the verify step answers
+ * exactly as for a real account and never reveals which emails exist.
  */
 export interface IPasswordResetCode extends mongoose.Document {
-  user: mongoose.Types.ObjectId;
+  /** Null for a decoy (no account has this email): it never verifies. */
+  user: mongoose.Types.ObjectId | null;
   emailLower: string;
   codeHash: string;
   /** Code expiry (10 min). Documents are purged by a TTL index a day later. */
@@ -42,7 +47,7 @@ export interface IPasswordResetCode extends mongoose.Document {
 
 const passwordResetCodeSchema = new Schema<IPasswordResetCode>(
   {
-    user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    user: { type: Schema.Types.ObjectId, ref: "User", default: null },
     emailLower: { type: String, required: true },
     codeHash: { type: String, required: true },
     expiresAt: { type: Date, required: true },

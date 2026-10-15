@@ -22,15 +22,12 @@ export const api = axios.create({
   },
 });
 
-/** Machine-readable `code` from a backend JSON error (e.g. "password_setup_required"). */
+/** Machine-readable `code` from a backend JSON error, when it sends one. */
 export function getErrorCode(error: unknown): string | undefined {
   if (!axios.isAxiosError<{ code?: unknown }>(error)) return undefined;
   const code = error.response?.data?.code;
   return typeof code === "string" ? code : undefined;
 }
-
-/** Login 403 `code` for imported accounts that must set a password via a link first. */
-export const PASSWORD_SETUP_REQUIRED_CODE = "password_setup_required";
 
 /**
  * Pulls a readable message out of any thrown error:

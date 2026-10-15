@@ -4,12 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/components/ui/toast";
 import { meKeys } from "@/hooks/use-auth";
 import { usersKeys } from "@/hooks/use-users";
-import {
-  api,
-  getErrorCode,
-  getErrorMessage,
-  PASSWORD_SETUP_REQUIRED_CODE,
-} from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import type {
   PasswordLinkResponse,
   PasswordLinksResponse,
@@ -26,11 +21,6 @@ export const MAX_BULK_PASSWORD_LINKS = 500;
 export const passwordSetupKeys = {
   preview: (token: string) => ["password-setup-preview", token] as const,
 };
-
-/** True when a login error means "this account must set a password via a link first". */
-export function isPasswordSetupRequiredError(error: unknown): boolean {
-  return getErrorCode(error) === PASSWORD_SETUP_REQUIRED_CODE;
-}
 
 /** Status + 410 reason of a failed preview / submit, for picking the right state card. */
 export function passwordSetupFailure(error: unknown): {

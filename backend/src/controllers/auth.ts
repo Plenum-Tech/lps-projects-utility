@@ -1,3 +1,5 @@
+import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 import { canViewTimeReport } from "../lib/reportAccess.js";
 import type { Request, Response } from "express";
 import { logActivity } from "../lib/activityLog.js";
@@ -21,41 +23,49 @@ function cookieFlags(): { sameSite: "lax" | "none"; secure: boolean } {
   return { sameSite: isProd && crossSite ? "none" : "lax", secure: isProd };
 }
 
+/**
+ * The one answer for an unknown email, a wrong password and an account that has
+ * no password yet, so sign-in never reveals which emails have accounts. Forgot
+ * password also sets a first password (it only needs the emailed code).
+ */
+const INVALID_LOGIN = "Invalid email or password. First time here or forgot it? Use Forgot password.";
+
+/**
+ * Hash of a random throwaway password at the cost real hashes use (10): compared
+ * against when an email has no usable password, so every failed sign-in costs
+ * one bcrypt compare and response times don't tell accounts apart.
+ */
+const dummyHash = bcrypt.hash(crypto.randomBytes(16).toString("base64url"), 10);
+
 /** Authenticates credentials and sets the JWT as an httpOnly cookie to maintain the session. */
 export async function login(req: Request, res: Response): Promise<void> {
-  const { email, password } = (req.body ?? {}) as { email?: string; password?: string };
+  const { email, password } = (req.body ?? {}) as { email?: unknown; password?: unknown };
 
-  if (!email || !password) {
+  if (typeof email !== "string" || typeof password !== "string" || !email.trim() || !password) {
     res.status(400).json({ error: "Email and password are required" });
     return;
   }
+  const emailLower = email.trim().toLowerCase();
 
-  const user = await User.findOne({ email: email.trim().toLowerCase() }).select("+password");
+  const account = await User.findOne({ email: emailLower }).select("+password");
 
-  // Imported accounts have no usable password until the user opens a set-password link.
-  if (user?.passwordSetupRequired) {
-    logActivity({
-      action: "login_failed",
-      actorEmail: email.trim().toLowerCase(),
-      details: { reason: "password_setup_required" },
-      ip: req.ip,
-    });
-    res.status(403).json({
-      error: "Your account needs a password — use the link from your administrator.",
-      code: "password_setup_required",
-    });
-    return;
-  }
+  // Imported accounts have no usable password until the user sets one (set-password
+  // link or Forgot password): they fail exactly like a wrong password.
+  const user = account && !account.passwordSetupRequired ? account : null;
+  const passwordOk = user
+    ? await user.comparePassword(password)
+    : await bcrypt.compare(password, await dummyHash);
 
-  if (!user || !(await user.comparePassword(password))) {
+  if (!user || !passwordOk) {
     // Audit failed attempts — actor is unknown, so snapshot the attempted email.
+    // The real reason stays in the (admin-only) log, never in the response.
     logActivity({
       action: "login_failed",
-      actorEmail: email.trim().toLowerCase(),
-      details: { reason: "invalid_credentials" },
+      actorEmail: emailLower,
+      details: { reason: account?.passwordSetupRequired ? "password_setup_required" : "invalid_credentials" },
       ip: req.ip,
     });
-    res.status(401).json({ error: "Invalid email or password" });
+    res.status(401).json({ error: INVALID_LOGIN });
     return;
   }
 

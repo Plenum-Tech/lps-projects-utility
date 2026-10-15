@@ -72,15 +72,13 @@ function firstNameOf(name: string): string {
 }
 
 /**
- * Creates and emails a code for `emailLower` when an account exists and the
- * per-email throttles allow it. Returns nothing: the caller always answers generically.
+ * Creates and emails a code for `emailLower` when the per-email throttles allow
+ * it. An email without an account gets a decoy record instead (same throttles,
+ * a code nobody receives) so the verify step can't tell the two apart either.
+ * Returns nothing: the caller always answers generically.
  */
 async function issueCode(emailLower: string, ip: string | undefined): Promise<void> {
   const user = await User.findOne({ email: emailLower });
-  if (!user) {
-    hashCode(emailLower, "000000"); // comparable work for unknown emails
-    return;
-  }
 
   const now = Date.now();
   const latest = await PasswordResetCode.findOne({ emailLower }).sort({ createdAt: -1 }).select("createdAt").lean();
@@ -94,17 +92,21 @@ async function issueCode(emailLower: string, ip: string | undefined): Promise<vo
     return;
   }
 
-  // A new code replaces every older code / reset token of this user.
-  await PasswordResetCode.updateMany({ user: user._id, revokedAt: null }, { $set: { revokedAt: new Date(now) } });
+  // A new code replaces every older code / reset token of this user (or older decoys of this email).
+  await PasswordResetCode.updateMany(
+    user ? { user: user._id, revokedAt: null } : { emailLower, user: null, revokedAt: null },
+    { $set: { revokedAt: new Date(now) } }
+  );
 
   const code = crypto.randomInt(0, 1_000_000).toString().padStart(6, "0");
   await PasswordResetCode.create({
-    user: user._id,
+    user: user?._id ?? null,
     emailLower,
     codeHash: hashCode(emailLower, code),
     expiresAt: new Date(now + PASSWORD_RESET_LIMITS.codeTtlMs),
     ip,
   });
+  if (!user) return; // decoy: the code is never sent anywhere
 
   if (emailConfigured()) {
     // Fire-and-forget: a mail failure must not change the (generic) response.
@@ -170,7 +172,9 @@ export async function verifyPasswordReset(req: Request, res: Response): Promise<
     return;
   }
 
-  if (!sameHash(counted.codeHash, hashCode(emailLower, code))) {
+  // A decoy (no account has this email) never verifies: it fails like a wrong code.
+  const matches = sameHash(counted.codeHash, hashCode(emailLower, code));
+  if (!counted.user || !matches) {
     const attemptsLeft = Math.max(0, PASSWORD_RESET_LIMITS.maxAttempts - counted.attempts);
     if (attemptsLeft === 0) {
       res.status(429).json({ error: LOCKED, attemptsLeft: 0, reason: "locked" });

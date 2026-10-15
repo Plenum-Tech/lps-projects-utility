@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
+import axios from "axios";
 import { AlertCircle, Eye, EyeOff, LoaderCircle, LogIn } from "lucide-react";
-import { LuKeyRound } from "react-icons/lu";
 import { Link, useNavigate } from "react-router";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -8,8 +8,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useLogin } from "@/hooks/use-auth";
-import { isPasswordSetupRequiredError } from "@/hooks/use-password-setup";
 import { getErrorMessage } from "@/lib/api";
+
+/**
+ * Wrong credentials (401) or too many attempts (429): the way in is Forgot
+ * password, which also sets a first password for accounts that have none yet
+ * (sign-in answers those exactly like a wrong password).
+ */
+function suggestsPasswordReset(error: unknown): boolean {
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+  return status === 401 || status === 429;
+}
 
 /**
  * Email + password login form backed by POST /api/auth/login.
@@ -108,20 +117,24 @@ export function LoginForm() {
         </div>
       </div>
 
-      {login.isError && isPasswordSetupRequiredError(login.error) ? (
-        <Alert className="border-primary/30 bg-primary/5">
-          <LuKeyRound aria-hidden className="size-4" />
-          <AlertTitle>Set your password first</AlertTitle>
-          <AlertDescription>
-            Your account needs a password — use the set-password link from your administrator. If you
-            can&apos;t find it or it has expired, ask them to send a new one.
-          </AlertDescription>
-        </Alert>
-      ) : login.isError && (
+      {login.isError && (
         <Alert variant="destructive">
           <AlertCircle className="size-4" />
           <AlertTitle>Sign-in failed</AlertTitle>
-          <AlertDescription>{getErrorMessage(login.error)}</AlertDescription>
+          <AlertDescription className="[&_p:not(:last-child)]:mb-1">
+            <p>{getErrorMessage(login.error)}</p>
+            {suggestsPasswordReset(login.error) && (
+              <p>
+                <Link
+                  to="/forgot-password"
+                  state={email.trim() ? { email: email.trim() } : undefined}
+                  className="font-medium"
+                >
+                  Set or reset your password
+                </Link>
+              </p>
+            )}
+          </AlertDescription>
         </Alert>
       )}
 

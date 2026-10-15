@@ -246,7 +246,7 @@ function EmailStep({
       step="email"
       icon={<LuMail aria-hidden className="size-5" />}
       title="Forgot your password?"
-      description="Enter the email you sign in with and we'll send you a 6-digit code to reset it."
+      description="Enter the email you sign in with and we'll send you a 6-digit code to reset it — or to set your first password."
     >
       <form onSubmit={handleSubmit} noValidate className="space-y-4">
         {notice && (

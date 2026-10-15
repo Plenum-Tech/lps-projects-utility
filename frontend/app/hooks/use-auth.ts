@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
-import { api, getErrorCode, getErrorMessage, PASSWORD_SETUP_REQUIRED_CODE } from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import type { LoginInput, UserResponse } from "@/types";
 
 export const meKeys = {
@@ -45,8 +45,6 @@ export function useLogin() {
       queryClient.setQueryData(meKeys.all, user);
     },
     onError: (error: unknown) => {
-      // The login form explains this case inline; a toast would just repeat it.
-      if (getErrorCode(error) === PASSWORD_SETUP_REQUIRED_CODE) return;
       toast.error(getErrorMessage(error));
     },
   });
