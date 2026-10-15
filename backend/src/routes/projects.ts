@@ -51,9 +51,6 @@ import { requireRole } from "../middlewares/requireRole.js";
 const router = Router();
 
 router.use(requireAuth);
-// AI summary score (one OpenAI call per check): 20 per hour per user. Runs ahead of
-// the summary-check handler and passes the request on while under the limit.
-router.post("/summary-check", summaryCheckRateLimit);
 
 router.get("/", listProjects);
 router.post("/", createProject);
@@ -64,7 +61,8 @@ router.post("/bulk", bulkProjects);
 
 router.get("/approvals", listApprovals);
 router.get("/team-load", teamLoad);
-router.post("/summary-check", summaryCheck);
+// AI summary score (one OpenAI call per check): 20 per hour per user.
+router.post("/summary-check", summaryCheckRateLimit, summaryCheck);
 router.get("/:id/scope-usage", scopeUsage);
 router.get("/approvals/changes/:id", getChangeRequest);
 router.post("/approvals/changes/:id", decideChangeRequest);
