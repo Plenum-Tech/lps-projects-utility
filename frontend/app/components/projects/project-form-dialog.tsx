@@ -559,6 +559,9 @@ export function ProjectFormDialog({
       nextStep();
       return;
     }
+    // Last step: only the "Create project" button creates it (not Enter in a people box).
+    const submitter = (event.nativeEvent as SubmitEvent).submitter;
+    if (wizard && !(submitter instanceof HTMLButtonElement && submitter.type === "submit")) return;
     setSubmitted(true);
     if (
       hasErrors ||
@@ -1154,13 +1157,15 @@ export function ProjectFormDialog({
                 Cancel
               </Button>
             )}
+            {/* Separate keys: React must not turn the "Next" button into the submit button
+                mid-click (the browser would then submit the form on the same click). */}
             {wizard && step < 4 ? (
-              <Button type="button" onClick={nextStep}>
+              <Button key="wizard-next" type="button" onClick={nextStep}>
                 Next: {["", "project", "scope", "team"][step]}
                 <LuArrowRight aria-hidden />
               </Button>
             ) : (
-              <Button type="submit" disabled={pending}>
+              <Button key="wizard-submit" type="submit" disabled={pending}>
                 {pending ? (
                   <LuLoaderCircle aria-hidden className="animate-spin" />
                 ) : isEdit ? (
