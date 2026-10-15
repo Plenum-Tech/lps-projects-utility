@@ -56,6 +56,7 @@ import {
   countLeaveDays,
   formatLeaveDate,
   leaveDecidedByName,
+  leaveHasStarted,
   LEAVE_STATUS_META,
   LEAVE_TYPE_LABELS,
 } from "@/lib/leave";
@@ -67,14 +68,18 @@ const LEAVE_TYPES: LeaveType[] = ["annual", "sick", "personal", "unpaid"];
 const PAGE_SIZE = 10;
 
 
+const STARTED_HINT = "Already started — ask your manager or HR to cancel it";
+
 /**
  * Employee leave management: view balance, apply for leave, and cancel
- * pending/approved requests (cancelling an approved request refunds the days).
+ * pending requests or approved ones that haven't started (cancelling an
+ * approved request refunds the days).
  */
 export function MyLeaveRequests({ embedded = false }: { embedded?: boolean }) {
   const { data: currentUser } = useCurrentUser();
   // A head's own requests are decided by an admin, never by themselves.
   const isHead = currentUser?.role === "head";
+  const isAdmin = currentUser?.role === "admin";
   const [search, setSearch] = useState("");
   const { page, setPage, offset, total, setTotal } = usePagination({
     limit: PAGE_SIZE,
@@ -165,8 +170,10 @@ export function MyLeaveRequests({ embedded = false }: { embedded?: boolean }) {
                       </TableHeader>
                       <TableBody>
                         {leaves?.map((leave) => {
+                          // Once an approved leave has started, only an admin / the approver cancels it.
+                          const locked = leaveHasStarted(leave) && !isAdmin;
                           const cancellable =
-                            leave.status === "pending" || leave.status === "approved";
+                            (leave.status === "pending" || leave.status === "approved") && !locked;
                           return (
                             <TableRow key={leave._id}>
                               <TableCell className="whitespace-nowrap text-sm font-medium">
@@ -201,7 +208,7 @@ export function MyLeaveRequests({ embedded = false }: { embedded?: boolean }) {
                                 {formatLeaveDate(leave.createdAt)}
                               </TableCell>
                               <TableCell>
-                                <div className="flex justify-end">
+                                <div className="flex flex-col items-end">
                                   <Button
                                     variant="ghost"
                                     size="sm"
@@ -210,12 +217,19 @@ export function MyLeaveRequests({ embedded = false }: { embedded?: boolean }) {
                                     aria-label={
                                       cancellable
                                         ? `Cancel ${LEAVE_TYPE_LABELS[leave.leaveType]} request`
-                                        : "This request can no longer be cancelled"
+                                        : locked
+                                          ? STARTED_HINT
+                                          : "This request can no longer be cancelled"
                                     }
                                   >
                                     <X />
                                     Cancel
                                   </Button>
+                                  {locked && (
+                                    <p className="mt-1 max-w-44 whitespace-normal text-right text-xs text-muted-foreground">
+                                      {STARTED_HINT}
+                                    </p>
+                                  )}
                                 </div>
                               </TableCell>
                             </TableRow>

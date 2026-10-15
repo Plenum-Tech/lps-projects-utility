@@ -1,6 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
+import { appToday } from "../lib/appTime.js";
 import { notify, notifyUsers } from "../lib/notifications.js";
 import { getPolicies, policyFor } from "../lib/leavePolicies.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
@@ -515,13 +516,23 @@ export async function decideLeave(req: Request, res: Response): Promise<void> {
   res.json({ leave: decided.toJSON() });
 }
 
-/** Owner-only: cancels their own pending or approved request (approved refunds the days). */
+/**
+ * Cancels a pending or approved request (approved refunds the days). The owner
+ * cancels a pending request any time and an approved one until it starts; an
+ * approved leave that has started (or passed) is cancelled only by an admin or
+ * whoever may decide the owner's requests.
+ */
 export async function cancelLeave(req: Request, res: Response): Promise<void> {
   const leave = await getLeaveOr404(req, res);
   if (!leave) return;
   const user = req.user!;
 
-  if (!leave.user.equals(user._id)) {
+  const own = leave.user.equals(user._id);
+  const owner = own ? user : await User.findById(leave.user);
+  const reviewer = owner ? canReviewLeavesOf(user, owner) : user.role === "admin";
+  const started = leave.status === "approved" && leave.startDate.getTime() <= appToday().getTime();
+  // Reviewers only step in for a started leave; the rest stays with the owner.
+  if (!own && !(reviewer && started)) {
     res.status(403).json({ error: "You can only cancel your own leave requests" });
     return;
   }
@@ -529,36 +540,53 @@ export async function cancelLeave(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "Only pending or approved requests can be cancelled" });
     return;
   }
+  if (started && !reviewer) {
+    res.status(403).json({ error: "This leave has already started. Ask your manager or HR to cancel it." });
+    return;
+  }
 
+  // Claim the cancellation atomically so a double click refunds the days once.
   const wasApproved = leave.status === "approved";
-  leave.status = "cancelled";
-  await leave.save();
+  const cancelled = await Leave.findOneAndUpdate(
+    { _id: leave._id, status: leave.status },
+    { $set: { status: "cancelled" } },
+    { new: true }
+  );
+  if (!cancelled) {
+    res.status(400).json({ error: "Only pending or approved requests can be cancelled" });
+    return;
+  }
 
-  if (wasApproved && isBalanceTracked(leave.leaveType)) {
+  if (wasApproved && owner && isBalanceTracked(cancelled.leaveType)) {
     const policies = await getPolicies();
-    await applyBalanceDelta(user, policies, leave.leaveType, leave.days);
+    await applyBalanceDelta(owner, policies, cancelled.leaveType, cancelled.days);
   }
 
   logActivity({
     action: "leave_cancelled",
     actor: user,
     targetType: "leave",
-    targetId: leave._id,
-    targetName: `${leave.leaveType} leave`,
-    details: { leaveType: leave.leaveType, days: leave.days, refunded: wasApproved },
+    targetId: cancelled._id,
+    targetName: `${cancelled.leaveType} leave`,
+    details: {
+      leaveType: cancelled.leaveType,
+      days: cancelled.days,
+      refunded: wasApproved,
+      ...(own ? {} : { employee: owner?.name, cancelledByRole: user.role }),
+    },
     ip: req.ip,
   });
 
-  // Real-time refresh for the owner and everyone who reviews their requests.
-  broadcastLeaveUpdate(user, [user._id.toString()], {
-    leaveId: leave._id,
+  // Real-time refresh for the owner, the canceller and everyone who reviews the owner's requests.
+  broadcastLeaveUpdate(owner, [cancelled.user.toString(), user._id.toString()], {
+    leaveId: cancelled._id,
     action: "cancelled",
-    leaveType: leave.leaveType,
-    days: leave.days,
+    leaveType: cancelled.leaveType,
+    days: cancelled.days,
     status: "cancelled",
   });
 
-  res.json({ leave: leave.toJSON() });
+  res.json({ leave: cancelled.toJSON() });
 }
 
 /** Admin-only: users with their current-year balances, sorted by name, with optional search + pagination. */

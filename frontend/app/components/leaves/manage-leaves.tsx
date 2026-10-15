@@ -53,6 +53,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import {
   useAdjustLeaveBalance,
+  useCancelLeave,
   useDecideLeave,
   useLeaveBalances,
   useLeavePolicies,
@@ -65,6 +66,7 @@ import { getErrorMessage } from "@/lib/api";
 import {
   formatLeaveDate,
   leaveDecidedByName,
+  leaveHasStarted,
   LEAVE_STATUS_META,
   LEAVE_TYPE_LABELS,
 } from "@/lib/leave";
@@ -109,6 +111,7 @@ export function RequestsTab() {
   } = useLeaves({ status, search: search || undefined, limit: PAGE_SIZE, offset });
   const leaves = data?.leaves;
   const [deciding, setDeciding] = useState<Leave | null>(null);
+  const [cancelling, setCancelling] = useState<Leave | null>(null);
 
   useEffect(() => {
     setTotal(data?.total ?? 0);
@@ -251,6 +254,19 @@ export function RequestsTab() {
                                 Reject
                               </Button>
                             </div>
+                          ) : leaveHasStarted(leave) ? (
+                            // A started leave can't be cancelled by the employee any more.
+                            <div className="flex justify-end">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setCancelling(leave)}
+                                aria-label={`Cancel ${leave.user.name}'s leave`}
+                              >
+                                <X />
+                                Cancel
+                              </Button>
+                            </div>
                           ) : (
                             <div className="flex justify-end" />
                           )}
@@ -309,7 +325,68 @@ export function RequestsTab() {
           if (!open) setDeciding(null);
         }}
       />
+      <CancelStartedLeaveDialog
+        leave={cancelling}
+        onOpenChange={(open) => {
+          if (!open) setCancelling(null);
+        }}
+      />
     </div>
+  );
+}
+
+/** Admin / approver: cancels an approved leave that has already started (refunds the days). */
+function CancelStartedLeaveDialog({
+  leave,
+  onOpenChange,
+}: {
+  leave: Leave | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const cancel = useCancelLeave();
+  const open = leave !== null;
+
+  function handleCancel() {
+    if (!leave) return;
+    cancel.mutate(leave._id, { onSuccess: () => onOpenChange(false) });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Cancel this leave?</DialogTitle>
+          <DialogDescription>
+            {leave && (
+              <>
+                {leave.user.name}&apos;s {LEAVE_TYPE_LABELS[leave.leaveType].toLowerCase()} for{" "}
+                {formatLeaveDate(leave.startDate)} – {formatLeaveDate(leave.endDate)} (
+                {leave.days} day{leave.days === 1 ? "" : "s"}) has already started. Cancelling it
+                returns the days to their balance.
+              </>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+
+        {cancel.isError && (
+          <Alert variant="destructive">
+            <AlertCircle className="size-4" />
+            <AlertTitle>Couldn&apos;t cancel the leave</AlertTitle>
+            <AlertDescription>{getErrorMessage(cancel.error)}</AlertDescription>
+          </Alert>
+        )}
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={cancel.isPending}>
+            Keep leave
+          </Button>
+          <Button variant="destructive" onClick={handleCancel} disabled={cancel.isPending}>
+            {cancel.isPending ? <LoaderCircle className="animate-spin" /> : <X />}
+            {cancel.isPending ? "Cancelling…" : "Cancel leave"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

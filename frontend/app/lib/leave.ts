@@ -2,6 +2,7 @@ import type { VariantProps } from "class-variance-authority";
 
 import { badgeVariants } from "@/components/ui/badge";
 import { formatDate, formatDateOnly } from "@/lib/format";
+import { dateKey } from "@/lib/time";
 import type { Leave, LeaveStatus, LeaveType } from "@/types";
 
 export const LEAVE_TYPE_LABELS: Record<LeaveType, string> = {
@@ -42,4 +43,12 @@ export function formatLeaveDate(value: string): string {
 export function leaveDecidedByName(leave: Pick<Leave, "decidedBy">): string | null {
   const decidedBy = leave.decidedBy;
   return decidedBy && typeof decidedBy === "object" ? decidedBy.name : null;
+}
+
+/**
+ * An approved leave whose first day is today or earlier. Only an admin or the
+ * owner's approver may cancel it then (the API re-checks in the app timezone).
+ */
+export function leaveHasStarted(leave: Pick<Leave, "status" | "startDate">): boolean {
+  return leave.status === "approved" && leave.startDate.slice(0, 10) <= dateKey(new Date());
 }
