@@ -332,24 +332,40 @@ export async function departmentAttendance(req: Request, res: Response): Promise
 // Single record detail
 // ---------------------------------------------------------------------------
 
-/** Any authenticated user: view a single attendance record. */
+/**
+ * A single attendance record: the employee it belongs to, admins, and heads of
+ * that employee's department (the same heads who can update it). Anyone else
+ * gets a 404 so record ids can't be probed.
+ */
 export async function getAttendance(req: Request, res: Response): Promise<void> {
+  const actor = req.user!;
   const id = paramId(req);
   if (!id || isInvalidObjectId(id)) {
     res.status(404).json({ error: "Attendance record not found" });
     return;
   }
 
-  const record = await Attendance.findById(id)
-    .populate("user", "name email")
-    .populate("markedBy", "name");
-
+  const record = await Attendance.findById(id);
   if (!record) {
     res.status(404).json({ error: "Attendance record not found" });
     return;
   }
 
-  res.json({ attendance: record.toJSON() });
+  const isOwner = record.user.equals(actor._id as mongoose.Types.ObjectId);
+  if (!isOwner && actor.role !== "admin") {
+    const targetUser = actor.role === "head" ? await User.findById(record.user).select("department").lean() : null;
+    if (!actor.department || !targetUser?.department || !actor.department.equals(targetUser.department)) {
+      res.status(404).json({ error: "Attendance record not found" });
+      return;
+    }
+  }
+
+  const populated = await record.populate([
+    { path: "user", select: "name email" },
+    { path: "markedBy", select: "name" },
+  ]);
+
+  res.json({ attendance: populated.toJSON() });
 }
 
 // ---------------------------------------------------------------------------
