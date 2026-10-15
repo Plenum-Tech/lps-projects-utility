@@ -255,7 +255,7 @@ export function ProjectOverview({ detail }: { detail: ProjectDetailResponse }) {
                     <tr key={index} className="border-b last:border-0">
                       <td className="px-3 py-1.5">{row.unit}</td>
                       <td className="px-3 py-1.5 text-right tabular-nums text-muted-foreground">
-                        {row.quantity} × {row.languages} × {row.sizes}
+                        {row.quantity} × {row.languageList?.length ? `${row.languages} (${row.languageList.join(", ")})` : row.languages} × {row.sizes}
                       </td>
                       <td className="px-3 py-1.5 text-right font-medium tabular-nums">{row.quantity * row.languages * row.sizes}</td>
                     </tr>

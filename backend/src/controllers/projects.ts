@@ -6,6 +6,7 @@ import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpower
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { syncProjectTeamToPlan } from "../lib/manpowerSync.js";
+import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
@@ -2257,4 +2258,38 @@ export async function scopeUsage(req: Request, res: Response): Promise<void> {
   ]);
   const usedBy = new Map(used.map((u) => [u._id.trim(), u.used]));
   res.json({ units: [...totals.entries()].map(([key, t]) => ({ unit: t.unit, total: t.total, used: usedBy.get(key) ?? 0 })) });
+}
+
+/**
+ * POST /api/projects/summary-check — `{ brand, type, name, summary, files }`:
+ * AI score (0-100) of a project summary for its brand and type (not stored).
+ */
+export async function summaryCheck(req: Request, res: Response): Promise<void> {
+  if (!briefCheckConfigured()) {
+    res.status(503).json({ error: "The AI check isn't set up on this server" });
+    return;
+  }
+  const body = (req.body ?? {}) as { brand?: unknown; type?: unknown; name?: unknown; summary?: unknown; files?: unknown };
+  const summary = typeof body.summary === "string" ? body.summary.trim() : "";
+  if (!summary) {
+    res.status(400).json({ error: "Write the summary first" });
+    return;
+  }
+  const brand =
+    typeof body.brand === "string" && !isInvalidObjectId(body.brand)
+      ? ((await Brand.findById(body.brand).select("name").lean())?.name ?? "")
+      : "";
+  try {
+    const result = await checkProjectSummary({
+      brand,
+      type: typeof body.type === "string" ? body.type.slice(0, 40) : "",
+      name: typeof body.name === "string" ? body.name.slice(0, 200) : "",
+      summary,
+      files: Math.max(0, Math.min(50, Number(body.files) || 0)),
+    });
+    res.json(result);
+  } catch (err) {
+    console.error("[projects] summary check failed", err);
+    res.status(502).json({ error: "The AI check didn't answer. Try again in a moment." });
+  }
 }

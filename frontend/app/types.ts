@@ -3832,6 +3832,9 @@ export interface DeliveryTrafficResponse {
 export interface ScopeItem {
   unit: string;
   quantity: number;
+  /** Multiplier (= languageList.length when languages are picked). */
   languages: number;
+  /** The languages picked ("English", "Arabic" …). */
+  languageList?: string[];
   sizes: number;
 }

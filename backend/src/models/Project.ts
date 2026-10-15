@@ -67,7 +67,7 @@ export interface IProject extends mongoose.Document {
   /** Manpower plan row (key) this project belongs to, in the plan of its month; null = automatic match. */
   manpowerRow?: string | null;
   /** Structured scope: deliverables per unit (lib/scopeUnits.ts). */
-  scopeItems?: Array<{ unit: string; quantity: number; languages: number; sizes: number }>;
+  scopeItems?: Array<{ unit: string; quantity: number; languages: number; languageList?: string[]; sizes: number }>;
   category?: mongoose.Types.ObjectId | null;
   /** Brand (client); a task's brand is its project's brand. */
   brand?: mongoose.Types.ObjectId | null;
@@ -135,6 +135,7 @@ const projectSchema = new Schema<IProject>(
             unit: { type: String, required: true, maxlength: 40 },
             quantity: { type: Number, required: true, min: 1 },
             languages: { type: Number, default: 1, min: 1 },
+            languageList: { type: [String], default: undefined },
             sizes: { type: Number, default: 1, min: 1 },
           },
           { _id: false }

@@ -183,7 +183,9 @@ export default function ProjectReviewRoute() {
                       <tr key={index} className="border-b last:border-0">
                         <td className="py-1.5 pr-3">{row.unit}</td>
                         <td className="py-1.5 pr-3 text-right tabular-nums">{row.quantity}</td>
-                        <td className="py-1.5 pr-3 text-right tabular-nums">× {row.languages}</td>
+                        <td className="py-1.5 pr-3 text-right tabular-nums">
+                          × {row.languageList?.length ? `${row.languages} (${row.languageList.join(", ")})` : row.languages}
+                        </td>
                         <td className="py-1.5 pr-3 text-right tabular-nums">× {row.sizes}</td>
                         <td className="py-1.5 text-right font-semibold tabular-nums">{scopeTotal(row)}</td>
                       </tr>

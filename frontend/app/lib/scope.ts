@@ -3,6 +3,14 @@ import type { ScopeItem } from "@/types";
 /** Units offered in scope rows (keep in step with backend lib/scopeUnits.ts). */
 export const SCOPE_UNITS = ["Video", "Static", "Story", "Carousel", "Reel", "Others"] as const;
 
+/** Languages offered in scope rows (keep in step with backend lib/scopeUnits.ts). */
+export const SCOPE_LANGUAGES = ["English", "Arabic", "French", "Hindi", "Urdu", "Russian", "Chinese", "German", "Spanish", "Others"] as const;
+
+/** "× 2 (English, Arabic)" */
+export function languagesText(item: ScopeItem): string {
+  return item.languageList?.length ? `${item.languages} (${item.languageList.join(", ")})` : String(item.languages);
+}
+
 export const scopeTotal = (item: ScopeItem) => item.quantity * item.languages * item.sizes;
 
 /** Approved total per unit, in row order. */

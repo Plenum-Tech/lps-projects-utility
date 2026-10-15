@@ -1,9 +1,10 @@
-import { LuPlus, LuX } from "react-icons/lu";
+import { LuChevronDown, LuPlus, LuX } from "react-icons/lu";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OptionSelect } from "@/components/projects/project-fields";
-import { SCOPE_UNITS, scopeTotal, scopeTotals } from "@/lib/scope";
+import { SCOPE_LANGUAGES, SCOPE_UNITS, scopeTotal, scopeTotals } from "@/lib/scope";
 import type { ScopeItem } from "@/types";
 
 const UNIT_OPTIONS = SCOPE_UNITS.map((u) => ({ value: u, label: u }));
@@ -62,14 +63,14 @@ export function ScopeItemsEditor({
             disabled={disabled}
           />
           <span className="text-center text-muted-foreground">×</span>
-          <Input
-            type="number"
-            min={1}
-            max={20}
-            value={row.languages}
-            onChange={(e) => set(index, { languages: num(e.target.value, 20) })}
-            aria-label={`Row ${index + 1} languages`}
+          <LanguagePicker
+            value={row.languageList ?? []}
+            count={row.languages}
             disabled={disabled}
+            label={`Row ${index + 1} languages`}
+            onChange={(list) =>
+              set(index, list.length ? { languageList: list, languages: list.length } : { languageList: undefined, languages: 1 })
+            }
           />
           <span className="text-center text-muted-foreground">×</span>
           <Input
@@ -119,5 +120,51 @@ export function ScopeItemsEditor({
         )}
       </div>
     </div>
+  );
+}
+
+/** Pick the row's languages; the multiplier is how many are picked. */
+function LanguagePicker({
+  value,
+  count,
+  onChange,
+  disabled,
+  label,
+}: {
+  value: string[];
+  count: number;
+  onChange: (list: string[]) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  const toggle = (lang: string) => onChange(value.includes(lang) ? value.filter((l) => l !== lang) : [...value, lang]);
+  const text = value.length === 0 ? `${count}` : value.length <= 2 ? value.map((l) => l.slice(0, 2).toUpperCase()).join(" + ") : `${value.length}`;
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button type="button" variant="outline" className="w-full justify-between px-2 font-normal" disabled={disabled} aria-label={label} />
+        }
+      >
+        <span className="truncate tabular-nums">{text}</span>
+        <LuChevronDown aria-hidden className="size-3.5 opacity-60" />
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-2" align="start">
+        <p className="px-1 pb-1 text-xs text-muted-foreground">Languages for this row</p>
+        <ul className="space-y-0.5">
+          {SCOPE_LANGUAGES.map((lang) => (
+            <li key={lang}>
+              <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-muted">
+                <input type="checkbox" checked={value.includes(lang)} onChange={() => toggle(lang)} className="size-4 accent-primary" />
+                {lang}
+              </label>
+            </li>
+          ))}
+        </ul>
+        <p className="px-1 pt-1 text-xs text-muted-foreground">
+          {value.length ? `× ${value.length}: ${value.join(", ")}` : "None picked: counts as 1 language."}
+        </p>
+      </PopoverContent>
+    </Popover>
   );
 }

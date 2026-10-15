@@ -42,7 +42,44 @@ function hashOf(parts: string[]): string {
   return crypto.createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 32);
 }
 
-async function askModel(input: { brand: string; project: string; title: string; brief: string; files: number }) {
+const SUMMARY_PROMPT = `You review the summary (scope) of a new project inside a creative/marketing agency.
+It tells leadership and the team what the project is. Score its quality from 0 to 100:
+- Written in clear, proper English and easy to understand: up to 25 points.
+- Fits the brand and the project type (a Campaign has a goal, audience and timing; a Program / Retainer has the
+  ongoing deliverables and cadence; a Project has the outcome and deliverables): up to 30 points.
+- Says what will be delivered (formats, quantities, platforms, languages, key dates): up to 25 points.
+- Includes a reference link (deck, drive, brief document) or attached files: up to 20 points; neither scores 0 here.
+One-line or vague summaries ("social media", "as discussed", placeholders) score below 25.
+Gibberish, test text or a summary about a different brand scores below 10.
+Reply with JSON only: {"score":0-100,"verdict":"ok"|"weak"|"flagged","reason":"at most 20 words, say what to add"}.`;
+
+/** Scores a new project's summary against its brand and type (not stored). */
+export async function checkProjectSummary(input: {
+  brand: string;
+  type: string;
+  name: string;
+  summary: string;
+  files: number;
+}): Promise<{ score: number | null; verdict: BriefVerdict; reason: string }> {
+  return askModel(
+    { brand: input.brand, project: input.name, title: input.type, brief: input.summary, files: input.files },
+    SUMMARY_PROMPT,
+    [
+      `Brand: ${input.brand || "(none)"}`,
+      `Project type: ${input.type || "(none)"}`,
+      `Project name: ${input.name || "(none)"}`,
+      `Attached files: ${input.files}`,
+      "Summary:",
+      input.summary.slice(0, 4000),
+    ].join("\n")
+  );
+}
+
+async function askModel(
+  input: { brand: string; project: string; title: string; brief: string; files: number },
+  systemPrompt = SYSTEM_PROMPT,
+  userContent?: string
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
@@ -58,10 +95,10 @@ async function askModel(input: { brand: string; project: string; title: string; 
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: systemPrompt },
           {
             role: "user",
-            content: `Brand: ${input.brand || "(none)"}\nProject: ${input.project || "(none)"}\nTask title: ${input.title}\nAttached files: ${input.files}\nBrief:\n${input.brief.slice(0, 4000)}`,
+            content: userContent ?? `Brand: ${input.brand || "(none)"}\nProject: ${input.project || "(none)"}\nTask title: ${input.title}\nAttached files: ${input.files}\nBrief:\n${input.brief.slice(0, 4000)}`,
           },
         ],
       }),

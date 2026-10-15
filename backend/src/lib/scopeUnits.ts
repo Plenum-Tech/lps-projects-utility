@@ -12,9 +12,15 @@ export const SCOPE_LIMITS = { maxRows: 50, maxQuantity: 999, maxMultiplier: 20 }
 export interface ScopeItem {
   unit: string;
   quantity: number;
+  /** Multiplier: the number of languages (= languageList.length when the languages are named). */
   languages: number;
+  /** The languages ("English", "Arabic" …), when picked. */
+  languageList?: string[];
   sizes: number;
 }
+
+/** Languages offered in scope rows. */
+export const SCOPE_LANGUAGES = ["English", "Arabic", "French", "Hindi", "Urdu", "Russian", "Chinese", "German", "Spanish", "Others"] as const;
 
 export const scopeTotal = (item: ScopeItem) => item.quantity * item.languages * item.sizes;
 
@@ -57,7 +63,22 @@ export function parseScopeItems(raw: unknown): ScopeItem[] | string {
     const sizes = int(item.sizes, SCOPE_LIMITS.maxMultiplier, 1);
     if (Number.isNaN(quantity)) return `${at}: quantity must be a whole number from 1 to ${SCOPE_LIMITS.maxQuantity}`;
     if (Number.isNaN(languages) || Number.isNaN(sizes)) return `${at}: languages and sizes must be from 1 to ${SCOPE_LIMITS.maxMultiplier}`;
-    rows.push({ unit, quantity, languages, sizes });
+    // Named languages decide the multiplier.
+    let languageList: string[] | undefined;
+    if (Array.isArray(item.languageList) && item.languageList.length > 0) {
+      const known = new Map(SCOPE_LANGUAGES.map((l) => [l.toLowerCase(), l as string]));
+      languageList = [];
+      for (const raw of item.languageList as unknown[]) {
+        const name = typeof raw === "string" ? known.get(raw.trim().toLowerCase()) : undefined;
+        if (!name) return `${at}: choose languages from ${SCOPE_LANGUAGES.join(", ")}`;
+        if (!languageList.includes(name)) languageList.push(name);
+      }
+    }
+    rows.push(
+      languageList
+        ? { unit, quantity, languages: languageList.length, languageList, sizes }
+        : { unit, quantity, languages, sizes }
+    );
   }
   return rows;
 }

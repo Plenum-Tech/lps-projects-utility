@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
 import { ScopeItemsEditor } from "@/components/projects/scope-items-editor";
+import { AttachmentsField } from "@/components/tasks/attachments-field";
+import { api, getErrorMessage } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import { namingMonthLabel } from "@/lib/projects";
 import { useTeamLoad } from "@/hooks/use-team-load";
 import type { ScopeItem } from "@/types";
@@ -266,6 +269,12 @@ export function ProjectFormDialog({
   const showStep = (n: number) => !wizard || step === n;
   // Continuing: the copied scope is shown read-only until "Edit scope".
   const [scopeLocked, setScopeLocked] = useState(true);
+  // New projects: files picked here are uploaded once the project exists.
+  const [files, setFiles] = useState<File[]>([]);
+  const toast = useToast();
+  // AI score of the summary for the brand and type (on request).
+  const [summaryScore, setSummaryScore] = useState<{ score: number | null; reason: string } | { error: string } | null>(null);
+  const [scoring, setScoring] = useState(false);
   const pending = createProject.isPending || updateProject.isPending;
 
   useEffect(() => {
@@ -274,6 +283,8 @@ export function ProjectFormDialog({
       setScopeLocked(true);
       setSubmitted(false);
       setStep(1);
+      setFiles([]);
+      setSummaryScore(null);
       setNewBrand(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -524,6 +535,24 @@ export function ProjectFormDialog({
     setStep((s) => Math.min(4, s + 1));
   }
 
+  async function checkSummary() {
+    setScoring(true);
+    try {
+      const { data } = await api.post<{ score: number | null; reason: string }>("/projects/summary-check", {
+        brand: form.brand === NONE ? null : form.brand,
+        type: form.type,
+        name: preview,
+        summary: form.summary,
+        files: files.length,
+      });
+      setSummaryScore(data);
+    } catch (error) {
+      setSummaryScore({ error: getErrorMessage(error) });
+    } finally {
+      setScoring(false);
+    }
+  }
+
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (wizard && step < 4) {
@@ -572,7 +601,22 @@ export function ProjectFormDialog({
       if (form.progressMode === "manual")
         input.progress = Math.round(progressValue);
       createProject.mutate(input, {
-        onSuccess: (data) => {
+        onSuccess: async (data) => {
+          // Files picked in the form, one by one (a failed one doesn't block the rest).
+          const failed: string[] = [];
+          for (const file of files) {
+            const body = new FormData();
+            body.append("files", file);
+            try {
+              await api.post(`/projects/${data.project._id}/files`, body, {
+                headers: { "Content-Type": "multipart/form-data" },
+                timeout: 120_000,
+              });
+            } catch {
+              failed.push(file.name);
+            }
+          }
+          if (failed.length) toast.error(`Couldn't upload: ${failed.join(", ")}. Add them on the project's Files tab.`);
           onOpenChange(false);
           void navigate(`/projects/${data.project._id}`);
         },
@@ -928,6 +972,44 @@ export function ProjectFormDialog({
             )}
             {show(summaryError) && <FieldError>{summaryError}</FieldError>}
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={checkSummary} disabled={scoring || !form.summary.trim()}>
+              {scoring ? <LuLoaderCircle aria-hidden className="animate-spin" /> : null}
+              Check summary (AI score)
+            </Button>
+            {summaryScore && "error" in summaryScore && (
+              <span className="text-xs text-destructive">{summaryScore.error}</span>
+            )}
+            {summaryScore && !("error" in summaryScore) && (
+              <span className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span
+                  className={cn(
+                    "rounded-full px-2 py-0.5 font-medium",
+                    (summaryScore.score ?? 0) >= 70
+                      ? "bg-primary/10 text-primary"
+                      : (summaryScore.score ?? 0) >= 40
+                        ? "bg-amber-500/15 text-amber-700 dark:text-amber-400"
+                        : "bg-destructive/10 text-destructive",
+                  )}
+                >
+                  Summary score {summaryScore.score ?? "—"}/100
+                </span>
+                {summaryScore.reason}
+              </span>
+            )}
+          </div>
+          <p className="-mt-3 text-xs text-muted-foreground">
+            Scored for {selectedBrand?.name ?? "the brand"} and the {form.type || "project"} type: clear English, fits the
+            brand and type, says what's delivered, and has a link or file.
+          </p>
+
+          {!project && (
+            <div className="space-y-1.5">
+              <Label htmlFor="project-attachments">Files (brief, deck, references)</Label>
+              <AttachmentsField id="project-attachments" files={files} onChange={setFiles} disabled={pending} />
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
