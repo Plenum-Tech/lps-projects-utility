@@ -131,10 +131,20 @@ export function ProjectTeamFields({
             <p className="text-xs text-muted-foreground">“{row.name}” has nobody planned yet: add people to each role below.</p>
           )}
         </div>
+      ) : !naming.month ? null : planRows.isPending ? (
+        <p className="text-xs text-muted-foreground">Loading the {namingMonthLabel(naming.month)} manpower plan…</p>
+      ) : planRows.isError ? (
+        <p className="text-xs text-destructive">
+          Couldn&apos;t load the {namingMonthLabel(naming.month)} manpower plan.{" "}
+          <button type="button" className="underline underline-offset-2" onClick={() => void planRows.refetch()}>
+            Retry
+          </button>
+        </p>
       ) : (
-        naming.month && (
-          <p className="text-xs text-muted-foreground">No manpower plan for {namingMonthLabel(naming.month)} yet.</p>
-        )
+        <p className="text-xs text-muted-foreground">
+          No manpower plan for {namingMonthLabel(naming.month)} yet — add people to each role below (the plan is created on the
+          Manpower plan page).
+        </p>
       )}
       <div className="grid gap-3 sm:grid-cols-2">
         {roles.map((role) => (
