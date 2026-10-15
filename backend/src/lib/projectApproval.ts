@@ -6,6 +6,7 @@ import { getProjectSettings } from "../models/ProjectSettings.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
+import { syncProjectTeamToPlan } from "./manpowerSync.js";
 import { genericEmailTemplate, sendBatchEmails } from "./email.js";
 import { firstNameOf, notifyUsers } from "./notifications.js";
 import { formatNamingMonth } from "./projectNaming.js";
@@ -217,6 +218,8 @@ export async function decideProjectApproval(
     details: { approval: status, via, reason: reason || undefined },
     ip,
   });
+  // Approved: its team now goes onto its line of the manpower plan.
+  if (status === "approved" && (updated.team ?? []).length) await syncProjectTeamToPlan(updated, approver as IUser);
   const recipients = [project.approval.requestedBy, project.createdBy, project.manager].filter(Boolean) as mongoose.Types.ObjectId[];
   const approved = status === "approved";
   notifyUsers({

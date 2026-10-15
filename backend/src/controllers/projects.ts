@@ -1162,9 +1162,12 @@ export async function createProjectCore(
   });
   notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
-  if ((project.team ?? []).length && !options.skipPlanSync) await syncProjectTeamToPlan(project, actor);
   scheduleProjectTag(projectId);
-  await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false });
+  const approval = await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false });
+  // A project waiting for approval reaches the manpower plan only once approved (lib/projectApproval.ts).
+  if (approval === "approved" && (project.team ?? []).length && !options.skipPlanSync) {
+    await syncProjectTeamToPlan(project, actor);
+  }
   return { project };
 }
 
