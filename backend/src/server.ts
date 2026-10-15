@@ -91,13 +91,16 @@ const corsOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:5173")
   .filter(Boolean);
 
 // --- Global middleware (order matters: env first, then security/cors/parsing) ---
-// Invite tokens are credentials: mask them in the logged URL so they never reach the logs.
-const SECRET_QUERY_PARAM = /([?&](?:api_?key|key|token|access_token)=)[^&#]*/gi;
-const INVITE_TOKEN_PATH = /(\/api\/(?:invitations\/accept|password-setup)\/)[^/?#]+/;
+// One-time link tokens are credentials: mask them in the logged URL so they never reach the logs.
+// Covers the emailed pages (invite, set-password, project approval — the SPA fallback logs
+// those page loads too) and the API calls those pages make. Case-insensitive like Express routing.
+const SECRET_QUERY_PARAM = /([?&](?:api_?key|key|[\w-]*token|secret|password)=)[^&#]*/gi;
+const ONE_TIME_TOKEN_PATH =
+  /(\/(?:api\/+(?:invitations\/+accept|password-setup|project-approval)|invite|set-password|project-approval)\/+)[^/?#]+/gi;
 morgan.token("url", (req) => {
   const url = (req as express.Request).originalUrl || req.url || "";
   // API keys travel only in the Authorization header (never logged); mask key-like query params defensively.
-  return url.replace(INVITE_TOKEN_PATH, "$1[redacted]").replace(SECRET_QUERY_PARAM, "$1[redacted]");
+  return url.replace(ONE_TIME_TOKEN_PATH, "$1[redacted]").replace(SECRET_QUERY_PARAM, "$1[redacted]");
 });
 // Production: one JSON line per request on stdout (ACA -> Log Analytics); probes are not logged.
 const jsonLogFormat: morgan.FormatFn = (tokens, req, res) => {
