@@ -9,13 +9,48 @@ import { Project } from "../models/Project.js";
 import { isProjectApprover, projectApproverIds } from "../lib/projectApproval.js";
 import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { notifyUsers } from "../lib/notifications.js";
+import { applyBrandScopeToProjects } from "../lib/brandFlow.js";
+import { parseScopeItems, scopeText } from "../lib/scopeUnits.js";
+import { User, type IUser } from "../models/User.js";
+
+/** Tells leadership a brand waits for their approval (bell + email). */
+export async function notifyBrandApprovalRequested(brand: IBrand, user: IUser, extra = ""): Promise<void> {
+  notifyUsers({
+    recipients: await projectApproverIds(),
+    actor: user,
+    type: "brand_approval_requested",
+    title: "New brand awaiting your approval",
+    message: `${user.name} proposed the brand "${brand.name}". Approve it so projects can use it.${extra ? ` ${extra}` : ""}`,
+    link: "/approvals",
+    email: {
+      subject: `New brand to approve: ${brand.name}`,
+      heading: "New Brand Awaiting Approval",
+      intro: `${user.name} proposed a new brand. Projects can use it once you approve it.${extra ? ` ${extra}` : ""}`,
+      cardTitle: brand.name,
+      rows: brand.shortName ? [["Short name", brand.shortName]] : [],
+      buttonLabel: "Open Approvals",
+    },
+  });
+}
+
+/** Brand scope rows from a request: project scope rows plus what / source. */
+export function parseBrandScope(raw: unknown) {
+  const parsed = parseScopeItems(raw);
+  if (typeof parsed === "string") throw new FieldError("scopeItems", parsed);
+  const items = raw as Array<Record<string, unknown>>;
+  return parsed.map((row, i) => ({
+    ...row,
+    what: typeof items[i]?.what === "string" ? String(items[i]!.what).trim().slice(0, 80) : "",
+    source: typeof items[i]?.source === "string" ? String(items[i]!.source).trim().slice(0, 255) : "",
+  }));
+}
 
 // ---------------------------------------------------------------------------
 // /api/brands — GET for every signed-in user; POST/PATCH/DELETE admin only.
 // A brand used by projects can't be deleted (409) — deactivate it instead.
 // ---------------------------------------------------------------------------
 
-class FieldError extends Error {
+export class FieldError extends Error {
   constructor(
     readonly field: string,
     message: string
@@ -24,7 +59,7 @@ class FieldError extends Error {
   }
 }
 
-function parseName(raw: unknown): string {
+export function parseName(raw: unknown): string {
   if (typeof raw !== "string" || !raw.trim()) throw new FieldError("name", "name is required");
   const name = raw.trim().replace(/\s+/g, " ");
   if (name.length > BRAND_LIMITS.nameMax) throw new FieldError("name", `name must be ${BRAND_LIMITS.nameMax} characters or fewer`);
@@ -62,11 +97,11 @@ async function projectCounts(ids: mongoose.Types.ObjectId[]): Promise<Map<string
   return new Map(rows.map((r) => [String(r._id), r.count]));
 }
 
-function serialize(brand: IBrand, projectCount: number) {
+export function serialize(brand: IBrand, projectCount: number) {
   return { ...(brand.toJSON() as Record<string, unknown>), projectCount };
 }
 
-function sendFieldError(res: Response, err: unknown): boolean {
+export function sendFieldError(res: Response, err: unknown): boolean {
   if (err instanceof FieldError) {
     res.status(400).json({ error: err.message, field: err.field });
     return true;
@@ -112,24 +147,7 @@ export async function createBrand(req: Request, res: Response): Promise<void> {
       requestedBy: user._id,
       ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),
     });
-    if (!leader) {
-      notifyUsers({
-        recipients: await projectApproverIds(),
-        actor: user,
-        type: "brand_approval_requested",
-        title: "New brand awaiting your approval",
-        message: `${user.name} proposed the brand "${brand.name}". Approve it so projects can use it.`,
-        link: "/approvals",
-        email: {
-          subject: `New brand to approve: ${brand.name}`,
-          heading: "New Brand Awaiting Approval",
-          intro: `${user.name} proposed a new brand. Projects can use it once you approve it.`,
-          cardTitle: brand.name,
-          rows: brand.shortName ? [["Short name", brand.shortName]] : [],
-          buttonLabel: "Open Approvals",
-        },
-      });
-    }
+    if (!leader) await notifyBrandApprovalRequested(brand, user);
     logActivity({
       action: "settings_updated",
       actor: req.user,
@@ -159,7 +177,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as Record<string, unknown>;
   // The requested values (validated), then: leadership applies them, anyone else
   // sends them to leadership for approval (one request per brand, emailed now).
-  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean } = {};
+  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope> } = {};
   try {
     if ("name" in body) {
       const name = parseName(body.name);
@@ -177,6 +195,10 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
       const active = parseActive(body.active);
       if (active !== brand.active) next.active = active;
     }
+    if ("scopeItems" in body) {
+      const scopeItems = parseBrandScope(body.scopeItems);
+      if (scopeText(scopeItems) !== scopeText(brand.scopeItems ?? [])) next.scopeItems = scopeItems;
+    }
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
@@ -184,10 +206,16 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const changed = Object.keys(next);
   let pendingApproval: string | undefined;
   if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
-    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active" };
+    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope" };
     const colourName: Record<string, string> = { "chart-1": "Teal", "chart-2": "Sky", "chart-3": "Indigo", "chart-4": "Amber", "chart-5": "Coral" };
     const show = (key: string, value: unknown) =>
-      key === "active" ? (value ? "Active" : "Inactive") : key === "color" ? (colourName[String(value)] ?? String(value)) : String(value ?? "") || "—";
+      key === "active"
+        ? value ? "Active" : "Inactive"
+        : key === "color"
+          ? (colourName[String(value)] ?? String(value))
+          : key === "scopeItems"
+            ? scopeText(value as never) || "—"
+            : String(value ?? "") || "—";
     await requestChange({
       kind: "brand_edit",
       actor: req.user!,
@@ -206,6 +234,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     try {
       Object.assign(brand, next);
       await brand.save();
+      if (next.scopeItems) await applyBrandScopeToProjects(brand);
     } catch (err) {
       if (!sendFieldError(res, err)) throw err;
       return;
@@ -280,7 +309,17 @@ export async function decideBrand(req: Request, res: Response): Promise<void> {
   brand.decidedBy = user._id as mongoose.Types.ObjectId;
   brand.decidedAt = new Date();
   brand.rejectReason = brand.status === "rejected" ? reason : "";
+  const setup = brand.pendingSetup;
+  brand.pendingSetup = null;
   await brand.save();
+  // Brand flow: the project, lead tasks and plan line waited for this approval.
+  let setupNote = "";
+  if (setup && brand.status === "approved") {
+    const { runBrandSetup } = await import("./brandFlow.js");
+    const requester = brand.requestedBy ? await User.findById(brand.requestedBy) : null;
+    const result = await runBrandSetup(brand, setup as never, requester ?? user, req.ip);
+    setupNote = "error" in result ? ` The project couldn't be created: ${result.error}` : ` Project ${result.project.name} was created.`;
+  }
   logActivity({
     action: "settings_updated",
     actor: user,
@@ -298,7 +337,7 @@ export async function decideBrand(req: Request, res: Response): Promise<void> {
       type: approved ? "brand_approved" : "brand_rejected",
       title: approved ? "Brand approved" : "Brand not approved",
       message: approved
-        ? `${user.name} approved the brand "${brand.name}". You can use it on projects now.`
+        ? `${user.name} approved the brand "${brand.name}". You can use it on projects now.${setupNote}`
         : `${user.name} didn't approve the brand "${brand.name}"${reason ? `: ${reason}` : "."}`,
       link: "/projects",
       email: {

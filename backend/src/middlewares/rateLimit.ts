@@ -239,3 +239,14 @@ export const summaryCheckRateLimit = rateLimit({
   keyGenerator: userOrIpKey,
   message: "You've checked a lot of summaries in the last hour. Try again later.",
 });
+
+/**
+ * Brand flow scope reading (POST /api/brands/scope-extract — one vision model call
+ * per click): 30 per hour per user.
+ */
+export const scopeExtractRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  keyGenerator: userOrIpKey,
+  message: "You've read a lot of files in the last hour. Try again later.",
+});

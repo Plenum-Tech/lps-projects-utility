@@ -58,6 +58,11 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     if (!brand) return "The brand no longer exists";
     Object.assign(brand, payload);
     await brand.save();
+    // A new brand scope reaches the brand's open projects (their scope is locked to it).
+    if ((payload as Record<string, unknown>).scopeItems) {
+      const { applyBrandScopeToProjects } = await import("../lib/brandFlow.js");
+      await applyBrandScopeToProjects(brand);
+    }
     return null;
   }
   const plan = await ManpowerPlan.findOne({ month: request.month, version: request.version });

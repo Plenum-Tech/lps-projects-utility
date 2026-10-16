@@ -12,7 +12,28 @@ import { TASK_LABEL_COLORS } from "./TaskLabel.js";
 export const BRAND_COLORS = TASK_LABEL_COLORS;
 export type BrandColor = (typeof BRAND_COLORS)[number];
 
-export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20 } as const;
+export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20, maxScopeFiles: 10, noteMax: 300, maxNotes: 20, maxPlatforms: 12 } as const;
+
+/** A brand scope row: a project scope row plus what it is and the file it came from. */
+export interface IBrandScopeItem {
+  unit: string;
+  quantity: number;
+  languages: number;
+  languageList?: string[];
+  sizes: number;
+  /** "Engagement posts", "Native TikTok videos" … */
+  what?: string;
+  /** File (or "typed") the row was read from. */
+  source?: string;
+}
+
+/** A file the brand's scope was read from (GridFS "taskFiles" bucket; copied onto its projects). */
+export interface IBrandScopeFile {
+  gridFsId: mongoose.Types.ObjectId;
+  filename: string;
+  mimeType: string;
+  size: number;
+}
 
 /**
  * Case-insensitive identity of a brand name: trimmed, inner whitespace collapsed,
@@ -36,6 +57,23 @@ export interface IBrand extends mongoose.Document {
   decidedBy?: mongoose.Types.ObjectId | null;
   decidedAt?: Date | null;
   rejectReason?: string;
+  /** Brand flow: a pitch (shows potential revenue) or a direct client. */
+  isPitch?: boolean;
+  /** Potential revenue in AED (pitches); null with revenueTbc = not known yet. */
+  revenue?: number | null;
+  revenueTbc?: boolean;
+  /** Scope read from the brand's files; projects of the brand get it locked. Empty = no brand scope. */
+  scopeItems?: IBrandScopeItem[];
+  platforms?: string[];
+  scopeNotes?: string[];
+  scopeFiles?: IBrandScopeFile[];
+  /** Lead(s) picked in the brand flow. */
+  leads?: mongoose.Types.ObjectId[];
+  /**
+   * Brand flow run by someone who isn't leadership: the project, lead tasks and plan
+   * line to create once the brand is approved (lib/brandFlow.ts). Cleared after.
+   */
+  pendingSetup?: Record<string, unknown> | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -52,6 +90,44 @@ const brandSchema = new Schema<IBrand>(
     decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     decidedAt: { type: Date, default: null },
     rejectReason: { type: String, trim: true, maxlength: 500, default: "" },
+    isPitch: { type: Boolean, default: false },
+    revenue: { type: Number, default: null, min: 0 },
+    revenueTbc: { type: Boolean, default: false },
+    scopeItems: {
+      type: [
+        new Schema(
+          {
+            unit: { type: String, required: true, maxlength: 40 },
+            quantity: { type: Number, required: true, min: 1 },
+            languages: { type: Number, default: 1, min: 1 },
+            languageList: { type: [String], default: undefined },
+            sizes: { type: Number, default: 1, min: 1 },
+            what: { type: String, trim: true, maxlength: 80, default: "" },
+            source: { type: String, trim: true, maxlength: 255, default: "" },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
+    platforms: { type: [{ type: String, trim: true, maxlength: 40 }], default: [] },
+    scopeNotes: { type: [{ type: String, trim: true, maxlength: BRAND_LIMITS.noteMax }], default: [] },
+    scopeFiles: {
+      type: [
+        new Schema(
+          {
+            gridFsId: { type: Schema.Types.ObjectId, required: true },
+            filename: { type: String, required: true, maxlength: 255 },
+            mimeType: { type: String, default: "" },
+            size: { type: Number, default: 0 },
+          },
+          { _id: false }
+        ),
+      ],
+      default: [],
+    },
+    leads: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
+    pendingSetup: { type: Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
 );
@@ -83,6 +159,9 @@ brandSchema.set("toJSON", {
   transform: (_doc, ret) => {
     const json = ret as unknown as Record<string, unknown>;
     delete json.__v;
+    // The setup is the server's to run on approval; clients see only that one is waiting.
+    json.setupWaiting = Boolean(json.pendingSetup);
+    delete json.pendingSetup;
     return json;
   },
 });
