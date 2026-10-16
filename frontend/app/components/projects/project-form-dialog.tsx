@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
 import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
 import { ScopeItemsEditor } from "@/components/projects/scope-items-editor";
+import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
+import { scopeTotal } from "@/lib/scope";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
 import { api, getErrorMessage } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
@@ -464,6 +466,12 @@ export function ProjectFormDialog({
 
   // ---- validation ---------------------------------------------------------
   const selectedBrand = brands.data?.find((brand) => brand._id === form.brand);
+  // A brand with a scope (brand flow) fixes the scope of its projects: shown read-only.
+  const brandScope = selectedBrand?.scopeItems?.length ? selectedBrand.scopeItems : null;
+  const brandScopeRows: ScopeItem[] | null = brandScope
+    ? brandScope.map(({ unit, quantity, languages, languageList, sizes }) => ({ unit, quantity, languages, sizes, ...(languageList?.length ? { languageList } : {}) }))
+    : null;
+  const [brandFlowOpen, setBrandFlowOpen] = useState(false);
   const title = tidyNamePart(form.title);
   const code = form.code.trim().toUpperCase();
   const brandError =
@@ -481,7 +489,7 @@ export function ProjectFormDialog({
       : title.includes(NAMING_SEPARATOR)
         ? "Underscores separate the parts — use a space or dash instead."
         : null;
-  const scopeError = !project && form.scopeItems.length === 0 ? "Add at least one scope row." : null;
+  const scopeError = !project && !brandScope && form.scopeItems.length === 0 ? "Add at least one scope row." : null;
   const preview = composeProjectName({
     brand: selectedBrand?.name ?? "",
     type: form.type,
@@ -590,7 +598,7 @@ export function ProjectFormDialog({
         members: form.members,
         team: teamToInput(form.team),
         manpowerRow: form.manpowerRow === AUTO_ROW ? null : form.manpowerRow,
-        scopeItems: form.scopeItems,
+        scopeItems: brandScopeRows ?? form.scopeItems,
         status: form.status || undefined,
         progressMode: form.progressMode,
         hoursAllocated: hours,
@@ -636,7 +644,7 @@ export function ProjectFormDialog({
     if (form.category !== original.category) input.category = category;
     if (form.manpowerRow !== original.manpowerRow)
       input.manpowerRow = form.manpowerRow === AUTO_ROW ? null : form.manpowerRow;
-    if (JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
+    if (!brandScope && JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -837,10 +845,10 @@ export function ProjectFormDialog({
                 {isAdmin && newBrand === null && (
                   <button
                     type="button"
-                    onClick={() => setNewBrand("")}
+                    onClick={() => setBrandFlowOpen(true)}
                     className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:underline"
                   >
-                    + New brand
+                    + New brand (reads its scope from the brief)
                   </button>
                 )}
               </div>
@@ -1056,12 +1064,61 @@ export function ProjectFormDialog({
                 Deliverables as rows: unit, quantity and the language / size multipliers (3 videos × 2 languages × 2
                 sizes = 12). Tasks beyond a unit&apos;s total are flagged for an admin.
               </p>
-              <ScopeItemsEditor
-                value={form.scopeItems}
-                onChange={(rows) => set("scopeItems", rows)}
-                invalid={show(scopeError)}
-              />
-              {show(scopeError) && <FieldError>{scopeError}</FieldError>}
+              {brandScope ? (
+                <div className="space-y-2">
+                  <p className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
+                    🔒 <span className="font-medium">Scope comes from the brand {selectedBrand?.name}</span> — read from its
+                    files when the brand was created, so it can&apos;t be edited here. To change it, edit the brand&apos;s scope
+                    (non-leadership changes go for approval).
+                  </p>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[30rem] text-sm">
+                      <thead className="text-xs text-muted-foreground">
+                        <tr className="border-b text-left">
+                          <th className="py-1.5 pr-3 font-medium">Unit</th>
+                          <th className="py-1.5 pr-3 font-medium">What</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Qty</th>
+                          <th className="py-1.5 pr-3 font-medium">Languages</th>
+                          <th className="py-1.5 pr-3 text-right font-medium">Sizes</th>
+                          <th className="py-1.5 text-right font-medium">Total</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {brandScope.map((row, index) => (
+                          <tr key={index} className="border-b last:border-0">
+                            <td className="py-1.5 pr-3">{row.unit}</td>
+                            <td className="py-1.5 pr-3 text-muted-foreground">{row.what || "—"}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{row.quantity}</td>
+                            <td className="py-1.5 pr-3 text-xs">{row.languageList?.join(", ") || row.languages}</td>
+                            <td className="py-1.5 pr-3 text-right tabular-nums">{row.sizes}</td>
+                            <td className="py-1.5 text-right font-semibold tabular-nums">{scopeTotal(row)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {(selectedBrand?.platforms?.length || selectedBrand?.scopeFiles?.length) && (
+                    <p className="text-xs text-muted-foreground">
+                      {selectedBrand?.platforms?.length ? `Platforms: ${selectedBrand.platforms.join(", ")}. ` : ""}
+                      {selectedBrand?.scopeFiles?.length ? `The brand's files are attached to the project: ${selectedBrand.scopeFiles.map((f) => f.filename).join(", ")}.` : ""}
+                    </p>
+                  )}
+                  {selectedBrand?.scopeNotes?.length ? (
+                    <ul className="list-disc space-y-0.5 pl-5 text-xs text-amber-700 dark:text-amber-400">
+                      {selectedBrand.scopeNotes.map((n) => <li key={n}>{n}</li>)}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : (
+                <>
+                  <ScopeItemsEditor
+                    value={form.scopeItems}
+                    onChange={(rows) => set("scopeItems", rows)}
+                    invalid={show(scopeError)}
+                  />
+                  {show(scopeError) && <FieldError>{scopeError}</FieldError>}
+                </>
+              )}
             </fieldset>
           )}
 
@@ -1178,6 +1235,7 @@ export function ProjectFormDialog({
             )}
           </DialogFooter>
         </form>
+        {isAdmin && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
       </DialogContent>
     </Dialog>
   );

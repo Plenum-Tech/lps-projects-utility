@@ -23,6 +23,7 @@ import { FilterSelect } from "@/components/globals/filter-select";
 import { ImportButton } from "@/components/imports/import-button";
 import { EmptyState, PageHeader } from "@/components/globals/query-states";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
+import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import {
   ArchiveDialog,
   DeleteProjectDialog,
@@ -192,6 +193,7 @@ export function ProjectWorkspace() {
 
   const [sheetOpen, setSheetOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [brandFlowOpen, setBrandFlowOpen] = useState(false);
   const [dialog, setDialog] = useState<{ kind: ProjectDialogKind; project: Project } | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState<"archive" | "restore" | "delete" | null>(null);
 
@@ -308,6 +310,12 @@ export function ProjectWorkspace() {
                 <LuPlus aria-hidden />
                 Add project
               </Button>
+              {isAdmin && (
+                <Button variant="outline" onClick={() => setBrandFlowOpen(true)}>
+                  <LuPlus aria-hidden />
+                  New brand
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={() => exportCsv()}
@@ -572,6 +580,7 @@ export function ProjectWorkspace() {
       </FiltersSheet>
 
       <ProjectFormDialog open={createOpen} onOpenChange={setCreateOpen} />
+      {isAdmin && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
 
       {dialog && (
         <>

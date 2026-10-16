@@ -3119,8 +3119,26 @@ export interface Brand {
   /** Absent on older brands (= approved). Pending / rejected brands can't be used yet. */
   status?: "approved" | "pending" | "rejected";
   projectCount: number;
+  /** Brand flow: a pitch (has potential revenue) or a direct client. */
+  isPitch?: boolean;
+  revenue?: number | null;
+  revenueTbc?: boolean;
+  /** Scope read from the brand's files; non-empty = its projects' scope is locked to it. */
+  scopeItems?: BrandScopeItem[];
+  platforms?: string[];
+  scopeNotes?: string[];
+  scopeFiles?: Array<{ filename: string; mimeType: string; size: number }>;
+  leads?: string[];
+  /** A brand-flow setup (project, lead tasks, team) waits for this brand's approval. */
+  setupWaiting?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A brand scope row: a project scope row plus what it is and the file it came from. */
+export interface BrandScopeItem extends ScopeItem {
+  what?: string;
+  source?: string;
 }
 
 export interface BrandInput {
@@ -3128,6 +3146,39 @@ export interface BrandInput {
   shortName?: string;
   color?: BrandColor;
   active?: boolean;
+  scopeItems?: BrandScopeItem[];
+}
+
+/** POST /brands/scope-extract — what was read from the brief / SOW. */
+export interface ScopeExtraction {
+  texts: Array<{ source: string; text: string; read: boolean }>;
+  projectName: string | null;
+  platforms: string[];
+  revenue: number | null;
+  dates: { clientPresentation: string | null; milestone1: string | null; milestone2: string | null };
+  scope: Array<{ unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string }>;
+  notes: string[];
+  usedAI: boolean;
+}
+
+/** A pitch-tracker date cell: the date, or a month only (its last day), plus the text as written. */
+export interface PitchSheetDate {
+  date: string | null;
+  monthOnly: boolean;
+  text: string;
+}
+
+/** POST /brands/pitch-sheet — one row of the pitch tracker. */
+export interface PitchSheetRow {
+  client: string;
+  campaign: string;
+  revenue: number | null;
+  revenueTbc: boolean;
+  clientPresentation: PitchSheetDate;
+  milestone1: PitchSheetDate;
+  milestone2: PitchSheetDate;
+  status: string;
+  lead: string;
 }
 
 /** Brand as populated on a project. */

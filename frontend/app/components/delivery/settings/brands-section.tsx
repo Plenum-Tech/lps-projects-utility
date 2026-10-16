@@ -30,6 +30,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useBrands, useCreateBrand, useDeleteBrand, useUpdateBrand } from "@/hooks/use-brands";
+import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { Brand, BrandColor } from "@/types";
@@ -38,6 +39,7 @@ import type { Brand, BrandColor } from "@/types";
 export function BrandsSection() {
   const brands = useBrands();
   const [editing, setEditing] = useState<Brand | "new" | null>(null);
+  const [flowOpen, setFlowOpen] = useState(false);
   const [deleting, setDeleting] = useState<Brand | null>(null);
 
   return (
@@ -52,7 +54,7 @@ export function BrandsSection() {
           deactivate them instead so they can&apos;t be picked for new projects.
         </CardDescription>
         <CardAction>
-          <Button size="sm" onClick={() => setEditing("new")}>
+          <Button size="sm" onClick={() => setFlowOpen(true)}>
             <LuPlus aria-hidden />
             New brand
           </Button>
@@ -74,7 +76,7 @@ export function BrandsSection() {
           />
         ) : brands.data.length === 0 ? (
           <EmptyState icon={LuTags} title="No brands yet" description="Add your first client brand, then pick it on projects.">
-            <Button size="sm" onClick={() => setEditing("new")}>
+            <Button size="sm" onClick={() => setFlowOpen(true)}>
               <LuPlus aria-hidden />
               New brand
             </Button>
@@ -94,6 +96,7 @@ export function BrandsSection() {
         onOpenChange={(open) => !open && setEditing(null)}
       />
       <DeleteBrandDialog brand={deleting} onClose={() => setDeleting(null)} />
+      <BrandFlowDialog open={flowOpen} onOpenChange={setFlowOpen} />
     </Card>
   );
 }
