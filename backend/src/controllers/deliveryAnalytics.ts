@@ -8,7 +8,7 @@ import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
 import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
 import { briefCheckConfigured, briefCheckModel } from "../lib/briefCheck.js";
-import { loadBriefInputs } from "../lib/delivery/briefs.js";
+import { BRIEF_RULE_KEYS, briefRules, loadBriefInputs, scoreBrief, type BriefInput, type BriefScore } from "../lib/delivery/briefs.js";
 import { deliveryCached } from "../lib/delivery/cache.js";
 import { dayFromKey, keyFromDay } from "../lib/delivery/days.js";
 import {
@@ -52,6 +52,7 @@ import { getDeliverySettings, type DeliverySettingsSnapshot } from "../lib/deliv
 const DELAYED_ROW_CAP = 1000;
 const WEAKEST_COUNT = 20;
 const WEAKEST_DAYS = 30;
+const MONTHS_CAP = 24;
 
 class BadRequest extends Error {}
 
@@ -247,7 +248,16 @@ const pctText = (v: number | null) => (v === null ? "" : v);
 export async function getSummary(req: Request, res: Response): Promise<void> {
   await respond(req, res, "summary", (ctx) => {
     const s = summarize(ctx.facts, ctx.period);
-    return { kpis: statsRow(s.current), previous: s.previous ? statsRow(s.previous) : null, deltas: s.deltas };
+    // "Added this week": tasks briefed (created) in the last 7 days vs the 7 days before (period filter doesn't apply).
+    const createdIn = (start: number, end: number) => ctx.facts.filter((f) => f.createdDay >= start && f.createdDay <= end).length;
+    const addedThisWeek = createdIn(ctx.today - 6, ctx.today);
+    const addedPrevWeek = createdIn(ctx.today - 13, ctx.today - 7);
+    return {
+      kpis: statsRow(s.current),
+      previous: s.previous ? statsRow(s.previous) : null,
+      deltas: s.deltas,
+      addedThisWeek: { count: addedThisWeek, delta: delta(addedThisWeek, addedPrevWeek, "neutral") },
+    };
   });
 }
 
@@ -259,7 +269,95 @@ export async function getWeekly(req: Request, res: Response): Promise<void> {
   });
 }
 
-type TeamsData = { rows: Array<ReturnType<typeof statsRow> & { team: { id: string; name: string }; volume: number }> };
+/** Facts per doer. */
+function factsByPerson(facts: TaskFact[]): Map<string, TaskFact[]> {
+  const byPerson = new Map<string, TaskFact[]>();
+  for (const f of facts) {
+    for (const d of f.doers) {
+      const list = byPerson.get(d);
+      if (list) list.push(f);
+      else byPerson.set(d, [f]);
+    }
+  }
+  return byPerson;
+}
+
+type Performer = { person: ReturnType<typeof userRef>; why: string };
+
+/**
+ * Best and bottom performer of a team: people with at least `minCompleted`
+ * completed in the period, ranked on on-time rate, mean days, rework share,
+ * overdue count and volume (completed). Each metric gives a 0–1 rank (1 = best
+ * in the team); the mean of the ranks decides. Null when fewer than 2 qualify.
+ */
+function teamPerformers(
+  ctx: Ctx,
+  people: Array<{ id: string; stats: Stats }>,
+  minCompleted: number
+): { best: Performer; bottom: Performer } | null {
+  const ranked = people.filter((p) => p.stats.completed >= minCompleted);
+  if (ranked.length < 2) return null;
+  const metrics: Array<{ value: (s: Stats) => number | null; higher: boolean }> = [
+    { value: (s) => s.onTimePct, higher: true },
+    { value: (s) => s.meanDays, higher: false },
+    { value: (s) => s.reworkPct, higher: false },
+    { value: (s) => s.overdue, higher: false },
+    { value: (s) => s.completed, higher: true },
+  ];
+  const scores = new Map<string, { sum: number; n: number }>(ranked.map((p) => [p.id, { sum: 0, n: 0 }]));
+  for (const m of metrics) {
+    const withValue = ranked.filter((p) => m.value(p.stats) !== null);
+    if (withValue.length < 2) continue;
+    for (const p of withValue) {
+      const v = m.value(p.stats)!;
+      // Share of the others this person beats (ties count half).
+      let beats = 0;
+      for (const o of withValue) {
+        if (o.id === p.id) continue;
+        const ov = m.value(o.stats)!;
+        if (v === ov) beats += 0.5;
+        else if (m.higher ? v > ov : v < ov) beats += 1;
+      }
+      const s = scores.get(p.id)!;
+      s.sum += beats / (withValue.length - 1);
+      s.n += 1;
+    }
+  }
+  const order = ranked
+    .map((p) => ({ p, score: scores.get(p.id)!.n ? scores.get(p.id)!.sum / scores.get(p.id)!.n : 0.5 }))
+    .sort((a, b) => b.score - a.score || b.p.stats.completed - a.p.stats.completed || userRef(ctx, a.p.id).name.localeCompare(userRef(ctx, b.p.id).name));
+  const why = (s: Stats) =>
+    [
+      s.onTimePct !== null ? `${Math.round(s.onTimePct)}% on time` : null,
+      s.meanDays !== null ? `${s.meanDays}d mean` : null,
+      s.reworkPct !== null && s.reworkPct > 0 ? `${Math.round(s.reworkPct)}% rework` : null,
+      s.overdue > 0 ? `${s.overdue} overdue` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ") || `${s.completed} completed`;
+  const first = order[0]!.p;
+  const last = order[order.length - 1]!.p;
+  return {
+    best: { person: userRef(ctx, first.id), why: why(first.stats) },
+    bottom: { person: userRef(ctx, last.id), why: why(last.stats) },
+  };
+}
+
+type TeamsData = {
+  minCompletedToRank: number;
+  rows: Array<
+    ReturnType<typeof statsRow> & {
+      team: { id: string; name: string };
+      volume: number;
+      /** People in the team (by department) with work in the period. */
+      people: number;
+      /** Mean days brief → done for tasks completed in the last 30 days. */
+      meanDays30: number | null;
+      best: Performer | null;
+      bottom: Performer | null;
+    }
+  >;
+};
 
 /** GET /teams — per dashboard team (a task counts once for each team of its doers). */
 export async function getTeams(req: Request, res: Response): Promise<void> {
@@ -269,26 +367,84 @@ export async function getTeams(req: Request, res: Response): Promise<void> {
     "teams",
     (ctx) => {
       const groups = groupStats(ctx.facts, (f) => f.teams, ctx.period.current, ctx.today);
+      const last30 = groupStats(ctx.facts, (f) => f.teams, { start: ctx.today - 29, end: ctx.today }, ctx.today);
       const configured = ctx.settings.dashboardTeams ?? [...ctx.ref.departments.keys()];
       const keys = new Set<string>([...configured.filter((id) => ctx.ref.departments.has(id)), ...[...groups.keys()].filter((k): k is string => k !== null)]);
+      // People per team (their own department's team), with work in the period.
+      const teamPeople = new Map<string, Array<{ id: string; stats: Stats }>>();
+      for (const [id, facts] of factsByPerson(ctx.facts)) {
+        const stats = statsFor(facts, ctx.period.current, ctx.today);
+        if (isEmptyStats(stats)) continue;
+        const team = teamOfDepartment(ctx, ctx.ref.users.get(id)?.department ?? null);
+        const list = teamPeople.get(team);
+        if (list) list.push({ id, stats });
+        else teamPeople.set(team, [{ id, stats }]);
+      }
+      const minCompleted = ctx.settings.minCompletedToRank;
       const rows = [...keys]
         .map((key) => {
           const s = groups.get(key) ?? statsFor([], ctx.period.current, ctx.today);
-          return { team: { id: key, name: teamName(ctx, key) }, ...statsRow(s), volume: s.completed };
+          const people = teamPeople.get(key) ?? [];
+          const performers = teamPerformers(ctx, people, minCompleted);
+          return {
+            team: { id: key, name: teamName(ctx, key) },
+            ...statsRow(s),
+            volume: s.completed,
+            people: people.length,
+            meanDays30: last30.get(key)?.meanDays ?? null,
+            best: performers?.best ?? null,
+            bottom: performers?.bottom ?? null,
+          };
         })
         .filter((r) => r.team.id !== OTHER_TEAM || r.created + r.completed + r.open > 0)
         .sort((a, b) => b.completed - a.completed || a.team.name.localeCompare(b.team.name));
-      return { rows };
+      return { minCompletedToRank: minCompleted, rows };
     },
     {
       csv: (d) => ({
         name: "delivery-teams",
-        headers: ["Team", "Completed", "On time %", "Mean days", "Mean start → done", "Rework %", "Overdue now", "Open", "Created"],
-        rows: d.rows.map((r) => [r.team.name, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.startToDoneDays), pctText(r.reworkPct), r.overdue, r.open, r.created]),
+        headers: [
+          "Team", "People", "Completed", "On time %", "Mean days", "Mean days · 30d", "Mean start → done", "Rework %", "Overdue now", "Open", "Created",
+          "Best performer", "Bottom performer",
+        ],
+        rows: d.rows.map((r) => [
+          r.team.name, r.people, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.meanDays30), pctText(r.startToDoneDays),
+          pctText(r.reworkPct), r.overdue, r.open, r.created,
+          r.best ? `${r.best.person.name} (${r.best.why})` : "", r.bottom ? `${r.bottom.person.name} (${r.bottom.why})` : "",
+        ]),
       }),
     }
   );
 }
+
+type ScoredBrief = { input: BriefInput; score: BriefScore };
+
+/**
+ * Brief inputs and LPS rule scores for `facts`. "Doer on the map" uses the
+ * team-map sources of the team-map coverage table (manpower plan of the task's
+ * creation month, else the brand team map).
+ */
+async function scoreBriefs(ctx: Ctx, facts: TaskFact[]): Promise<ScoredBrief[]> {
+  if (facts.length === 0) return [];
+  const minDay = facts.reduce((m, f) => Math.min(m, f.createdDay), ctx.today);
+  const [inputs, projects] = await Promise.all([loadBriefInputs(facts), loadPlanProjects()]);
+  const plans = await planMapsFor(keyFromDay(minDay).slice(0, 7), keyFromDay(ctx.today).slice(0, 7), projects);
+  const { mapForFact } = teamMapSources(ctx.settings, projects, plans);
+  return inputs.map((input) => {
+    const f = input.fact;
+    const brandName = f.brand ? (ctx.ref.brands.get(f.brand)?.name ?? null) : null;
+    return { input, score: scoreBrief(input, ctx.settings, brandName, mapForFact(f, brandKey(ctx, f)).set) };
+  });
+}
+
+const meanScore = (list: ScoredBrief[]): number | null => {
+  const scores = list.map((s) => s.score.score).filter((s): s is number => s !== null);
+  return scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+};
+
+const createdInRange = (f: TaskFact, r: Range) => f.createdDay >= r.start && f.createdDay <= r.end;
+
+type WarningFlag = "reworkUp" | "onTimeDown" | "overdueUp";
 
 type BrandsData = {
   rows: Array<
@@ -296,6 +452,11 @@ type BrandsData = {
       brand: ReturnType<typeof brandRef>;
       previous: ReturnType<typeof statsRow> | null;
       deltas: Record<string, ReturnType<typeof delta>> | null;
+      /** Mean LPS brief score (0–100) of the brand's tasks created in the period. */
+      briefScore: number | null;
+      briefsScored: number;
+      /** Warning signs vs the previous period: rework up, on time down, overdue up (null without a previous period). */
+      warnings: { count: number; flags: WarningFlag[] } | null;
     }
   >;
 };
@@ -306,31 +467,51 @@ export async function getBrands(req: Request, res: Response): Promise<void> {
     req,
     res,
     "brands",
-    (ctx) => {
+    async (ctx) => {
       const key = (f: TaskFact) => [brandKey(ctx, f)];
       const cur = groupStats(ctx.facts, key, ctx.period.current, ctx.today);
       const prev = ctx.period.previous ? groupStats(ctx.facts, key, ctx.period.previous, ctx.period.previous.end) : null;
       const keys = new Set<string>([...cur.keys(), ...(prev?.keys() ?? [])].filter((k): k is string => k !== null));
+      const scored = await scoreBriefs(ctx, ctx.facts.filter((f) => createdInRange(f, ctx.period.current)));
+      const scoredByBrand = new Map<string, ScoredBrief[]>();
+      for (const s of scored) {
+        const k = brandKey(ctx, s.input.fact);
+        const list = scoredByBrand.get(k);
+        if (list) list.push(s);
+        else scoredByBrand.set(k, [s]);
+      }
       const rows = [...keys]
         .map((k) => {
           const c = cur.get(k) ?? statsFor([], ctx.period.current, ctx.today);
           const p = prev?.get(k) ?? null;
           const had = p !== null && !isEmptyStats(p);
           const pv = <T extends number | null>(v: T | undefined): T | null => (had && v !== undefined ? v : null);
+          const deltas = ctx.period.previous
+            ? {
+                created: delta(c.created, pv(p?.created), "neutral"),
+                completed: delta(c.completed, pv(p?.completed), "higher"),
+                onTimePct: delta(c.onTimePct, pv(p?.onTimePct), "higher"),
+                meanDays: delta(c.meanDays, pv(p?.meanDays), "lower"),
+                reworkPct: delta(c.reworkPct, pv(p?.reworkPct), "lower"),
+                overdue: delta(c.overdue, pv(p?.overdue), "lower"),
+              }
+            : null;
+          const flags: WarningFlag[] = deltas
+            ? [
+                ...(deltas.reworkPct.direction === "up" ? (["reworkUp"] as const) : []),
+                ...(deltas.onTimePct.direction === "down" ? (["onTimeDown"] as const) : []),
+                ...(deltas.overdue.direction === "up" ? (["overdueUp"] as const) : []),
+              ]
+            : [];
+          const brandScored = scoredByBrand.get(k) ?? [];
           return {
             brand: brandRef(ctx, k === NO_BRAND ? null : k),
             ...statsRow(c),
             previous: p ? statsRow(p) : null,
-            deltas: ctx.period.previous
-              ? {
-                  created: delta(c.created, pv(p?.created), "neutral"),
-                  completed: delta(c.completed, pv(p?.completed), "higher"),
-                  onTimePct: delta(c.onTimePct, pv(p?.onTimePct), "higher"),
-                  meanDays: delta(c.meanDays, pv(p?.meanDays), "lower"),
-                  reworkPct: delta(c.reworkPct, pv(p?.reworkPct), "lower"),
-                  overdue: delta(c.overdue, pv(p?.overdue), "lower"),
-                }
-              : null,
+            deltas,
+            briefScore: meanScore(brandScored),
+            briefsScored: brandScored.filter((s) => s.score.score !== null).length,
+            warnings: deltas ? { count: flags.length, flags } : null,
           };
         })
         .filter((r) => !isEmptyStats(r) || (r.previous !== null && !isEmptyStats(r.previous)))
@@ -341,13 +522,13 @@ export async function getBrands(req: Request, res: Response): Promise<void> {
       csv: (d) => ({
         name: "delivery-brands",
         headers: [
-          "Brand", "Created", "Completed", "On time %", "Mean days", "Rework %", "Overdue now",
-          "Created (prev)", "Completed (prev)", "On time % (prev)", "Mean days (prev)", "Rework % (prev)",
+          "Brand", "Created", "Completed", "On time %", "Mean days", "Rework %", "Overdue now", "Brief score",
+          "Created (prev)", "Completed (prev)", "On time % (prev)", "Mean days (prev)", "Rework % (prev)", "Overdue (prev)", "Warning signs",
         ],
         rows: d.rows.map((r) => [
-          r.brand.name, r.created, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.reworkPct), r.overdue,
+          r.brand.name, r.created, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.reworkPct), r.overdue, pctText(r.briefScore),
           r.previous?.created ?? "", r.previous?.completed ?? "", pctText(r.previous?.onTimePct ?? null),
-          pctText(r.previous?.meanDays ?? null), pctText(r.previous?.reworkPct ?? null),
+          pctText(r.previous?.meanDays ?? null), pctText(r.previous?.reworkPct ?? null), r.previous?.overdue ?? "", r.warnings?.count ?? "",
         ]),
       }),
     }
@@ -394,10 +575,10 @@ export async function getDelayed(req: Request, res: Response): Promise<void> {
       extra: { includeStale, csv: req.query.format === "csv" },
       csv: (d) => ({
         name: "delivery-delayed",
-        headers: ["Code", "Task", "Brand", "Project", "Doers", "Briefer", "Due", "Days late", "Status"],
+        headers: ["Code", "Task", "Brand", "Project", "Doers", "Briefed by", "Created", "Due", "Days late", "Status"],
         rows: d.rows.map((r) => [
           r.code, r.title, r.brand.name, r.project ? `${r.project.code} · ${r.project.name}` : "",
-          r.doers.map((u) => u.name).join("; "), r.briefer.name, r.dueDate ?? "", r.daysLate ?? "", r.status,
+          r.doers.map((u) => u.name).join("; "), r.briefer.name, r.createdDate, r.dueDate ?? "", r.daysLate ?? "", r.status,
         ]),
       }),
     }
@@ -405,7 +586,7 @@ export async function getDelayed(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * GET /briefs — brief coverage (the task has a description or an attachment)
+ * GET /briefs — LPS brief rules (check pass rates, score by briefer, weakest briefs), brief coverage (the task has a description or an attachment)
  * by briefer for the period, the AI brief check per briefer, and recent briefs
  * needing attention (missing, flagged or weak; last 30 days).
  */
@@ -416,13 +597,15 @@ export async function getBriefs(req: Request, res: Response): Promise<void> {
     const candidates = ctx.facts.filter(
       (f) => (f.createdDay >= current.start && f.createdDay <= current.end) || (f.createdDay >= recentStart && f.createdDay <= ctx.today)
     );
-    const inputs = await loadBriefInputs(candidates);
-    const rows = inputs.map((input) => ({
+    const scored = await scoreBriefs(ctx, candidates);
+    const rows = scored.map(({ input, score }) => ({
       fact: input.fact,
+      description: input.description,
       covered: input.description.trim().length > 0 || input.fileCount > 0,
       hasDescription: input.description.trim().length > 0,
       fileCount: input.fileCount,
       ai: input.ai,
+      rules: score,
     }));
     type Row = (typeof rows)[number];
     const summarize = (list: Row[]) => {
@@ -431,8 +614,19 @@ export async function getBriefs(req: Request, res: Response): Promise<void> {
       const count = (v: "ok" | "weak" | "flagged") => checked.filter((r) => r.ai!.verdict === v).length;
       const scores = checked.map((r) => r.ai!.score).filter((s): s is number => typeof s === "number");
       const avgScore = scores.length ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : null;
+      const ruleScores = list.map((r) => r.rules.score).filter((s): s is number => s !== null);
       return {
         briefs: list.length,
+        /** Mean LPS brief score (0–100). */
+        score: ruleScores.length ? Math.round(ruleScores.reduce((a, b) => a + b, 0) / ruleScores.length) : null,
+        /** Per LPS rule: tasks passing ÷ tasks where the rule applies. */
+        checks: Object.fromEntries(
+          BRIEF_RULE_KEYS.map((k) => {
+            const applicable = list.filter((r) => r.rules.results[k] !== "na").length;
+            const passed = list.filter((r) => r.rules.results[k] === "pass").length;
+            return [k, { passed, applicable, pct: pct(passed, applicable) }];
+          })
+        ),
         covered,
         coveragePct: pct(covered, list.length),
         ai: {
@@ -471,11 +665,27 @@ export async function getBriefs(req: Request, res: Response): Promise<void> {
         reason: r.ai?.reason || (!r.covered ? "No description and no attachment" : ""),
       }));
 
+    // Weakest briefs: lowest LPS score among the period's tasks, newest first among ties.
+    const weakest = inPeriod
+      .filter((r) => r.rules.score !== null && r.rules.score < 100)
+      .sort((a, b) => a.rules.score! - b.rules.score! || b.fact.createdAt.getTime() - a.fact.createdAt.getTime())
+      .slice(0, WEAKEST_COUNT)
+      .map((r) => ({
+        ...taskRow(ctx, r.fact),
+        score: r.rules.score!,
+        passed: r.rules.passed,
+        applicable: r.rules.applicable,
+        failed: r.rules.failed,
+        snippet: r.description.replace(/\s+/g, " ").trim().slice(0, 160),
+      }));
+
     return {
       aiConfigured: briefCheckConfigured(),
       aiModel: briefCheckConfigured() ? briefCheckModel() : null,
+      rules: briefRules(ctx.settings),
       totals: summarize(inPeriod),
       byBriefer: briefers,
+      weakest,
       attentionWindowDays: WEAKEST_DAYS,
       attention,
     };
@@ -494,7 +704,16 @@ function personStats(ctx: Ctx, facts: TaskFact[]) {
       )
       .map((f) => brandKey(ctx, f))
   );
-  return { ...statsRow(s), brandCount: brands.size, ranked: s.completed >= ctx.settings.minCompletedToRank };
+  // Completed in the last 7 / 30 days (whatever the period).
+  const completedSince = (days: number) =>
+    facts.filter((f) => f.completedDay !== null && f.completedDay > ctx.today - days && f.completedDay <= ctx.today).length;
+  return {
+    ...statsRow(s),
+    brandCount: brands.size,
+    ranked: s.completed >= ctx.settings.minCompletedToRank,
+    completedThisWeek: completedSince(7),
+    completed30d: completedSince(30),
+  };
 }
 
 function personInfo(ctx: Ctx, id: string) {
@@ -502,6 +721,8 @@ function personInfo(ctx: Ctx, id: string) {
   const team = teamOfDepartment(ctx, u?.department ?? null);
   return {
     ...userRef(ctx, id),
+    designation: u?.designation ?? "",
+    role: u?.role ?? null,
     department: u?.department ? { id: u.department, name: ctx.ref.departments.get(u.department) ?? "" } : null,
     team: { id: team, name: teamName(ctx, team) },
     isTrafficManager: ctx.settings.trafficManagers.includes(id),
@@ -520,14 +741,7 @@ export async function getPeople(req: Request, res: Response): Promise<void> {
     res,
     "people",
     (ctx) => {
-      const byPerson = new Map<string, TaskFact[]>();
-      for (const f of ctx.facts) {
-        for (const d of f.doers) {
-          const list = byPerson.get(d);
-          if (list) list.push(f);
-          else byPerson.set(d, [f]);
-        }
-      }
+      const byPerson = factsByPerson(ctx.facts);
       if (ctx.filters.person) for (const id of [...byPerson.keys()]) if (id !== ctx.filters.person) byPerson.delete(id);
       const rows = [...byPerson]
         .map(([id, facts]) => ({ person: personInfo(ctx, id), ...personStats(ctx, facts) }))
@@ -538,9 +752,9 @@ export async function getPeople(req: Request, res: Response): Promise<void> {
     {
       csv: (d) => ({
         name: "delivery-people",
-        headers: ["Person", "Team", "Completed", "On time %", "Mean days", "Mean start → done", "Rework %", "Overdue now", "Open now", "Brands", "Ranked"],
+        headers: ["Person", "Designation", "Team", "Completed", "This week", "30 days", "On time %", "Mean days", "Mean start → done", "Rework %", "Overdue now", "Open now", "Brands", "Ranked"],
         rows: d.rows.map((r) => [
-          r.person.name, r.person.team.name, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.startToDoneDays), pctText(r.reworkPct),
+          r.person.name, r.person.designation, r.person.team.name, r.completed, r.completedThisWeek, r.completed30d, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.startToDoneDays), pctText(r.reworkPct),
           r.overdue, r.open, r.brandCount, r.ranked ? "Yes" : "No",
         ]),
       }),
@@ -576,12 +790,22 @@ export async function getPerson(req: Request, res: Response): Promise<void> {
         .filter((f) => openAt(f, ctx.today))
         .map((f) => taskRow(ctx, f))
         .sort((a, b) => (a.dueDate ?? "9999").localeCompare(b.dueDate ?? "9999") || a.code.localeCompare(b.code));
+      // Month by month (calendar months within the period, newest first, latest 24).
+      const monthly: Array<{ month: string; completed: number; meanDays: number | null; onTimePct: number | null; completedWithDue: number }> = [];
+      for (let end = ctx.period.current.end; end >= ctx.period.current.start && monthly.length < MONTHS_CAP; ) {
+        const month = keyFromDay(end).slice(0, 7);
+        const start = Math.max(dayFromKey(`${month}-01`), ctx.period.current.start);
+        const s = statsFor(facts, { start, end }, end);
+        monthly.push({ month, completed: s.completed, meanDays: s.meanDays, onTimePct: s.onTimePct, completedWithDue: s.completedWithDue });
+        end = dayFromKey(`${month}-01`) - 1;
+      }
       return {
         person: personInfo(ctx, id),
         minCompletedToRank: ctx.settings.minCompletedToRank,
         stats: personStats(ctx, facts),
         brands,
         weekly: { capped, weeks: weeklySeries(facts, weeks) },
+        monthly,
         openWork,
       };
     },
@@ -750,39 +974,52 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
  * month. Months or brands without a plan use the configured brand team map, or
  * one derived from the brand's project members and managers (flagged `derived`).
  */
+function loadPlanProjects(): Promise<PlanProject[]> {
+  return Project.find({}).select("brand members.user manager name naming deadline manpowerRow").lean<PlanProject[]>();
+}
+
+/**
+ * On-map sets for tasks: the people on the task's project line of its creation
+ * month's approved manpower plan (else everyone planned on its brand that
+ * month); months / brands without a plan use the configured brand team map, or
+ * one derived from the brand's project members and managers.
+ */
+function teamMapSources(settings: DeliverySettingsSnapshot, projects: PlanProject[], plans: Map<string, PlanMonthMaps>) {
+  const traffic = new Set(settings.trafficManagers);
+  const configured = new Map(settings.brandTeamMap.filter((e) => e.users.length > 0).map((e) => [e.brand, new Set(e.users)]));
+  const derived = new Map<string, Set<string>>();
+  for (const p of projects) {
+    if (!p.brand) continue;
+    const brand = String(p.brand);
+    if (configured.has(brand)) continue;
+    const set = derived.get(brand) ?? new Set<string>();
+    for (const m of p.members ?? []) if (m.user && !traffic.has(String(m.user))) set.add(String(m.user));
+    if (p.manager && !traffic.has(String(p.manager))) set.add(String(p.manager));
+    if (set.size) derived.set(brand, set);
+  }
+  const fallbackOf = (brand: string) => configured.get(brand) ?? derived.get(brand) ?? null;
+
+  /** The on-map set for one task, and the plan month it came from (null = fallback map). */
+  const mapForFact = (f: TaskFact, brand: string): { set: Set<string> | null; planMonth: string | null } => {
+    const month = keyFromDay(f.createdDay).slice(0, 7);
+    const plan = plans.get(month);
+    if (plan) {
+      const rowKey = f.project ? plan.projectRow.get(f.project) : undefined;
+      const set = (rowKey ? plan.rowUsers.get(rowKey) : undefined) ?? plan.brandUsers.get(brand);
+      if (set) return { set, planMonth: month };
+    }
+    return { set: fallbackOf(brand), planMonth: null };
+  };
+  return { configured, derived, fallbackOf, mapForFact };
+}
+
 export async function getTeamMap(req: Request, res: Response): Promise<void> {
-  const projects = await Project.find({})
-    .select("brand members.user manager name naming deadline manpowerRow")
-    .lean<PlanProject[]>();
+  const projects = await loadPlanProjects();
   const settingsNow = await getDeliverySettings();
   const plans = await planMapsFor(settingsNow.teamMapStartDate.slice(0, 7), appDateKey().slice(0, 7), projects);
   await respond(req, res, "team-map", (ctx) => {
     const start = dayFromKey(ctx.settings.teamMapStartDate);
-    const traffic = new Set(ctx.settings.trafficManagers);
-    const configured = new Map(ctx.settings.brandTeamMap.filter((e) => e.users.length > 0).map((e) => [e.brand, new Set(e.users)]));
-    const derived = new Map<string, Set<string>>();
-    for (const p of projects) {
-      if (!p.brand) continue;
-      const brand = String(p.brand);
-      if (configured.has(brand)) continue;
-      const set = derived.get(brand) ?? new Set<string>();
-      for (const m of p.members ?? []) if (m.user && !traffic.has(String(m.user))) set.add(String(m.user));
-      if (p.manager && !traffic.has(String(p.manager))) set.add(String(p.manager));
-      if (set.size) derived.set(brand, set);
-    }
-    const fallbackOf = (brand: string) => configured.get(brand) ?? derived.get(brand) ?? null;
-
-    /** The on-map set for one task, and the plan month it came from (null = fallback map). */
-    const mapForFact = (f: TaskFact, brand: string): { set: Set<string> | null; planMonth: string | null } => {
-      const month = keyFromDay(f.createdDay).slice(0, 7);
-      const plan = plans.get(month);
-      if (plan) {
-        const rowKey = f.project ? plan.projectRow.get(f.project) : undefined;
-        const set = (rowKey ? plan.rowUsers.get(rowKey) : undefined) ?? plan.brandUsers.get(brand);
-        if (set) return { set, planMonth: month };
-      }
-      return { set: fallbackOf(brand), planMonth: null };
-    };
+    const { configured, derived, fallbackOf, mapForFact } = teamMapSources(ctx.settings, projects, plans);
 
     type Agg = { tasks: number; offMap: number; working: Map<string, number>; onMap: Set<string>; planMonths: Set<string> };
     const emptyAgg = (): Agg => ({ tasks: 0, offMap: 0, working: new Map(), onMap: new Set(), planMonths: new Set() });

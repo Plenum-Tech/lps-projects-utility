@@ -9,25 +9,44 @@ import type { TaskFact } from "./facts.js";
 import type { DeliverySettingsSnapshot } from "./settings.js";
 
 // ---------------------------------------------------------------------------
-// Brief score: 7 rules per task (prompts/delivery-pulse.md, "Brief score").
-// A rule is "pass", "fail" or "na"; score = passed ÷ applicable.
+// Brief score: the 7 LPS brief rules per task (tasks created in the period).
+// A rule is "pass", "fail" or "na"; score = passed ÷ applicable (0–100).
 // ---------------------------------------------------------------------------
 
-export const BRIEF_RULES = [
-  { id: 1, key: "attached", label: "Brief attached (deck, doc or link)" },
-  { id: 2, key: "written", label: "Written brief" },
-  { id: 3, key: "weekday", label: "Briefed on the briefing weekday" },
-  { id: 4, key: "leadTime", label: "Minimum lead time" },
-  { id: 5, key: "noSameDay", label: "No same-day delivery" },
-  { id: 6, key: "teamMap", label: "Doer on the brand team map" },
-  { id: 7, key: "finalAsset", label: "Final asset attached" },
+export const BRIEF_RULE_KEYS = [
+  "brief_attached",
+  "written_brief",
+  "monday",
+  "lead_time",
+  "not_same_day",
+  "on_map",
+  "final_asset",
 ] as const;
+export type BriefRuleKey = (typeof BRIEF_RULE_KEYS)[number];
+
+const WEEKDAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+/** Minimum words (links excluded) for a written brief. */
+export const WRITTEN_BRIEF_MIN_WORDS = 15;
+/** Brands allowed same-day delivery by name (plus the brands picked in Settings → Delivery). */
+const SAME_DAY_BRAND_NAMES = /\b(?:ajmal|wasl|emarat)\b/i;
+
+/** Rule labels (weekday / lead days follow the delivery settings). */
+export function briefRules(settings: DeliverySettingsSnapshot): Array<{ key: BriefRuleKey; label: string }> {
+  return [
+    { key: "brief_attached", label: "Brief attached (deck, doc or link)" },
+    { key: "written_brief", label: `Written brief, ${WRITTEN_BRIEF_MIN_WORDS}+ words` },
+    { key: "monday", label: `Briefed on a ${WEEKDAY_NAMES[settings.briefingWeekday] ?? "Monday"}` },
+    { key: "lead_time", label: `≥${settings.minLeadDays} days lead time` },
+    { key: "not_same_day", label: "No same-day delivery (unless Ajmal/Wasl/Emarat)" },
+    { key: "on_map", label: "Doer is on the brand team map" },
+    { key: "final_asset", label: "Final asset attached or frame.io/OneDrive link" },
+  ];
+}
 
 export type RuleResult = "pass" | "fail" | "na";
 
 /** http(s):// or www. links in free text. */
 const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"'()[\]{}]+/gi;
-const DAY_MS = 86_400_000;
 
 export function findUrls(text: string | null | undefined): string[] {
   return text ? [...text.matchAll(URL_PATTERN)].map((m) => m[0]) : [];
@@ -67,6 +86,8 @@ export interface BriefInput {
   /** Earliest task file upload (any file on the task or its subtasks). */
   firstFileAt: Date | null;
   fileCount: number;
+  /** Final deliverable recorded at completion (a file or a link). */
+  finalAsset: boolean;
   /** Bodies of comments and non-private notes (only those containing a link are needed). */
   linkTexts: string[];
   /** Stored AI verdict on the description (null = not checked). */
@@ -74,54 +95,64 @@ export interface BriefInput {
 }
 
 export interface BriefScore {
-  results: RuleResult[];
+  results: Record<BriefRuleKey, RuleResult>;
   passed: number;
   applicable: number;
-  /** passed ÷ applicable (0–1), null when no rule applies. */
+  /** passed ÷ applicable as 0–100 (rounded), null when no rule applies. */
   score: number | null;
-  failed: number[];
+  failed: BriefRuleKey[];
 }
 
-export function scoreBrief(input: BriefInput, settings: DeliverySettingsSnapshot): BriefScore {
+export const wordCount = (text: string) => (text ? text.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length : 0);
+
+/**
+ * Scores one task on the LPS brief rules. `onMap` = the people on the brand's
+ * team map for the task (manpower-plan line of its creation month, else the
+ * brand map; null = no map → n/a).
+ */
+export function scoreBrief(
+  input: BriefInput,
+  settings: DeliverySettingsSnapshot,
+  brandName: string | null,
+  onMap: Set<string> | null
+): BriefScore {
   const f = input.fact;
   const urls = findUrls(input.description);
-  const mapEntry = f.brand ? settings.brandTeamMap.find((e) => e.brand === f.brand && e.users.length > 0) : undefined;
+  const sameDayOk =
+    f.brand !== null && (settings.sameDayBrands.includes(f.brand) || (brandName !== null && SAME_DAY_BRAND_NAMES.test(brandName)));
 
-  const results: RuleResult[] = [
-    // 1 — a file within 24 h of creation, or a link in the description.
-    (input.firstFileAt !== null && input.firstFileAt.getTime() <= f.createdAt.getTime() + DAY_MS) || urls.length > 0
-      ? "pass"
-      : "fail",
-    // 2 — written description (minus links) of at least the minimum length.
-    writtenText(input.description).length >= settings.briefMinLength ? "pass" : "fail",
-    // 3 — created on the briefing weekday (app timezone).
-    weekdayOf(f.createdDay) === settings.briefingWeekday ? "pass" : "fail",
-    // 4 — due − created ≥ minimum lead days.
-    f.dueDay === null ? "na" : f.dueDay - f.createdDay >= settings.minLeadDays ? "pass" : "fail",
-    // 5 — not due on the creation date, unless the brand allows same-day delivery.
-    f.dueDay === null
-      ? "na"
-      : f.dueDay !== f.createdDay || (f.brand !== null && settings.sameDayBrands.includes(f.brand))
-        ? "pass"
-        : "fail",
-    // 6 — every doer on the brand's team map (n/a without a map).
-    !mapEntry ? "na" : f.doers.every((d) => mapEntry.users.includes(d)) ? "pass" : "fail",
-    // 7 — completed tasks: a file, or an allowed-domain link in the description / comments / notes.
-    f.status !== "completed"
-      ? "na"
-      : input.fileCount > 0 || hasAllowedLink([input.description, ...input.linkTexts], settings.finalAssetDomains)
-        ? "pass"
-        : "fail",
-  ];
+  const results: Record<BriefRuleKey, RuleResult> = {
+    // Any file on the task, or a link in the description.
+    brief_attached: input.fileCount > 0 || urls.length > 0 ? "pass" : "fail",
+    // Written description (links removed) of at least 15 words.
+    written_brief: wordCount(writtenText(input.description)) >= WRITTEN_BRIEF_MIN_WORDS ? "pass" : "fail",
+    // Created on the briefing weekday (Monday by default; app timezone).
+    monday: weekdayOf(f.createdDay) === settings.briefingWeekday ? "pass" : "fail",
+    // due − created ≥ minimum lead days (n/a without a due date).
+    lead_time: f.dueDay === null ? "na" : f.dueDay - f.createdDay >= settings.minLeadDays ? "pass" : "fail",
+    // Not due on the creation day, unless the brand allows same-day delivery.
+    not_same_day: f.dueDay === null ? "na" : f.dueDay !== f.createdDay || sameDayOk ? "pass" : "fail",
+    // Any doer on the brand's team map (n/a without a map or without doers).
+    on_map: !onMap || f.doers.length === 0 ? "na" : f.doers.some((d) => onMap.has(d)) ? "pass" : "fail",
+    // Completed tasks: the final file / link given at completion, or a frame.io / OneDrive-type
+    // link in the comments. The brief's own files and links don't count as the final asset.
+    final_asset:
+      f.status !== "completed"
+        ? "na"
+        : input.finalAsset || hasAllowedLink(input.linkTexts, settings.finalAssetDomains)
+          ? "pass"
+          : "fail",
+  };
 
-  const passed = results.filter((r) => r === "pass").length;
-  const applicable = results.filter((r) => r !== "na").length;
+  const values = BRIEF_RULE_KEYS.map((k) => results[k]);
+  const passed = values.filter((r) => r === "pass").length;
+  const applicable = values.filter((r) => r !== "na").length;
   return {
     results,
     passed,
     applicable,
-    score: applicable > 0 ? passed / applicable : null,
-    failed: results.flatMap((r, i) => (r === "fail" ? [i + 1] : [])),
+    score: applicable > 0 ? Math.round((passed / applicable) * 100) : null,
+    failed: BRIEF_RULE_KEYS.filter((k) => results[k] === "fail"),
   };
 }
 
@@ -136,7 +167,7 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
   const linkFilter = { $regex: /https?:\/\/|www\./i };
 
   const [descriptions, files, comments, notes] = await Promise.all([
-    Task.find({ createdAt: { $gte: since } }).select("description briefCheck").lean(),
+    Task.find({ createdAt: { $gte: since } }).select("description briefCheck finalFile").lean(),
     TaskFile.aggregate<{ _id: mongoose.Types.ObjectId; first: Date; count: number }>([
       { $match: { task: { $in: ids } } },
       { $group: { _id: "$task", first: { $min: "$createdAt" }, count: { $sum: 1 } } },
@@ -166,6 +197,9 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
         : []
     )
   );
+  const finals = new Set(
+    descriptions.flatMap((d) => (wanted.has(String(d._id)) && (d.finalFile?.url || d.finalFile?.fileId) ? [String(d._id)] : []))
+  );
   const fileStats = new Map(files.map((f) => [String(f._id), f]));
   const linkTexts = new Map<string, string[]>();
   for (const row of [...comments, ...notes] as Array<{ task: mongoose.Types.ObjectId; body: string }>) {
@@ -182,6 +216,7 @@ export async function loadBriefInputs(facts: TaskFact[]): Promise<BriefInput[]> 
       description: description.get(fact.id) ?? "",
       firstFileAt: fs?.first ?? null,
       fileCount: fs?.count ?? 0,
+      finalAsset: finals.has(fact.id),
       linkTexts: linkTexts.get(fact.id) ?? [],
       ai: verdicts.get(fact.id) ?? null,
     };

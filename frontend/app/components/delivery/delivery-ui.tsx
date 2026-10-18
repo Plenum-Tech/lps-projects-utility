@@ -261,6 +261,31 @@ export function DeltaPill({
   );
 }
 
+/** Small pill in a tone (brief scores, warning counts). */
+export function TonePill({ tone, title, children }: { tone: Tone; title?: string; children: ReactNode }) {
+  return (
+    <span
+      title={title}
+      className={cn(
+        "inline-flex items-center rounded-full px-2 py-0.5 text-[0.7rem] font-medium whitespace-nowrap tabular-nums ring-1 ring-inset",
+        TONE_PILL[tone]
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+/** Brief score (0–100) pill: good ≥ 80, warn ≥ 50, critical below. */
+export function ScorePill({ score, title }: { score: number | null; title?: string }) {
+  if (score === null) return <span className="text-xs text-muted-foreground">{DASH}</span>;
+  return (
+    <TonePill tone={score >= 80 ? "good" : score >= 50 ? "warn" : "critical"} title={title}>
+      {score}
+    </TonePill>
+  );
+}
+
 /** Horizontal bar relative to `max` (e.g. team volume). */
 export function VolumeBar({ value, max, label, className }: { value: number; max: number; label: string; className?: string }) {
   const pct = max > 0 ? Math.max(value > 0 ? 3 : 0, Math.round((value / max) * 100)) : 0;

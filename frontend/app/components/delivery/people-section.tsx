@@ -290,6 +290,11 @@ function PeopleTable({
               </Badge>
             )}
           </span>
+          {row.person.designation && (
+            <span className="text-xs text-foreground/80">
+              {row.person.designation}
+            </span>
+          )}
           <span className="text-xs text-muted-foreground">
             {row.person.team.name}
           </span>
@@ -303,6 +308,22 @@ function PeopleTable({
       align: "right",
       cell: (row) => fmtNum(row.completed),
       sortValue: (row) => row.completed,
+    },
+    {
+      id: "thisWeek",
+      header: "This week",
+      hint: "Completed in the last 7 days, whatever the period",
+      align: "right",
+      cell: (row) => fmtNum(row.completedThisWeek),
+      sortValue: (row) => row.completedThisWeek,
+    },
+    {
+      id: "last30",
+      header: "30 days",
+      hint: "Completed in the last 30 days, whatever the period",
+      align: "right",
+      cell: (row) => fmtNum(row.completed30d),
+      sortValue: (row) => row.completed30d,
     },
     {
       id: "onTime",

@@ -318,7 +318,7 @@ async function queryFacts(
 // -- Reference data (names / colours), cached with the responses --------------
 
 export interface RefData {
-  users: Map<string, { name: string; department: string | null; role: string }>;
+  users: Map<string, { name: string; department: string | null; role: string; designation: string }>;
   brands: Map<string, { name: string; shortName: string; color: string; active: boolean }>;
   departments: Map<string, string>;
   projects: Map<string, { code: string; name: string; brand: string | null }>;
@@ -327,14 +327,14 @@ export interface RefData {
 export function loadRefData(): Promise<RefData> {
   return deliveryCached("ref", async () => {
     const [users, brands, departments, projects] = await Promise.all([
-      User.find().select("name department role").lean(),
+      User.find().select("name department role designation").lean(),
       Brand.find().select("name shortName color active").lean(),
       Department.find().select("name").lean(),
       Project.find().select("code name brand").lean(),
     ]);
     return {
       users: new Map(
-        users.map((u) => [String(u._id), { name: u.name, department: u.department ? String(u.department) : null, role: u.role }])
+        users.map((u) => [String(u._id), { name: u.name, department: u.department ? String(u.department) : null, role: u.role, designation: u.designation ?? "" }])
       ),
       brands: new Map(
         brands.map((b) => [String(b._id), { name: b.name, shortName: b.shortName ?? "", color: b.color, active: b.active }])

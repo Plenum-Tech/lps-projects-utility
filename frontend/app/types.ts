@@ -3341,6 +3341,8 @@ export interface DeliverySummaryResponse {
     open: DeliveryDelta;
     overdue: DeliveryDelta;
   };
+  /** Tasks briefed (created) in the last 7 days, vs the 7 days before. */
+  addedThisWeek: { count: number; delta: DeliveryDelta };
 }
 
 export interface DeliveryWeekRow {
@@ -3365,13 +3367,27 @@ export interface DeliveryWeeklyResponse {
   weeks: DeliveryWeekRow[];
 }
 
+export interface DeliveryPerformer {
+  person: DeliveryUserRef;
+  /** Short reason, e.g. "92% on time · 1.4d mean". */
+  why: string;
+}
+
 export type DeliveryTeamRow = DeliveryStats & {
   team: { id: string; name: string };
   volume: number;
+  /** People in the team with work in the period. */
+  people: number;
+  /** Mean days brief → done, tasks completed in the last 30 days. */
+  meanDays30: number | null;
+  /** null = fewer than 2 people with enough completed tasks. */
+  best: DeliveryPerformer | null;
+  bottom: DeliveryPerformer | null;
 };
 
 export interface DeliveryTeamsResponse {
   meta: DeliveryMeta;
+  minCompletedToRank: number;
   rows: DeliveryTeamRow[];
 }
 
@@ -3382,6 +3398,11 @@ export type DeliveryBrandRow = DeliveryStats & {
   brand: DeliveryBrandRef;
   previous: DeliveryStats | null;
   deltas: Record<DeliveryBrandDeltaKey, DeliveryDelta> | null;
+  /** Mean LPS brief score (0–100) of the brand's tasks created in the period. */
+  briefScore: number | null;
+  briefsScored: number;
+  /** Warning signs vs the previous period (null without one). */
+  warnings: { count: number; flags: ("reworkUp" | "onTimeDown" | "overdueUp")[] } | null;
 };
 
 export interface DeliveryBrandsResponse {
@@ -3404,36 +3425,40 @@ export interface DeliveryDelayedResponse {
   rows: DeliveryDelayedRow[];
 }
 
+export type DeliveryBriefRuleKey =
+  | "brief_attached"
+  | "written_brief"
+  | "monday"
+  | "lead_time"
+  | "not_same_day"
+  | "on_map"
+  | "final_asset";
+
+export interface DeliveryRuleDef {
+  key: DeliveryBriefRuleKey;
+  label: string;
+}
+
 export interface DeliveryRuleRate {
-  id: number;
   passed: number;
   applicable: number;
   pct: number | null;
 }
 
-export interface DeliveryRuleDef {
-  id: number;
-  key:
-    | "attached"
-    | "written"
-    | "weekday"
-    | "leadTime"
-    | "noSameDay"
-    | "teamMap"
-    | "finalAsset";
-  label: string;
-}
-
+/** Lowest-scoring briefs of the period (LPS rules). */
 export type DeliveryWeakBrief = DeliveryTaskRow & {
   score: number;
   passed: number;
   applicable: number;
-  results: ("pass" | "fail" | "na")[];
-  failed: number[];
+  failed: DeliveryBriefRuleKey[];
+  snippet: string;
 };
 
 export interface DeliveryBriefSummary {
   briefs: number;
+  /** Mean LPS brief score (0–100). */
+  score: number | null;
+  checks: Record<DeliveryBriefRuleKey, DeliveryRuleRate>;
   /** Tasks with a description or an attachment. */
   covered: number;
   coveragePct: number | null;
@@ -3453,13 +3478,17 @@ export interface DeliveryBriefsResponse {
   meta: DeliveryMeta;
   aiConfigured: boolean;
   aiModel: string | null;
+  rules: DeliveryRuleDef[];
   totals: DeliveryBriefSummary;
   byBriefer: ({ briefer: DeliveryUserRef } & DeliveryBriefSummary)[];
+  weakest: DeliveryWeakBrief[];
   attentionWindowDays: number;
   attention: DeliveryBriefAttention[];
 }
 
 export interface DeliveryPerson extends DeliveryUserRef {
+  designation: string;
+  role: string | null;
   department: { id: string; name: string } | null;
   team: { id: string; name: string };
   isTrafficManager: boolean;
@@ -3468,6 +3497,9 @@ export interface DeliveryPerson extends DeliveryUserRef {
 export type DeliveryPersonStats = DeliveryStats & {
   brandCount: number;
   ranked: boolean;
+  /** Completed in the last 7 / 30 days (whatever the period). */
+  completedThisWeek: number;
+  completed30d: number;
 };
 
 export interface DeliveryPeopleResponse {
@@ -3483,6 +3515,8 @@ export interface DeliveryPersonResponse {
   stats: DeliveryPersonStats;
   brands: (DeliveryStats & { brand: DeliveryBrandRef })[];
   weekly: { capped: boolean; weeks: DeliveryWeekRow[] };
+  /** Calendar months in the period, newest first. */
+  monthly: { month: string; completed: number; meanDays: number | null; onTimePct: number | null; completedWithDue: number }[];
   openWork: DeliveryTaskRow[];
 }
 

@@ -39,7 +39,7 @@ export function PersonDrawer({
           </SheetTitle>
           <SheetDescription>
             {data
-              ? [data.person.team.name, data.person.department?.name !== data.person.team.name ? data.person.department?.name : null]
+              ? [data.person.designation || null, data.person.team.name, data.person.department?.name !== data.person.team.name ? data.person.department?.name : null]
                   .filter(Boolean)
                   .join(" · ") || "No department"
               : "Delivery for the selected period and filters."}
@@ -127,6 +127,50 @@ export function PersonDrawer({
                     )}
                   </section>
 
+                  {data.monthly && (
+                    <section aria-labelledby="drawer-monthly" className="space-y-2">
+                      <h3 id="drawer-monthly" className="text-sm font-medium">
+                        Month by month
+                      </h3>
+                      {data.monthly.every((row) => row.completed === 0) ? (
+                        <p className="text-sm text-muted-foreground">Nothing completed in this period.</p>
+                      ) : (
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="w-full text-sm">
+                            <caption className="sr-only">Completed, mean days and on time by month</caption>
+                            <thead>
+                              <tr className="border-b text-xs text-muted-foreground">
+                                <th scope="col" className="h-9 px-3 text-left font-medium">Month</th>
+                                <th scope="col" className="h-9 px-3 text-right font-medium">Completed</th>
+                                <th scope="col" className="h-9 px-3 text-right font-medium">Mean days</th>
+                                <th scope="col" className="h-9 px-3 text-right font-medium">On time</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {data.monthly.map((row) => (
+                                <tr key={row.month} className="border-b last:border-0">
+                                  <th scope="row" className="px-3 py-1.5 text-left font-normal">
+                                    {monthLabel(row.month)}
+                                  </th>
+                                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtNum(row.completed)}</td>
+                                  <td className="px-3 py-1.5 text-right tabular-nums">{fmtDays(row.meanDays)}</td>
+                                  <td
+                                    className={cn(
+                                      "px-3 py-1.5 text-right tabular-nums",
+                                      row.onTimePct !== null && TONE_TEXT[rateTone(row.onTimePct)],
+                                    )}
+                                  >
+                                    {fmtPct(row.onTimePct)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </section>
+                  )}
+
                   <section aria-labelledby="drawer-open" className="space-y-2">
                     <h3 id="drawer-open" className="text-sm font-medium">
                       Open work <span className="text-muted-foreground">({data.openWork.length})</span>
@@ -165,6 +209,14 @@ export function PersonDrawer({
       </SheetContent>
     </Sheet>
   );
+}
+
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "2026-10" → "Oct 2026". */
+function monthLabel(month: string): string {
+  const [year, m] = month.split("-").map(Number);
+  return m ? `${MONTH_NAMES[m - 1]} ${year}` : month;
 }
 
 function Stat({ label, value, tone = "neutral" }: { label: string; value: string; tone?: Tone }) {

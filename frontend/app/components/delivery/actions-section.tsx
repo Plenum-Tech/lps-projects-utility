@@ -19,6 +19,7 @@ import {
   Panel,
   PanelState,
   RateBar,
+  ScorePill,
   SortTable,
   useShowMore,
   type SortColumn,
@@ -37,6 +38,7 @@ import type {
   DeliveryFilters,
   DeliveryTaskRow,
   DeliveryBriefAttention,
+  DeliveryBriefRuleKey,
 } from "@/types";
 
 /** Task code + title cell. */
@@ -143,10 +145,17 @@ function DelayedPanel({
     },
     {
       id: "briefer",
-      header: "Briefer",
+      header: "Briefed by",
       className: "text-muted-foreground",
       cell: (row) => userName(row.briefer),
       sortValue: (row) => userName(row.briefer),
+    },
+    {
+      id: "created",
+      header: "Created",
+      className: "whitespace-nowrap text-muted-foreground",
+      cell: (row) => formatDateOnly(row.createdDate),
+      sortValue: (row) => row.createdDate,
     },
     {
       id: "due",
@@ -284,13 +293,25 @@ function BriefsPanel({
       title="Brief coverage and quality"
       description={
         <>
-          A task has a brief when it has a description or an attachment.
+          Every task created in the period is checked against the 7 LPS brief
+          rules; its brief score is the share of the rules that apply that it
+          passes (0–100). Coverage: a task has a brief when it has a
+          description or an attachment.
           {data?.aiConfigured
             ? " Each written brief is also read by an AI check that flags gibberish, off-context or off-brand text."
             : " The AI quality check is not configured yet (OpenAI key)."}
           {data && data.totals.briefs > 0 && (
             <span className="block">
-              {fmtNum(data.totals.briefs)} tasks in the period · coverage{" "}
+              {fmtNum(data.totals.briefs)} tasks in the period
+              {data.totals.score != null && (
+                <>
+                  {" "}· mean brief score{" "}
+                  <span className={cn("font-medium", TONE_TEXT[rateTone(data.totals.score, 80, 50)])}>
+                    {data.totals.score}
+                  </span>
+                </>
+              )}{" "}
+              · coverage{" "}
               <span
                 className={cn(
                   "font-medium",
@@ -325,18 +346,29 @@ function BriefsPanel({
       >
         {() =>
           data && (
+            <div className="space-y-4">
+            {data.rules && data.totals.checks && <CheckTiles data={data} />}
             <Tabs value={tab} onValueChange={(value) => setTab(String(value))}>
-              <TabsList>
-                <TabsTrigger value="briefer">By person</TabsTrigger>
+              <TabsList className="h-auto flex-wrap">
+                <TabsTrigger value="briefer">By briefer</TabsTrigger>
+                <TabsTrigger value="coverage">Coverage &amp; AI check</TabsTrigger>
+                <TabsTrigger value="weakest">Weakest recent briefs</TabsTrigger>
                 <TabsTrigger value="attention">Needs attention</TabsTrigger>
               </TabsList>
               <TabsContent value="briefer" className="mt-3">
+                <RulesByBrieferTable data={data} />
+              </TabsContent>
+              <TabsContent value="coverage" className="mt-3">
                 <ByBrieferTable data={data} />
+              </TabsContent>
+              <TabsContent value="weakest" className="mt-3">
+                <WeakestList data={data} onOpenTask={onOpenTask} />
               </TabsContent>
               <TabsContent value="attention" className="mt-3">
                 <AttentionList data={data} onOpenTask={onOpenTask} />
               </TabsContent>
             </Tabs>
+            </div>
           )
         }
       </PanelState>
@@ -345,6 +377,178 @@ function BriefsPanel({
 }
 
 type BrieferRow = DeliveryBriefsResponse["byBriefer"][number];
+
+/** Short column headers for the LPS rules (the full label is the hint). */
+const RULE_SHORT: Record<DeliveryBriefRuleKey, string> = {
+  brief_attached: "Attached",
+  written_brief: "Written",
+  monday: "Monday",
+  lead_time: "Lead time",
+  not_same_day: "Not same-day",
+  on_map: "On map",
+  final_asset: "Final asset",
+};
+
+/** Pass-rate tone for the rule checks: good ≥ 80, warn ≥ 50. */
+const checkTone = (pct: number | null) => rateTone(pct, 80, 50);
+
+/** One tile per LPS rule: % of the period's tasks passing (where the rule applies). */
+function CheckTiles({ data }: { data: DeliveryBriefsResponse }) {
+  return (
+    <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
+      {data.rules.map((rule) => {
+        const rate = data.totals.checks[rule.key];
+        return (
+          <li key={rule.key} className="flex flex-col rounded-lg border p-3">
+            <span
+              className={cn(
+                "font-heading text-2xl font-semibold tabular-nums",
+                rate?.pct == null ? "text-muted-foreground" : TONE_TEXT[checkTone(rate.pct)],
+              )}
+            >
+              {rate?.pct == null ? DASH : `${Math.round(rate.pct)}%`}
+            </span>
+            <span className="mt-1 text-xs leading-snug">{rule.label}</span>
+            <span className="mt-auto pt-1 text-[0.7rem] text-muted-foreground tabular-nums">
+              {rate ? `${fmtNum(rate.passed)} of ${fmtNum(rate.applicable)}` : DASH}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function RulesByBrieferTable({ data }: { data: DeliveryBriefsResponse }) {
+  if (data.byBriefer.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed px-4 py-8 text-center">
+        <LuClipboardCheck aria-hidden className="size-5 text-muted-foreground" />
+        <p className="text-sm font-medium">No tasks created in this period</p>
+      </div>
+    );
+  }
+  const columns: SortColumn<BrieferRow>[] = [
+    {
+      id: "briefer",
+      header: "Briefer",
+      cell: (row) => <span className="font-medium">{userName(row.briefer)}</span>,
+      sortValue: (row) => userName(row.briefer),
+    },
+    {
+      id: "briefs",
+      header: "Briefs",
+      align: "right",
+      cell: (row) => fmtNum(row.briefs),
+      sortValue: (row) => row.briefs,
+    },
+    {
+      id: "score",
+      header: "Score",
+      hint: "Mean brief score (0–100): share of the applicable LPS rules passed",
+      align: "right",
+      cell: (row) => <ScorePill score={row.score ?? null} />,
+      sortValue: (row) => row.score ?? null,
+    },
+    ...data.rules.map(
+      (rule): SortColumn<BrieferRow> => ({
+        id: `rule-${rule.key}`,
+        header: RULE_SHORT[rule.key] ?? rule.label,
+        hint: rule.label,
+        align: "right",
+        cell: (row) => {
+          const rate = row.checks?.[rule.key];
+          return (
+            <span
+              className={cn("tabular-nums", rate?.pct != null && TONE_TEXT[checkTone(rate.pct)])}
+              title={rate ? `${rate.passed} of ${rate.applicable}` : undefined}
+            >
+              {rate?.pct == null ? DASH : `${Math.round(rate.pct)}%`}
+            </span>
+          );
+        },
+        sortValue: (row) => row.checks?.[rule.key]?.pct ?? null,
+      }),
+    ),
+    {
+      id: "rework",
+      header: "Rework on their briefs",
+      hint: "Share of their briefs marked as rework",
+      align: "right",
+      cell: (row) => (
+        <span className={cn(row.reworkPct !== null && TONE_TEXT[lowRateTone(row.reworkPct)])}>
+          {fmtPct(row.reworkPct)}
+        </span>
+      ),
+      sortValue: (row) => row.reworkPct,
+    },
+  ];
+  return (
+    <SortTable
+      caption="LPS brief rules by briefer"
+      columns={columns}
+      rows={data.byBriefer}
+      getRowId={(row) => row.briefer.id ?? `former-${row.briefer.name}`}
+      defaultSort="briefs"
+    />
+  );
+}
+
+function WeakestList({
+  data,
+  onOpenTask,
+}: {
+  data: DeliveryBriefsResponse;
+  onOpenTask: (id: string) => void;
+}) {
+  const weakest = data.weakest ?? [];
+  if (weakest.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed px-4 py-8 text-center">
+        <LuCircleCheck aria-hidden className="size-5 text-muted-foreground" />
+        <p className="text-sm font-medium">No weak briefs</p>
+        <p className="text-xs text-muted-foreground">Every task created in the period passes all the rules that apply.</p>
+      </div>
+    );
+  }
+  const labels = new Map(data.rules.map((rule) => [rule.key, rule.label]));
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        Lowest brief scores among tasks created in the period, newest first among ties. Click a task to open it.
+      </p>
+      <ul className="max-h-[28rem] divide-y overflow-auto rounded-lg border">
+        {weakest.map((brief) => (
+          <li key={brief.id}>
+            <button
+              type="button"
+              onClick={() => onOpenTask(brief.id)}
+              className="flex w-full items-start gap-3 px-3 py-2.5 text-left outline-none transition-colors duration-150 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-inset"
+            >
+              <span className="min-w-0 flex-1 space-y-1">
+                <TaskCell task={brief} className="max-w-none" />
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                  <TaskBrandCell task={brief} />
+                  <span>created {formatDateOnly(brief.createdDate)}</span>
+                  <span>by {userName(brief.briefer)}</span>
+                </span>
+                <span className="line-clamp-2 block text-xs text-foreground/80">
+                  {brief.snippet || <span className="text-muted-foreground italic">No description</span>}
+                </span>
+                {brief.failed.length > 0 && (
+                  <span className="block text-[0.7rem] text-critical">
+                    Missed: {brief.failed.map((key) => labels.get(key) ?? key).join(" · ")}
+                  </span>
+                )}
+              </span>
+              <ScorePill score={brief.score} title={`${brief.passed} of ${brief.applicable} rules passed`} />
+            </button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
 function ByBrieferTable({ data }: { data: DeliveryBriefsResponse }) {
   if (data.byBriefer.length === 0) {

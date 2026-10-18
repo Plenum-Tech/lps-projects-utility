@@ -91,7 +91,7 @@ export function ResultsSection({ summary }: { summary: SummaryQuery }) {
     >
       {summary.isPending ? (
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-busy="true" aria-label="Loading KPIs">
-          {Array.from({ length: 9 }).map((_, index) => (
+          {Array.from({ length: 10 }).map((_, index) => (
             <Skeleton key={index} className="h-32 rounded-xl" />
           ))}
         </div>
@@ -183,6 +183,16 @@ function Kpis({ data, dimmed }: { data: DeliverySummaryResponse; dimmed: boolean
         unit="count"
         explanation="New briefs (tasks created) in the period."
       />
+      {data.addedThisWeek && (
+        <KpiTile
+          label="Added this week"
+          value={fmtNum(data.addedThisWeek.count)}
+          delta={data.addedThisWeek.delta}
+          unit="count"
+          explanation="Tasks briefed (created) in the last 7 days — vs the 7 days before."
+          tip="Always the last 7 days, whatever period is picked."
+        />
+      )}
       <KpiTile
         label="Open now"
         value={fmtNum(kpis.open)}
