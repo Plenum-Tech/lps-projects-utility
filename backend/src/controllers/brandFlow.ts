@@ -151,6 +151,9 @@ export async function runBrandSetup(
       members: setup.leads,
       team: setup.team,
       ...(setup.summary ? { summary: setup.summary } : {}),
+      // The period read from the files (else the month's first / last day).
+      ...(setup.startDate ? { startDate: setup.startDate } : {}),
+      ...(setup.endDate ? { deadline: setup.endDate } : {}),
     } as never,
     ip,
     { activityExtra: { via: "brand_flow" } }
@@ -215,7 +218,27 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
   }
   if (tasks.length > MAX_TASKS) throw new FieldError("tasks", `At most ${MAX_TASKS} lead tasks`);
   const summary = str(raw.summary).slice(0, 4000);
-  return { projectType, month, title, leads, team, tasks, ...(summary ? { summary } : {}) };
+  const date = (v: unknown, field: "startDate" | "endDate") => {
+    const s = str(v);
+    if (!s) return undefined;
+    const d = parseLooseDate(s);
+    if (!d) throw new FieldError(field, `The ${field === "startDate" ? "start" : "end"} date isn't a valid date`);
+    return d;
+  };
+  const startDate = date(raw.startDate, "startDate");
+  const endDate = date(raw.endDate, "endDate");
+  if (startDate && endDate && endDate < startDate) throw new FieldError("endDate", "The end date must be on or after the start date");
+  return {
+    projectType,
+    month,
+    title,
+    leads,
+    team,
+    tasks,
+    ...(summary ? { summary } : {}),
+    ...(startDate ? { startDate } : {}),
+    ...(endDate ? { endDate } : {}),
+  };
 }
 
 /**

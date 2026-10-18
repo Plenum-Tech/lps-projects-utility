@@ -105,7 +105,12 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [notes, setNotes] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   // Step 3
-  const [month] = useState(thisMonth);
+  // Project period (optional): read from the files or typed. The project's month follows the start.
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const month = startDate ? startDate.slice(0, 7) : thisMonth();
+  const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const periodError = startDate && endDate && endDate < startDate ? "The end date must be on or after the start date." : null;
   const [leads, setLeads] = useState<string[]>([]);
   const [tasks, setTasks] = useState<LeadTask[]>([]);
   const [team, setTeam] = useState<Record<string, string[]>>({});
@@ -118,6 +123,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setStep(1); setTried(0); setIsPitch(true); setName(""); setRevenue(""); setTbc(false); setProjectType("Project");
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
     setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
+    setStartDate(""); setEndDate("");
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -177,6 +183,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           setPlatforms(data.platforms);
           setNotes(data.notes);
           if (!title.trim() && data.projectName) setTitle(data.projectName);
+          if (!startDate && data.dates.startDate) setStartDate(data.dates.startDate);
+          if (!endDate && data.dates.endDate) setEndDate(data.dates.endDate);
           if (isPitch && !sheetRow && !revenue && data.revenue) setRevenue(String(data.revenue));
         },
       },
@@ -253,7 +261,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       setTried(0);
       setStep(2);
     } else if (step === 2) {
-      if (!rows.length || !title.trim() || title.includes("_")) return;
+      if (!rows.length || !title.trim() || title.includes("_") || periodError) return;
       setTried(0);
       goStep3();
     }
@@ -290,6 +298,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       leads,
       team: roles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
       tasks: activeTasks.map((t) => ({ title: t.title, dueDate: t.dueDate })),
+      ...(startDate ? { startDate } : {}),
+      ...(endDate ? { endDate } : {}),
     };
     create.mutate(
       { data, files },
@@ -493,6 +503,26 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                   </div>
                 </div>
 
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="brand-flow-start">
+                      Start date <span className="font-normal text-muted-foreground">(optional)</span>
+                      {result.dates.startDate && startDate === result.dates.startDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
+                    </Label>
+                    <Input id="brand-flow-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                    <p className="text-xs text-muted-foreground">Empty = the 1st of the month. The project's month follows the start date.</p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="brand-flow-end">
+                      End date <span className="font-normal text-muted-foreground">(optional)</span>
+                      {result.dates.endDate && endDate === result.dates.endDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
+                    </Label>
+                    <Input id="brand-flow-end" type="date" value={endDate} min={startDate || undefined} onChange={(e) => setEndDate(e.target.value)} aria-invalid={Boolean(periodError) || undefined} />
+                    <p className="text-xs text-muted-foreground">The project's deadline. Empty = {fmtDate(monthEnd)} (end of the month).</p>
+                    {periodError && <FieldError>{periodError}</FieldError>}
+                  </div>
+                </div>
+
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Scope</p>
                   <div className="overflow-x-auto">
@@ -639,7 +669,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <p className="font-medium">When you click Create brand</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
                 <li>The brand <span className="text-foreground">{name.trim()}</span> is created{isPitch ? ` (potential revenue ${tbc ? "TBC" : `AED ${Number(revenue).toLocaleString("en-US")}`})` : ""}. If you aren't leadership, it waits for Aasim, Rania or Bala — and so does everything below.</li>
-                <li>The project <span className="break-all text-foreground">{projectName}</span> with the scope above ({pieces} pieces); its scope is locked to the brand. Your files are attached.</li>
+                <li>The project <span className="break-all text-foreground">{projectName}</span> with the scope above ({pieces} pieces), running {fmtDate(startDate || `${month}-01`)} – {fmtDate(endDate || monthEnd)}; its scope is locked to the brand. Your files are attached.</li>
                 {isPitch && <li>{activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} for the lead: {activeTasks.map((t) => `${t.title} (${fmtDate(t.dueDate)})`).join(", ") || "none"}.</li>}
                 <li>{teamPeople.length} people on the team, written to the {monthLabel} manpower plan.</li>
               </ul>

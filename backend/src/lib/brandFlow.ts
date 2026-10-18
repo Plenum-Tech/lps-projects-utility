@@ -23,6 +23,9 @@ export interface BrandSetup {
   team: Array<{ role: string; users: string[] }>;
   tasks: Array<{ title: string; dueDate: string }>;
   summary?: string;
+  /** Project start / end (YYYY-MM-DD); without them the month's first / last day. */
+  startDate?: string;
+  endDate?: string;
 }
 
 /** The brand's scope as project scope rows (without what / source). */

@@ -3155,7 +3155,14 @@ export interface ScopeExtraction {
   projectName: string | null;
   platforms: string[];
   revenue: number | null;
-  dates: { clientPresentation: string | null; milestone1: string | null; milestone2: string | null };
+  dates: {
+    clientPresentation: string | null;
+    milestone1: string | null;
+    milestone2: string | null;
+    /** The work period (project start / end), when the files state it. */
+    startDate: string | null;
+    endDate: string | null;
+  };
   scope: Array<{ unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string }>;
   notes: string[];
   usedAI: boolean;

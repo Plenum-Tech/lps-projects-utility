@@ -31,7 +31,14 @@ export interface ScopeExtraction {
   projectName: string | null;
   platforms: string[];
   revenue: number | null;
-  dates: { clientPresentation: string | null; milestone1: string | null; milestone2: string | null };
+  /** Presentation / milestones (the lead's tasks) and the work period (project start / end). */
+  dates: {
+    clientPresentation: string | null;
+    milestone1: string | null;
+    milestone2: string | null;
+    startDate: string | null;
+    endDate: string | null;
+  };
   scope: ExtractedScopeRow[];
   notes: string[];
   /** true when the AI model read the files. */
@@ -182,6 +189,18 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
     return null;
   };
   const platforms = PLATFORM_RULES.filter(([re]) => re.test(all)).map(([, name]) => name);
+  // Work period: "Start date: …" / "End date: …" (deadline, go-live), or "Period: X to Y".
+  const period = () => {
+    const range = find(/(?:period|duration|term|campaign dates?)[^:\n]*[:\-–]\s*([^\n]+)/i);
+    const [from, to] = range ? range.split(/\s+(?:to|until|till|-|–)\s+/i) : [];
+    return {
+      startDate:
+        parseLooseDate(find(/\b(?:start(?:ing)?\s*date|starts?|commencement)\b[^:\n]*[:\-–]\s*([^\n]+)/i)) ?? parseLooseDate(from),
+      endDate:
+        parseLooseDate(find(/\b(?:end\s*date|ends?|deadline|go[- ]live|launch\s*date|completion)\b[^:\n]*[:\-–]\s*([^\n]+)/i)) ??
+        parseLooseDate(to),
+    };
+  };
   const revenueRaw = find(/(?:revenue|budget|fee|value)[^\d]{0,20}([\d,]{4,})/i);
   if (/\bmonthly\b/i.test(all)) notes.push("Monthly deliverables — the scope repeats every month.");
   if (rows.length && !/\bsizes?\b/i.test(all)) notes.push("Sizes aren't mentioned — 1 size per piece assumed.");
@@ -193,6 +212,7 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       clientPresentation: parseLooseDate(find(/client\s+pres(?:entation)?[^:\n]*[:\-–]\s*([^\n]+)/i)),
       milestone1: parseLooseDate(find(/milestone\s*1[^:\n]*[:\-–]\s*([^\n]+)/i)),
       milestone2: parseLooseDate(find(/milestone\s*2[^:\n]*[:\-–]\s*([^\n]+)/i)),
+      ...period(),
     },
     scope: cleanRows(rows),
     notes,
@@ -209,7 +229,8 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
 - "projectName": the campaign / idea / project title if one is stated (short), else null.
 - "platforms": social platforms named (e.g. "Meta (Facebook)", "Instagram", "TikTok", "X (Twitter)", "LinkedIn").
 - "revenue": a fee / budget / revenue amount in AED as a number if stated, else null.
-- "dates": {"clientPresentation","milestone1","milestone2"} as YYYY-MM-DD if stated, else null.
+- "dates": {"clientPresentation","milestone1","milestone2","startDate","endDate"} as YYYY-MM-DD if stated, else null.
+  startDate / endDate are the period of the work (contract or campaign start; end date, deadline or go-live).
 - "scope": the countable content deliverables, one row each: {"what": the deliverable as written (e.g. "Engagement posts"),
   "unit": one of ${SCOPE_UNITS.join(", ")} (Reel for reels, Story for stories, Carousel, Video for videos/TikToks/films,
   Static for posts/images/visuals, Others for anything else such as tweets), "quantity": integer,
@@ -220,7 +241,7 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
 - "notes": short notes for the user to check (shoot days, things that repeat monthly, assumptions, conflicts between inputs).
 Reply with JSON only:
 {"texts":[{"source":"<input name>","text":"..."}],"projectName":null,"platforms":[],"revenue":null,
- "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null},"scope":[],"notes":[]}`;
+ "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null,"startDate":null,"endDate":null},"scope":[],"notes":[]}`;
 
 async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<Omit<ScopeExtraction, "usedAI">> {
   const content: Array<Record<string, unknown>> = [{ type: "text", text: "Inputs follow. Each starts with its name." }];
@@ -270,6 +291,8 @@ async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<
         clientPresentation: parseLooseDate(dates.clientPresentation),
         milestone1: parseLooseDate(dates.milestone1),
         milestone2: parseLooseDate(dates.milestone2),
+        startDate: parseLooseDate(dates.startDate),
+        endDate: parseLooseDate(dates.endDate),
       },
       scope: cleanRows(Array.isArray(p.scope) ? (p.scope as ExtractedScopeRow[]) : []),
       notes: Array.isArray(p.notes) ? (p.notes as unknown[]).map(String).map((s) => s.slice(0, 300)).slice(0, 20) : [],
