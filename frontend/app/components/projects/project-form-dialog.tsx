@@ -168,6 +168,18 @@ function continueState(source: Project): FormState {
   };
 }
 
+/** Which brand scope rows a project already has (each project row matches one brand row). */
+function matchBrandRows(brandRows: ScopeItem[], projectRows: ScopeItem[]): boolean[] {
+  const key = (r: ScopeItem) => [r.unit.toLowerCase(), r.quantity, r.languages, [...(r.languageList ?? [])].sort().join(","), r.sizes].join("|");
+  const left = projectRows.map(key);
+  return brandRows.map((row) => {
+    const i = left.indexOf(key(row));
+    if (i < 0) return false;
+    left.splice(i, 1);
+    return true;
+  });
+}
+
 function initialState(project?: Project | null): FormState {
   return {
     type: project?.naming?.type ?? "",
@@ -278,10 +290,16 @@ export function ProjectFormDialog({
   const [summaryScore, setSummaryScore] = useState<{ score: number | null; reason: string } | { error: string } | null>(null);
   const [scoring, setScoring] = useState(false);
   const pending = createProject.isPending || updateProject.isPending;
+  // Brand with a scope: which of its rows this project covers (null = all of them).
+  const [pickedRows, setPickedRows] = useState<boolean[] | null>(null);
+  // New projects: the dates follow the month until the user changes them.
+  const [datesTouched, setDatesTouched] = useState(false);
 
   useEffect(() => {
     if (open) {
       setForm(freshState());
+      setPickedRows(null);
+      setDatesTouched(Boolean(project || continueFrom));
       setScopeLocked(true);
       setSubmitted(false);
       setStep(1);
@@ -291,6 +309,16 @@ export function ProjectFormDialog({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, project?._id, continueFrom?._id]);
+
+  // New project: the period follows the month (1st – last day) until the dates are changed.
+  useEffect(() => {
+    if (!open || datesTouched || !MONTH_PATTERN.test(form.month)) return;
+    const start = `${form.month}-01`;
+    const end = monthEnd(form.month);
+    if (form.startDate !== start || form.deadline !== end) {
+      setForm((current) => ({ ...current, startDate: start, deadline: end }));
+    }
+  }, [open, datesTouched, form.month, form.startDate, form.deadline]);
 
   // Legacy project: pre-fill the four name fields once the detection arrives.
   const suggested = suggestion.data;
@@ -468,8 +496,14 @@ export function ProjectFormDialog({
   const selectedBrand = brands.data?.find((brand) => brand._id === form.brand);
   // A brand with a scope (brand flow) fixes the scope of its projects: shown read-only.
   const brandScope = selectedBrand?.scopeItems?.length ? selectedBrand.scopeItems : null;
+  // Rows picked for this project (default: all; editing: the ones the project has).
+  const picked: boolean[] = brandScope
+    ? (pickedRows ?? (project ? matchBrandRows(brandScope, project.scopeItems ?? []) : brandScope.map(() => true)))
+    : [];
   const brandScopeRows: ScopeItem[] | null = brandScope
-    ? brandScope.map(({ unit, quantity, languages, languageList, sizes }) => ({ unit, quantity, languages, sizes, ...(languageList?.length ? { languageList } : {}) }))
+    ? brandScope
+        .filter((_, index) => picked[index])
+        .map(({ unit, quantity, languages, languageList, sizes }) => ({ unit, quantity, languages, sizes, ...(languageList?.length ? { languageList } : {}) }))
     : null;
   const [brandFlowOpen, setBrandFlowOpen] = useState(false);
   const title = tidyNamePart(form.title);
@@ -489,7 +523,18 @@ export function ProjectFormDialog({
       : title.includes(NAMING_SEPARATOR)
         ? "Underscores separate the parts — use a space or dash instead."
         : null;
-  const scopeError = !project && !brandScope && form.scopeItems.length === 0 ? "Add at least one scope row." : null;
+  const scopeError = brandScope
+    ? brandScopeRows!.length === 0
+      ? "Pick at least one of the brand's scope rows."
+      : null
+    : !project && form.scopeItems.length === 0
+      ? "Add at least one scope row."
+      : null;
+  const datesError = !form.startDate
+    ? "Pick the start date."
+    : form.deadline && form.deadline < form.startDate
+      ? "The end date must be on or after the start date."
+      : null;
   const preview = composeProjectName({
     brand: selectedBrand?.name ?? "",
     type: form.type,
@@ -523,6 +568,7 @@ export function ProjectFormDialog({
     progressError ||
     summaryError ||
     scopeError ||
+    datesError ||
     hours === "invalid" ||
     budget === "invalid",
   );
@@ -531,7 +577,7 @@ export function ProjectFormDialog({
   const stepErrors: Record<number, unknown[]> = {
     1: [brandError],
     2: [typeError, monthError, nameError, summaryError, progressError, hours === "invalid", budget === "invalid"],
-    3: [scopeError],
+    3: [scopeError, datesError],
     4: [],
   };
   function nextStep() {
@@ -599,6 +645,8 @@ export function ProjectFormDialog({
         team: teamToInput(form.team),
         manpowerRow: form.manpowerRow === AUTO_ROW ? null : form.manpowerRow,
         scopeItems: brandScopeRows ?? form.scopeItems,
+        startDate: form.startDate,
+        deadline: form.deadline || null,
         status: form.status || undefined,
         progressMode: form.progressMode,
         hoursAllocated: hours,
@@ -644,7 +692,11 @@ export function ProjectFormDialog({
     if (form.category !== original.category) input.category = category;
     if (form.manpowerRow !== original.manpowerRow)
       input.manpowerRow = form.manpowerRow === AUTO_ROW ? null : form.manpowerRow;
-    if (!brandScope && JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
+    if (brandScope) {
+      if (pickedRows && JSON.stringify(brandScopeRows) !== JSON.stringify(original.scopeItems)) input.scopeItems = brandScopeRows!;
+    } else if (JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
+    if (form.startDate !== original.startDate) input.startDate = form.startDate;
+    if (form.deadline !== original.deadline) input.deadline = form.deadline || null;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
       input.departments = form.departments;
     }
@@ -1058,6 +1110,43 @@ export function ProjectFormDialog({
           )}
 
           {showStep(3) && (
+            <fieldset className="grid gap-4 sm:grid-cols-2">
+              <legend className="mb-2 text-sm font-medium text-foreground">Project period</legend>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-start">Start date<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
+                <Input
+                  id="project-start"
+                  type="date"
+                  value={form.startDate}
+                  onChange={(event) => {
+                    setDatesTouched(true);
+                    set("startDate", event.target.value);
+                  }}
+                  aria-invalid={(show(datesError) && !form.startDate) || undefined}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="project-end">End date</Label>
+                <Input
+                  id="project-end"
+                  type="date"
+                  value={form.deadline}
+                  min={form.startDate || undefined}
+                  onChange={(event) => {
+                    setDatesTouched(true);
+                    set("deadline", event.target.value);
+                  }}
+                  aria-invalid={(show(datesError) && Boolean(form.deadline)) || undefined}
+                />
+              </div>
+              <p className="text-xs text-muted-foreground sm:col-span-2">
+                {datesTouched ? "The project runs between these dates." : "The month's first and last day — change them if the work runs longer or shorter."}
+              </p>
+              {show(datesError) && <div className="sm:col-span-2"><FieldError>{datesError}</FieldError></div>}
+            </fieldset>
+          )}
+
+          {showStep(3) && (
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium text-foreground">Scope</legend>
               <p className="text-xs text-muted-foreground">
@@ -1068,13 +1157,22 @@ export function ProjectFormDialog({
                 <div className="space-y-2">
                   <p className="rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-foreground">
                     🔒 <span className="font-medium">Scope comes from the brand {selectedBrand?.name}</span> — read from its
-                    files when the brand was created, so it can&apos;t be edited here. To change it, edit the brand&apos;s scope
-                    (non-leadership changes go for approval).
+                    files when the brand was created, so rows can&apos;t be edited here. Tick the rows this project covers;
+                    to change the rows themselves, edit the brand&apos;s scope (non-leadership changes go for approval).
                   </p>
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[30rem] text-sm">
                       <thead className="text-xs text-muted-foreground">
                         <tr className="border-b text-left">
+                          <th className="w-8 py-1.5 pr-2 font-medium">
+                            <input
+                              type="checkbox"
+                              aria-label="All of the brand's scope rows"
+                              className="size-4 accent-primary"
+                              checked={picked.every(Boolean)}
+                              onChange={(event) => setPickedRows(brandScope.map(() => event.target.checked))}
+                            />
+                          </th>
                           <th className="py-1.5 pr-3 font-medium">Unit</th>
                           <th className="py-1.5 pr-3 font-medium">What</th>
                           <th className="py-1.5 pr-3 text-right font-medium">Qty</th>
@@ -1085,7 +1183,16 @@ export function ProjectFormDialog({
                       </thead>
                       <tbody>
                         {brandScope.map((row, index) => (
-                          <tr key={index} className="border-b last:border-0">
+                          <tr key={index} className={cn("border-b last:border-0", !picked[index] && "text-muted-foreground opacity-60")}>
+                            <td className="py-1.5 pr-2">
+                              <input
+                                type="checkbox"
+                                aria-label={`Include ${row.what || row.unit}`}
+                                className="size-4 accent-primary"
+                                checked={picked[index] ?? false}
+                                onChange={(event) => setPickedRows(picked.map((on, i) => (i === index ? event.target.checked : on)))}
+                              />
+                            </td>
                             <td className="py-1.5 pr-3">{row.unit}</td>
                             <td className="py-1.5 pr-3 text-muted-foreground">{row.what || "—"}</td>
                             <td className="py-1.5 pr-3 text-right tabular-nums">{row.quantity}</td>
@@ -1097,6 +1204,11 @@ export function ProjectFormDialog({
                       </tbody>
                     </table>
                   </div>
+                  <p className="text-right text-xs text-muted-foreground">
+                    {brandScopeRows!.length} of {brandScope.length} rows ·{" "}
+                    {brandScopeRows!.reduce((n, row) => n + row.quantity, 0)} pieces for this project
+                  </p>
+                  {show(scopeError) && <FieldError>{scopeError}</FieldError>}
                   {(selectedBrand?.platforms?.length || selectedBrand?.scopeFiles?.length) && (
                     <p className="text-xs text-muted-foreground">
                       {selectedBrand?.platforms?.length ? `Platforms: ${selectedBrand.platforms.join(", ")}. ` : ""}

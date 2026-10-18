@@ -73,14 +73,59 @@ export async function attachBrandFiles(project: IProject, brand: Pick<IBrand, "s
   return added;
 }
 
-/** After a brand's scope changes: its open projects follow (archived ones keep theirs). */
-export async function applyBrandScopeToProjects(brand: IBrand): Promise<number> {
+type ScopeRowLike = { unit: string; quantity: number; languages?: number; languageList?: string[]; sizes?: number };
+
+/** Identity of a scope row (unit, quantity, languages, sizes) for matching against the brand's rows. */
+export function scopeRowKey(r: ScopeRowLike): string {
+  return [r.unit.toLowerCase(), r.quantity, r.languages ?? 1, [...(r.languageList ?? [])].sort().join(","), r.sizes ?? 1].join("|");
+}
+
+/**
+ * A project of a brand with a scope may cover some of the brand's rows (picked in
+ * the project form), never anything else. Returns the rows to store, or an error.
+ * An empty pick = the whole brand scope.
+ */
+export function pickBrandScope(
+  brand: Pick<IBrand, "scopeItems" | "name">,
+  rows: ScopeRowLike[]
+): { rows: ReturnType<typeof brandScopeForProject> } | { error: string } {
+  const all = brandScopeForProject(brand);
+  if (rows.length === 0) return { rows: all };
+  const left = new Map<string, number>();
+  for (const r of all) left.set(scopeRowKey(r), (left.get(scopeRowKey(r)) ?? 0) + 1);
+  const picked: typeof all = [];
+  for (const r of rows) {
+    const key = scopeRowKey(r);
+    const n = left.get(key) ?? 0;
+    if (n === 0) return { error: `This project's scope comes from the brand ${brand.name}: pick its rows, or edit the brand's scope.` };
+    left.set(key, n - 1);
+    picked.push(all.find((a) => scopeRowKey(a) === key)!);
+  }
+  return { rows: picked };
+}
+
+/**
+ * After a brand's scope changes, its open projects follow (archived ones keep theirs):
+ * a project on the whole old scope gets the whole new one; a project on some rows keeps
+ * those still in the brand (all of them if none are left).
+ */
+export async function applyBrandScopeToProjects(brand: IBrand, previous: ScopeRowLike[] = []): Promise<number> {
   const brandId = brand._id as mongoose.Types.ObjectId;
-  const res = await Project.updateMany(
-    { $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null },
-    { $set: { scopeItems: brandScopeForProject(brand) } }
-  );
-  return res.modifiedCount;
+  const next = brandScopeForProject(brand);
+  const nextKeys = new Set(next.map(scopeRowKey));
+  const wasAll = (rows: ScopeRowLike[]) =>
+    rows.length === previous.length && rows.map(scopeRowKey).sort().join("\n") === previous.map(scopeRowKey).sort().join("\n");
+  const projects = await Project.find({ $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null }).select("scopeItems");
+  let changed = 0;
+  for (const p of projects) {
+    const current = (p.scopeItems ?? []) as ScopeRowLike[];
+    const kept = current.filter((r) => nextKeys.has(scopeRowKey(r)));
+    const rows = previous.length === 0 || wasAll(current) || kept.length === 0 ? next : (pickBrandScope(brand, kept) as { rows: typeof next }).rows;
+    if (rows.map(scopeRowKey).join("\n") === current.map(scopeRowKey).join("\n")) continue;
+    await Project.updateOne({ _id: p._id }, { $set: { scopeItems: rows } });
+    changed++;
+  }
+  return changed;
 }
 
 /** Loads a brand by id (for the project write path). */

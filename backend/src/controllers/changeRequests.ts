@@ -56,12 +56,13 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   if (request.kind === "brand_edit") {
     const brand = request.brand ? await Brand.findById(request.brand) : null;
     if (!brand) return "The brand no longer exists";
+    const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
     Object.assign(brand, payload);
     await brand.save();
     // A new brand scope reaches the brand's open projects (their scope is locked to it).
     if ((payload as Record<string, unknown>).scopeItems) {
       const { applyBrandScopeToProjects } = await import("../lib/brandFlow.js");
-      await applyBrandScopeToProjects(brand);
+      await applyBrandScopeToProjects(brand, previous);
     }
     return null;
   }

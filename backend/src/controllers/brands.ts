@@ -232,9 +232,10 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     pendingApproval = "Brand changes were sent to leadership for approval.";
   } else if (changed.length > 0) {
     try {
+      const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
       Object.assign(brand, next);
       await brand.save();
-      if (next.scopeItems) await applyBrandScopeToProjects(brand);
+      if (next.scopeItems) await applyBrandScopeToProjects(brand, previous);
     } catch (err) {
       if (!sendFieldError(res, err)) throw err;
       return;

@@ -6,7 +6,7 @@ import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpower
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
 import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { syncProjectTeamToPlan } from "../lib/manpowerSync.js";
-import { attachBrandFiles, brandById, brandLocksScope, brandScopeForProject } from "../lib/brandFlow.js";
+import { attachBrandFiles, brandById, brandLocksScope, pickBrandScope } from "../lib/brandFlow.js";
 import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
@@ -1041,9 +1041,14 @@ export async function createProjectCore(
     brand = parsed;
   }
 
-  // A brand with a scope (brand flow) fixes its projects' scope: the form's rows are ignored.
+  // A brand with a scope (brand flow) fixes its projects' scope: the project takes some
+  // of the brand's rows (picked in the form) or, by default, all of them.
   const brandDoc = await brandById(brand);
-  if (brandDoc && brandLocksScope(brandDoc)) scopeItems = brandScopeForProject(brandDoc);
+  if (brandDoc && brandLocksScope(brandDoc)) {
+    const picked = pickBrandScope(brandDoc, scopeItems);
+    if ("error" in picked) return bad(picked.error, 409);
+    scopeItems = picked.rows;
+  }
 
   let departments: mongoose.Types.ObjectId[] = actor.role !== "admin" && actor.department ? [actor.department] : [];
   if (body.departments !== undefined) {
@@ -1259,11 +1264,10 @@ export async function updateProjectCore(
     if (brandDoc && brandLocksScope(brandDoc)) {
       const parsed = parseScopeItems(body.scopeItems);
       if (typeof parsed === "string") return bad(parsed);
-      if (scopeText(parsed) !== scopeText(brandScopeForProject(brandDoc))) {
-        return bad(`This project's scope comes from the brand ${brandDoc.name}. Edit the brand's scope instead.`, 409);
-      }
-      body = { ...body };
-      delete body.scopeItems;
+      // Only rows of the brand's scope (a different pick goes the usual way, approval included).
+      const picked = pickBrandScope(brandDoc, parsed);
+      if ("error" in picked) return bad(picked.error, 409);
+      body = { ...body, scopeItems: picked.rows };
     }
   }
 
