@@ -112,6 +112,12 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
                 <span className="font-semibold">{rows.length}</span> rows · <span className="font-semibold">{picked.length}</span> to create ·{" "}
                 {rows.filter((r) => r.exists).length} already imported
               </p>
+              {picked.length === 0 && (
+                <p className="w-full text-xs text-muted-foreground">
+                  Nothing to create yet: rows marked “Already imported” exist as projects; for a row without a lead, pick the
+                  lead and it&apos;s ticked.
+                </p>
+              )}
               <div className="flex gap-2">
                 <Button type="button" variant="outline" size="sm" onClick={() => setRows(rows.map((r) => ({ ...r, on: ready(r) })))}>Tick all ready</Button>
                 <Button type="button" variant="outline" size="sm" onClick={() => setRows(rows.map((r) => ({ ...r, on: false })))}>Untick all</Button>
@@ -224,7 +230,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
           </div>
         )}
 
-        <DialogFooter className="gap-2 sm:justify-between">
+        <DialogFooter className="sticky bottom-0 z-10 gap-2 bg-background sm:justify-between">
           {rows && !results ? (
             <Button type="button" variant="outline" onClick={() => setRows(null)} disabled={run.isPending}>Choose another file</Button>
           ) : (
