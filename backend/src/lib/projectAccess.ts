@@ -368,6 +368,10 @@ export async function serializeProjects(
       return rest;
     });
     if (!ratesVisible) delete json.budget;
+    // Potential revenue is as private as the budget; the tracker status isn't.
+    if (!ratesVisible && json.pitch && typeof json.pitch === "object") {
+      json.pitch = { ...(json.pitch as Record<string, unknown>), revenue: null, revenueTbc: false, revenueHidden: true };
+    }
     const status = json.status as { isCompleted?: boolean } | null;
     const deadline = p.deadline ? p.deadline.getTime() : null;
     const id = String(p._id);

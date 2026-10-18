@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controllers/brandFlow.js";
+import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
 import { createBrand, decideBrand, deleteBrand, listBrands, updateBrand } from "../controllers/brands.js";
 import { uploadTaskFilesMiddleware } from "../controllers/taskFiles.js";
 import { scopeExtractRateLimit } from "../middlewares/rateLimit.js";
@@ -18,6 +19,9 @@ router.post("/", requireRole("admin"), createBrand);
 router.post("/scope-extract", requireRole("admin"), scopeExtractRateLimit, uploadTaskFilesMiddleware, extractBrandScope);
 router.post("/pitch-sheet", requireRole("admin"), uploadTaskFilesMiddleware, readPitchSheet);
 router.post("/flow", requireRole("admin"), uploadTaskFilesMiddleware, createBrandFlow);
+// Pitch tracker import: preview the sheet's rows, then create the ticked ones.
+router.post("/pitch-import/preview", requireRole("admin"), uploadTaskFilesMiddleware, previewPitchImport);
+router.post("/pitch-import", requireRole("admin"), runPitchImport);
 router.post("/:id/approval", decideBrand);
 router.patch("/:id", requireRole("admin"), updateBrand);
 router.delete("/:id", requireRole("admin"), deleteBrand);

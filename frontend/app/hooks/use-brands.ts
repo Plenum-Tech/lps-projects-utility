@@ -5,7 +5,7 @@ import { projectKeys } from "@/hooks/use-projects";
 import { SettingsFieldError } from "@/hooks/use-settings";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
-import type { Brand, BrandInput, PitchSheetRow, ScopeExtraction } from "@/types";
+import type { Brand, BrandInput, PitchImportResult, PitchImportRow, PitchSheetRow, ScopeExtraction } from "@/types";
 
 export const brandKeys = {
   all: ["brands"] as const,
@@ -160,6 +160,34 @@ export function useCreateBrandFlow() {
       invalidate();
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
       void queryClient.invalidateQueries({ queryKey: ["manpower"] });
+    },
+  });
+}
+
+/** Pitch tracker import, step 1: what each row of the sheet will create. */
+export function usePreviewPitchImport() {
+  return useMutation({
+    mutationFn: async (file: File) => {
+      const body = new FormData();
+      body.append("files", file);
+      const { data } = await api.post<{ rows: PitchImportRow[]; canCreateBrands: boolean }>("/brands/pitch-import/preview", body, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+      return data;
+    },
+  });
+}
+
+/** Pitch tracker import, step 2: create the confirmed rows. */
+export function useRunPitchImport() {
+  const invalidate = useInvalidateBrands();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (rows: Array<Record<string, unknown>>) =>
+      (await api.post<{ results: PitchImportResult[] }>("/brands/pitch-import", { rows }, { timeout: 300_000 })).data.results,
+    onSuccess: () => {
+      invalidate();
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
     },
   });
 }

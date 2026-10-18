@@ -272,6 +272,18 @@ export function ProjectOverview({ detail }: { detail: ProjectDetailResponse }) {
                 {project.isOverdue && " (overdue)"}
               </span>
             </Fact>
+            {project.pitch && (
+              <>
+                <Fact label="Potential revenue">
+                  {project.pitch.revenueHidden
+                    ? "—"
+                    : project.pitch.revenue
+                      ? `AED ${project.pitch.revenue.toLocaleString("en-US")}`
+                      : "TBC"}
+                </Fact>
+                <Fact label="Pitch status">{project.pitch.status || "—"}</Fact>
+              </>
+            )}
             <Fact label="Category">{project.category?.name ?? "None"}</Fact>
             <Fact label="Departments">
               {project.departments.length > 0

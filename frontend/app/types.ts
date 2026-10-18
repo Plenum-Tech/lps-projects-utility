@@ -1871,6 +1871,8 @@ export interface Project {
   summary?: string;
   /** Manpower plan row key chosen on the project; null = automatic match. */
   manpowerRow?: string | null;
+  /** Pitch projects: potential revenue (AED; hidden without rate access) and the tracker's status. */
+  pitch?: { revenue: number | null; revenueTbc: boolean; status: string; revenueHidden?: boolean } | null;
   /** Structured scope: deliverables per unit. */
   scopeItems?: ScopeItem[];
   category: { _id: string; name: string } | null;
@@ -3913,4 +3915,30 @@ export interface ScopeItem {
   /** The languages picked ("English", "Arabic" …). */
   languageList?: string[];
   sizes: number;
+}
+
+/** POST /brands/pitch-import/preview — what one tracker row creates. */
+export interface PitchImportRow {
+  client: string;
+  brand: { _id: string; name: string; status: string } | null;
+  title: string;
+  month: string;
+  projectName: string;
+  revenue: number | null;
+  revenueTbc: boolean;
+  status: string;
+  leadText: string;
+  leads: string[];
+  tasks: Array<{ title: string; dueDate: string | null }>;
+  warnings: string[];
+  exists: boolean;
+}
+
+export interface PitchImportResult {
+  client: string;
+  title: string;
+  status: "created" | "skipped" | "failed";
+  message: string;
+  projectId?: string;
+  tasks?: number;
 }

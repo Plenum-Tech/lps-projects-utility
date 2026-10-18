@@ -68,25 +68,29 @@ function sheetDate(raw: string, year: number): { date: string | null; monthOnly:
   return { date: null, monthOnly: false, text };
 }
 
-/**
- * POST /api/brands/pitch-sheet — multipart `files` (one .xlsx: the pitch tracker).
- * Rows: client, campaign, revenue, client presentation, milestones, status, lead.
- */
-export async function readPitchSheet(req: Request, res: Response): Promise<void> {
-  const file = ((req.files as Express.Multer.File[] | undefined) ?? [])[0];
-  if (!file || !/\.xlsx$/i.test(file.originalname)) {
-    res.status(400).json({ error: "Upload the pitch tracker as an .xlsx file" });
-    return;
-  }
+/** One row of the pitch tracker. */
+export interface PitchSheetRow {
+  client: string;
+  campaign: string;
+  revenue: number | null;
+  revenueTbc: boolean;
+  clientPresentation: ReturnType<typeof sheetDate>;
+  milestone1: ReturnType<typeof sheetDate>;
+  milestone2: ReturnType<typeof sheetDate>;
+  status: string;
+  lead: string;
+}
+
+/** Reads the pitch tracker (.xlsx): the first sheet with a "Client Name" column. */
+export async function parsePitchWorkbook(buffer: Buffer): Promise<{ rows: PitchSheetRow[] } | { error: string }> {
   const workbook = new ExcelJS.Workbook();
   try {
-    await workbook.xlsx.load(file.buffer as unknown as ArrayBuffer);
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
   } catch {
-    res.status(400).json({ error: "That file couldn't be read as an Excel workbook" });
-    return;
+    return { error: "That file couldn't be read as an Excel workbook" };
   }
   const year = new Date().getFullYear();
-  const rows: Array<Record<string, unknown>> = [];
+  const rows: PitchSheetRow[] = [];
   for (const sheet of workbook.worksheets) {
     let columns: Record<string, number> | null = null;
     sheet.eachRow((row) => {
@@ -127,11 +131,25 @@ export async function readPitchSheet(req: Request, res: Response): Promise<void>
     });
     if (rows.length) break;
   }
-  if (rows.length === 0) {
-    res.status(400).json({ error: 'No rows found: the sheet needs a "Client Name" column' });
+  return rows.length ? { rows } : { error: 'No rows found: the sheet needs a "Client Name" column' };
+}
+
+/**
+ * POST /api/brands/pitch-sheet — multipart `files` (one .xlsx: the pitch tracker).
+ * Rows: client, campaign, revenue, client presentation, milestones, status, lead.
+ */
+export async function readPitchSheet(req: Request, res: Response): Promise<void> {
+  const file = ((req.files as Express.Multer.File[] | undefined) ?? [])[0];
+  if (!file || !/\.xlsx$/i.test(file.originalname)) {
+    res.status(400).json({ error: "Upload the pitch tracker as an .xlsx file" });
     return;
   }
-  res.json({ rows: rows.slice(0, 200) });
+  const parsed = await parsePitchWorkbook(file.buffer);
+  if ("error" in parsed) {
+    res.status(400).json({ error: parsed.error });
+    return;
+  }
+  res.json({ rows: parsed.rows.slice(0, 200) });
 }
 
 const bad = (error: string) => ({ error });
