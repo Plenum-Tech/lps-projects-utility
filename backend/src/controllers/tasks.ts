@@ -922,16 +922,20 @@ const STATUS_LABELS: Record<TaskStatus, string> = {
  * A task can be completed only with (1) a record of the outcome — an outcome
  * note, the final file or link, or a file on the task — and (2) time spent logged.
  */
+/**
+ * Closing a task needs all three: the time spent (a time log), the final deliverable
+ * (a link, or a file / image uploaded as the final file — the brief's files don't
+ * count) and an outcome note.
+ */
 async function completionBlocker(task: ITask): Promise<string | null> {
-  const [file, log] = await Promise.all([
-    TaskFile.exists({ task: task._id }),
-    TimeLog.exists({ task: task._id, status: { $ne: "rejected" } }),
-  ]);
-  const outcome = Boolean(task.finalFile?.fileId || task.finalFile?.url || task.submissionNotes?.trim() || file);
-  if (!outcome && !log) return "Add a note, file or link and log the time spent before completing this task";
-  if (!outcome) return "Add a note, file or link before completing this task";
-  if (!log) return "Log the time spent before completing this task";
-  return null;
+  const log = await TimeLog.exists({ task: task._id, status: { $ne: "rejected" } });
+  const missing: string[] = [];
+  if (!log) missing.push("log the time spent");
+  if (!task.finalFile?.fileId && !task.finalFile?.url) missing.push("add the final link or file / image");
+  if (!task.submissionNotes?.trim()) missing.push("write an outcome note");
+  if (missing.length === 0) return null;
+  const list = missing.length === 1 ? missing[0]! : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`;
+  return `To close this task, ${list}.`;
 }
 
 /** Tasks over their project's approved scope can't move until an admin approves them. */

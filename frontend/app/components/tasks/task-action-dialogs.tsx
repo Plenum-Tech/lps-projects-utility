@@ -122,14 +122,14 @@ export function SubmitTaskDialog({
     actualEnd === toDateTimeInput(task.actualEndAt!);
   const logRange = rangeSet && !(alreadyLogged && rangeUnchanged);
   const timeMissing = !alreadyLogged && spent === 0 && !rangeSet;
-  // Outcome is mandatory too: a note, the final file or link, or a file already on the task.
-  const outcomeMissing =
-    !notes.trim() &&
+  // Closing needs the final deliverable (a link, or a file / image) AND an outcome note.
+  const deliverableMissing =
     !(mode === "file" && file) &&
     !(mode === "link" && linkValue && !linkInvalid) &&
     !task.finalFile?.fileId &&
-    !task.finalFile?.url &&
-    !(task.fileCount > 0);
+    !task.finalFile?.url;
+  const notesMissing = !notes.trim();
+  const outcomeMissing = deliverableMissing || notesMissing;
   const pending = submit.isPending || upload.isPending || logging;
 
   async function handleSubmit(event: FormEvent) {
@@ -217,7 +217,10 @@ export function SubmitTaskDialog({
           )}
 
           <fieldset className="space-y-2 rounded-lg border p-3">
-            <legend className="px-1 text-sm font-medium">Final file</legend>
+            <legend className="px-1 text-sm font-medium">
+              Final link or file / image
+              <span aria-hidden className="ml-0.5 text-destructive">*</span>
+            </legend>
             <div className="flex gap-1">
               <Button
                 type="button"
@@ -225,7 +228,7 @@ export function SubmitTaskDialog({
                 variant={mode === "file" ? "secondary" : "ghost"}
                 onClick={() => setMode("file")}
               >
-                Upload a file
+                Upload a file / image
               </Button>
               <Button
                 type="button"
@@ -265,27 +268,29 @@ export function SubmitTaskDialog({
                 The link must start with http:// or https://.
               </p>
             )}
+            {submitted && deliverableMissing && !linkInvalid && (
+              <p className="text-xs text-destructive">
+                Add the final link, or upload the final file or image.
+              </p>
+            )}
           </fieldset>
 
           <div className="space-y-1.5">
-            <Label htmlFor="submission-notes">Outcome note</Label>
+            <Label htmlFor="submission-notes">
+              Outcome note<span aria-hidden className="ml-0.5 text-destructive">*</span>
+            </Label>
             <Textarea
               id="submission-notes"
               value={notes}
               onChange={(event) => setNotes(event.target.value)}
               rows={3}
               placeholder="What was delivered? Anything the reviewer should check?"
+              aria-invalid={(submitted && notesMissing) || undefined}
             />
-            <p className="text-xs text-muted-foreground">
-              Needed unless you attach the final file or link.
-            </p>
+            {submitted && notesMissing && (
+              <p className="text-xs text-destructive">Write what was delivered.</p>
+            )}
           </div>
-
-          {submitted && outcomeMissing && (
-            <p className="text-xs text-destructive">
-              Add an outcome note, or the final file or link.
-            </p>
-          )}
 
           <fieldset className="space-y-1.5">
             <legend className="mb-1.5 text-sm leading-none font-medium">
