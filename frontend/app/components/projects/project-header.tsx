@@ -16,6 +16,7 @@ import {
   LuPin,
   LuPinOff,
   LuTrash2,
+  LuTriangleAlert,
   LuUser,
 } from "react-icons/lu";
 
@@ -71,6 +72,8 @@ import { formatDateOnly } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
+import { BrandNoScopePanel } from "@/components/brands/brand-no-scope-panel";
+import { useBrands } from "@/hooks/use-brands";
 import { ProjectPearityButton } from "@/components/projects/project-pearity-button";
 
 type DialogKind = "edit" | "continue" | "duplicate" | "archive" | "restore" | "delete" | null;
@@ -132,6 +135,20 @@ export function ProjectHeader({
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
               <ProjectApprovalBadge project={project} />
+              {!(project.scopeItems?.length ?? 0) && (
+                <Badge
+                  variant="destructive"
+                  className="gap-1"
+                  title={
+                    project.requiresScope
+                      ? "This project has no scope yet: tasks can't be added until it has one (add the brand's scope)."
+                      : "This project has no scope. Tasks can still be added; leadership is told."
+                  }
+                >
+                  <LuTriangleAlert aria-hidden className="size-3" />
+                  No scope
+                </Badge>
+              )}
               {project.expired && (
                 <Badge
                   variant="outline"
@@ -451,6 +468,12 @@ export function DuplicateProjectDialog({
 }) {
   const duplicate = useDuplicateProject();
   const navigate = useNavigate();
+  // The copy is a new project of the brand: a brand without scope can't get one (pitches can).
+  const brands = useBrands(false, open);
+  const brandId = project.naming?.brand ?? project.brand?._id ?? null;
+  const brand = brandId ? brands.data?.find((b) => b._id === brandId) : undefined;
+  const brandNoScope =
+    Boolean(project.naming) && Boolean(brand) && !(brand!.scopeItems?.length ?? 0) && project.naming!.type.toLowerCase() !== "pitch";
   const [name, setName] = useState("");
   const [includeTasks, setIncludeTasks] = useState(false);
   const [startDate, setStartDate] = useState("");
@@ -475,7 +498,7 @@ export function DuplicateProjectDialog({
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (nameError || datesError) return;
+    if (nameError || datesError || brandNoScope) return;
     duplicate.mutate(
       {
         id: project._id,
@@ -556,6 +579,7 @@ export function DuplicateProjectDialog({
               </div>
             )}
           </div>
+          {brandNoScope && brand && <BrandNoScopePanel brand={brand} onLeave={() => onOpenChange(false)} />}
           <SwitchRow
             id="duplicate-tasks"
             label="Include tasks"
@@ -572,7 +596,7 @@ export function DuplicateProjectDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={duplicate.isPending}>
+            <Button type="submit" disabled={duplicate.isPending || brandNoScope}>
               {duplicate.isPending ? (
                 <LuLoaderCircle aria-hidden className="animate-spin" />
               ) : (

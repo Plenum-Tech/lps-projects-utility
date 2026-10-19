@@ -233,6 +233,11 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                       {g.org ? shortName(b.name, g.org) : b.name}
                     </Link>
                     {b.status === "pending" && <Badge variant="outline" className="ml-2">waiting for approval</Badge>}
+                    {b.monthlyRetainer && (
+                      <Badge variant="outline" className="ml-2" title="Gets a new project on the 1st of each month">
+                        Monthly retainer
+                      </Badge>
+                    )}
                     {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
                   <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span></td>

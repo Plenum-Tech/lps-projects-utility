@@ -162,6 +162,11 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 name: project.name,
                 code: project.code,
                 canCreateTasks: permissions.canCreateTasks && !archived && !project.expired,
+                // New projects take no tasks until they have a scope (the brand's, usually).
+                noScope:
+                  project.requiresScope && !(project.scopeItems?.length ?? 0)
+                    ? { addScopeHref: project.brand?._id ? `/brands/${project.brand._id}` : null }
+                    : null,
               }}
             />
           )}

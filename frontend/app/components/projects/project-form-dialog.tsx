@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router";
-import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPencil, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
 import { ScopeItemsEditor } from "@/components/projects/scope-items-editor";
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { scopeTotal } from "@/lib/scope";
@@ -34,6 +34,7 @@ import {
   type OptionItem,
 } from "@/components/projects/project-fields";
 import { Button } from "@/components/ui/button";
+import { BrandNoScopePanel } from "@/components/brands/brand-no-scope-panel";
 import {
   Combobox,
   ComboboxContent,
@@ -147,8 +148,10 @@ function monthEnd(month: string): string {
 }
 
 /**
- * "Continue in next month": a new project with the source's brand, type, name,
- * scope, team and settings, in the next month (status, progress and dates start fresh).
+ * "Continue in next month": a new project with the source's brand, type, name and
+ * settings, in the next month. The scope comes from the brand and the team from the
+ * new month's manpower plan — never from the previous project (status, progress and
+ * dates start fresh too).
  */
 function continueState(source: Project): FormState {
   const base = initialState(source);
@@ -160,7 +163,11 @@ function continueState(source: Project): FormState {
     month,
     code: "",
     title: source.naming?.title ?? source.name,
-    members: source.members.map((member) => member.user._id),
+    summary: "",
+    scopeItems: [],
+    team: teamFromProject(undefined),
+    manager: NONE,
+    members: [],
     status: "",
     manpowerRow: AUTO_ROW,
     startDate: firstDay > today ? firstDay : today,
@@ -284,8 +291,6 @@ export function ProjectFormDialog({
   const [step, setStep] = useState(1);
   const wizard = !project;
   const showStep = (n: number) => !wizard || step === n;
-  // Continuing: the copied scope is shown read-only until "Edit scope".
-  const [scopeLocked, setScopeLocked] = useState(true);
   // New projects: files picked here are uploaded once the project exists.
   const [files, setFiles] = useState<File[]>([]);
   const toast = useToast();
@@ -306,7 +311,6 @@ export function ProjectFormDialog({
       setPickedRows(null);
       setPitchDates({ clientPresentation: "", milestone1: "", milestone2: "" });
       setDatesTouched(Boolean(project || continueFrom));
-      setScopeLocked(true);
       setSubmitted(false);
       setStep(1);
       setFiles([]);
@@ -512,6 +516,10 @@ export function ProjectFormDialog({
         .map(({ unit, quantity, languages, languageList, sizes }) => ({ unit, quantity, languages, sizes, ...(languageList?.length ? { languageList } : {}) }))
     : null;
   const [brandFlowOpen, setBrandFlowOpen] = useState(false);
+  // A new project takes its scope from the brand: a brand without one can't get new
+  // projects (pitches are the exception — pitch brands usually have no scope yet).
+  const brandHasNoScope = !project && Boolean(selectedBrand) && !brandScope && form.type.toLowerCase() !== "pitch";
+  const pitchTypeName = typeOptions.find((option) => option.value.toLowerCase() === "pitch")?.value ?? null;
   // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
   const title = stripComposedPrefix(form.title, selectedBrand?.name ?? "", form.type, form.month);
   const code = form.code.trim().toUpperCase();
@@ -570,6 +578,7 @@ export function ProjectFormDialog({
   const summaryError =
     form.summary.length > MAX_SUMMARY ? "Keep the summary shorter." : null;
   const hasErrors = Boolean(
+    brandHasNoScope ||
     brandError ||
     typeError ||
     monthError ||
@@ -586,7 +595,7 @@ export function ProjectFormDialog({
   const show = (error: string | null | boolean) => submitted && Boolean(error);
   // Per wizard step: what must be right before moving on.
   const stepErrors: Record<number, unknown[]> = {
-    1: [brandError],
+    1: [brandError, brandHasNoScope],
     2: [typeError, monthError, nameError, pitchError, summaryError, progressError, hours === "invalid", budget === "invalid"],
     3: [scopeError, datesError],
     4: [],
@@ -748,7 +757,7 @@ export function ProjectFormDialog({
             {isEdit
               ? "Update the project details and team. Status, rates and other members are managed from the project page."
               : continuing
-                ? `A new project for ${continueFrom!.name}'s work, with its name, scope and team copied. Change anything before creating it. Tasks stay in the old project.`
+                ? `A new project for ${continueFrom!.name}'s work in the next month, with the same name. Its scope comes from the brand and its team from the new month's manpower plan. Tasks stay in the old project.`
                 : "Set up the project, its team and how progress is measured. Members are notified."}
           </DialogDescription>
         </DialogHeader>
@@ -906,6 +915,19 @@ export function ProjectFormDialog({
                       .join(", ")}
                   </p>
                 )}
+                {brandHasNoScope && selectedBrand && (
+                  <BrandNoScopePanel brand={selectedBrand} onLeave={() => onOpenChange(false)}>
+                    {pitchTypeName && (
+                      <button
+                        type="button"
+                        onClick={() => changeNamePart({ type: pitchTypeName })}
+                        className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:underline"
+                      >
+                        It&apos;s a pitch? Continue as a {pitchTypeName} project (no scope needed yet)
+                      </button>
+                    )}
+                  </BrandNoScopePanel>
+                )}
                 {brandCreator && newBrand === null && (
                   <button
                     type="button"
@@ -1051,25 +1073,8 @@ export function ProjectFormDialog({
 
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="project-summary">{continuing ? "Scope" : "Summary"}</Label>
-              {continuing && scopeLocked && (
-                <Button type="button" variant="ghost" size="xs" onClick={() => setScopeLocked(false)}>
-                  <LuPencil aria-hidden />
-                  Edit scope
-                </Button>
-              )}
+              <Label htmlFor="project-summary">Summary</Label>
             </div>
-            {continuing && scopeLocked ? (
-              <div className="space-y-1">
-                <p
-                  id="project-summary"
-                  className="max-h-40 overflow-y-auto rounded-md border bg-muted/40 px-3 py-2 text-sm break-words whitespace-pre-wrap"
-                >
-                  {form.summary.trim() || <span className="text-muted-foreground">No scope written on {continueFrom!.name}.</span>}
-                </p>
-                <p className="text-xs text-muted-foreground">Copied from {continueFrom!.name}.</p>
-              </div>
-            ) : (
             <Textarea
               id="project-summary"
               value={form.summary}
@@ -1078,7 +1083,6 @@ export function ProjectFormDialog({
               placeholder="Goals, scope and anything the team should know."
               aria-invalid={show(summaryError) || undefined}
             />
-            )}
             {show(summaryError) && <FieldError>{summaryError}</FieldError>}
           </div>
 
@@ -1293,6 +1297,7 @@ export function ProjectFormDialog({
               title,
             }}
             enabled={open}
+            autoFill={continuing}
             planRow={form.manpowerRow}
             onPlanRowChange={(key) => set("manpowerRow", key)}
           />

@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBrandDetail, useDeleteBrandFile, usePatchBrand, useSplitBrand, useUploadBrandFiles } from "@/hooks/use-brand-dashboard";
 import { useExtractBrandScope } from "@/hooks/use-brands";
@@ -304,6 +305,21 @@ function LeadsEditor({ data }: { data: BrandDetailResponse }) {
         {patch.isPending && <LuLoaderCircle aria-hidden className="animate-spin" />}
         Save
       </Button>
+      <div className="flex items-start gap-2.5 sm:col-span-3">
+        <Switch
+          id="brand-retainer"
+          checked={Boolean(b.monthlyRetainer)}
+          disabled={patch.isPending}
+          onCheckedChange={(checked) => patch.mutate({ id: b._id, monthlyRetainer: checked })}
+        />
+        <div className="space-y-0.5">
+          <Label htmlFor="brand-retainer">Monthly retainer</Label>
+          <p className="text-xs text-muted-foreground">
+            On the 1st of each month the brand gets that month&apos;s project automatically: last month&apos;s project name
+            with the new month, the brand&apos;s scope and the team from the new month&apos;s manpower plan.
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -372,6 +388,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             {b.organisation ? shortName(b.name, b.organisation) : b.name}
             {b.status === "pending" && <Badge variant="outline" className="ml-2 align-middle">waiting for approval</Badge>}
             {b.isPitch && <Badge variant="secondary" className="ml-2 align-middle">Pitch</Badge>}
+            {b.monthlyRetainer && <Badge variant="outline" className="ml-2 align-middle">Monthly retainer</Badge>}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {b.organisation && <span className="mr-2 font-medium text-foreground">{b.organisation}</span>}

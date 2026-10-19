@@ -124,6 +124,8 @@ const NOTIFICATION_ICONS: Record<NotificationType, NotificationIcon> = {
   change_approval_requested: LuGitPullRequestArrow,
   change_decided: LuScale,
   task_over_scope: LuTriangleAlert,
+  change_exception: LuTriangleAlert,
+  retainer_projects_created: LuCalendarClock,
 };
 
 /** Theme tokens only — no palette colours. */
@@ -178,6 +180,8 @@ const NOTIFICATION_ICON_COLORS: Record<NotificationType, string> = {
   change_approval_requested: "text-chart-4",
   change_decided: "text-chart-2",
   task_over_scope: "text-destructive",
+  change_exception: "text-chart-4",
+  retainer_projects_created: "text-primary",
 };
 
 /**

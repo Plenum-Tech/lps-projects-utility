@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { LuSparkles } from "react-icons/lu";
 
 import { MultiSelect, type MultiSelectOption } from "@/components/globals/multi-select";
@@ -51,7 +52,10 @@ export function ProjectTeamFields({
   enabled,
   planRow,
   onPlanRowChange,
+  autoFill = false,
 }: {
+  /** Fill an empty team from the plan line once it's known ("Continue in next month"). */
+  autoFill?: boolean;
   value: TeamValue;
   onChange: (value: TeamValue) => void;
   options: MultiSelectOption[];
@@ -95,6 +99,16 @@ export function ProjectTeamFields({
     }
     onChange(next);
   }
+
+  // "Continue in next month": the team is the new month's plan line, filled in once.
+  const autoFilled = useRef(false);
+  useEffect(() => {
+    if (!autoFill || autoFilled.current || !suggestion.data?.team.length || options.length === 0) return;
+    if (Object.values(value).some((ids) => ids.length)) return;
+    autoFilled.current = true;
+    fillFromPlan();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoFill, suggestion.data, options.length]);
 
   return (
     <fieldset className="space-y-3">

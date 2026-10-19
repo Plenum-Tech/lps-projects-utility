@@ -78,7 +78,7 @@ export function usePatchBrand() {
   const invalidate = useInvalidateAll();
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({ id, ...body }: { id: string; leads?: string[]; organisation?: string; scopeItems?: unknown[] }) =>
+    mutationFn: async ({ id, ...body }: { id: string; leads?: string[]; organisation?: string; scopeItems?: unknown[]; monthlyRetainer?: boolean }) =>
       (await api.patch<{ brand: Brand; changed: string[]; pendingApproval?: string }>(`/brands/${id}`, body)).data,
     onSuccess: (data) => {
       invalidate();

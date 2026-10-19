@@ -512,7 +512,9 @@ export type NotificationType =
   | "brand_rejected"
   | "change_approval_requested"
   | "change_decided"
-  | "task_over_scope";
+  | "task_over_scope"
+  | "change_exception"
+  | "retainer_projects_created";
 
 /** Mirrors the backend Notification model as returned by the API. */
 export interface Notification {
@@ -1876,6 +1878,11 @@ export interface Project {
   pitch?: { revenue: number | null; revenueTbc: boolean; status: string; revenueHidden?: boolean } | null;
   /** Structured scope: deliverables per unit. */
   scopeItems?: ScopeItem[];
+  /** The brand's platforms and scope notes, copied onto the project. */
+  platforms?: string[];
+  scopeNotes?: string[];
+  /** New projects (brand rules onwards): no tasks until the project has a scope. Absent on older projects. */
+  requiresScope?: boolean;
   category: { _id: string; name: string } | null;
   /** Client brand (populated); null when unset. */
   brand?: ProjectBrandRef | null;
@@ -3134,6 +3141,8 @@ export interface Brand {
   scopeNotes?: string[];
   scopeFiles?: Array<{ filename: string; mimeType: string; size: number }>;
   leads?: string[];
+  /** On the 1st of each month the brand gets that month's project automatically. */
+  monthlyRetainer?: boolean;
   /** A brand-flow setup (project, lead tasks, team) waits for this brand's approval. */
   setupWaiting?: boolean;
   createdAt: string;
@@ -3173,6 +3182,8 @@ export interface BrandSummary {
   organisation: string;
   status: "approved" | "pending" | "rejected";
   isPitch: boolean;
+  /** On the 1st of each month the brand gets that month's project automatically. */
+  monthlyRetainer?: boolean;
   /** Has current projects or a line in the month's plan. */
   active: boolean;
   checks: BrandChecks;

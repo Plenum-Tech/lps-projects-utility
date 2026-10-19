@@ -14,6 +14,7 @@ import {
   LuPlus,
   LuRepeat,
   LuTrash2,
+  LuTriangleAlert,
   LuUserCheck,
 } from "react-icons/lu";
 
@@ -151,6 +152,29 @@ export interface WorkspaceProject {
   code: string;
   /** From the project permissions (admin, head, project manager). */
   canCreateTasks: boolean;
+  /**
+   * New project without scope: no tasks until it has one. Shown instead of
+   * "Add task", with a link to where the scope is added.
+   */
+  noScope?: { addScopeHref: string | null } | null;
+}
+
+/** "Add task" replacement on a new project that has no scope yet. */
+function NoScopeNotice({ addScopeHref }: { addScopeHref: string | null }) {
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-1.5 text-sm"
+    >
+      <LuTriangleAlert aria-hidden className="size-4 shrink-0 text-destructive" />
+      <span>No tasks yet — this project has no scope. Add its scope (or the brand&apos;s) first.</span>
+      {addScopeHref && (
+        <Link to={addScopeHref} className={buttonVariants({ size: "sm", variant: "outline" })}>
+          Add scope
+        </Link>
+      )}
+    </div>
+  );
 }
 
 /**
@@ -349,7 +373,8 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
   const projectOptions = useProjectOptions(Boolean(user) && !project);
   // Everyone gets "Add task" (the form lists the projects they can add to, or
   // explains how to get one); inside a project it follows its permissions.
-  const canCreate = project ? project.canCreateTasks : true;
+  const noScope = project?.noScope ?? null;
+  const canCreate = (project ? project.canCreateTasks : true) && !noScope;
   const milestoneProject = project?._id ?? (filters.project && filters.project !== "none" ? filters.project : "");
   const milestones = useMilestones(milestoneProject || null, Boolean(milestoneProject));
   const recurringParent = useTask(filters.recurringParent || null);
@@ -428,11 +453,15 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
       }
       className="border-0"
     >
-      {canCreate && (
-        <Button onClick={() => setCreateOpen(true)}>
-          <LuPlus aria-hidden />
-          Add task
-        </Button>
+      {noScope && project?.canCreateTasks ? (
+        <NoScopeNotice addScopeHref={noScope.addScopeHref} />
+      ) : (
+        canCreate && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <LuPlus aria-hidden />
+            Add task
+          </Button>
+        )
       )}
     </EmptyState>
   );
@@ -456,6 +485,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
         <DataTableToolbar
           actions={
             <>
+              {noScope && project?.canCreateTasks && <NoScopeNotice addScopeHref={noScope.addScopeHref} />}
               {canCreate && (
                 <Button onClick={() => setCreateOpen(true)}>
                   <LuPlus aria-hidden />
