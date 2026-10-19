@@ -1383,19 +1383,10 @@ export async function createTaskCore(
   if (options.enforceRules) {
     if (!project) return { status: 400, error: "Every task must belong to a project (pick one)" };
     const hasDescription = typeof description === "string" && richTextToPlain(description).trim().length > 0;
-    // A written brief AND a file or a link (a rework gets the original's when left empty).
+    // A written brief is required; a brief file or link is optional (a rework gets the
+    // original's when left empty).
     if (!hasDescription) {
       return { status: 400, error: "Add the brief: write a description of the work" };
-    }
-    const hasLink = typeof description === "string" && /https?:\/\/\S+/i.test(description);
-    if (body.hasAttachments !== true && !hasLink) {
-      return {
-        status: 400,
-        error:
-          iteration === "rework"
-            ? "The original task has no file or link: attach a file or add a link for this rework"
-            : "Attach a brief file or add a link to the brief",
-      };
     }
     if (!titleParts) return { status: 400, error: "Task name needs a scope unit, a quantity and a short name" };
     if (!iteration) return { status: 400, error: "Choose the iteration: new work or rework" };

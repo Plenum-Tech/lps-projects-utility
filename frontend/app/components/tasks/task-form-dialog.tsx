@@ -506,9 +506,8 @@ export function TaskFormDialog({
   // New work needs a written brief AND a file or a link.
   const briefTextMissing = !task && !reworkCreate && descriptionText.trim() === "";
   // A link in the brief counts like a file.
-  const briefHasLink = /https?:\/\/\S+/i.test(form.description);
-  const briefFilesMissing = !task && !reworkCreate && attachments.length === 0 && !briefHasLink;
-  const briefMissing = briefTextMissing || briefFilesMissing;
+  // A brief file or link is optional: the written brief is enough.
+  const briefMissing = briefTextMissing;
   const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0 && !reworkCreate;
@@ -937,7 +936,7 @@ export function TaskFormDialog({
                   <span className="font-normal text-muted-foreground">
                     {reworkCreate
                       ? "(leave empty to use the original task's brief and files)"
-                      : "(a description, plus a file or a link, is required)"}
+                      : "(a description is required; a file or link is optional)"}
                   </span>
                 </Label>
                 <RichTextEditor
@@ -983,9 +982,7 @@ export function TaskFormDialog({
                   </ul>
                 </div>
               )}
-              {briefInvalid && briefFilesMissing && (
-                <p className="-mt-2 text-xs text-destructive">Attach a brief file or add a link to the brief.</p>
-              )}
+
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
