@@ -5,6 +5,7 @@ import { Project, type IProject } from "../models/Project.js";
 import { User, type IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { brandLocksScope } from "./brandFlow.js";
+import { brandsInPlan, monthName } from "./brandReadiness.js";
 import { requestChange } from "./changeRequests.js";
 import { applyLeadership } from "./leadership.js";
 import { notifyUsersAsync } from "./notifications.js";
@@ -18,7 +19,8 @@ import { composeProjectName } from "./projectNaming.js";
 //  2. every active, approved brand flagged "Monthly retainer" gets this month's
 //     project(s): last month's project name with only the month changed (same
 //     brand, type and title), scope from the brand, team from the new month's
-//     plan (else the brand's leads). Brands without a scope are skipped;
+//     plan (else the brand's leads). Brands that aren't ready are skipped and
+//     reported: no scope, no line in the month's plan (the pending copy counts), no lead;
 //  3. the brand leads and the approvers are told what was created.
 // Idempotent: a month that has a plan isn't copied again; a project that exists
 // (same brand / type / month / title) isn't created again.
@@ -141,10 +143,20 @@ export async function runMonthlyRetainers(now: Date = new Date(), options: { mon
   }).sort({ nameKey: 1 });
   const { createProjectCore } = await import("../controllers/projects.js");
   const leadsByBrand = new Map<string, { brand: IBrand; projects: string[] }>();
+  // Readiness (lib/brandReadiness.ts) against the plan this job uses: the month's latest version, the pending copy included.
+  const inPlan = await brandsInPlan(month, { includePending: true });
 
   for (const brand of brands) {
     if (!brandLocksScope(brand)) {
       result.skipped.push({ brand: brand.name, reason: "The brand has no scope — add its scope, then create the month's project" });
+      continue;
+    }
+    if (!inPlan.has(String(brand._id))) {
+      result.skipped.push({ brand: brand.name, reason: `The brand isn't in the ${monthName(month)} manpower plan — add its line, then create the month's project` });
+      continue;
+    }
+    if (!(brand.leads ?? []).length) {
+      result.skipped.push({ brand: brand.name, reason: "The brand has no lead — give it a lead, then create the month's project" });
       continue;
     }
     const sources = await sourceProjects(brand, from);
@@ -174,7 +186,7 @@ export async function runMonthlyRetainers(now: Date = new Date(), options: { mon
           requireTaskApproval: src.requireTaskApproval,
         },
         undefined,
-        { planIncludesPending: true, skipPlanSync: true, activityExtra: { via: "monthly_retainer", from: String(src._id) } }
+        { planIncludesPending: true, skipPlanSync: true, skipBrandReadiness: true, activityExtra: { via: "monthly_retainer", from: String(src._id) } }
       );
       if ("error" in created) {
         result.skipped.push({ brand: brand.name, reason: `${name}: ${created.error}` });

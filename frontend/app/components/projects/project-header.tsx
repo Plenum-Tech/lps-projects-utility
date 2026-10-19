@@ -73,7 +73,7 @@ import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
 import { BrandNoScopePanel } from "@/components/brands/brand-no-scope-panel";
-import { useBrands } from "@/hooks/use-brands";
+import { useBrandReadiness, useBrands } from "@/hooks/use-brands";
 import { ProjectPearityButton } from "@/components/projects/project-pearity-button";
 
 type DialogKind = "edit" | "continue" | "duplicate" | "archive" | "restore" | "delete" | null;
@@ -468,12 +468,19 @@ export function DuplicateProjectDialog({
 }) {
   const duplicate = useDuplicateProject();
   const navigate = useNavigate();
-  // The copy is a new project of the brand: a brand without scope can't get one (pitches can).
+  // The copy is a new project of the brand: a brand that isn't ready (no scope, not in the
+  // current plan, no lead) can't get one (pitches can).
   const brands = useBrands(false, open);
+  const isPitch = project.naming?.type.toLowerCase() === "pitch";
+  const readiness = useBrandReadiness(open && Boolean(project.naming) && !isPitch);
   const brandId = project.naming?.brand ?? project.brand?._id ?? null;
   const brand = brandId ? brands.data?.find((b) => b._id === brandId) : undefined;
+  const readinessReasons = brandId ? readiness.data?.brands[brandId]?.reasons : undefined;
   const brandNoScope =
-    Boolean(project.naming) && Boolean(brand) && !(brand!.scopeItems?.length ?? 0) && project.naming!.type.toLowerCase() !== "pitch";
+    Boolean(project.naming) &&
+    Boolean(brand) &&
+    !isPitch &&
+    (readinessReasons ? readinessReasons.length > 0 : !(brand!.scopeItems?.length ?? 0));
   const [name, setName] = useState("");
   const [includeTasks, setIncludeTasks] = useState(false);
   const [startDate, setStartDate] = useState("");
@@ -579,7 +586,9 @@ export function DuplicateProjectDialog({
               </div>
             )}
           </div>
-          {brandNoScope && brand && <BrandNoScopePanel brand={brand} onLeave={() => onOpenChange(false)} />}
+          {brandNoScope && brand && (
+            <BrandNoScopePanel brand={brand} reasons={readinessReasons?.length ? readinessReasons : ["no_scope"]} month={readiness.data?.month} onLeave={() => onOpenChange(false)} />
+          )}
           <SwitchRow
             id="duplicate-tasks"
             label="Include tasks"

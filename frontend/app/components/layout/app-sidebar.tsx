@@ -24,6 +24,7 @@ import {
   Settings,
   Sparkles,
   Trophy,
+  TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -179,6 +180,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { title: "Brands", to: "/brands", icon: Tags, match: ["/brands/", "/manpower"] },
       { title: "Projects", to: "/projects", icon: FolderKanban, match: ["/projects/"] },
+      { title: "Pitch & Growth", to: "/pitches", icon: TrendingUp },
       { title: "Approvals", to: "/approvals", icon: ClipboardCheck, approvers: true },
       { title: "Tasks", to: "/tasks", icon: ClipboardList, match: ["/tasks/"] },
       { title: "Meetings", to: "/meetings", icon: MessagesSquare, match: ["/meetings/"] },

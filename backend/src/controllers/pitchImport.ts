@@ -15,7 +15,7 @@ import { notifyBrandApprovalRequested } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 
 // ---------------------------------------------------------------------------
-// Pitch tracker import (Projects → Import pitch sheet): every row of the
+// Pitch tracker import (Pitch & Growth → Import pitch sheet): every row of the
 // "Proactive & Pitches" sheet becomes a Pitch project of its client (brand
 // created when new), with the lead's tasks: Client presentation, Milestone 1
 // and Milestone 2 meetings and the Client presentation on their dates. Preview first, then create the ticked rows.

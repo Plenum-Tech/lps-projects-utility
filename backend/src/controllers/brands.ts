@@ -209,6 +209,8 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const direct: { leads?: mongoose.Types.ObjectId[]; organisation?: string; monthlyRetainer?: boolean } = {};
   try {
     if ("leads" in body) direct.leads = await parseLeads(body.leads);
+    // A brand keeps at least one lead (new projects need one): clearing the last one is refused.
+    if (direct.leads?.length === 0 && (brand.leads ?? []).length > 0) throw new FieldError("leads", "A brand needs at least one lead — add another lead before removing the last one");
     if ("organisation" in body) direct.organisation = parseOrganisation(body.organisation);
     if ("monthlyRetainer" in body) {
       if (typeof body.monthlyRetainer !== "boolean") throw new FieldError("monthlyRetainer", "monthlyRetainer must be a boolean");

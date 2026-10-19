@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { LuArrowLeft, LuArrowRight, LuInfo, LuLoaderCircle, LuPlus, LuSave, LuSend, LuX } from "react-icons/lu";
 import { ScopeItemsEditor } from "@/components/projects/scope-items-editor";
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
@@ -56,7 +56,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useBrands, useCreateBrand } from "@/hooks/use-brands";
+import { readinessReasonText, useBrandReadiness, useBrands, useCreateBrand } from "@/hooks/use-brands";
 import { useDepartments } from "@/hooks/use-departments";
 import {
   useProjectCategories,
@@ -224,6 +224,9 @@ function parseOptionalNumber(text: string): number | null | "invalid" {
 
 const MONTH_PATTERN = /^\d{4}-(0[1-9]|1[0-2])$/;
 
+/** Brand picker option: a brand that isn't ready for new projects is disabled, with the reason. */
+type BrandOption = OptionItem & { disabled?: boolean; reason?: string };
+
 function sameNaming(a: ProjectNaming | null | undefined, b: ProjectNaming) {
   return (
     Boolean(a) &&
@@ -249,6 +252,7 @@ export function ProjectFormDialog({
   canViewRates = true,
   continueFrom = null,
   defaultType,
+  pitch = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -258,8 +262,14 @@ export function ProjectFormDialog({
   canViewRates?: boolean;
   /** Create mode, pre-filled from this (closed) project for the next month. */
   continueFrom?: Project | null;
-  /** Create mode: the project type picked up front (Brands → Pitch plan → New pitch: "Pitch"). */
+  /** Create mode: the project type picked up front (Pitch & Growth → New pitch: "Pitch"). */
   defaultType?: string;
+  /**
+   * Create mode: a pitch (Pitch & Growth → New pitch). The type selector is hidden and the
+   * type is fixed to Pitch; the brand needs no scope / plan line / lead yet. The normal form
+   * can't pick Pitch — "the pitch flag drives the pitch fields".
+   */
+  pitch?: boolean;
 }) {
   const isEdit = Boolean(project);
   const continuing = !project && Boolean(continueFrom);
@@ -279,6 +289,15 @@ export function ProjectFormDialog({
 
   const brands = useBrands(false, open);
   const types = useProjectTypes(open);
+  // A pitch form: New pitch, or continuing / pre-set as a Pitch. Otherwise Pitch isn't offered.
+  const pitchMode =
+    !project &&
+    (pitch || defaultType?.toLowerCase() === "pitch" || (Boolean(continueFrom) && continueFrom?.naming?.type.toLowerCase() === "pitch"));
+  // New non-pitch projects: only brands that are ready (scope, current plan line, lead).
+  const readiness = useBrandReadiness(open && !project && !pitchMode);
+  const [brandSearch, setBrandSearch] = useState("");
+  const [explainBrand, setExplainBrand] = useState<string | null>(null);
+  const [showNotReady, setShowNotReady] = useState(false);
   // Legacy names: brand / type / month / name detected from the old name.
   const legacy = Boolean(project && !project.naming);
   const suggestion = useProjectNamingSuggestion(project?._id, open && legacy);
@@ -289,6 +308,7 @@ export function ProjectFormDialog({
 
   const freshState = (): FormState => {
     const state = !project && continueFrom ? continueState(continueFrom) : initialState(project);
+    if (!project && !continueFrom && pitch) return { ...state, type: defaultType ?? "Pitch" };
     return !project && !continueFrom && defaultType ? { ...state, type: defaultType } : state;
   };
   const [form, setForm] = useState<FormState>(freshState);
@@ -325,6 +345,9 @@ export function ProjectFormDialog({
       setFiles([]);
       setSummaryScore(null);
       setNewBrand(null);
+      setBrandSearch("");
+      setExplainBrand(null);
+      setShowNotReady(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, project?._id, continueFrom?._id]);
@@ -448,16 +471,25 @@ export function ProjectFormDialog({
   );
 
   // Active brands, plus the project's current one even if it was deactivated since.
-  const brandOptions = useMemo<OptionItem[]>(() => {
+  // New non-pitch projects: ready brands first; the others at the bottom, greyed and disabled with the reason.
+  const readinessMonth = readiness.data?.month ?? null;
+  const notReadyOf = (brandId: string) => {
+    if (project || pitchMode || !readiness.data) return null;
+    const r = readiness.data.brands[brandId];
+    return r && !r.ready ? r.reasons : null;
+  };
+  const brandOptions = useMemo<BrandOption[]>(() => {
     const currentId = project?.brand?._id;
-    return [
-      ...(brands.data ?? [])
-        // Brands waiting for (or refused) leadership approval can't be picked yet.
-        .filter((brand) => (brand.status ?? "approved") === "approved" || brand._id === currentId)
-        .filter((brand) => brand.active || brand._id === currentId)
-        .map((brand) => ({
+    const list: BrandOption[] = (brands.data ?? [])
+      // Brands waiting for (or refused) leadership approval can't be picked yet.
+      .filter((brand) => (brand.status ?? "approved") === "approved" || brand._id === currentId)
+      .filter((brand) => brand.active || brand._id === currentId)
+      .map((brand) => {
+        const reasons = notReadyOf(brand._id);
+        return {
           value: brand._id,
           label: brand.active ? brand.name : `${brand.name} (inactive)`,
+          ...(reasons ? { disabled: true, reason: reasons.map((r) => readinessReasonText(r, readinessMonth!)).join(", ") } : {}),
           icon: (
             <span
               aria-hidden
@@ -467,9 +499,22 @@ export function ProjectFormDialog({
               )}
             />
           ),
-        })),
-    ];
-  }, [brands.data, project?.brand?._id]);
+        };
+      });
+    // Ready brands keep their order; the not-ready ones go to the bottom.
+    return [...list.filter((o) => !o.disabled), ...list.filter((o) => o.disabled)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brands.data, project?.brand?._id, readiness.data, pitchMode]);
+  const notReadyBrands = brandOptions.filter((o) => o.disabled);
+  // Searching a brand that can't be picked explains why (when no ready brand matches).
+  const searchTerm = brandSearch.trim().toLowerCase();
+  const searchedNotReady = (() => {
+    if (!searchTerm || form.brand !== NONE) return null;
+    const matches = brandOptions.filter((o) => o.label.toLowerCase().includes(searchTerm));
+    return matches.length > 0 && matches.every((o) => o.disabled) ? matches[0]!.value : null;
+  })();
+  const explainedId = explainBrand ?? searchedNotReady;
+  const explained = explainedId ? brands.data?.find((b) => b._id === explainedId) : undefined;
 
   const statusOptions = useMemo<OptionItem[]>(
     () =>
@@ -502,8 +547,10 @@ export function ProjectFormDialog({
       !names.some((name) => name.toLowerCase() === current.toLowerCase())
         ? [...names, current]
         : names;
-    return all.map((name) => ({ value: name, label: name }));
-  }, [types.data, types.isError, project?.naming?.type]);
+    // New projects: Pitch is created from Pitch & Growth → New pitch, not picked here.
+    const offered = project ? all : all.filter((name) => name.toLowerCase() !== "pitch");
+    return offered.map((name) => ({ value: name, label: name }));
+  }, [types.data, types.isError, project?.naming?.type, project]);
 
   const modeOptions: OptionItem[] = PROGRESS_MODES.map((mode) => ({
     value: mode,
@@ -527,8 +574,12 @@ export function ProjectFormDialog({
   const [brandFlowOpen, setBrandFlowOpen] = useState(false);
   // A new project takes its scope from the brand: a brand without one can't get new
   // projects (pitches are the exception — pitch brands usually have no scope yet).
-  const brandHasNoScope = !project && Boolean(selectedBrand) && !brandScope && form.type.toLowerCase() !== "pitch";
-  const pitchTypeName = typeOptions.find((option) => option.value.toLowerCase() === "pitch")?.value ?? null;
+  // Readiness (scope, current plan line, lead) — the server refuses the others with 409 too.
+  const selectedReasons = selectedBrand && !pitchMode && form.type.toLowerCase() !== "pitch" ? notReadyOf(selectedBrand._id) : null;
+  const brandHasNoScope =
+    !project && Boolean(selectedBrand) && form.type.toLowerCase() !== "pitch" && !pitchMode && (Boolean(selectedReasons) || !brandScope);
+  const pitchTypeName =
+    (types.data?.map((type) => type.name) ?? DEFAULT_PROJECT_TYPES).find((name) => name.toLowerCase() === "pitch") ?? "Pitch";
   // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
   const title = stripComposedPrefix(form.title, selectedBrand?.name ?? "", form.type, form.month);
   const code = form.code.trim().toUpperCase();
@@ -772,13 +823,15 @@ export function ProjectFormDialog({
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{isEdit ? "Edit project" : continuing ? "Continue in next month" : "New project"}</DialogTitle>
+          <DialogTitle>{isEdit ? "Edit project" : continuing ? "Continue in next month" : pitchMode ? "New pitch" : "New project"}</DialogTitle>
           <DialogDescription>
             {isEdit
               ? "Update the project details and team. Status, rates and other members are managed from the project page."
               : continuing
                 ? `A new project for ${continueFrom!.name}'s work in the next month, with the same name. Its scope comes from the brand and its team from the new month's manpower plan. Tasks stay in the old project.`
-                : "Set up the project, its team and how progress is measured. Members are notified."}
+                : pitchMode
+                  ? "A pitch / proactive project: the client's brand, the potential revenue, the lead and the three dates (they become the lead's tasks). The brand needs no scope yet."
+                  : "Set up the project, its team and how progress is measured. Members are notified."}
           </DialogDescription>
         </DialogHeader>
 
@@ -846,9 +899,12 @@ export function ProjectFormDialog({
                         (option) => option.value === form.brand,
                       ) ?? null
                     }
-                    onValueChange={(item) =>
-                      changeNamePart({ brand: item?.value ?? NONE })
-                    }
+                    onValueChange={(item) => {
+                      if (item?.disabled) return;
+                      setExplainBrand(null);
+                      changeNamePart({ brand: item?.value ?? NONE });
+                    }}
+                    onInputValueChange={(text: string) => setBrandSearch(text)}
                     disabled={brands.isPending || namingLoading}
                     autoHighlight
                   >
@@ -863,10 +919,11 @@ export function ProjectFormDialog({
                     <ComboboxContent sideOffset={4}>
                       <ComboboxEmpty>No brands found.</ComboboxEmpty>
                       <ComboboxList>
-                        {(item: OptionItem) => (
-                          <ComboboxItem key={item.value} value={item}>
+                        {(item: BrandOption) => (
+                          <ComboboxItem key={item.value} value={item} disabled={item.disabled} className={cn(item.disabled && "opacity-60")}>
                             {item.icon}
-                            {item.label}
+                            <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                            {item.reason && <span className="shrink-0 text-xs text-muted-foreground">{item.reason}</span>}
                           </ComboboxItem>
                         )}
                       </ComboboxList>
@@ -935,18 +992,53 @@ export function ProjectFormDialog({
                       .join(", ")}
                   </p>
                 )}
-                {brandHasNoScope && selectedBrand && (
-                  <BrandNoScopePanel brand={selectedBrand} onLeave={() => onOpenChange(false)}>
-                    {pitchTypeName && (
-                      <button
-                        type="button"
-                        onClick={() => changeNamePart({ type: pitchTypeName })}
+                {(() => {
+                  // The selected brand isn't ready, or one the user asked about / searched for.
+                  const panelBrand = brandHasNoScope && selectedBrand ? selectedBrand : explained;
+                  if (!panelBrand) return null;
+                  const reasons = notReadyOf(panelBrand._id) ?? (panelBrand === selectedBrand && !brandScope ? (["no_scope"] as const) : null);
+                  if (!reasons) return null;
+                  return (
+                    <BrandNoScopePanel brand={panelBrand} reasons={[...reasons]} month={readinessMonth ?? undefined} onLeave={() => onOpenChange(false)}>
+                      <Link
+                        to="/pitches"
+                        onClick={() => onOpenChange(false)}
                         className="text-xs font-medium text-primary underline-offset-4 outline-none hover:underline focus-visible:underline"
                       >
-                        It&apos;s a pitch? Continue as a {pitchTypeName} project (no scope needed yet)
-                      </button>
+                        It&apos;s a pitch? Use Pitch &amp; Growth → New pitch (no scope or plan line needed)
+                      </Link>
+                    </BrandNoScopePanel>
+                  );
+                })()}
+                {notReadyBrands.length > 0 && form.brand === NONE && newBrand === null && (
+                  <div className="text-xs">
+                    <button
+                      type="button"
+                      aria-expanded={showNotReady}
+                      onClick={() => setShowNotReady((v) => !v)}
+                      className="font-medium text-muted-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
+                    >
+                      Why can&apos;t I pick some brands? ({notReadyBrands.length} not ready)
+                    </button>
+                    {showNotReady && (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {notReadyBrands.map((o) => (
+                          <button
+                            key={o.value}
+                            type="button"
+                            aria-pressed={explainBrand === o.value}
+                            onClick={() => setExplainBrand(explainBrand === o.value ? null : o.value)}
+                            className={cn(
+                              "rounded-full border px-2 py-0.5 text-left hover:bg-muted",
+                              explainBrand === o.value && "border-destructive/50 bg-destructive/5",
+                            )}
+                          >
+                            {o.label} <span className="text-muted-foreground">· {o.reason}</span>
+                          </button>
+                        ))}
+                      </div>
                     )}
-                  </BrandNoScopePanel>
+                  </div>
                 )}
                 {brandCreator && newBrand === null && (
                   <button
@@ -961,6 +1053,12 @@ export function ProjectFormDialog({
               )}
               {showStep(2) && (
               <>
+              {pitchMode ? (
+              <div className="space-y-1.5">
+                <span className="text-sm font-medium">Type</span>
+                <p className="flex h-9 items-center rounded-md border bg-muted/40 px-3 text-sm">{form.type || pitchTypeName}</p>
+              </div>
+              ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="project-type">Type<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <OptionSelect
@@ -974,10 +1072,19 @@ export function ProjectFormDialog({
                   aria-label="Type"
                 />
                 {show(typeError) && <FieldError>{typeError}</FieldError>}
+                {!isEdit && (
+                  <p className="text-xs text-muted-foreground">
+                    Creating a pitch? Use{" "}
+                    <Link to="/pitches" onClick={() => onOpenChange(false)} className="font-medium text-primary underline-offset-4 hover:underline">
+                      Pitch &amp; Growth → New pitch
+                    </Link>
+                  </p>
+                )}
                 {isAdmin && (
                   <ManageLink to="/settings/projects">Manage types</ManageLink>
                 )}
               </div>
+              )}
               <div className="space-y-1.5">
                 <Label htmlFor="project-month">Month<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <Input

@@ -25,6 +25,7 @@ export default [
     route("brands", "routes/brands.tsx"),
     route("brands/:id", "routes/brands.$id.tsx"),
     route("projects", "routes/projects.tsx"),
+    route("pitches", "routes/pitches.tsx"),
     route("projects/:id", "routes/projects.$id.tsx"),
     route("meetings", "routes/meetings.tsx"),
     route("meetings/:id", "routes/meetings.$id.tsx"),

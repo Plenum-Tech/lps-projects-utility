@@ -1,8 +1,9 @@
 import { Fragment, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
-import { LuFileSpreadsheet, LuLoaderCircle, LuPlus, LuPresentation } from "react-icons/lu";
+import { LuFileSpreadsheet, LuFileUp, LuLoaderCircle, LuPlus, LuPresentation } from "react-icons/lu";
 
 import { CELL_TONE, PersonPicker, type CellTone } from "@/components/brands/alloc-cell";
+import { PitchImportDialog } from "@/components/brands/pitch-import-dialog";
 import { shortName } from "@/components/brands/brands-dashboard";
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 import type { PitchRow, PitchStepKey, PitchTone } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Brands → Pitch plan: pitches / proactive projects by month, laid out like the
+// Pitch & Growth Tracker (/pitches): pitches / proactive projects by month, laid out like the
 // Manpower plan grid. Dates, revenue, lead and end date edit in the cell (no
 // pop-up) for leadership, Nazeer and the pitch's lead / manager. The status
 // comes from the pitch's three tasks (Milestone 1 meeting, Milestone 2 meeting,
@@ -126,7 +127,7 @@ interface CellError {
   taskId: string | null;
 }
 
-export function PitchPlan({ quarter, onQuarterChange }: { quarter: string; onQuarterChange: (quarter: string) => void }) {
+export function PitchPlan({ quarter, onQuarterChange, canImport = false }: { quarter: string; onQuarterChange: (quarter: string) => void; canImport?: boolean }) {
   const pitches = usePitches(quarter);
   const exporter = usePitchesExport();
   const edit = usePitchEdit(quarter);
@@ -137,6 +138,7 @@ export function PitchPlan({ quarter, onQuarterChange }: { quarter: string; onQua
   const [error, setError] = useState<CellError | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
   const [newPitch, setNewPitch] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
 
   const today = pitches.data?.today ?? new Date().toISOString().slice(0, 10);
   const all = useMemo(() => pitches.data?.rows ?? [], [pitches.data]);
@@ -351,7 +353,7 @@ export function PitchPlan({ quarter, onQuarterChange }: { quarter: string; onQua
   return (
     <div className="mx-auto w-full max-w-[96rem] space-y-3 p-4 md:p-6">
       <PageHeader
-        title="Pitch plan"
+        title="Pitch & Growth Tracker"
         description="Pitches / proactive projects by month. Status comes from each pitch's tasks: the three are created automatically, others can be added."
       />
 
@@ -379,6 +381,11 @@ export function PitchPlan({ quarter, onQuarterChange }: { quarter: string; onQua
           <NativeSelectOption value="nodates">No dates yet</NativeSelectOption>
         </NativeSelect>
         <span className="grow" />
+        {canImport && (
+          <Button type="button" variant="outline" onClick={() => setImportOpen(true)}>
+            <LuFileUp aria-hidden /> Import pitch sheet
+          </Button>
+        )}
         <Button type="button" variant="outline" onClick={() => exporter.mutate(quarter)} disabled={exporter.isPending || all.length === 0}>
           {exporter.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuFileSpreadsheet aria-hidden />}
           Download Excel
@@ -521,7 +528,8 @@ export function PitchPlan({ quarter, onQuarterChange }: { quarter: string; onQua
         </div>
       )}
 
-      <ProjectFormDialog open={newPitch} onOpenChange={setNewPitch} defaultType="Pitch" />
+      <ProjectFormDialog open={newPitch} onOpenChange={setNewPitch} defaultType="Pitch" pitch />
+      {canImport && <PitchImportDialog open={importOpen} onOpenChange={setImportOpen} />}
     </div>
   );
 }

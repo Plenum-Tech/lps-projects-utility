@@ -27,6 +27,29 @@ export function useBrands(activeOnly = false, enabled = true) {
   });
 }
 
+export type BrandNotReadyReason = "no_scope" | "not_in_plan" | "no_lead";
+export interface BrandReadinessResponse {
+  /** The current month ("YYYY-MM"): the plan line must be in its latest approved plan. */
+  month: string;
+  brands: Record<string, { ready: boolean; reasons: BrandNotReadyReason[] }>;
+}
+
+/** Which brands can get a NEW non-pitch project: a scope, a line in the current month's approved plan, a lead. */
+export function useBrandReadiness(enabled = true) {
+  return useQuery({
+    queryKey: [...brandKeys.all, "readiness"] as const,
+    queryFn: async () => (await api.get<BrandReadinessResponse>("/brands/readiness")).data,
+    staleTime: 30_000,
+    enabled,
+  });
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+/** "no scope", "not in October's plan", "no lead". */
+export function readinessReasonText(reason: BrandNotReadyReason, month: string): string {
+  return reason === "no_scope" ? "no scope" : reason === "not_in_plan" ? `not in ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? month}'s plan` : "no lead";
+}
+
 function toFieldError(error: unknown): SettingsFieldError {
   const field = (error as { response?: { data?: { field?: unknown } } })?.response?.data?.field ?? null;
   return new SettingsFieldError(getErrorMessage(error), typeof field === "string" ? field : null);

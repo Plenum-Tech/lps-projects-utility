@@ -8,6 +8,7 @@ import { clip, ExceptionBatch, isLeadershipActor, notifyException, requestChange
 import { planTeamForProject, syncProjectTeamToPlan } from "../lib/manpowerSync.js";
 import { attachBrandFiles, brandById, brandLocksScope, brandScopeForProject, pickBrandScope } from "../lib/brandFlow.js";
 import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
+import { brandsInPlan, currentMonth, notReadyMessage, readinessOf } from "../lib/brandReadiness.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
@@ -992,6 +993,8 @@ export interface ProjectWriteOptions {
   skipPitchTasks?: boolean;
   /** Create: the brand may have no scope yet (brand flow — it brings the scope; monthly retainer job). */
   allowBrandWithoutScope?: boolean;
+  /** Create: skip the brand readiness check (scope / plan line / lead) — the retainer job checks it itself. */
+  skipBrandReadiness?: boolean;
   /** Create: don't fill an empty team from the brand's plan line / leads. */
   skipBrandTeam?: boolean;
   /** Create: the brand team may come from a pending plan version (the monthly retainer job's copy). */
@@ -1096,17 +1099,27 @@ export async function createProjectCore(
   // A brand with a scope (brand flow) fixes its projects' scope: the project takes some
   // of the brand's rows (picked in the form) or, by default, all of them.
   const brandDoc = await brandById(brand);
-  // A new project needs a brand with a scope (its scope comes from the brand). Pitches,
-  // the brand flow (it brings the scope), imports and the retainer job are exempt.
-  const scopeExempt =
-    naming?.type.toLowerCase() === "pitch" || options.allowBrandWithoutScope || options.allowLegacyName || options.skipApproval;
-  if (!scopeExempt) {
+  // A new project needs a READY brand (lib/brandReadiness.ts): a scope (its scope comes
+  // from the brand), a line in the current month's approved manpower plan and a lead.
+  // Pitches, the brand flow (it brings the scope), imports and the retainer job (it runs
+  // its own check) are exempt.
+  const readinessExempt =
+    naming?.type.toLowerCase() === "pitch" ||
+    options.allowBrandWithoutScope ||
+    options.allowLegacyName ||
+    options.skipApproval ||
+    options.skipBrandReadiness;
+  if (!readinessExempt) {
     if (!brandDoc) return { ...bad("Pick a brand", 400), field: "brand" } as Invalid;
-    if (!brandLocksScope(brandDoc)) {
+    const month = currentMonth();
+    const { reasons } = readinessOf(brandDoc, await brandsInPlan(month));
+    if (reasons.length) {
       return {
-        ...bad(`${brandDoc.name} has no scope yet — add the brand's scope first, or create a new brand with its scope.`, 409),
+        ...bad(notReadyMessage(brandDoc.name, reasons, month), 409),
         field: "brand",
-        code: "brand_no_scope",
+        code: "brand_not_ready",
+        reasons,
+        month,
         brand: { _id: String(brandDoc._id), name: brandDoc.name },
       } as Invalid;
     }

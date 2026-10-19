@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
 import type { PitchImportResult, PitchImportRow } from "@/types";
 
 // ---------------------------------------------------------------------------
-// Projects → Import pitch sheet: the "Proactive & Pitches" tracker becomes Pitch
+// Pitch & Growth → Import pitch sheet: the "Proactive & Pitches" tracker becomes Pitch
 // projects (one per row; the client's brand is reused or created) with the
 // lead's Milestone 1 meeting / Milestone 2 meeting / Client presentation tasks on their dates.
 // ---------------------------------------------------------------------------

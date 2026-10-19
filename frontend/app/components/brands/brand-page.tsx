@@ -283,6 +283,8 @@ function LeadsEditor({ data }: { data: BrandDetailResponse }) {
     return list;
   }, [people.data, b.leads]);
   const dirty = leads.join(",") !== b.leads.map((l) => l._id).join(",") || organisation.trim() !== b.organisation;
+  // A brand keeps at least one lead (new projects need one); the server refuses clearing them too.
+  const clearsLeads = leads.length === 0 && b.leads.length > 0;
 
   if (!data.canManage) {
     return (
@@ -296,12 +298,13 @@ function LeadsEditor({ data }: { data: BrandDetailResponse }) {
       <div className="space-y-1.5">
         <Label htmlFor="brand-leads">Lead(s)</Label>
         <MultiSelect id="brand-leads" options={options} value={leads} onValueChange={(v) => setLeads(v.slice(0, 5))} placeholder="Pick the lead(s)…" max={5} />
+        {clearsLeads && <p className="text-xs text-destructive">A brand needs at least one lead.</p>}
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="brand-org">Organisation</Label>
         <Input id="brand-org" value={organisation} maxLength={80} onChange={(e) => setOrganisation(e.target.value)} placeholder="e.g. Ajmal" />
       </div>
-      <Button type="button" disabled={!dirty || patch.isPending} onClick={() => patch.mutate({ id: b._id, leads, organisation: organisation.trim() })}>
+      <Button type="button" disabled={!dirty || clearsLeads || patch.isPending} onClick={() => patch.mutate({ id: b._id, leads, organisation: organisation.trim() })}>
         {patch.isPending && <LuLoaderCircle aria-hidden className="animate-spin" />}
         Save
       </Button>

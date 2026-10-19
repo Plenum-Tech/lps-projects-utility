@@ -5,7 +5,6 @@ import {
   LuCalendarDays,
   LuCircleDot,
   LuDownload,
-  LuFileSpreadsheet,
   LuFolderKanban,
   LuLayoutList,
   LuLoaderCircle,
@@ -25,7 +24,6 @@ import { ImportButton } from "@/components/imports/import-button";
 import { EmptyState, PageHeader } from "@/components/globals/query-states";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
-import { PitchImportDialog } from "@/components/brands/pitch-import-dialog";
 import {
   ArchiveDialog,
   DeleteProjectDialog,
@@ -198,7 +196,6 @@ export function ProjectWorkspace() {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [brandFlowOpen, setBrandFlowOpen] = useState(false);
-  const [pitchImportOpen, setPitchImportOpen] = useState(false);
   const [dialog, setDialog] = useState<{ kind: ProjectDialogKind; project: Project } | null>(null);
   const [bulkConfirm, setBulkConfirm] = useState<"archive" | "restore" | "delete" | null>(null);
 
@@ -319,12 +316,6 @@ export function ProjectWorkspace() {
                 <Button variant="outline" onClick={() => setBrandFlowOpen(true)}>
                   <LuPlus aria-hidden />
                   New brand
-                </Button>
-              )}
-              {isAdmin && (
-                <Button variant="outline" onClick={() => setPitchImportOpen(true)}>
-                  <LuFileSpreadsheet aria-hidden />
-                  Import pitch sheet
                 </Button>
               )}
               <Button
@@ -592,7 +583,6 @@ export function ProjectWorkspace() {
 
       <ProjectFormDialog open={createOpen} onOpenChange={setCreateOpen} />
       {brandCreator && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
-      {isAdmin && <PitchImportDialog open={pitchImportOpen} onOpenChange={setPitchImportOpen} />}
 
       {dialog && (
         <>

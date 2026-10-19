@@ -19,7 +19,7 @@ import type { BrandChecks, BrandOverviewResponse, BrandSummary } from "@/types";
 // ---------------------------------------------------------------------------
 // Brands → Overview (checks per brand, least set up first) and Allocation
 // (brands × plan roles, colour-only cells editing the month's manpower plan).
-// Brands without a scope are flagged, never blocked.
+// Brands that aren't ready (no scope / not in the plan / no lead) are flagged in a banner.
 // ---------------------------------------------------------------------------
 
 type Filter = "all" | "noscope" | "nodocs" | "noplan" | "nolead";
@@ -150,21 +150,40 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   const count = (k: keyof BrandChecks) => base.filter((b) => b.checks[k]).length;
   const pick = (f: Filter) => setFilter(filter === f && f !== "all" ? "all" : f);
 
-  // Brands (not pitches) without a scope: new projects for them are blocked until it's added.
-  const noScope = base.filter((b) => !b.checks.scope && !b.isPitch && b.status !== "rejected").length;
+  // Brands (not pitches) that aren't ready for new projects: a scope, a line in the month's plan and a lead are all needed.
+  const blockable = base.filter((b) => !b.isPitch && b.status !== "rejected");
+  const noScope = blockable.filter((b) => !b.checks.scope).length;
+  const noPlan = blockable.filter((b) => !b.checks.plan).length;
+  const noLead = blockable.filter((b) => !b.checks.lead).length;
+  const monthLong = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
+  const notReady = blockable.filter((b) => !b.checks.scope || !b.checks.plan || !b.checks.lead).length;
+  const fix: Array<{ n: number; text: string; filter: Filter }> = [
+    { n: noScope, text: "no scope", filter: "noscope" },
+    { n: noPlan, text: `not in ${monthLong}'s plan`, filter: "noplan" },
+    { n: noLead, text: "no lead", filter: "nolead" },
+  ];
 
   return (
     <div className="space-y-3">
-      {noScope > 0 && (
+      {notReady > 0 && (
         <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
           <LuTriangleAlert aria-hidden className="size-5 shrink-0" />
           <p className="min-w-0 flex-1">
-            <span className="font-semibold">{noScope} brand{noScope === 1 ? " has" : "s have"} no scope.</span> New projects for {noScope === 1 ? "it" : "them"} are blocked until the scope is added —
-            open the brand and upload the scope document or a screenshot (.docx, PDF, image or Excel); it&apos;s read automatically.
+            <span className="font-semibold">
+              {notReady} brand{notReady === 1 ? " isn't" : "s aren't"} ready for new projects.
+            </span>{" "}
+            A brand needs a scope, a line in the month&apos;s manpower plan and a lead. Upload the scope on the brand page (.docx, PDF, image or Excel; it&apos;s read
+            automatically), add the line in Allocation, and set the lead.
           </p>
-          <Button type="button" size="sm" variant="outline" className="border-red-300 bg-transparent dark:border-red-800" onClick={() => setFilter("noscope")}>
-            Show {noScope === 1 ? "it" : "them"}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {fix
+              .filter((f) => f.n > 0)
+              .map((f) => (
+                <Button key={f.filter} type="button" size="sm" variant="outline" className="border-red-300 bg-transparent dark:border-red-800" onClick={() => setFilter(f.filter)}>
+                  {f.n} {f.text}
+                </Button>
+              ))}
+          </div>
         </div>
       )}
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">

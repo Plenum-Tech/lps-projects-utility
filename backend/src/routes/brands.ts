@@ -2,6 +2,7 @@ import { Router } from "express";
 import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controllers/brandFlow.js";
 import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
 import { exportPitches, listPitches, updatePitch } from "../controllers/pitches.js";
+import { brandReadiness } from "../controllers/brandReadiness.js";
 import { createBrand, decideBrand, deleteBrand, listBrands, updateBrand } from "../controllers/brands.js";
 import { brandDetail, brandOverview, deleteBrandFile, downloadBrandFile, splitBrand, uploadBrandFiles } from "../controllers/brandDashboard.js";
 import { requireBrandCreator, requireBrandManager } from "../lib/brandAccess.js";
@@ -19,7 +20,9 @@ router.use(requireAuth);
 router.get("/", listBrands);
 // Brands section: overview + allocation in one call, the brand page.
 router.get("/overview", brandOverview);
-// Pitch plan tab: every visible Pitch project of a quarter with its automatic status, and the .xlsx.
+// New projects: which brands are ready (scope, current plan line, lead) — the project form's picker.
+router.get("/readiness", brandReadiness);
+// Pitch & Growth (/pitches): every visible Pitch project of a quarter with its automatic status, and the .xlsx.
 router.get("/pitches", listPitches);
 router.get("/pitches/export", exportPitches);
 router.patch("/pitches/:id", updatePitch);

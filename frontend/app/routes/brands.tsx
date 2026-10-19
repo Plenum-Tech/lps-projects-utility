@@ -1,7 +1,6 @@
-import { useSearchParams } from "react-router";
+import { Navigate, useSearchParams } from "react-router";
 
 import { BrandsAllocation, BrandsOverview, MonthPicker, NewBrandButton, thisMonth, useBrandsMonth } from "@/components/brands/brands-dashboard";
-import { isQuarter, PitchPlan, thisQuarter } from "@/components/brands/pitch-plan";
 import { PageHeader } from "@/components/globals/query-states";
 import { ManpowerPage } from "@/components/manpower/manpower-page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,7 +16,7 @@ export function meta({}: Route.MetaArgs) {
  * Brands: the overview (scope, documents, plan, lead per brand), the Allocation grid
  * (brands × plan roles, editing the month's manpower plan) and, for heads and
  * admins, the Manpower plan — the same plan page as before (`?section=manpower`; the plan keeps its own `?tab=`).
- * Pitch plan (`?section=pitches&quarter=2026-Q4`, everyone): pitches by month with automatic status, edited in place.
+ * The Pitch plan moved to its own page, Pitch & Growth (/pitches); old `?section=pitches` links redirect there.
  */
 export default function Brands() {
   const { data: user } = useCurrentUser();
@@ -25,8 +24,7 @@ export default function Brands() {
   const month = /^\d{4}-\d{2}$/.test(searchParams.get("month") ?? "") ? searchParams.get("month")! : thisMonth();
   const canSeePlan = user ? user.role !== "employee" : false;
   const wanted = searchParams.get("section");
-  const tab = wanted === "pitches" ? "pitches" : canSeePlan && (wanted === "manpower" || wanted === "allocation") ? wanted : "brands";
-  const quarter = isQuarter(searchParams.get("quarter")) ? searchParams.get("quarter")! : thisQuarter();
+  const tab = canSeePlan && (wanted === "manpower" || wanted === "allocation") ? wanted : "brands";
   const overview = useBrandsMonth(month);
 
   function setParam(key: string, value: string | null) {
@@ -40,6 +38,13 @@ export default function Brands() {
       { replace: true },
     );
   }
+  if (wanted === "pitches") {
+    const next = new URLSearchParams(searchParams);
+    next.delete("section");
+    next.delete("month");
+    const query = next.toString();
+    return <Navigate to={`/pitches${query ? `?${query}` : ""}`} replace />;
+  }
   if (!user) return null;
   const shared = { month, data: overview.data, isPending: overview.isPending, error: overview.error, refetch: () => void overview.refetch() };
 
@@ -50,14 +55,13 @@ export default function Brands() {
           <TabsTrigger value="brands">Overview</TabsTrigger>
           {canSeePlan && <TabsTrigger value="allocation">Allocation</TabsTrigger>}
           {canSeePlan && <TabsTrigger value="manpower">Manpower plan</TabsTrigger>}
-          <TabsTrigger value="pitches">Pitch plan</TabsTrigger>
         </TabsList>
       </div>
-      {tab !== "manpower" && tab !== "pitches" && (
+      {tab !== "manpower" && (
         <div className="mx-auto w-full max-w-[96rem] px-4 pt-4 md:px-6">
           <PageHeader
             title="Brands"
-            description="Scope, documents, team and lead per brand. Brands without a scope are flagged, not blocked."
+            description="Scope, documents, team and lead per brand. New projects need a brand with a scope, a plan line and a lead."
             actions={
               <>
                 <MonthPicker month={month} onChange={(m) => setParam("month", m === thisMonth() ? null : m)} />
@@ -79,9 +83,6 @@ export default function Brands() {
           </div>
         </TabsContent>
       )}
-      <TabsContent value="pitches">
-        {tab === "pitches" && <PitchPlan quarter={quarter} onQuarterChange={(q) => setParam("quarter", q === thisQuarter() ? null : q)} />}
-      </TabsContent>
       {canSeePlan && (
         <TabsContent value="manpower">
           <ManpowerPage />
