@@ -200,6 +200,15 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     () => rolesFromScope(rows, notes, (result?.texts ?? []).map((t) => t.text).join(" ")),
     [rows, notes, result],
   );
+  // Every manpower position: the ones the SOW asks for first (pre-filled), then the rest to fill if needed.
+  const allRoles = useMemo(() => {
+    const why = new Map(roles.map((r) => [r.key, r.why]));
+    const fromSow = MANPOWER_ROLE_FALLBACK.filter((r) => why.has(r.key)).sort(
+      (a, b) => roles.findIndex((x) => x.key === a.key) - roles.findIndex((x) => x.key === b.key),
+    );
+    const rest = MANPOWER_ROLE_FALLBACK.filter((r) => !why.has(r.key));
+    return [...fromSow, ...rest].map((r) => ({ key: r.key, label: r.label, why: why.get(r.key) ?? null }));
+  }, [roles]);
   // People holding each role in the month's plan, least busy first.
   const holders = useMemo(() => {
     const byRole = new Map<string, Map<string, string>>();
@@ -273,7 +282,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const activeTasks = isPitch ? tasks.filter((t) => t.dueDate) : [];
   // A pitch needs all three dates: Client presentation, Milestone 1, Milestone 2.
   const pitchDatesMissing = isPitch ? tasks.filter((t) => !t.dueDate).map((t) => t.title) : [];
-  const teamPeople = [...new Set(roles.flatMap((r) => team[r.key] ?? []))];
+  const teamPeople = [...new Set(allRoles.flatMap((r) => team[r.key] ?? []))];
   // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
   const typeForName = isPitch ? "Pitch" : "Project";
   // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
@@ -302,7 +311,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       month,
       title: cleanTitle,
       leads,
-      team: roles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
+      team: allRoles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
       tasks: [],
       ...(isPitch
         ? { pitchDates: { clientPresentation: tasks[0]?.dueDate ?? "", milestone1: tasks[1]?.dueDate ?? "", milestone2: tasks[2]?.dueDate ?? "" } }
@@ -654,47 +663,67 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
             )}
 
             <div className="space-y-2">
-              <p className="text-sm font-medium">Team from the scope</p>
-              <p className="text-xs text-muted-foreground">People who hold the role in the {monthLabel} manpower plan, least busy first (projects / max {max}). Click to add or remove.</p>
-              {plan.isPending ? (
+              <p className="text-sm font-medium">Team — all manpower positions</p>
+              <p className="text-xs text-muted-foreground">
+                Positions the SOW asks for are filled in for you ({roles.length}); fill any other position you need. Chips are the people who hold the role in the {monthLabel} manpower plan, least busy first (projects / max {max}) — or add anyone.
+              </p>
+              {plan.isPending && (
                 <p className="flex items-center gap-2 text-xs text-muted-foreground"><LuLoaderCircle aria-hidden className="size-3.5 animate-spin" /> Loading the manpower plan…</p>
-              ) : plan.isError ? (
-                <p className="text-xs text-amber-700 dark:text-amber-400">No manpower plan for {monthLabel} yet — the team can be added on the project later.</p>
-              ) : (
-                <div className="space-y-2">
-                  {roles.map((r) => {
-                    const list = holders.get(r.key) ?? [];
-                    const picked = team[r.key] ?? [];
-                    return (
-                      <div key={r.key} className="rounded-lg border p-3">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <p className="text-sm font-medium">{roleLabel.get(r.key) ?? r.key}</p>
-                          <span className="text-xs text-muted-foreground">Why: {r.why}</span>
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {list.length === 0 && <span className="text-xs text-muted-foreground">Nobody holds this role in the plan.</span>}
-                          {list.map((p) => {
-                            const on = picked.includes(p.id);
-                            const n = (load.data?.load[p.id] ?? 0) + (on ? 1 : 0);
-                            return (
-                              <button
-                                key={p.id}
-                                type="button"
-                                aria-pressed={on}
-                                onClick={() => toggle(r.key, p.id)}
-                                className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", on ? "border-primary bg-primary/10 font-medium text-primary" : "hover:bg-muted")}
-                              >
-                                {on ? "✓" : "+"} {p.name}
-                                <span className={cn("tabular-nums", n > max ? "font-semibold text-destructive" : "text-muted-foreground")}>{n}/{max}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
               )}
+              {plan.isError && (
+                <p className="text-xs text-amber-700 dark:text-amber-400">No manpower plan for {monthLabel} yet — pick people with “Add anyone”.</p>
+              )}
+              <div className="space-y-2">
+                {allRoles.map((r) => {
+                  const picked = team[r.key] ?? [];
+                  const list = [...(holders.get(r.key) ?? [])];
+                  for (const id of picked) if (!list.some((p) => p.id === id)) list.push({ id, name: nameOf(id) });
+                  const others = peopleOptions.filter((o) => !list.some((p) => p.id === o.value));
+                  return (
+                    <div key={r.key} className={cn("rounded-lg border p-3", r.why ? "border-primary/40" : "", !r.why && !picked.length && "bg-muted/20")}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-medium">
+                          {r.label}
+                          {picked.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({picked.length})</span>}
+                        </p>
+                        {r.why ? (
+                          <Badge variant="secondary" className="text-xs font-normal">From the SOW: {r.why}</Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">Not in the SOW — fill if needed</span>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                        {list.map((p) => {
+                          const on = picked.includes(p.id);
+                          const n = (load.data?.load[p.id] ?? 0) + (on ? 1 : 0);
+                          return (
+                            <button
+                              key={p.id}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => toggle(r.key, p.id)}
+                              className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs", on ? "border-primary bg-primary/10 font-medium text-primary" : "hover:bg-muted")}
+                            >
+                              {on ? "✓" : "+"} {p.name}
+                              <span className={cn("tabular-nums", n > max ? "font-semibold text-destructive" : "text-muted-foreground")}>{n}/{max}</span>
+                            </button>
+                          );
+                        })}
+                        {others.length > 0 && (
+                          <OptionSelect
+                            aria-label={`Add anyone as ${r.label}`}
+                            className="h-7 w-40 text-xs"
+                            value=""
+                            placeholder="+ Add anyone…"
+                            options={others}
+                            onChange={(id) => id && toggle(r.key, id)}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
 
             <div className="rounded-lg bg-muted/40 p-3 text-sm">
