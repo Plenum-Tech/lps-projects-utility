@@ -80,7 +80,7 @@ import { TaskHistory } from "../models/TaskHistory.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
-import { PITCH_STEPS } from "../lib/pitches.js";
+import { internalMeetingLabelId, PITCH_STEPS } from "../lib/pitches.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import { listTasksForProject } from "./tasks.js";
 
@@ -917,6 +917,9 @@ export interface ProjectBody {
   pitchDates?: unknown;
   /** Pitch projects: who gets the three pitch tasks (default the manager, else the creator). */
   pitchLeads?: unknown;
+  /** Pitch projects: potential revenue (AED), or TBC. */
+  pitchRevenue?: unknown;
+  pitchRevenueTbc?: unknown;
   /** Structured name parts `{ brand, type, month, title }` (required on create). */
   naming?: unknown;
   code?: unknown;
@@ -1002,7 +1005,7 @@ export const PITCH_TASKS = PITCH_STEPS;
 
 /** A pitch's three dates — all required (they become the lead's tasks). */
 function parsePitchDates(raw: unknown): Record<(typeof PITCH_TASKS)[number]["key"], Date> | Invalid {
-  const missing = "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates";
+  const missing = "A pitch needs the Milestone 1 meeting, Milestone 2 meeting and Client presentation dates";
   if (!raw || typeof raw !== "object") return bad(missing);
   const r = raw as Record<string, unknown>;
   const out = {} as Record<(typeof PITCH_TASKS)[number]["key"], Date>;
@@ -1083,6 +1086,12 @@ export async function createProjectCore(
     pitchDates = parsePitchDates(body.pitchDates);
     if (isInvalid(pitchDates)) return pitchDates;
   }
+  const pitchRevenueTbc = body.pitchRevenueTbc === true;
+  const pitchRevenueNum = body.pitchRevenue === null || body.pitchRevenue === undefined || body.pitchRevenue === "" ? null : Number(body.pitchRevenue);
+  if (pitchRevenueNum !== null && (!Number.isFinite(pitchRevenueNum) || pitchRevenueNum < 0 || pitchRevenueNum > 1e12)) {
+    return bad("Potential revenue must be a positive number");
+  }
+  const pitchRevenue = pitchRevenueTbc || pitchRevenueNum === null ? null : Math.round(pitchRevenueNum);
 
   // A brand with a scope (brand flow) fixes its projects' scope: the project takes some
   // of the brand's rows (picked in the form) or, by default, all of them.
@@ -1261,17 +1270,20 @@ export async function createProjectCore(
   if (approval === "approved" && (project.team ?? []).length && !options.skipPlanSync) {
     await syncProjectTeamToPlan(project, actor);
   }
-  if (pitchDates && !isInvalid(pitchDates)) await createPitchTasks(project, pitchDates, body.pitchLeads, actor, ip);
+  if (pitchDates && !isInvalid(pitchDates)) {
+    await createPitchTasks(project, pitchDates, body.pitchLeads, actor, ip, { revenue: pitchRevenue, revenueTbc: pitchRevenueTbc || pitchRevenue === null });
+  }
   return { project };
 }
 
-/** The pitch's Client presentation / Milestone 1 / Milestone 2 tasks for its lead(s); dates kept on the project. */
+/** The pitch's Milestone 1 meeting / Milestone 2 meeting / Client presentation tasks for its lead(s); dates kept on the project. */
 async function createPitchTasks(
   project: IProject,
   dates: Record<(typeof PITCH_TASKS)[number]["key"], Date>,
   rawLeads: unknown,
   actor: IUser,
-  ip: string | undefined
+  ip: string | undefined,
+  revenue: { revenue: number | null; revenueTbc: boolean } | null = null
 ): Promise<void> {
   const leads = Array.isArray(rawLeads) ? rawLeads.map(String).filter((id) => mongoose.isValidObjectId(id)).slice(0, 3) : [];
   const assignees = leads.length ? leads : [String(project.manager ?? actor._id)];
@@ -1282,8 +1294,8 @@ async function createPitchTasks(
     {
       $set: {
         pitch: {
-          revenue: pitch?.revenue ?? null,
-          revenueTbc: pitch?.revenueTbc ?? false,
+          revenue: revenue?.revenue ?? pitch?.revenue ?? null,
+          revenueTbc: revenue?.revenueTbc ?? pitch?.revenueTbc ?? false,
           status: pitch?.status ?? "",
           clientPresentation: dates.clientPresentation,
           milestone1: dates.milestone1,
@@ -1293,6 +1305,8 @@ async function createPitchTasks(
     }
   );
   const { createTaskCore } = await import("./tasks.js");
+  // The two milestone meetings are internal: they carry the "Internal meeting" label.
+  const internalLabel = String(await internalMeetingLabelId());
   for (const t of PITCH_TASKS) {
     const result = await createTaskCore(
       actor,
@@ -1303,6 +1317,7 @@ async function createPitchTasks(
         dueDate: dates[t.key].toISOString().slice(0, 10),
         priority: "high",
         description: `<p>${t.title} for the pitch ${project.name}.</p>`,
+        ...(t.internal ? { labels: [internalLabel] } : {}),
       },
       ip,
       { via: "pitch" },

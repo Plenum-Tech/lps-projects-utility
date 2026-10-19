@@ -1,7 +1,7 @@
 import { useSearchParams } from "react-router";
 
 import { BrandsAllocation, BrandsOverview, MonthPicker, NewBrandButton, thisMonth, useBrandsMonth } from "@/components/brands/brands-dashboard";
-import { isQuarter, PitchesTab, thisQuarter } from "@/components/brands/pitches-tab";
+import { isQuarter, PitchPlan, thisQuarter } from "@/components/brands/pitch-plan";
 import { PageHeader } from "@/components/globals/query-states";
 import { ManpowerPage } from "@/components/manpower/manpower-page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -17,7 +17,7 @@ export function meta({}: Route.MetaArgs) {
  * Brands: the overview (scope, documents, plan, lead per brand), the Allocation grid
  * (brands × plan roles, editing the month's manpower plan) and, for heads and
  * admins, the Manpower plan — the same plan page as before (`?section=manpower`; the plan keeps its own `?tab=`).
- * Pitches (`?section=pitches&quarter=2026-Q4`, everyone): the pitch tracker with automatic status.
+ * Pitch plan (`?section=pitches&quarter=2026-Q4`, everyone): pitches by month with automatic status, edited in place.
  */
 export default function Brands() {
   const { data: user } = useCurrentUser();
@@ -50,7 +50,7 @@ export default function Brands() {
           <TabsTrigger value="brands">Overview</TabsTrigger>
           {canSeePlan && <TabsTrigger value="allocation">Allocation</TabsTrigger>}
           {canSeePlan && <TabsTrigger value="manpower">Manpower plan</TabsTrigger>}
-          <TabsTrigger value="pitches">Pitches</TabsTrigger>
+          <TabsTrigger value="pitches">Pitch plan</TabsTrigger>
         </TabsList>
       </div>
       {tab !== "manpower" && tab !== "pitches" && (
@@ -80,7 +80,7 @@ export default function Brands() {
         </TabsContent>
       )}
       <TabsContent value="pitches">
-        {tab === "pitches" && <PitchesTab quarter={quarter} onQuarterChange={(q) => setParam("quarter", q === thisQuarter() ? null : q)} />}
+        {tab === "pitches" && <PitchPlan quarter={quarter} onQuarterChange={(q) => setParam("quarter", q === thisQuarter() ? null : q)} />}
       </TabsContent>
       {canSeePlan && (
         <TabsContent value="manpower">

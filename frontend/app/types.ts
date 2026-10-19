@@ -2012,6 +2012,11 @@ export interface ProjectInput {
   team?: Array<{ role: string; users: string[] }>;
   /** true when `code` is the suggested one: if taken, the server adds a number. */
   autoCode?: boolean;
+  /** Pitch projects (create): the three dates, lead(s) and potential revenue. */
+  pitchDates?: { clientPresentation: string; milestone1: string; milestone2: string };
+  pitchLeads?: string[];
+  pitchRevenue?: number | null;
+  pitchRevenueTbc?: boolean;
 }
 
 export type ProjectUpdateInput = Partial<
@@ -3323,11 +3328,6 @@ export interface ProjectBrandRef {
   active: boolean;
 }
 
-export interface DeliverySettings {
-  trafficManagers: string[];
-  dashboardTeams: string[] | null;
-  reworkKeywords: string[];
-  reworkCategories: string[];
 export interface OutcomeReadiness {
   score: number;
   verdict: "good" | "partial" | "weak";
@@ -3337,6 +3337,11 @@ export interface OutcomeReadiness {
   source: "ai" | "rules";
 }
 
+export interface DeliverySettings {
+  trafficManagers: string[];
+  dashboardTeams: string[] | null;
+  reworkKeywords: string[];
+  reworkCategories: string[];
   briefingWeekday: number;
   minLeadDays: number;
   sameDayBrands: string[];
@@ -3344,13 +3349,13 @@ export interface OutcomeReadiness {
   briefMinLength: number;
   minCompletedToRank: number;
   staleDays: number;
+  /** Outcome readiness advice when closing tasks (default on). */
+  outcomeReadiness: boolean;
   brandTeamMap: { brand: string; users: string[] }[];
   teamMapStartDate: string;
   updatedAt: string | null;
 }
 
-  /** Outcome readiness advice when closing tasks (default on). */
-  outcomeReadiness: boolean;
 export type DeliverySettingsInput = Partial<
   Omit<DeliverySettings, "updatedAt">
 >;
@@ -3366,12 +3371,12 @@ export interface DeliverySettingsResponse {
     briefMinLength: number;
     minCompletedToRank: number;
     staleDays: number;
+    outcomeReadiness?: boolean;
   };
   changed?: string[];
 }
 
 export type DeliveryPeriod = "7d" | "30d" | "90d" | "12m" | "all" | "custom";
-    outcomeReadiness?: boolean;
 
 export interface DeliveryFilters {
   period: DeliveryPeriod;
@@ -4112,19 +4117,28 @@ export interface PitchImportResult {
   projectId?: string;
   tasks?: number;
 }
-
 // ---------------------------------------------------------------------------
-// Brands → Pitches (GET /api/brands/pitches)
+// Brands → Pitch plan (GET /api/brands/pitches)
 // ---------------------------------------------------------------------------
 
-export type PitchStepKey = "clientPresentation" | "milestone1" | "milestone2";
-export type PitchTone = "ok" | "soon" | "missed" | "done";
+export type PitchStepKey = "milestone1" | "milestone2" | "clientPresentation";
+export type PitchTone = "ok" | "soon" | "missed" | "done" | "none";
 
 export interface PitchStatus {
   text: string;
   tone: PitchTone;
   next?: { key: PitchStepKey; title: string; due: string | null };
   missed: Array<{ key: PitchStepKey; title: string; due: string; emailed: boolean }>;
+}
+
+export interface PitchStepState {
+  key: PitchStepKey;
+  title: string;
+  due: string | null;
+  done: boolean;
+  taskId: string | null;
+  assignees: string[];
+  notified: boolean;
 }
 
 export interface PitchRow {
@@ -4134,20 +4148,30 @@ export interface PitchRow {
   brand: { id: string; name: string; organisation: string } | null;
   title: string;
   month: string | null;
+  /** "YYYY-MM" plan group; null = "Dates not set". */
+  group: string | null;
   revenue: number | null;
   revenueTbc: boolean;
+  revenueHidden: boolean;
   clientPresentation: string | null;
   milestone1: string | null;
   milestone2: string | null;
-  steps: Array<{ key: PitchStepKey; title: string; due: string | null; done: boolean; taskId: string | null }>;
+  deadline: string | null;
+  steps: PitchStepState[];
   status: PitchStatus;
+  onTime: "on_time" | "late" | "na";
+  openTasks: number;
   note: string;
   leads: Array<{ id: string; name: string }>;
+  managerId: string | null;
+  canEdit: boolean;
 }
 
 export interface PitchesResponse {
   quarter: string;
   label: string;
   rows: PitchRow[];
-  totals: { count: number; revenue: number };
+  /** Dubai calendar date the statuses were computed for. */
+  today: string;
+  totals: { count: number; revenue: number; tbc: number };
 }

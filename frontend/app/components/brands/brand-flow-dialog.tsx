@@ -224,9 +224,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (tasks.length === 0) {
       setTasks(
         [
+          { title: "Milestone 1 meeting", ...pick(sheet?.milestone1, found?.milestone1) },
+          { title: "Milestone 2 meeting", ...pick(sheet?.milestone2, found?.milestone2) },
           { title: "Client presentation", ...pick(sheet?.clientPresentation, found?.clientPresentation) },
-          { title: "Milestone 1", ...pick(sheet?.milestone1, found?.milestone1) },
-          { title: "Milestone 2", ...pick(sheet?.milestone2, found?.milestone2) },
         ].map((t) => ({ ...t, on: Boolean(t.dueDate) })),
       );
     }
@@ -257,7 +257,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const peopleOptions = (people.data ?? []).map((u) => ({ value: u._id, label: u.name, description: u.email }));
   const nameOf = (id: string) => people.data?.find((u) => u._id === id)?.name ?? holders.get("")?.find((h) => h.id === id)?.name ?? "—";
   const activeTasks = isPitch ? tasks.filter((t) => t.dueDate) : [];
-  // A pitch needs all three dates: Client presentation, Milestone 1, Milestone 2.
+  // A pitch needs all three dates: Milestone 1 meeting, Milestone 2 meeting, Client presentation.
   const pitchDatesMissing = isPitch ? tasks.filter((t) => !t.dueDate).map((t) => t.title) : [];
   const teamPeople = [...new Set(allRoles.flatMap((r) => team[r.key] ?? []))];
   // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
@@ -292,7 +292,13 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       team: allRoles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
       tasks: [],
       ...(isPitch
-        ? { pitchDates: { clientPresentation: tasks[0]?.dueDate ?? "", milestone1: tasks[1]?.dueDate ?? "", milestone2: tasks[2]?.dueDate ?? "" } }
+        ? {
+            pitchDates: {
+              milestone1: tasks.find((t) => t.title.startsWith("Milestone 1"))?.dueDate ?? "",
+              milestone2: tasks.find((t) => t.title.startsWith("Milestone 2"))?.dueDate ?? "",
+              clientPresentation: tasks.find((t) => t.title === "Client presentation")?.dueDate ?? "",
+            },
+          }
         : {}),
       ...(startDate ? { startDate } : {}),
       ...(endDate ? { endDate } : {}),

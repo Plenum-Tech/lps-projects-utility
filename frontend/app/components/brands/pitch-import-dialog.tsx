@@ -15,7 +15,7 @@ import type { PitchImportResult, PitchImportRow } from "@/types";
 // ---------------------------------------------------------------------------
 // Projects → Import pitch sheet: the "Proactive & Pitches" tracker becomes Pitch
 // projects (one per row; the client's brand is reused or created) with the
-// lead's Client presentation / Milestone 1 / Milestone 2 tasks on their dates.
+// lead's Milestone 1 meeting / Milestone 2 meeting / Client presentation tasks on their dates.
 // ---------------------------------------------------------------------------
 
 const fmt = (iso: string | null) =>
@@ -43,7 +43,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
 
   const peopleOptions = (people.data ?? []).map((u) => ({ value: u._id, label: u.name }));
   const nameOf = (id: string) => people.data?.find((u) => u._id === id)?.name ?? "?";
-  // A pitch needs a lead and all three dates (Client presentation, Milestone 1, Milestone 2).
+  // A pitch needs a lead and all three dates (Milestone 1 meeting, Milestone 2 meeting, Client presentation).
   const datesOk = (r: Row) => r.tasks.every((t) => t.dueDate);
   const ready = (r: Row) => !r.exists && r.leads.length > 0 && datesOk(r) && (r.brand ? r.brand.status === "approved" : canCreateBrands);
   const picked = (rows ?? []).filter((r) => r.on && ready(r));
@@ -81,7 +81,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
           <DialogTitle>Import pitch sheet</DialogTitle>
           <DialogDescription>
             Each row becomes a Pitch project of its client (the brand is reused or created), with the lead&apos;s tasks:
-            Client presentation, Milestone 1 and Milestone 2 on their dates. Rows already imported are skipped.
+            Milestone 1 meeting, Milestone 2 meeting and Client presentation on their dates. Rows already imported are skipped.
           </DialogDescription>
         </DialogHeader>
 

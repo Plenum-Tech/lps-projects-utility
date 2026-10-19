@@ -248,6 +248,7 @@ export function ProjectFormDialog({
   project,
   canViewRates = true,
   continueFrom = null,
+  defaultType,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -257,6 +258,8 @@ export function ProjectFormDialog({
   canViewRates?: boolean;
   /** Create mode, pre-filled from this (closed) project for the next month. */
   continueFrom?: Project | null;
+  /** Create mode: the project type picked up front (Brands → Pitch plan → New pitch: "Pitch"). */
+  defaultType?: string;
 }) {
   const isEdit = Boolean(project);
   const continuing = !project && Boolean(continueFrom);
@@ -284,7 +287,10 @@ export function ProjectFormDialog({
   useRefetchOnFocus(categories.refetch, open && isAdmin);
   useRefetchOnFocus(brands.refetch, open && isAdmin);
 
-  const freshState = () => (!project && continueFrom ? continueState(continueFrom) : initialState(project));
+  const freshState = (): FormState => {
+    const state = !project && continueFrom ? continueState(continueFrom) : initialState(project);
+    return !project && !continueFrom && defaultType ? { ...state, type: defaultType } : state;
+  };
   const [form, setForm] = useState<FormState>(freshState);
   const [submitted, setSubmitted] = useState(false);
   // New projects: four steps (brand, project, scope, team). Editing shows everything.
@@ -302,14 +308,17 @@ export function ProjectFormDialog({
   const [pickedRows, setPickedRows] = useState<boolean[] | null>(null);
   // New projects: the dates follow the month until the user changes them.
   const [datesTouched, setDatesTouched] = useState(false);
-  // Pitch projects: Client presentation / Milestone 1 / Milestone 2 (required; become the manager's tasks).
+  // Pitch projects: Milestone 1 meeting / Milestone 2 meeting / Client presentation (required; become the lead's
+  // tasks), the potential revenue (or TBC) and the lead (the project manager). No fee.
   const [pitchDates, setPitchDates] = useState({ clientPresentation: "", milestone1: "", milestone2: "" });
+  const [pitchRevenue, setPitchRevenue] = useState({ amount: "", tbc: false });
 
   useEffect(() => {
     if (open) {
       setForm(freshState());
       setPickedRows(null);
       setPitchDates({ clientPresentation: "", milestone1: "", milestone2: "" });
+      setPitchRevenue({ amount: "", tbc: false });
       setDatesTouched(Boolean(project || continueFrom));
       setSubmitted(false);
       setStep(1);
@@ -534,8 +543,12 @@ export function ProjectFormDialog({
   const isPitchType = !project && form.type.toLowerCase() === "pitch";
   const pitchError =
     isPitchType && (!pitchDates.clientPresentation || !pitchDates.milestone1 || !pitchDates.milestone2)
-      ? "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates."
-      : null;
+      ? "A pitch needs the Milestone 1 meeting, Milestone 2 meeting and Client presentation dates."
+      : isPitchType && !pitchRevenue.tbc && !(Number(pitchRevenue.amount) > 0)
+        ? "Enter the potential revenue, or tick TBC."
+        : isPitchType && form.manager === NONE
+          ? "Pick the pitch's lead."
+          : null;
   const nameError = !title
     ? "A name is required."
     : title.length > NAMING_TITLE_MAX
@@ -674,7 +687,14 @@ export function ProjectFormDialog({
         isPublic: form.isPublic,
         manualTimeLogs: form.manualTimeLogs,
         requireTaskApproval: form.requireTaskApproval,
-        ...(isPitchType ? { pitchDates } : {}),
+        ...(isPitchType
+          ? {
+              pitchDates,
+              pitchLeads: manager ? [manager] : [],
+              pitchRevenue: pitchRevenue.tbc ? null : Number(pitchRevenue.amount),
+              pitchRevenueTbc: pitchRevenue.tbc,
+            }
+          : {}),
       };
       if (isAdmin && form.departments.length > 0)
         input.departments = form.departments;
@@ -1015,14 +1035,50 @@ export function ProjectFormDialog({
             {isPitchType && (
               <fieldset className="space-y-2 rounded-lg border p-3">
                 <legend className="px-1 text-sm font-medium">
-                  Pitch dates<span aria-hidden className="ml-0.5 text-destructive">*</span>
+                  Pitch<span aria-hidden className="ml-0.5 text-destructive">*</span>
                 </legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label htmlFor="pitch-revenue" className="text-xs">Potential revenue (AED)</Label>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        id="pitch-revenue"
+                        type="number"
+                        min={0}
+                        step={1000}
+                        placeholder="200000"
+                        value={pitchRevenue.amount}
+                        disabled={pitchRevenue.tbc}
+                        onChange={(event) => setPitchRevenue((r) => ({ ...r, amount: event.target.value }))}
+                      />
+                      <label className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={pitchRevenue.tbc}
+                          onChange={(event) => setPitchRevenue((r) => ({ ...r, tbc: event.target.checked }))}
+                        />
+                        TBC
+                      </label>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="pitch-lead" className="text-xs">Lead</Label>
+                    <OptionSelect
+                      id="pitch-lead"
+                      value={form.manager}
+                      onChange={(value) => set("manager", value)}
+                      options={managerOptions}
+                      aria-label="Pitch lead"
+                      invalid={show(pitchError) && form.manager === NONE}
+                    />
+                  </div>
+                </div>
                 <div className="grid gap-3 sm:grid-cols-3">
                   {(
                     [
+                      ["milestone1", "Milestone 1 meeting"],
+                      ["milestone2", "Milestone 2 meeting"],
                       ["clientPresentation", "Client presentation"],
-                      ["milestone1", "Milestone 1"],
-                      ["milestone2", "Milestone 2"],
                     ] as const
                   ).map(([key, label]) => (
                     <div key={key} className="space-y-1">
@@ -1041,7 +1097,7 @@ export function ProjectFormDialog({
                 {show(pitchError) ? (
                   <FieldError>{pitchError}</FieldError>
                 ) : (
-                  <p className="text-xs text-muted-foreground">Each one becomes a high-priority task for the project manager.</p>
+                  <p className="text-xs text-muted-foreground">Each date becomes a high-priority task for the lead (the two milestone meetings are internal). The end date is on the next step.</p>
                 )}
               </fieldset>
             )}

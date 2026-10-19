@@ -1,12 +1,35 @@
 import type { Request, Response } from "express";
 import ExcelJS from "exceljs";
-import { brandLabel, currentQuarter, loadPitchRows, quarterMonths, shortDate, type PitchRow } from "../lib/pitches.js";
-import { projectVisibilityFilter } from "../lib/projectAccess.js";
+import mongoose from "mongoose";
+import {
+  brandLabel,
+  canEditPitch,
+  currentQuarter,
+  internalMeetingLabelId,
+  loadPitchRows,
+  PITCH_STEPS,
+  pitchDate,
+  pitchLeadIds,
+  pitchToday,
+  quarterMonths,
+  stepsByProject,
+  type PitchRow,
+  type PitchStepKey,
+} from "../lib/pitches.js";
+import { getViewableProjectOr404, projectVisibilityFilter } from "../lib/projectAccess.js";
+import { projectApproverIds } from "../lib/projectApproval.js";
+import { Project } from "../models/Project.js";
+import { updateProjectCore } from "./projects.js";
+import { createTaskCore } from "./tasks.js";
 
 // ---------------------------------------------------------------------------
-// Brands → Pitches: GET /api/brands/pitches?quarter=2026-Q4 (rows + automatic
-// status) and /pitches/export (the tracker sheet's layout as .xlsx). Only the
-// projects the user may see (same rule as the projects list).
+// Brands → Pitch plan:
+//   GET   /api/brands/pitches?quarter=2026-Q4   rows + automatic status
+//   GET   /api/brands/pitches/export            the plan as .xlsx
+//   PATCH /api/brands/pitches/:id               in-place edits of one pitch
+// Only the projects the user may see (same rule as the projects list). Task
+// changes (due date, held = completed, assignees) go through the task API from
+// the page, so the task rules (completion requirements included) apply as usual.
 // ---------------------------------------------------------------------------
 
 function quarterOf(req: Request): string | null {
@@ -18,7 +41,11 @@ function quarterOf(req: Request): string | null {
 const quarterLabel = (q: string) => `${q.slice(5)} ${q.slice(0, 4)}`;
 
 function totals(rows: PitchRow[]) {
-  return { count: rows.length, revenue: rows.reduce((sum, r) => sum + (r.revenue ?? 0), 0) };
+  return {
+    count: rows.length,
+    revenue: rows.reduce((sum, r) => sum + (r.revenue ?? 0), 0),
+    tbc: rows.filter((r) => r.revenue === null && !r.revenueHidden).length,
+  };
 }
 
 /** GET /api/brands/pitches */
@@ -28,46 +55,59 @@ export async function listPitches(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "quarter must be YYYY-Q1..Q4" });
     return;
   }
-  const rows = await loadPitchRows(projectVisibilityFilter(req.user!), quarter);
-  res.json({ quarter, label: quarterLabel(quarter), rows, totals: totals(rows) });
+  const rows = await loadPitchRows(req.user!, projectVisibilityFilter(req.user!), quarter);
+  res.json({ quarter, label: quarterLabel(quarter), today: pitchToday(), rows, totals: totals(rows) });
 }
 
-const fmtRevenue = (r: PitchRow) => (r.revenue === null ? "TBC" : `AED ${r.revenue.toLocaleString("en-US")}`);
-const fmtDate = (d: string | null) => (d ? shortDate(d) : "");
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+export const groupLabel = (group: string | null) => (group ? `${MONTH_NAMES[Number(group.slice(5, 7)) - 1]} ${group.slice(0, 4)}` : "Dates not set");
 
-/** GET /api/brands/pitches/export — title row, the sheet's 8 headers, one row per pitch, totals. */
+const fmtRevenue = (r: PitchRow) => (r.revenueHidden ? "" : r.revenue === null ? "TBC" : `AED ${r.revenue.toLocaleString("en-US")}`);
+const fmtDate = (d: string | null) => (d ? pitchDate(d) : "");
+const stepCell = (r: PitchRow, key: PitchStepKey) => {
+  const s = r.steps.find((x) => x.key === key);
+  if (!s?.due) return "";
+  return `${pitchDate(s.due)}${s.done ? " (held)" : r.status.missed.some((m) => m.key === key) ? " (missed)" : ""}`;
+};
+const ON_TIME = { on_time: "On time", late: "Late", na: "—" } as const;
+
+/** GET /api/brands/pitches/export — title row, headers, month sections, one row per pitch, totals. */
 export async function exportPitches(req: Request, res: Response): Promise<void> {
   const quarter = quarterOf(req);
   if (!quarter) {
     res.status(400).json({ error: "quarter must be YYYY-Q1..Q4" });
     return;
   }
-  const rows = await loadPitchRows(projectVisibilityFilter(req.user!), quarter);
+  const rows = await loadPitchRows(req.user!, projectVisibilityFilter(req.user!), quarter);
   const label = quarterLabel(quarter);
+  const headers = [
+    "Client Name",
+    "Campaign/Idea",
+    "Potential revenue",
+    "Milestone 1 meeting",
+    "Milestone 2 meeting",
+    "Client presentation",
+    "End date",
+    "Lead",
+    "Open tasks",
+    "On time",
+    "Status",
+  ];
 
   const wb = new ExcelJS.Workbook();
   wb.creator = req.user!.name;
   wb.created = new Date();
-  const sheet = wb.addWorksheet(`Pitches ${label}`);
-  sheet.columns = [
-    { width: 28 },
-    { width: 36 },
-    { width: 18 },
-    { width: 13 },
-    { width: 13 },
-    { width: 13 },
-    { width: 60 },
-    { width: 24 },
-  ];
+  const sheet = wb.addWorksheet(`Pitch plan ${label}`);
+  sheet.columns = [28, 34, 18, 20, 20, 20, 14, 24, 11, 10, 60].map((width) => ({ width }));
 
-  sheet.mergeCells("A1:H1");
+  sheet.mergeCells(1, 1, 1, headers.length);
   const title = sheet.getCell("A1");
   title.value = `PITCHES/PROACTIVE PROJECTS  ${label}`;
   title.font = { bold: true, size: 14 };
   title.alignment = { horizontal: "center", vertical: "middle" };
   sheet.getRow(1).height = 24;
 
-  const header = sheet.addRow(["Client Name", "Campaign/Idea", "Revenue Potential", "Client Pres", "Milestone 1", "Milestone 2", "Status", "Lead"]);
+  const header = sheet.addRow(headers);
   header.font = { bold: true };
   header.eachCell((cell) => {
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE6F4EA" } };
@@ -75,35 +115,158 @@ export async function exportPitches(req: Request, res: Response): Promise<void> 
     cell.alignment = { vertical: "middle", wrapText: true };
   });
 
-  const toneFill: Record<string, string> = { missed: "FFFDE2E1", soon: "FFFFF4D6", ok: "FFE6F4EA", done: "FFE6F4EA" };
+  const fill = (argb: string): ExcelJS.Fill => ({ type: "pattern", pattern: "solid", fgColor: { argb } });
+  const toneFill: Record<string, string> = { missed: "FFFDE2E1", soon: "FFFFF4D6", ok: "FFE6F4EA", done: "FFE6F4EA", none: "FFF1F5F9" };
+  let group: string | null | undefined;
   for (const r of rows) {
-    const status = r.note ? `${r.status.text}\n${r.note}` : r.status.text;
+    if (r.group !== group) {
+      group = r.group;
+      const n = rows.filter((x) => x.group === group).length;
+      const section = sheet.addRow([`${groupLabel(group)} · ${n}`]);
+      section.font = { bold: true, color: { argb: "FF64748B" } };
+      section.eachCell({ includeEmpty: true }, (cell) => (cell.fill = fill("FFEEF2F7")));
+      for (let c = 1; c <= headers.length; c++) section.getCell(c).fill = fill("FFEEF2F7");
+    }
     const row = sheet.addRow([
       brandLabel(r),
       r.title,
       fmtRevenue(r),
-      fmtDate(r.clientPresentation),
-      fmtDate(r.milestone1),
-      fmtDate(r.milestone2),
-      status,
-      r.leads.map((l) => l.name).join(", "),
+      stepCell(r, "milestone1"),
+      stepCell(r, "milestone2"),
+      stepCell(r, "clientPresentation"),
+      fmtDate(r.deadline),
+      r.leads.map((l) => l.name).join(", ") || "No lead",
+      r.openTasks,
+      ON_TIME[r.onTime],
+      r.note ? `${r.status.text}\n${r.note}` : r.status.text,
     ]);
     row.alignment = { vertical: "top", wrapText: true };
-    row.getCell(7).fill = { type: "pattern", pattern: "solid", fgColor: { argb: toneFill[r.status.tone] ?? "FFFFFFFF" } };
+    row.getCell(11).fill = fill(toneFill[r.status.tone] ?? "FFFFFFFF");
+    if (r.leads.length === 0) row.getCell(8).fill = fill(toneFill.missed!);
   }
 
   const t = totals(rows);
-  const total = sheet.addRow([`${t.count} pitch${t.count === 1 ? "" : "es"}`, "", `AED ${t.revenue.toLocaleString("en-US")}`]);
+  const total = sheet.addRow([
+    `${t.count} pitch${t.count === 1 ? "" : "es"}`,
+    "",
+    `AED ${t.revenue.toLocaleString("en-US")}`,
+    t.tbc ? `${t.tbc} TBC not counted` : "",
+  ]);
   total.font = { bold: true };
   total.eachCell((cell) => (cell.border = { top: { style: "thin" } }));
 
-  const filename = `Proactive & Pitches Status_${quarter.slice(5)}_${quarter.slice(0, 4)}.xlsx`;
+  const q = `${quarter.slice(5)}_${quarter.slice(0, 4)}`;
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader(
     "Content-Disposition",
-    `attachment; filename="Pitches_${quarter.slice(5)}_${quarter.slice(0, 4)}.xlsx"; filename*=UTF-8''${encodeURIComponent(filename)}`
+    `attachment; filename="Pitch_plan_${q}.xlsx"; filename*=UTF-8''${encodeURIComponent(`Proactive & Pitches Status_${q}.xlsx`)}`
   );
   res.setHeader("X-Export-Rows", String(rows.length));
   await wb.xlsx.write(res);
   res.end();
+}
+
+// ---------------------------------------------------------------------------
+// In-place edits
+// ---------------------------------------------------------------------------
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const STEP_KEYS = new Set<string>(PITCH_STEPS.map((s) => s.key));
+
+/**
+ * PATCH /api/brands/pitches/:id — one of:
+ *   { step, date }            the pitch's date (task due date: PATCH /api/tasks/:id first);
+ *                             a missing step task is created on its date
+ *   { revenue, revenueTbc }   potential revenue
+ *   { leads: [ids] }          the project manager becomes the first lead (project-edit rules);
+ *                             the page reassigns the pitch tasks through the task API
+ *   { deadline }              the project's end date (project-edit rules)
+ * Leadership, brand creators and the pitch's lead / manager only.
+ */
+export async function updatePitch(req: Request, res: Response): Promise<void> {
+  const project = await getViewableProjectOr404(req, res);
+  if (!project) return;
+  const user = req.user!;
+  if (!/^pitch$/i.test(project.naming?.type ?? "")) {
+    res.status(400).json({ error: "This project isn't a pitch" });
+    return;
+  }
+  if (project.archivedAt) {
+    res.status(409).json({ error: "This project is archived and read-only. Restore it first." });
+    return;
+  }
+  const steps = (await stepsByProject([project]).then((m) => m.get(String(project._id)))) ?? [];
+  const approvers = new Set((await projectApproverIds()).map(String));
+  if (!canEditPitch(user, project, steps, approvers)) {
+    res.status(403).json({ error: "Only leadership, Nazeer and the pitch's lead or manager can edit it here" });
+    return;
+  }
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const pitchBase = project.pitch
+    ? {}
+    : { pitch: { revenue: null, revenueTbc: false, status: "", missedNotified: [] } };
+  let message: string | undefined;
+
+  if (typeof body.step === "string") {
+    if (!STEP_KEYS.has(body.step)) return void res.status(400).json({ error: "step must be milestone1, milestone2 or clientPresentation" });
+    const key = body.step as PitchStepKey;
+    const raw = body.date;
+    if (raw !== null && (typeof raw !== "string" || !DATE.test(raw))) return void res.status(400).json({ error: "date must be YYYY-MM-DD or null" });
+    const date = raw ? new Date(`${raw}T00:00:00.000Z`) : null;
+    if (pitchBase.pitch) await Project.updateOne({ _id: project._id, pitch: null }, { $set: pitchBase });
+    await Project.updateOne({ _id: project._id }, { $set: { [`pitch.${key}`]: date } });
+    const step = steps.find((s) => s.key === key);
+    if (date && step && !step.taskId) {
+      const def = PITCH_STEPS.find((s) => s.key === key)!;
+      const leads = pitchLeadIds(project, steps);
+      const created = await createTaskCore(
+        user,
+        {
+          project: String(project._id),
+          title: def.title,
+          assignees: leads.length ? leads : [String(user._id)],
+          dueDate: raw,
+          priority: "high",
+          description: `<p>${def.title} for the pitch ${project.name}.</p>`,
+          ...(def.internal ? { labels: [String(await internalMeetingLabelId())] } : {}),
+        },
+        req.ip,
+        { via: "pitch_plan" },
+        { allowClosedProject: true, allowNoScope: true }
+      );
+      if (!("taskId" in created)) return void res.status(created.status).json({ error: created.error });
+      message = `${def.title} task created`;
+    }
+  } else if ("revenue" in body || "revenueTbc" in body) {
+    const tbc = body.revenueTbc === true;
+    const revenue = body.revenue === null || body.revenue === "" || body.revenue === undefined ? null : Number(body.revenue);
+    if (revenue !== null && (!Number.isFinite(revenue) || revenue < 0 || revenue > 1e12)) {
+      return void res.status(400).json({ error: "revenue must be a positive number" });
+    }
+    if (pitchBase.pitch) await Project.updateOne({ _id: project._id, pitch: null }, { $set: pitchBase });
+    await Project.updateOne(
+      { _id: project._id },
+      { $set: { "pitch.revenue": tbc ? null : revenue === null ? null : Math.round(revenue), "pitch.revenueTbc": tbc || revenue === null } }
+    );
+  } else if (Array.isArray(body.leads)) {
+    const leads = [...new Set(body.leads.map(String))].filter((id) => mongoose.isValidObjectId(id)).slice(0, 3);
+    if (leads.length === 0) return void res.status(400).json({ error: "Pick the lead" });
+    if (String(project.manager ?? "") !== leads[0]) {
+      const result = await updateProjectCore(user, project, { manager: leads[0] }, req.ip);
+      if ("status" in result && "error" in result) return void res.status(result.status).json({ error: result.error });
+      message = (result as { pendingApproval?: string }).pendingApproval;
+    }
+  } else if ("deadline" in body) {
+    const raw = body.deadline;
+    if (raw !== null && (typeof raw !== "string" || !DATE.test(raw))) return void res.status(400).json({ error: "deadline must be YYYY-MM-DD or null" });
+    const result = await updateProjectCore(user, project, { deadline: raw }, req.ip);
+    if ("status" in result && "error" in result) return void res.status(result.status).json({ error: result.error });
+    message = (result as { pendingApproval?: string }).pendingApproval;
+  } else {
+    res.status(400).json({ error: "Nothing to update" });
+    return;
+  }
+
+  const [row] = await loadPitchRows(user, projectVisibilityFilter(user), currentQuarter(), new Date(), project._id as mongoose.Types.ObjectId);
+  res.json({ row: row ?? null, ...(message ? { message } : {}) });
 }

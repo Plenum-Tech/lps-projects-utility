@@ -172,8 +172,10 @@ export async function runBrandSetup(
       // The period read from the files (else the month's first / last day).
       ...(setup.startDate ? { startDate: setup.startDate } : {}),
       ...(setup.endDate ? { deadline: setup.endDate } : {}),
-      // Pitch: the project creates the Client presentation / Milestone 1 / Milestone 2 tasks.
-      ...(setup.pitchDates ? { pitchDates: setup.pitchDates, pitchLeads: setup.leads } : {}),
+      // Pitch: the project creates the Milestone 1 meeting / Milestone 2 meeting / Client presentation tasks.
+      ...(setup.pitchDates
+        ? { pitchDates: setup.pitchDates, pitchLeads: setup.leads, pitchRevenue: brand.revenue ?? null, pitchRevenueTbc: Boolean(brand.revenueTbc) }
+        : {}),
     } as never,
     ip,
     { activityExtra: { via: "brand_flow" }, allowBrandWithoutScope: true }

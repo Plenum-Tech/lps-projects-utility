@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { canCreateBrand } from "../lib/brandAccess.js";
 import type { BrandSetup } from "../lib/brandFlow.js";
+import { PITCH_STEP_BY_TITLE, PITCH_STEPS, type PitchStepKey } from "../lib/pitches.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
 import { composeProjectName } from "../lib/projectNaming.js";
 import { parseLooseDate } from "../lib/scopeExtract.js";
@@ -17,17 +18,13 @@ import { createProjectCore } from "./projects.js";
 // Pitch tracker import (Projects → Import pitch sheet): every row of the
 // "Proactive & Pitches" sheet becomes a Pitch project of its client (brand
 // created when new), with the lead's tasks: Client presentation, Milestone 1
-// and Milestone 2 on their dates. Preview first, then create the ticked rows.
+// and Milestone 2 meetings and the Client presentation on their dates. Preview first, then create the ticked rows.
 // A row whose project already exists is skipped, so the sheet can be re-imported.
 // ---------------------------------------------------------------------------
 
 const TYPE = "Pitch";
-/** Task title → createProjectCore's pitchDates key. */
-const PITCH_KEY: Record<string, "clientPresentation" | "milestone1" | "milestone2"> = {
-  "Client presentation": "clientPresentation",
-  "Milestone 1": "milestone1",
-  "Milestone 2": "milestone2",
-};
+/** Task title (current and pre-Oct 2026 names) → createProjectCore's pitchDates key. */
+const PITCH_KEY: ReadonlyMap<string, PitchStepKey> = PITCH_STEP_BY_TITLE;
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_ROWS = 200;
 
@@ -60,11 +57,8 @@ const currentMonth = () => new Date().toISOString().slice(0, 7);
 function planRow(row: PitchSheetRow, people: Person[], brands: Map<string, { _id: string; name: string; status?: string }>) {
   const brand = brands.get(brandNameKey(row.client)) ?? null;
   const title = (row.campaign || "Pitch").replace(/_/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
-  const tasks = [
-    { title: "Client presentation", cell: row.clientPresentation },
-    { title: "Milestone 1", cell: row.milestone1 },
-    { title: "Milestone 2", cell: row.milestone2 },
-  ].map((t) => ({ title: t.title, dueDate: t.cell.date, text: t.cell.text, monthOnly: t.cell.monthOnly }));
+  const cells = { milestone1: row.milestone1, milestone2: row.milestone2, clientPresentation: row.clientPresentation };
+  const tasks = PITCH_STEPS.map((s) => ({ title: s.title, cell: cells[s.key] })).map((t) => ({ title: t.title, dueDate: t.cell.date, text: t.cell.text, monthOnly: t.cell.monthOnly }));
   const dated = tasks.filter((t) => t.dueDate);
   const month = row.clientPresentation.date ? monthOf(row.clientPresentation.date) : dated[0]?.dueDate ? monthOf(dated[0].dueDate) : currentMonth();
   const leads = matchLeads(row.lead, people);
@@ -153,9 +147,9 @@ function parseImportRow(raw: Record<string, unknown>): ImportRow | string {
     if (name && due) tasks.push({ title: name, dueDate: due });
   }
   const revenue = Number(raw.revenue);
-  const have = new Set(tasks.map((t) => t.title));
-  const missing = Object.keys(PITCH_KEY).filter((t) => !have.has(t));
-  if (missing.length) return `A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates (missing: ${missing.join(", ")})`;
+  const have = new Set(tasks.map((t) => PITCH_KEY.get(t.title)).filter(Boolean));
+  const missing = PITCH_STEPS.filter((s) => !have.has(s.key)).map((s) => s.title);
+  if (missing.length) return `A pitch needs the Milestone 1 meeting, Milestone 2 meeting and Client presentation dates (missing: ${missing.join(", ")})`;
   return {
     client,
     title,
@@ -220,7 +214,7 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
             tasks: [],
             startDate: start,
             endDate: end,
-            pitchDates: Object.fromEntries(row.tasks.map((t) => [PITCH_KEY[t.title]!, t.dueDate])) as NonNullable<BrandSetup["pitchDates"]>,
+            pitchDates: Object.fromEntries(row.tasks.filter((t) => PITCH_KEY.has(t.title)).map((t) => [PITCH_KEY.get(t.title)!, t.dueDate])) as NonNullable<BrandSetup["pitchDates"]>,
           };
       brand = await Brand.create({
         name: row.client,
@@ -263,8 +257,10 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
         ]
           .filter(Boolean)
           .join("\n"),
-        pitchDates: Object.fromEntries(row.tasks.map((t) => [PITCH_KEY[t.title]!, t.dueDate])),
+        pitchDates: Object.fromEntries(row.tasks.filter((t) => PITCH_KEY.has(t.title)).map((t) => [PITCH_KEY.get(t.title)!, t.dueDate])),
         pitchLeads: row.leads,
+        pitchRevenue: row.revenue,
+        pitchRevenueTbc: row.revenueTbc,
       } as never,
       req.ip,
       { activityExtra: { via: "pitch_import" } }
