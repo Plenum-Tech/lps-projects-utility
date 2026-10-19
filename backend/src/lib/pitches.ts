@@ -60,8 +60,10 @@ export interface PitchStep {
   done: boolean;
   taskId: string | null;
   assignees: string[];
-  /** A missed-date email went out for this due date. */
+  /** A missed-date email went out for this due date (or it was recorded silently). */
   notified: boolean;
+  /** Recorded without an email: it was already missed when the check went live. */
+  silent: boolean;
 }
 
 export type PitchTone = "ok" | "soon" | "missed" | "done" | "none";
@@ -111,9 +113,9 @@ export function pitchStatus(allSteps: PitchStep[], today: string): PitchStatus {
   const next = { key: nextStep.key, title: nextStep.title, due: nextStep.due };
   const missed = steps
     .filter((s) => !s.done && s.due && s.due < today)
-    .map((s) => ({ key: s.key, title: s.title, due: s.due!, emailed: s.notified }));
+    .map((s) => ({ key: s.key, title: s.title, due: s.due!, emailed: s.notified, silent: s.silent }));
   if (missed.length) {
-    const text = missed.map((m) => `${m.title} missed (${pitchDate(m.due)}) — ${m.emailed ? "email sent" : "email pending"}`).join("; ");
+    const text = missed.map((m) => `${m.title} missed (${pitchDate(m.due)}) — ${m.silent ? "missed before go-live" : m.emailed ? "email sent" : "email pending"}`).join("; ");
     return { text, tone: "missed", next, missed };
   }
 
@@ -156,7 +158,8 @@ export async function stepsByProject(projects: Array<Pick<LeanPitchProject, "_id
       PITCH_STEPS.map((s) => {
         const task = byKey.get(`${String(p._id)}:${s.key}`);
         const due = dateKey(task?.dueDate ?? null) ?? dateKey(p.pitch?.[s.key] ?? null);
-        const notified = Boolean(due && (p.pitch?.missedNotified ?? []).some((n) => n.step === s.key && dateKey(n.dueDate) === due));
+        const record = due ? (p.pitch?.missedNotified ?? []).find((n) => n.step === s.key && dateKey(n.dueDate) === due) : undefined;
+        const notified = Boolean(record);
         return {
           key: s.key,
           title: s.title,
@@ -165,6 +168,7 @@ export async function stepsByProject(projects: Array<Pick<LeanPitchProject, "_id
           taskId: task ? String(task._id) : null,
           assignees: task ? task.assignees.map(String) : [],
           notified,
+          silent: Boolean(record?.silent),
         };
       })
     );
@@ -360,7 +364,11 @@ export interface PitchMissedResult {
  */
 export async function runPitchMissedReminders(
   now: Date = new Date(),
-  options: { projectIds?: mongoose.Types.ObjectId[] } = {}
+  options: {
+    projectIds?: mongoose.Types.ObjectId[];
+    /** Record the misses without emailing (go-live: dates already missed before the check existed). */
+    silent?: boolean;
+  } = {}
 ): Promise<PitchMissedResult> {
   const today = pitchToday(now);
   const filter: Record<string, unknown> = {
@@ -395,9 +403,13 @@ export async function runPitchMissedReminders(
       const dueDate = new Date(`${step.due}T00:00:00.000Z`);
       const claimed = await Project.updateOne(
         { _id: project._id, "pitch.missedNotified": { $not: { $elemMatch: { step: step.key, dueDate } } } },
-        { $push: { "pitch.missedNotified": { step: step.key, dueDate, at: now } } }
+        { $push: { "pitch.missedNotified": { step: step.key, dueDate, at: now, ...(options.silent ? { silent: true } : {}) } } }
       );
       if (claimed.modifiedCount !== 1) continue;
+      if (options.silent) {
+        result.notified++;
+        continue;
+      }
 
       approvers ??= await projectApproverIds();
       if (!brandNames) {
