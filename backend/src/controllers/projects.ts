@@ -21,6 +21,7 @@ import {
   NAMING_SEPARATOR,
   parseMonthInput,
   parseStructuredName,
+  stripComposedPrefix,
   PROJECT_NAMING_LIMITS,
   tidy,
 } from "../lib/projectNaming.js";
@@ -216,8 +217,8 @@ async function parseNaming(
   if (!month) return bad('month must be a month like "2026-10"');
 
   if (typeof input.title !== "string") return bad("name must be text");
-  const title = tidy(input.title);
-  if (title.includes(NAMING_SEPARATOR)) return bad('Name can\'t contain "_" (it separates the parts)');
+  // "_" is fine in the name; a pasted whole name loses its Brand_Type_Month_ start.
+  const title = stripComposedPrefix(input.title, brand.name, type, month);
   if (title.length > PROJECT_NAMING_LIMITS.titleMax) {
     return bad(`Name must be ${PROJECT_NAMING_LIMITS.titleMax} characters or fewer`);
   }

@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
 import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
+import { stripComposedPrefix } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 import type { PitchSheetRow, ScopeExtraction } from "@/types";
 
@@ -261,7 +262,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       setTried(0);
       setStep(2);
     } else if (step === 2) {
-      if (!rows.length || !title.trim() || title.includes("_") || periodError) return;
+      if (!rows.length || !title.trim() || periodError) return;
       setTried(0);
       goStep3();
     }
@@ -273,6 +274,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const teamPeople = [...new Set(roles.flatMap((r) => team[r.key] ?? []))];
   // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
   const typeForName = isPitch ? "Pitch" : "Project";
+  // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
+  const cleanTitle = stripComposedPrefix(title, name, typeForName, month);
 
   function submit() {
     setTried(3);
@@ -295,7 +298,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       notes,
       projectType: typeForName,
       month,
-      title: title.trim(),
+      title: cleanTitle,
       leads,
       team: roles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
       tasks: activeTasks.map((t) => ({ title: t.title, dueDate: t.dueDate })),
@@ -317,7 +320,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   }
 
   const monthLabel = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
-  const projectName = `${name.trim() || "Brand"}_${typeForName}_${new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}${month.slice(0, 4)}_${title.trim() || "Project"}`;
+  const projectName = `${name.trim() || "Brand"}_${typeForName}_${new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "short", timeZone: "UTC" })}${month.slice(0, 4)}_${cleanTitle || "Project"}`;
 
   return (
     <Dialog
@@ -509,10 +512,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="brand-flow-title">Project name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
-                    <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && (!title.trim() || title.includes("_"))) || undefined} />
+                    <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && !title.trim()) || undefined} />
                     <p className="break-all text-xs text-muted-foreground">Project: {projectName}</p>
                     {tried >= 2 && !title.trim() && <FieldError>Enter the project name (the tracker's Campaign/Idea).</FieldError>}
-                    {title.includes("_") && <FieldError>The project name can't contain “_”.</FieldError>}
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-sm font-medium">Platforms</p>

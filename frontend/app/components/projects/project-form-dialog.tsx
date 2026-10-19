@@ -77,6 +77,7 @@ import {
   PROGRESS_MODE_META,
   previewProjectCode,
   statusColor,
+  stripComposedPrefix,
   tidyNamePart,
 } from "@/lib/projects";
 import { currencySymbol } from "@/lib/format";
@@ -506,7 +507,8 @@ export function ProjectFormDialog({
         .map(({ unit, quantity, languages, languageList, sizes }) => ({ unit, quantity, languages, sizes, ...(languageList?.length ? { languageList } : {}) }))
     : null;
   const [brandFlowOpen, setBrandFlowOpen] = useState(false);
-  const title = tidyNamePart(form.title);
+  // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
+  const title = stripComposedPrefix(form.title, selectedBrand?.name ?? "", form.type, form.month);
   const code = form.code.trim().toUpperCase();
   const brandError =
     form.brand === NONE
@@ -520,9 +522,7 @@ export function ProjectFormDialog({
     ? "A name is required."
     : title.length > NAMING_TITLE_MAX
       ? `Max ${NAMING_TITLE_MAX} characters.`
-      : title.includes(NAMING_SEPARATOR)
-        ? "Underscores separate the parts — use a space or dash instead."
-        : null;
+      : null;
   const scopeError = brandScope
     ? brandScopeRows!.length === 0
       ? "Pick at least one of the brand's scope rows."

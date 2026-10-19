@@ -209,7 +209,6 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
   if (!MONTH.test(month)) throw new FieldError("month", "month must be YYYY-MM");
   const title = str(raw.title).replace(/\s+/g, " ");
   if (!title) throw new FieldError("title", "Enter the project name");
-  if (title.includes("_")) throw new FieldError("title", "The project name can't contain “_”");
   if (title.length > 80) throw new FieldError("title", "The project name must be 80 characters or fewer");
   const ids = (v: unknown, field: string) => {
     if (!Array.isArray(v)) throw new FieldError(field, `${field} must be a list of user IDs`);

@@ -95,13 +95,29 @@ export interface ParsedStructuredName {
   title: string;
 }
 
-/** "Wasl_Campaign_Oct2026_JGE Launch" → its four parts (exactly four, valid month); else null. */
+/**
+ * "Wasl_Campaign_Oct2026_JGE Launch" → its parts (valid month); else null. Brand, type
+ * and month never contain "_", so everything after the month is the name ("Reel_v2").
+ */
 export function parseStructuredName(name: string): ParsedStructuredName | null {
   const parts = name.split(NAMING_SEPARATOR).map(tidy);
-  if (parts.length !== 4 || parts.some((p) => !p)) return null;
+  if (parts.length < 4 || parts.slice(0, 3).some((p) => !p)) return null;
   const month = parseMonthInput(parts[2]!);
   if (!month) return null;
-  return { brand: parts[0]!, type: parts[1]!, month, title: parts[3]! };
+  const title = tidy(parts.slice(3).join(NAMING_SEPARATOR));
+  if (!title) return null;
+  return { brand: parts[0]!, type: parts[1]!, month, title };
+}
+
+/**
+ * The name part only: when the whole composed name was typed into the name field
+ * ("Wasl_Campaign_Oct2026_Launch"), the "Brand_Type_MonYYYY_" start is dropped.
+ */
+export function stripComposedPrefix(title: string, brandName: string, type: string, month: string): string {
+  const prefix = `${tidy(brandName)}${NAMING_SEPARATOR}${tidy(type)}${NAMING_SEPARATOR}${formatNamingMonth(month)}${NAMING_SEPARATOR}`.toLowerCase();
+  let out = tidy(title);
+  while (out.toLowerCase().startsWith(prefix) && out.length > prefix.length) out = tidy(out.slice(prefix.length));
+  return out;
 }
 
 export interface NamingDetection {

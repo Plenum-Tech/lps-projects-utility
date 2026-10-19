@@ -139,7 +139,6 @@ function validateRow(
   if (!name && action !== "update") issues.error("Project name is required");
   if (structured) {
     if (name.length > PROJECT_NAMING_LIMITS.titleMax) issues.error(`Name must be ${PROJECT_NAMING_LIMITS.titleMax} characters or fewer`);
-    if (name.includes(NAMING_SEPARATOR)) issues.error('Name can\'t contain "_" (it separates the parts)');
   } else if (name.length > PROJECT_LIMITS.nameMax) {
     issues.error(`Project name must be ${PROJECT_LIMITS.nameMax} characters or fewer`);
   }

@@ -78,6 +78,18 @@ export function tidyNamePart(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/**
+ * The name part only: a whole composed name typed into the name field
+ * ("Wasl_Campaign_Oct2026_Launch") loses its "Brand_Type_MonYYYY_" start. "_" inside
+ * the name itself is fine (same rule as the server).
+ */
+export function stripComposedPrefix(title: string, brand: string, type: string, month: string): string {
+  const prefix = [tidyNamePart(brand), tidyNamePart(type), formatNamingMonth(month), ""].join(NAMING_SEPARATOR).toLowerCase();
+  let out = tidyNamePart(title);
+  while (prefix.length > 3 && out.toLowerCase().startsWith(prefix) && out.length > prefix.length) out = tidyNamePart(out.slice(prefix.length));
+  return out;
+}
+
 /** The composed project name, with "…" placeholders for missing parts (live preview). */
 export function composeProjectName(parts: { brand: string; type: string; month: string; title: string }): string {
   return [
