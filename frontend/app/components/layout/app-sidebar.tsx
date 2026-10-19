@@ -9,6 +9,7 @@ import {
   ClipboardList,
   FileText,
   FolderKanban,
+  Tags,
   GraduationCap,
   History,
   ListChecks,
@@ -24,7 +25,6 @@ import {
   Sparkles,
   Trophy,
   Users,
-  UsersRound,
   type LucideIcon,
 } from "lucide-react";
 import { useEffect, useState } from "react";
@@ -177,11 +177,11 @@ const NAV_GROUPS: NavGroup[] = [
     label: "Work",
     collapsible: true,
     items: [
+      { title: "Brands", to: "/brands", icon: Tags, match: ["/brands/", "/manpower"] },
       { title: "Projects", to: "/projects", icon: FolderKanban, match: ["/projects/"] },
       { title: "Approvals", to: "/approvals", icon: ClipboardCheck, approvers: true },
       { title: "Tasks", to: "/tasks", icon: ClipboardList, match: ["/tasks/"] },
       { title: "Meetings", to: "/meetings", icon: MessagesSquare, match: ["/meetings/"] },
-      { title: "Manpower plan", to: "/manpower", icon: UsersRound, roles: MANAGERS },
       { title: "Timesheet", to: "/timesheet", icon: Timer, match: ["/timelogs"] },
     ],
   },

@@ -1,6 +1,4 @@
-import { AccessDenied } from "@/components/globals/query-states";
-import { ManpowerPage } from "@/components/manpower/manpower-page";
-import { useCurrentUser } from "@/hooks/use-auth";
+import { Navigate, useSearchParams } from "react-router";
 
 import type { Route } from "./+types/manpower";
 
@@ -8,17 +6,10 @@ export function meta({}: Route.MetaArgs) {
   return [{ title: "Manpower plan | LPS" }];
 }
 
-/** Heads and admins read the plan; leadership and Nazeer edit it. */
+/** The Manpower plan lives under Brands now; old links (emails, bookmarks) land there. */
 export default function ManpowerRoute() {
-  const { data: user } = useCurrentUser();
-  if (!user) return null;
-  if (user.role === "employee") {
-    return (
-      <AccessDenied
-        title="Managers only"
-        description="The manpower plan is available to department heads and administrators."
-      />
-    );
-  }
-  return <ManpowerPage />;
+  const [searchParams] = useSearchParams();
+  const next = new URLSearchParams(searchParams);
+  next.set("tab", "manpower");
+  return <Navigate to={`/brands?${next.toString()}`} replace />;
 }

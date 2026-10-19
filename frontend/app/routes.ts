@@ -22,6 +22,7 @@ export default [
     route("performance-reviews", "routes/performance-reviews.tsx"),
     route("tasks", "routes/tasks.tsx"),
     route("tasks/recurring", "routes/tasks.recurring.tsx"),
+    route("brands", "routes/brands.tsx"),
     route("projects", "routes/projects.tsx"),
     route("projects/:id", "routes/projects.$id.tsx"),
     route("meetings", "routes/meetings.tsx"),
