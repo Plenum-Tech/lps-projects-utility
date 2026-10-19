@@ -2,6 +2,8 @@ import "dotenv/config";
 import { connectDB, disconnectDB } from "../db/index.js";
 import { runHrReminders } from "../lib/hrJobs.js";
 import { flushProgressRecalcs } from "../lib/projectProgress.js";
+import mongoose from "mongoose";
+import { runPitchMissedReminders } from "../lib/pitches.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "../lib/projectJobs.js";
 import { runRecurringTasks, runTaskReminders } from "../lib/taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "../lib/timeJobs.js";
@@ -13,6 +15,7 @@ import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from
  *   bun run jobs:time           → auto-stop timers + time-tracker reminder
  *   bun run jobs:projects       → project deadline reminders + deadline-mode progress
  *   bun run jobs:hr             → document expiry + probation/notice/internship reminders
+ *   bun src/scripts/runJobs.ts pitches [projectId …] → pitch missed-date emails (optionally only these projects)
  *   bun src/scripts/runJobs.ts daily-report → daily time-log report email
  */
 const JOBS: Record<string, () => Promise<Record<string, unknown>>> = {
@@ -28,6 +31,11 @@ const JOBS: Record<string, () => Promise<Record<string, unknown>>> = {
   }),
   "daily-report": async () => ({ dailyReport: await runDailyTimeLogReport(new Date()) }),
   hr: async () => ({ hrReminders: await runHrReminders(new Date()) }),
+  pitches: async () => {
+    const ids = process.argv.slice(3).filter((id) => mongoose.isValidObjectId(id));
+    const projectIds = ids.length ? ids.map((id) => new mongoose.Types.ObjectId(id)) : undefined;
+    return { pitchMissed: await runPitchMissedReminders(new Date(), { projectIds }) };
+  },
 };
 
 async function main(): Promise<void> {

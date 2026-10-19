@@ -75,6 +75,8 @@ export interface IProject extends mongoose.Document {
     clientPresentation?: Date | null;
     milestone1?: Date | null;
     milestone2?: Date | null;
+    /** Missed-date emails already sent (lib/pitches.ts): one per step per due date. */
+    missedNotified?: Array<{ step: string; dueDate: Date; at: Date }>;
   } | null;
   /** Structured scope: deliverables per unit (lib/scopeUnits.ts). */
   scopeItems?: Array<{ unit: string; quantity: number; languages: number; languageList?: string[]; sizes: number }>;
@@ -174,6 +176,15 @@ const projectSchema = new Schema<IProject>(
           clientPresentation: { type: Date, default: null },
           milestone1: { type: Date, default: null },
           milestone2: { type: Date, default: null },
+          missedNotified: {
+            type: [
+              new Schema(
+                { step: { type: String, required: true }, dueDate: { type: Date, required: true }, at: { type: Date, required: true } },
+                { _id: false }
+              ),
+            ],
+            default: [],
+          },
         },
         { _id: false }
       ),

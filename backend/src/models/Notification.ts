@@ -36,6 +36,7 @@ export const NOTIFICATION_TYPES = [
   "project_rejected",
   "project_status_changed",
   "project_deadline",
+  "pitch_milestone_missed",
   "project_note",
   "project_file",
   "timelog_pending",

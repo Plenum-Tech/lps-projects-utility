@@ -1,6 +1,7 @@
 import { useSearchParams } from "react-router";
 
 import { BrandsAllocation, BrandsOverview, MonthPicker, NewBrandButton, thisMonth, useBrandsMonth } from "@/components/brands/brands-dashboard";
+import { isQuarter, PitchesTab, thisQuarter } from "@/components/brands/pitches-tab";
 import { PageHeader } from "@/components/globals/query-states";
 import { ManpowerPage } from "@/components/manpower/manpower-page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,6 +17,7 @@ export function meta({}: Route.MetaArgs) {
  * Brands: the overview (scope, documents, plan, lead per brand), the Allocation grid
  * (brands × plan roles, editing the month's manpower plan) and, for heads and
  * admins, the Manpower plan — the same plan page as before (`?section=manpower`; the plan keeps its own `?tab=`).
+ * Pitches (`?section=pitches&quarter=2026-Q4`, everyone): the pitch tracker with automatic status.
  */
 export default function Brands() {
   const { data: user } = useCurrentUser();
@@ -23,7 +25,8 @@ export default function Brands() {
   const month = /^\d{4}-\d{2}$/.test(searchParams.get("month") ?? "") ? searchParams.get("month")! : thisMonth();
   const canSeePlan = user ? user.role !== "employee" : false;
   const wanted = searchParams.get("section");
-  const tab = canSeePlan && (wanted === "manpower" || wanted === "allocation") ? wanted : "brands";
+  const tab = wanted === "pitches" ? "pitches" : canSeePlan && (wanted === "manpower" || wanted === "allocation") ? wanted : "brands";
+  const quarter = isQuarter(searchParams.get("quarter")) ? searchParams.get("quarter")! : thisQuarter();
   const overview = useBrandsMonth(month);
 
   function setParam(key: string, value: string | null) {
@@ -47,9 +50,10 @@ export default function Brands() {
           <TabsTrigger value="brands">Overview</TabsTrigger>
           {canSeePlan && <TabsTrigger value="allocation">Allocation</TabsTrigger>}
           {canSeePlan && <TabsTrigger value="manpower">Manpower plan</TabsTrigger>}
+          <TabsTrigger value="pitches">Pitches</TabsTrigger>
         </TabsList>
       </div>
-      {tab !== "manpower" && (
+      {tab !== "manpower" && tab !== "pitches" && (
         <div className="mx-auto w-full max-w-[96rem] px-4 pt-4 md:px-6">
           <PageHeader
             title="Brands"
@@ -75,6 +79,9 @@ export default function Brands() {
           </div>
         </TabsContent>
       )}
+      <TabsContent value="pitches">
+        {tab === "pitches" && <PitchesTab quarter={quarter} onQuarterChange={(q) => setParam("quarter", q === thisQuarter() ? null : q)} />}
+      </TabsContent>
       {canSeePlan && (
         <TabsContent value="manpower">
           <ManpowerPage />

@@ -80,6 +80,7 @@ import { TaskHistory } from "../models/TaskHistory.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
+import { PITCH_STEPS } from "../lib/pitches.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import { listTasksForProject } from "./tasks.js";
 
@@ -986,11 +987,8 @@ export interface ProjectWriteOptions {
   skipPitchTasks?: boolean;
 }
 
-export const PITCH_TASKS = [
-  { key: "clientPresentation", title: "Client presentation" },
-  { key: "milestone1", title: "Milestone 1" },
-  { key: "milestone2", title: "Milestone 2" },
-] as const;
+/** The pitch's steps (lib/pitches.ts reads their status from these task titles). */
+export const PITCH_TASKS = PITCH_STEPS;
 
 /** A pitch's three dates — all required (they become the lead's tasks). */
 function parsePitchDates(raw: unknown): Record<(typeof PITCH_TASKS)[number]["key"], Date> | Invalid {

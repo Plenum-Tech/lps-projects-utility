@@ -15,6 +15,21 @@ export const projectDeadlineRemindersFunction = inngest.createFunction(
   }
 );
 
+/** Hourly: pitch steps past their due date and not done (one email per step per due date). */
+export const pitchMissedDatesFunction = inngest.createFunction(
+  {
+    id: "pitch-missed-dates",
+    triggers: [{ cron: "TZ=Asia/Dubai 5 * * * *" }],
+    retries: 2,
+  },
+  async ({ step }) => {
+    return step.run("run-pitch-missed-dates", async () => {
+      const { runPitchMissedReminders } = await import("../../lib/pitches.js");
+      return runPitchMissedReminders(new Date());
+    });
+  }
+);
+
 /** Daily at 00:15 IST: recalculates `deadline`-mode project progress. */
 export const projectProgressDeadlineModeFunction = inngest.createFunction(
   {

@@ -2,7 +2,11 @@ import { inngest } from "./client.js";
 import { generateInsightFunction } from "./functions/generateInsight.js";
 import { generateReviewFunction } from "./functions/generateReview.js";
 import { hrRemindersFunction } from "./functions/hrJobs.js";
-import { projectDeadlineRemindersFunction, projectProgressDeadlineModeFunction } from "./functions/projectJobs.js";
+import {
+  pitchMissedDatesFunction,
+  projectDeadlineRemindersFunction,
+  projectProgressDeadlineModeFunction,
+} from "./functions/projectJobs.js";
 import { recurringTasksFunction } from "./functions/recurringTasks.js";
 import { taskRemindersFunction } from "./functions/taskReminders.js";
 import {
@@ -22,6 +26,7 @@ export const functions = [
   recurringTasksFunction,
   projectDeadlineRemindersFunction,
   projectProgressDeadlineModeFunction,
+  pitchMissedDatesFunction,
   autoStopTimersFunction,
   timeTrackerReminderFunction,
   dailyTimeLogReportFunction,

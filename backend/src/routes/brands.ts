@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controllers/brandFlow.js";
 import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
+import { exportPitches, listPitches } from "../controllers/pitches.js";
 import { createBrand, decideBrand, deleteBrand, listBrands, updateBrand } from "../controllers/brands.js";
 import { brandDetail, brandOverview, deleteBrandFile, downloadBrandFile, splitBrand, uploadBrandFiles } from "../controllers/brandDashboard.js";
 import { requireBrandCreator, requireBrandManager } from "../lib/brandAccess.js";
@@ -18,6 +19,9 @@ router.use(requireAuth);
 router.get("/", listBrands);
 // Brands section: overview + allocation in one call, the brand page.
 router.get("/overview", brandOverview);
+// Pitches tab: every visible Pitch project of a quarter with its automatic status, and the .xlsx.
+router.get("/pitches", listPitches);
+router.get("/pitches/export", exportPitches);
 router.post("/", requireBrandCreator, createBrand);
 // Brand flow (Brands → New brand): read the scope from files, read the pitch
 // tracker, then create the brand with its project, lead tasks and team.

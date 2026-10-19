@@ -6,13 +6,15 @@ import { manpowerKeys } from "@/hooks/use-manpower";
 import { projectKeys } from "@/hooks/use-projects";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
-import type { Brand, BrandDetailResponse, BrandOverviewResponse } from "@/types";
+import { downloadFromApi } from "@/lib/download";
+import type { Brand, BrandDetailResponse, BrandOverviewResponse, PitchesResponse } from "@/types";
 
 // Brands section (/brands): overview + allocation, the brand page, split, leads, documents.
 
 export const brandDashboardKeys = {
   overview: (month: string) => ["brands", "overview", month] as const,
   detail: (id: string, month: string) => ["brands", "detail", id, month] as const,
+  pitches: (quarter: string) => ["brands", "pitches", quarter] as const,
 };
 
 const MONTH = /^\d{4}-\d{2}$/;
@@ -25,6 +27,28 @@ export function useBrandOverview(month: string) {
     enabled: MONTH.test(month),
     placeholderData: keepPreviousData,
     staleTime: 30_000,
+  });
+}
+
+/** Brands → Pitches: the quarter's pitch projects with their automatic status. */
+export function usePitches(quarter: string) {
+  return useQuery({
+    queryKey: brandDashboardKeys.pitches(quarter),
+    queryFn: async () => (await api.get<PitchesResponse>("/brands/pitches", { params: { quarter } })).data,
+    enabled: /^\d{4}-Q[1-4]$/.test(quarter),
+    placeholderData: keepPreviousData,
+    staleTime: 30_000,
+  });
+}
+
+/** The pitch tracker sheet (.xlsx) for a quarter. */
+export function usePitchesExport() {
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async (quarter: string) =>
+      downloadFromApi("/brands/pitches/export", { quarter }, `Pitches_${quarter.slice(5)}_${quarter.slice(0, 4)}.xlsx`),
+    onSuccess: () => toast.success("Excel downloaded"),
+    onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });
 }
 

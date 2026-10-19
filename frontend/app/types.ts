@@ -488,6 +488,7 @@ export type NotificationType =
   | "project_member_added"
   | "project_status_changed"
   | "project_deadline"
+  | "pitch_milestone_missed"
   | "project_note"
   | "project_file"
   | "timelog_pending"
@@ -4085,4 +4086,43 @@ export interface PitchImportResult {
   message: string;
   projectId?: string;
   tasks?: number;
+}
+
+// ---------------------------------------------------------------------------
+// Brands → Pitches (GET /api/brands/pitches)
+// ---------------------------------------------------------------------------
+
+export type PitchStepKey = "clientPresentation" | "milestone1" | "milestone2";
+export type PitchTone = "ok" | "soon" | "missed" | "done";
+
+export interface PitchStatus {
+  text: string;
+  tone: PitchTone;
+  next?: { key: PitchStepKey; title: string; due: string | null };
+  missed: Array<{ key: PitchStepKey; title: string; due: string; emailed: boolean }>;
+}
+
+export interface PitchRow {
+  id: string;
+  name: string;
+  code: string;
+  brand: { id: string; name: string; organisation: string } | null;
+  title: string;
+  month: string | null;
+  revenue: number | null;
+  revenueTbc: boolean;
+  clientPresentation: string | null;
+  milestone1: string | null;
+  milestone2: string | null;
+  steps: Array<{ key: PitchStepKey; title: string; due: string | null; done: boolean; taskId: string | null }>;
+  status: PitchStatus;
+  note: string;
+  leads: Array<{ id: string; name: string }>;
+}
+
+export interface PitchesResponse {
+  quarter: string;
+  label: string;
+  rows: PitchRow[];
+  totals: { count: number; revenue: number };
 }
