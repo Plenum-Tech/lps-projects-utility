@@ -9,7 +9,6 @@ import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 import { parsePitchWorkbook, type PitchSheetRow } from "./brandFlow.js";
 import { createProjectCore } from "./projects.js";
-import { createTaskCore } from "./tasks.js";
 
 // ---------------------------------------------------------------------------
 // Pitch tracker import (Projects → Import pitch sheet): every row of the
@@ -20,6 +19,12 @@ import { createTaskCore } from "./tasks.js";
 // ---------------------------------------------------------------------------
 
 const TYPE = "Pitch";
+/** Task title → createProjectCore's pitchDates key. */
+const PITCH_KEY: Record<string, "clientPresentation" | "milestone1" | "milestone2"> = {
+  "Client presentation": "clientPresentation",
+  "Milestone 1": "milestone1",
+  "Milestone 2": "milestone2",
+};
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_ROWS = 200;
 
@@ -66,8 +71,10 @@ function planRow(row: PitchSheetRow, people: Person[], brands: Map<string, { _id
   else if (leads.missing.length) warnings.push(`Lead not found: ${leads.missing.join(", ")}.`);
   for (const t of tasks) {
     if (t.monthOnly) warnings.push(`${t.title}: only “${t.text}” given — due the month's last day.`);
-    else if (!t.dueDate && t.text) warnings.push(`${t.title}: “${t.text}” isn't a date — skipped.`);
+    else if (!t.dueDate && t.text) warnings.push(`${t.title}: “${t.text}” isn't a date.`);
   }
+  // All three dates are required for a pitch.
+  if (tasks.some((t) => !t.dueDate)) warnings.push(`Missing: ${tasks.filter((t) => !t.dueDate).map((t) => t.title).join(", ")} — add the date${tasks.filter((t) => !t.dueDate).length === 1 ? "" : "s"} to create this pitch.`);
   const today = new Date().toISOString().slice(0, 10);
   if (row.clientPresentation.date && row.clientPresentation.date < today) warnings.push("The client presentation date has passed.");
   if (brand?.status === "pending") warnings.push("The brand is waiting for approval.");
@@ -142,6 +149,9 @@ function parseImportRow(raw: Record<string, unknown>): ImportRow | string {
     if (name && due) tasks.push({ title: name, dueDate: due });
   }
   const revenue = Number(raw.revenue);
+  const have = new Set(tasks.map((t) => t.title));
+  const missing = Object.keys(PITCH_KEY).filter((t) => !have.has(t));
+  if (missing.length) return `A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates (missing: ${missing.join(", ")})`;
   return {
     client,
     title,
@@ -227,6 +237,8 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
         ]
           .filter(Boolean)
           .join("\n"),
+        pitchDates: Object.fromEntries(row.tasks.map((t) => [PITCH_KEY[t.title]!, t.dueDate])),
+        pitchLeads: row.leads,
       } as never,
       req.ip,
       { activityExtra: { via: "pitch_import" } }
@@ -236,31 +248,13 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
       continue;
     }
     const project = created.project;
-    await Project.updateOne({ _id: project._id }, { $set: { pitch: { revenue: row.revenue, revenueTbc: row.revenueTbc, status: row.status } } });
-    let tasks = 0;
-    const errors: string[] = [];
-    for (const t of row.tasks) {
-      const result = await createTaskCore(
-        user,
-        {
-          project: String(project._id),
-          title: t.title,
-          assignees: row.leads,
-          dueDate: t.dueDate,
-          priority: "high",
-          description: `<p>${t.title} for the ${brand.name} pitch (${project.name}).${row.status ? ` Tracker status: ${row.status}` : ""}</p>`,
-        },
-        req.ip,
-        { via: "pitch_import" },
-        { allowClosedProject: true }
-      );
-      if ("taskId" in result) tasks++;
-      else errors.push(`${t.title}: ${result.error}`);
-    }
+    // Revenue and tracker status next to the dates createProjectCore stored.
+    await Project.updateOne({ _id: project._id }, { $set: { "pitch.revenue": row.revenue, "pitch.revenueTbc": row.revenueTbc, "pitch.status": row.status } });
+    const tasks = 3;
     results.push({
       ...label,
       status: "created",
-      message: errors.length ? `Created; some tasks failed — ${errors.join("; ")}` : `Created with ${tasks} task${tasks === 1 ? "" : "s"}`,
+      message: `Created with the ${tasks} pitch tasks`,
       projectId: String(project._id),
       tasks,
     });

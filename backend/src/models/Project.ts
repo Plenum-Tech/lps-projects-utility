@@ -67,7 +67,15 @@ export interface IProject extends mongoose.Document {
   /** Manpower plan row (key) this project belongs to, in the plan of its month; null = automatic match. */
   manpowerRow?: string | null;
   /** Pitch projects (pitch tracker import / brand flow): potential revenue (AED) and the tracker's status. */
-  pitch?: { revenue: number | null; revenueTbc: boolean; status: string } | null;
+  pitch?: {
+    revenue: number | null;
+    revenueTbc: boolean;
+    status: string;
+    /** The pitch's dates — each one is a task for the lead. */
+    clientPresentation?: Date | null;
+    milestone1?: Date | null;
+    milestone2?: Date | null;
+  } | null;
   /** Structured scope: deliverables per unit (lib/scopeUnits.ts). */
   scopeItems?: Array<{ unit: string; quantity: number; languages: number; languageList?: string[]; sizes: number }>;
   category?: mongoose.Types.ObjectId | null;
@@ -163,6 +171,9 @@ const projectSchema = new Schema<IProject>(
           revenue: { type: Number, default: null, min: 0 },
           revenueTbc: { type: Boolean, default: false },
           status: { type: String, trim: true, maxlength: 500, default: "" },
+          clientPresentation: { type: Date, default: null },
+          milestone1: { type: Date, default: null },
+          milestone2: { type: Date, default: null },
         },
         { _id: false }
       ),

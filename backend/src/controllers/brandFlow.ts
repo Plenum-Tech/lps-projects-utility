@@ -172,6 +172,8 @@ export async function runBrandSetup(
       // The period read from the files (else the month's first / last day).
       ...(setup.startDate ? { startDate: setup.startDate } : {}),
       ...(setup.endDate ? { deadline: setup.endDate } : {}),
+      // Pitch: the project creates the Client presentation / Milestone 1 / Milestone 2 tasks.
+      ...(setup.pitchDates ? { pitchDates: setup.pitchDates, pitchLeads: setup.leads } : {}),
     } as never,
     ip,
     { activityExtra: { via: "brand_flow" } }
@@ -179,7 +181,7 @@ export async function runBrandSetup(
   if ("status" in created) return bad((created as { error: string }).error);
   const project = created.project;
   const warnings: string[] = [];
-  let tasks = 0;
+  let tasks = setup.pitchDates ? 3 : 0;
   for (const task of setup.tasks) {
     const result = await createTaskCore(
       actor,
@@ -234,6 +236,13 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
     tasks.push({ title: taskTitle, dueDate });
   }
   if (tasks.length > MAX_TASKS) throw new FieldError("tasks", `At most ${MAX_TASKS} lead tasks`);
+  let pitchDates: BrandSetup["pitchDates"];
+  if (raw.pitchDates && typeof raw.pitchDates === "object") {
+    const d = raw.pitchDates as Record<string, unknown>;
+    const day = (v: unknown) => parseLooseDate(str(v));
+    const [cp, m1, m2] = [day(d.clientPresentation), day(d.milestone1), day(d.milestone2)];
+    if (cp && m1 && m2) pitchDates = { clientPresentation: cp, milestone1: m1, milestone2: m2 };
+  }
   const summary = str(raw.summary).slice(0, 4000);
   const date = (v: unknown, field: "startDate" | "endDate") => {
     const s = str(v);
@@ -255,6 +264,7 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
     ...(summary ? { summary } : {}),
     ...(startDate ? { startDate } : {}),
     ...(endDate ? { endDate } : {}),
+    ...(pitchDates ? { pitchDates } : {}),
   };
 }
 
@@ -295,7 +305,14 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     res.status(400).json({ error: "Enter the potential revenue, or mark it TBC", field: "revenue" });
     return;
   }
-  if (isPitch) setup.projectType = "Pitch";
+  if (isPitch) {
+    setup.projectType = "Pitch";
+    if (!setup.pitchDates) {
+      res.status(400).json({ error: "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates", field: "pitchDates" });
+      return;
+    }
+    setup.tasks = [];
+  } else delete setup.pitchDates;
   const list = (v: unknown, max: number, len: number) =>
     (Array.isArray(v) ? v : []).map((x) => String(x).trim().slice(0, len)).filter(Boolean).slice(0, max);
 

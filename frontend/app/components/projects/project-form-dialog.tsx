@@ -295,11 +295,14 @@ export function ProjectFormDialog({
   const [pickedRows, setPickedRows] = useState<boolean[] | null>(null);
   // New projects: the dates follow the month until the user changes them.
   const [datesTouched, setDatesTouched] = useState(false);
+  // Pitch projects: Client presentation / Milestone 1 / Milestone 2 (required; become the manager's tasks).
+  const [pitchDates, setPitchDates] = useState({ clientPresentation: "", milestone1: "", milestone2: "" });
 
   useEffect(() => {
     if (open) {
       setForm(freshState());
       setPickedRows(null);
+      setPitchDates({ clientPresentation: "", milestone1: "", milestone2: "" });
       setDatesTouched(Boolean(project || continueFrom));
       setScopeLocked(true);
       setSubmitted(false);
@@ -518,6 +521,11 @@ export function ProjectFormDialog({
         : null;
   const typeError = form.type ? null : "Pick a type.";
   const monthError = MONTH_PATTERN.test(form.month) ? null : "Pick a month.";
+  const isPitchType = !project && form.type.toLowerCase() === "pitch";
+  const pitchError =
+    isPitchType && (!pitchDates.clientPresentation || !pitchDates.milestone1 || !pitchDates.milestone2)
+      ? "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates."
+      : null;
   const nameError = !title
     ? "A name is required."
     : title.length > NAMING_TITLE_MAX
@@ -569,6 +577,7 @@ export function ProjectFormDialog({
     summaryError ||
     scopeError ||
     datesError ||
+    pitchError ||
     hours === "invalid" ||
     budget === "invalid",
   );
@@ -576,7 +585,7 @@ export function ProjectFormDialog({
   // Per wizard step: what must be right before moving on.
   const stepErrors: Record<number, unknown[]> = {
     1: [brandError],
-    2: [typeError, monthError, nameError, summaryError, progressError, hours === "invalid", budget === "invalid"],
+    2: [typeError, monthError, nameError, pitchError, summaryError, progressError, hours === "invalid", budget === "invalid"],
     3: [scopeError, datesError],
     4: [],
   };
@@ -654,6 +663,7 @@ export function ProjectFormDialog({
         isPublic: form.isPublic,
         manualTimeLogs: form.manualTimeLogs,
         requireTaskApproval: form.requireTaskApproval,
+        ...(isPitchType ? { pitchDates } : {}),
       };
       if (isAdmin && form.departments.length > 0)
         input.departments = form.departments;
@@ -962,7 +972,7 @@ export function ProjectFormDialog({
                   id="project-name-hint"
                   className="text-xs text-muted-foreground"
                 >
-                  Up to {NAMING_TITLE_MAX} characters, no underscores.{" "}
+                  Up to {NAMING_TITLE_MAX} characters.{" "}
                   {title.length}/{NAMING_TITLE_MAX}
                 </p>
               )}
@@ -977,6 +987,40 @@ export function ProjectFormDialog({
                 {namingLoading ? "Detecting from the old name…" : preview}
               </code>
             </div>
+
+            {isPitchType && (
+              <fieldset className="space-y-2 rounded-lg border p-3">
+                <legend className="px-1 text-sm font-medium">
+                  Pitch dates<span aria-hidden className="ml-0.5 text-destructive">*</span>
+                </legend>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {(
+                    [
+                      ["clientPresentation", "Client presentation"],
+                      ["milestone1", "Milestone 1"],
+                      ["milestone2", "Milestone 2"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <div key={key} className="space-y-1">
+                      <Label htmlFor={`pitch-${key}`} className="text-xs">{label}</Label>
+                      <Input
+                        id={`pitch-${key}`}
+                        type="date"
+                        required
+                        value={pitchDates[key]}
+                        onChange={(event) => setPitchDates((d) => ({ ...d, [key]: event.target.value }))}
+                        aria-invalid={(show(pitchError) && !pitchDates[key]) || undefined}
+                      />
+                    </div>
+                  ))}
+                </div>
+                {show(pitchError) ? (
+                  <FieldError>{pitchError}</FieldError>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Each one becomes a high-priority task for the project manager.</p>
+                )}
+              </fieldset>
+            )}
             </>
             )}
           </fieldset>

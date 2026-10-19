@@ -43,7 +43,9 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
 
   const peopleOptions = (people.data ?? []).map((u) => ({ value: u._id, label: u.name }));
   const nameOf = (id: string) => people.data?.find((u) => u._id === id)?.name ?? "?";
-  const ready = (r: Row) => !r.exists && r.leads.length > 0 && (r.brand ? r.brand.status === "approved" : canCreateBrands);
+  // A pitch needs a lead and all three dates (Client presentation, Milestone 1, Milestone 2).
+  const datesOk = (r: Row) => r.tasks.every((t) => t.dueDate);
+  const ready = (r: Row) => !r.exists && r.leads.length > 0 && datesOk(r) && (r.brand ? r.brand.status === "approved" : canCreateBrands);
   const picked = (rows ?? []).filter((r) => r.on && ready(r));
   const set = (i: number, patch: Partial<Row>) => setRows((list) => list!.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
@@ -51,7 +53,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
     preview.mutate(file, {
       onSuccess: (data) => {
         setCanCreateBrands(data.canCreateBrands);
-        setRows(data.rows.map((r) => ({ ...r, on: !r.exists && r.leads.length > 0 })));
+        setRows(data.rows.map((r) => ({ ...r, on: !r.exists && r.leads.length > 0 && r.tasks.every((t) => t.dueDate) })));
       },
     });
   }
@@ -152,7 +154,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
                             aria-label={`Import ${r.projectName}`}
                             className="size-4 accent-primary"
                             checked={r.on && !blocked}
-                            disabled={Boolean(blocked) || r.leads.length === 0}
+                            disabled={Boolean(blocked) || r.leads.length === 0 || !datesOk(r)}
                             onChange={(e) => set(i, { on: e.target.checked })}
                           />
                         </td>
@@ -178,16 +180,32 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
                             value={r.leads[0] ?? ""}
                             placeholder={r.leadText ? `“${r.leadText}” — pick` : "Pick the lead…"}
                             options={peopleOptions}
-                            onChange={(id) => set(i, { leads: id ? [id, ...r.leads.slice(1).filter((x) => x !== id)] : [], on: Boolean(id) && !blocked })}
+                            onChange={(id) => set(i, { leads: id ? [id, ...r.leads.slice(1).filter((x) => x !== id)] : [], on: Boolean(id) && !blocked && datesOk(r) })}
                           />
                           {r.leads.length > 1 && <p className="mt-1 text-xs">+ {r.leads.slice(1).map(nameOf).join(", ")}</p>}
                         </td>
                         <td className="px-2 py-2 text-xs">
-                          {r.tasks.map((t) => (
-                            <p key={t.title} className={cn(!t.dueDate && "line-through opacity-60")}>
-                              {t.title}: {t.dueDate ? fmt(t.dueDate) : "no date"}
-                            </p>
-                          ))}
+                          {r.tasks.map((t, k) =>
+                            t.dueDate && !r.exists ? (
+                              <p key={t.title}>{t.title}: {fmt(t.dueDate)}</p>
+                            ) : r.exists ? (
+                              <p key={t.title}>{t.title}: {t.dueDate ? fmt(t.dueDate) : "—"}</p>
+                            ) : (
+                              <label key={t.title} className="mb-1 flex items-center gap-1.5 text-destructive">
+                                <span className="w-28 shrink-0">{t.title} *</span>
+                                <input
+                                  type="date"
+                                  aria-label={`${t.title} date for ${r.client}`}
+                                  className="rounded border border-destructive/50 bg-background px-1 py-0.5 text-foreground"
+                                  onChange={(e) => {
+                                    const tasks = r.tasks.map((x, j) => (j === k ? { ...x, dueDate: e.target.value || null } : x));
+                                    const next = { ...r, tasks };
+                                    set(i, { tasks, on: !blocked && next.leads.length > 0 && tasks.every((x) => x.dueDate) });
+                                  }}
+                                />
+                              </label>
+                            ),
+                          )}
                         </td>
                         <td className="max-w-56 px-2 py-2 text-xs">{r.status || "—"}</td>
                       </tr>

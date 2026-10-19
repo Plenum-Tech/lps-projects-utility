@@ -270,7 +270,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   const peopleOptions = (people.data ?? []).map((u) => ({ value: u._id, label: u.name, description: u.email }));
   const nameOf = (id: string) => people.data?.find((u) => u._id === id)?.name ?? holders.get("")?.find((h) => h.id === id)?.name ?? "—";
-  const activeTasks = isPitch ? tasks.filter((t) => t.on && t.dueDate) : [];
+  const activeTasks = isPitch ? tasks.filter((t) => t.dueDate) : [];
+  // A pitch needs all three dates: Client presentation, Milestone 1, Milestone 2.
+  const pitchDatesMissing = isPitch ? tasks.filter((t) => !t.dueDate).map((t) => t.title) : [];
   const teamPeople = [...new Set(roles.flatMap((r) => team[r.key] ?? []))];
   // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
   const typeForName = isPitch ? "Pitch" : "Project";
@@ -279,7 +281,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   function submit() {
     setTried(3);
-    if (!leads.length) return;
+    if (!leads.length || pitchDatesMissing.length) return;
     const data = {
       name: name.trim(),
       isPitch,
@@ -301,7 +303,10 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       title: cleanTitle,
       leads,
       team: roles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
-      tasks: activeTasks.map((t) => ({ title: t.title, dueDate: t.dueDate })),
+      tasks: [],
+      ...(isPitch
+        ? { pitchDates: { clientPresentation: tasks[0]?.dueDate ?? "", milestone1: tasks[1]?.dueDate ?? "", milestone2: tasks[2]?.dueDate ?? "" } }
+        : {}),
       ...(startDate ? { startDate } : {}),
       ...(endDate ? { endDate } : {}),
     };
@@ -621,22 +626,28 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
             {isPitch ? (
               <div className="space-y-2">
-                <p className="text-sm font-medium">Tasks for the lead (created automatically)</p>
+                <p className="text-sm font-medium">
+                  Pitch dates<span aria-hidden className="ml-0.5 text-destructive">*</span>
+                  <span className="ml-1 font-normal text-muted-foreground">— all three required; each becomes a task for the lead</span>
+                </p>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[32rem] text-sm">
                     <tbody>
                       {tasks.map((t, i) => (
                         <tr key={i} className="border-b last:border-0">
-                          <td className="py-1.5 pr-2"><input type="checkbox" aria-label={`Create ${t.title}`} className="size-4 accent-primary" checked={t.on} onChange={(e) => setTasks(tasks.map((x, j) => (j === i ? { ...x, on: e.target.checked } : x)))} /></td>
-                          <td className="py-1.5 pr-2"><Input aria-label={`Task ${i + 1} name`} value={t.title} onChange={(e) => setTasks(tasks.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))} /></td>
-                          <td className="py-1.5 pr-2"><Input aria-label={`Task ${i + 1} due date`} type="date" value={t.dueDate} onChange={(e) => setTasks(tasks.map((x, j) => (j === i ? { ...x, dueDate: e.target.value, on: Boolean(e.target.value) || x.on, from: x.from || "typed" } : x)))} /></td>
+                          <td className="w-48 py-1.5 pr-2 font-medium">{t.title}</td>
+                          <td className="py-1.5 pr-2"><Input aria-label={`${t.title} date`} type="date" required value={t.dueDate} aria-invalid={(tried >= 3 && !t.dueDate) || undefined} onChange={(e) => setTasks(tasks.map((x, j) => (j === i ? { ...x, dueDate: e.target.value, on: true, from: e.target.value ? x.from || "typed" : "" } : x)))} /></td>
                           <td className="py-1.5 text-xs text-muted-foreground">{t.from || <span className="text-amber-700 dark:text-amber-400">no date</span>}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-xs text-muted-foreground">Assigned to the lead in the new project. A task without a date is left out.</p>
+                {tried >= 3 && pitchDatesMissing.length > 0 ? (
+                  <FieldError>Add the {pitchDatesMissing.join(", ")} date{pitchDatesMissing.length === 1 ? "" : "s"} — a pitch can't be created without them.</FieldError>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Assigned to the lead(s) in the new project, as high-priority tasks.</p>
+                )}
               </div>
             ) : (
               <p className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">Not a pitch: no presentation / milestone tasks are created.</p>

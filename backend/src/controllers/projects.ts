@@ -910,6 +910,10 @@ export async function bulkProjects(req: Request, res: Response): Promise<void> {
 export interface ProjectBody {
   /** Legacy free-text name (imports / legacy projects only). */
   name?: unknown;
+  /** Pitch projects (required): { clientPresentation, milestone1, milestone2 } as YYYY-MM-DD. */
+  pitchDates?: unknown;
+  /** Pitch projects: who gets the three pitch tasks (default the manager, else the creator). */
+  pitchLeads?: unknown;
   /** Structured name parts `{ brand, type, month, title }` (required on create). */
   naming?: unknown;
   code?: unknown;
@@ -978,6 +982,29 @@ export interface ProjectWriteOptions {
   skipApproval?: boolean;
   /** Don't copy the team onto the manpower plan (the plan is the source of this change). */
   skipPlanSync?: boolean;
+  /** Excel import: Pitch-type rows don't carry the pitch dates. */
+  skipPitchTasks?: boolean;
+}
+
+export const PITCH_TASKS = [
+  { key: "clientPresentation", title: "Client presentation" },
+  { key: "milestone1", title: "Milestone 1" },
+  { key: "milestone2", title: "Milestone 2" },
+] as const;
+
+/** A pitch's three dates — all required (they become the lead's tasks). */
+function parsePitchDates(raw: unknown): Record<(typeof PITCH_TASKS)[number]["key"], Date> | Invalid {
+  const missing = "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates";
+  if (!raw || typeof raw !== "object") return bad(missing);
+  const r = raw as Record<string, unknown>;
+  const out = {} as Record<(typeof PITCH_TASKS)[number]["key"], Date>;
+  for (const t of PITCH_TASKS) {
+    const v = r[t.key];
+    const d = typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) ? new Date(`${v}T00:00:00.000Z`) : null;
+    if (!d || Number.isNaN(d.getTime())) return bad(`${missing} (${t.title} is missing)`);
+    out[t.key] = d;
+  }
+  return out;
 }
 
 /**
@@ -1040,6 +1067,13 @@ export async function createProjectCore(
     const parsed = await parseBrand(body.brand);
     if (isInvalid(parsed)) return parsed;
     brand = parsed;
+  }
+
+  // Pitches: the client presentation and both milestones are required; they become the lead's tasks.
+  let pitchDates: ReturnType<typeof parsePitchDates> | null = null;
+  if (naming?.type.toLowerCase() === "pitch" && !options.skipPitchTasks) {
+    pitchDates = parsePitchDates(body.pitchDates);
+    if (isInvalid(pitchDates)) return pitchDates;
   }
 
   // A brand with a scope (brand flow) fixes its projects' scope: the project takes some
@@ -1181,7 +1215,55 @@ export async function createProjectCore(
   if (approval === "approved" && (project.team ?? []).length && !options.skipPlanSync) {
     await syncProjectTeamToPlan(project, actor);
   }
+  if (pitchDates && !isInvalid(pitchDates)) await createPitchTasks(project, pitchDates, body.pitchLeads, actor, ip);
   return { project };
+}
+
+/** The pitch's Client presentation / Milestone 1 / Milestone 2 tasks for its lead(s); dates kept on the project. */
+async function createPitchTasks(
+  project: IProject,
+  dates: Record<(typeof PITCH_TASKS)[number]["key"], Date>,
+  rawLeads: unknown,
+  actor: IUser,
+  ip: string | undefined
+): Promise<void> {
+  const leads = Array.isArray(rawLeads) ? rawLeads.map(String).filter((id) => mongoose.isValidObjectId(id)).slice(0, 3) : [];
+  const assignees = leads.length ? leads : [String(project.manager ?? actor._id)];
+  // A new project has no pitch sub-document yet: write it whole (revenue / status are set by the caller).
+  const pitch = project.pitch ?? null;
+  await Project.updateOne(
+    { _id: project._id },
+    {
+      $set: {
+        pitch: {
+          revenue: pitch?.revenue ?? null,
+          revenueTbc: pitch?.revenueTbc ?? false,
+          status: pitch?.status ?? "",
+          clientPresentation: dates.clientPresentation,
+          milestone1: dates.milestone1,
+          milestone2: dates.milestone2,
+        },
+      },
+    }
+  );
+  const { createTaskCore } = await import("./tasks.js");
+  for (const t of PITCH_TASKS) {
+    const result = await createTaskCore(
+      actor,
+      {
+        project: String(project._id),
+        title: t.title,
+        assignees,
+        dueDate: dates[t.key].toISOString().slice(0, 10),
+        priority: "high",
+        description: `<p>${t.title} for the pitch ${project.name}.</p>`,
+      },
+      ip,
+      { via: "pitch" },
+      { allowClosedProject: true }
+    );
+    if (!("taskId" in result)) console.error("[pitch] task not created", String(project._id), t.title, result.error);
+  }
 }
 
 /** POST /api/projects — admin, or a head for their own department. */

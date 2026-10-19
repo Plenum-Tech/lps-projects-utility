@@ -22,6 +22,8 @@ export interface BrandSetup {
   leads: string[];
   team: Array<{ role: string; users: string[] }>;
   tasks: Array<{ title: string; dueDate: string }>;
+  /** Pitches (required): YYYY-MM-DD dates; the project creates the three lead tasks. */
+  pitchDates?: { clientPresentation: string; milestone1: string; milestone2: string };
   summary?: string;
   /** Project start / end (YYYY-MM-DD); without them the month's first / last day. */
   startDate?: string;
