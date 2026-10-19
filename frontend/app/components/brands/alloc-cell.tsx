@@ -1,4 +1,4 @@
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { LuLoaderCircle, LuSave, LuUndo2 } from "react-icons/lu";
 
 import { Button } from "@/components/ui/button";
@@ -137,7 +137,7 @@ export function AllocCell({
  * People already in the cell first (✓), then the plan pool least busy first,
  * then everyone else. Click / Enter toggles a person; Escape or leaving closes.
  */
-function PersonPicker({
+export function PersonPicker({
   label,
   people,
   nameOf,
@@ -146,6 +146,8 @@ function PersonPicker({
   className,
   onChange,
   onClose,
+  showBrands = true,
+  children,
 }: {
   label: string;
   people: string[];
@@ -155,6 +157,10 @@ function PersonPicker({
   className: string;
   onChange: (ids: string[]) => void;
   onClose: () => void;
+  /** "· N brands" after each name (Brands views); off on the Manpower page. */
+  showBrands?: boolean;
+  /** Extra fields under the list (Manpower page: not needed, open slots, note); part of the picker for closing. */
+  children?: ReactNode;
 }) {
   const everyone = useAssignableUsers(true);
   const [q, setQ] = useState("");
@@ -241,7 +247,8 @@ function PersonPicker({
               <span aria-hidden className="w-3 shrink-0">{o && on ? "✓" : ""}</span>
               {o ? (
                 <span className="truncate">
-                  {o.name} <span className="text-muted-foreground">· {o.brands} brand{o.brands === 1 ? "" : "s"}</span>
+                  {o.name}
+                  {showBrands && <span className="text-muted-foreground"> · {o.brands} brand{o.brands === 1 ? "" : "s"}</span>}
                 </span>
               ) : (
                 "Nobody"
@@ -251,6 +258,7 @@ function PersonPicker({
         })}
         {list.length === 0 && <li className="px-1.5 py-0.5 text-muted-foreground">{everyone.isPending ? "Loading people…" : "No one matches"}</li>}
       </ul>
+      {children}
     </div>
   );
 }

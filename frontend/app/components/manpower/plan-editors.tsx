@@ -1,9 +1,9 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { LuTrash2 } from "react-icons/lu";
 
-import { MultiSelect, type MultiSelectOption } from "@/components/globals/multi-select";
+import { PersonPicker } from "@/components/brands/alloc-cell";
+import type { MultiSelectOption } from "@/components/globals/multi-select";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -20,105 +20,78 @@ import type { TableRow } from "./plan-table";
 
 type Cell = TableRow["cells"][number];
 
-/** Edit one role on one line: people, open slots, "not needed", note. */
-export function CellDialog({
-  open,
-  onOpenChange,
-  rowName,
-  roleLabel,
+export type CellValue = { users: string[]; placeholders: string[]; notNeeded: boolean; note: string };
+
+/**
+ * Edit one role on one line right in the cell (no pop-up): search and add people,
+ * then optional "not needed", open slots and a note under the list. Every change
+ * applies to the draft at once; Escape or clicking elsewhere closes it.
+ */
+export function InlineCellEditor({
+  label,
   cell,
   people,
-  onSave,
+  onChange,
+  onClose,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  rowName: string;
-  roleLabel: string;
+  label: string;
   cell: Cell | undefined;
   people: MultiSelectOption[];
-  onSave: (cell: { users: string[]; placeholders: string[]; notNeeded: boolean; note: string }) => void;
+  onChange: (cell: CellValue) => void;
+  onClose: () => void;
 }) {
-  const [users, setUsers] = useState<string[]>([]);
-  const [slots, setSlots] = useState("");
-  const [notNeeded, setNotNeeded] = useState(false);
-  const [note, setNote] = useState("");
-
-  useEffect(() => {
-    if (!open) return;
-    setUsers(cell?.users.map((u) => u._id) ?? []);
-    setSlots(cell?.placeholders.join(", ") ?? "");
-    setNotNeeded(cell?.notNeeded ?? false);
-    setNote(cell?.note ?? "");
-  }, [open, cell]);
-
-  function submit(event: FormEvent) {
-    event.preventDefault();
-    onSave({
-      users: notNeeded ? [] : users,
-      placeholders: notNeeded
-        ? []
-        : slots
-            .split(",")
-            .map((s) => s.trim())
-            .filter(Boolean)
-            .slice(0, 6),
-      notNeeded,
-      note: note.trim().slice(0, 300),
-    });
-    onOpenChange(false);
-  }
-
+  const users = cell?.users.map((u) => u._id) ?? [];
+  const value: CellValue = { users, placeholders: cell?.placeholders ?? [], notNeeded: cell?.notNeeded ?? false, note: cell?.note ?? "" };
+  const [slots, setSlots] = useState(value.placeholders.join(", "));
+  const nameOf = (id: string) => people.find((p) => p.value === id)?.label ?? cell?.users.find((u) => u._id === id)?.name ?? "…";
+  const parseSlots = (text: string) =>
+    text
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .slice(0, 6);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>{roleLabel}</DialogTitle>
-          <DialogDescription>{rowName}</DialogDescription>
-        </DialogHeader>
-        <form onSubmit={submit} className="space-y-4">
-          <label className="flex cursor-pointer items-center gap-2 text-sm">
-            <Checkbox checked={notNeeded} onCheckedChange={(checked) => setNotNeeded(checked === true)} />
-            Not needed on this line
-          </label>
-          <div className="space-y-1.5">
-            <Label htmlFor="mp-cell-people">People</Label>
-            <MultiSelect
-              id="mp-cell-people"
-              options={people}
-              value={users}
-              onValueChange={setUsers}
-              disabled={notNeeded}
-              placeholder="Search people…"
-              max={20}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mp-cell-slots">Open slots</Label>
-            <Input
-              id="mp-cell-slots"
-              value={slots}
-              onChange={(e) => setSlots(e.target.value)}
-              disabled={notNeeded}
-              placeholder="e.g. New PM, Freelancer"
-              aria-describedby="mp-cell-slots-hint"
-            />
-            <p id="mp-cell-slots-hint" className="text-xs text-muted-foreground">
-              Comma-separated. Use this for roles still to be hired or filled by someone outside the app.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mp-cell-note">Note</Label>
-            <Input id="mp-cell-note" value={note} onChange={(e) => setNote(e.target.value)} maxLength={300} placeholder="Optional" />
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
-            </Button>
-            <Button type="submit">Apply</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <PersonPicker
+      label={label}
+      people={users}
+      nameOf={nameOf}
+      options={[]}
+      showBrands={false}
+      className="block w-60 rounded-md border bg-card shadow-sm"
+      onChange={(ids) => onChange({ ...value, users: ids, notNeeded: ids.length ? false : value.notNeeded })}
+      onClose={onClose}
+    >
+      <div className="space-y-1 px-0.5 pt-0.5 text-xs">
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input
+            type="checkbox"
+            className="size-3.5 accent-primary"
+            checked={value.notNeeded}
+            onChange={(e) => onChange(e.target.checked ? { ...value, notNeeded: true, users: [], placeholders: [] } : { ...value, notNeeded: false })}
+          />
+          Not needed on this line
+        </label>
+        <input
+          aria-label={`${label}: open slots`}
+          value={slots}
+          disabled={value.notNeeded}
+          placeholder="Open slots: e.g. New PM, Freelancer"
+          className="w-full rounded border bg-background px-1.5 py-0.5"
+          onChange={(e) => {
+            setSlots(e.target.value);
+            onChange({ ...value, placeholders: parseSlots(e.target.value) });
+          }}
+        />
+        <input
+          aria-label={`${label}: note`}
+          defaultValue={value.note}
+          maxLength={300}
+          placeholder="Note (optional)"
+          className="w-full rounded border bg-background px-1.5 py-0.5"
+          onChange={(e) => onChange({ ...value, note: e.target.value.slice(0, 300) })}
+        />
+      </div>
+    </PersonPicker>
   );
 }
 

@@ -22,7 +22,7 @@ import { namingMonthLabel } from "@/lib/projects";
 import { todayKey } from "@/lib/tasks";
 import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/types";
 
-import { CellDialog, RowDialog } from "./plan-editors";
+import { InlineCellEditor, RowDialog, type CellValue } from "./plan-editors";
 import { PeopleView } from "./people-view";
 import { PlanTable, type TableRow } from "./plan-table";
 import { UnlinkedProjects } from "./unlinked-projects";
@@ -217,7 +217,27 @@ export function ManpowerPage() {
     );
   }
 
-  const editingCell = cellEdit && draft ? draft.rows.find((r) => r.key === cellEdit.rowKey) : undefined;
+  // Cell edits apply to the draft at once (the cell's inline editor; no pop-up).
+  function applyCell(rowKey: string, role: string, value: CellValue) {
+    updateRows((rows) =>
+      rows.map((r) => {
+        if (r.key !== rowKey) return r;
+        const others = r.cells.filter((c) => c.role !== role);
+        const empty = !value.notNeeded && value.users.length === 0 && value.placeholders.length === 0 && !value.note.trim();
+        if (empty) return { ...r, cells: others };
+        const cell = {
+          role,
+          users: value.users.map((id) => ({ _id: id, name: nameById.get(id) ?? r.cells.flatMap((c) => c.users).find((u) => u._id === id)?.name ?? "…" })),
+          placeholders: value.placeholders,
+          notNeeded: value.notNeeded,
+          note: value.note,
+        };
+        const order = roles.map((x) => x.key);
+        return { ...r, cells: [...others, cell].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)) };
+      }),
+    );
+  }
+
   const editingRow = rowEdit?.rowKey && draft ? draft.rows.find((r) => r.key === rowEdit.rowKey) : undefined;
   const highlightName = highlight ? data?.people.find((p) => p.user._id === highlight)?.user.name : null;
 
@@ -442,6 +462,16 @@ export function ManpowerPage() {
               highlight={editing ? null : highlight}
               editing={editing}
               onEditCell={(rowKey, roleKey) => setCellEdit({ rowKey, role: roleKey })}
+              activeCell={cellEdit}
+              renderCellEditor={(row, role) => (
+                <InlineCellEditor
+                  label={`${role.label} on ${row.name}`}
+                  cell={row.cells.find((c) => c.role === role.key)}
+                  people={peopleOptions}
+                  onChange={(value) => applyCell(row.key, role.key, value)}
+                  onClose={() => setCellEdit(null)}
+                />
+              )}
               onEditRow={(rowKey) => setRowEdit({ rowKey, section: "active" })}
               onAddRow={(section) => setRowEdit({ section })}
             />
@@ -531,34 +561,6 @@ export function ManpowerPage() {
 
       {draft && (
         <>
-          <CellDialog
-            open={cellEdit !== null}
-            onOpenChange={(open) => !open && setCellEdit(null)}
-            rowName={editingCell?.name ?? ""}
-            roleLabel={roles.find((r) => r.key === cellEdit?.role)?.label ?? ""}
-            cell={editingCell?.cells.find((c) => c.role === cellEdit?.role)}
-            people={peopleOptions}
-            onSave={(value) => {
-              if (!cellEdit) return;
-              updateRows((rows) =>
-                rows.map((r) => {
-                  if (r.key !== cellEdit.rowKey) return r;
-                  const others = r.cells.filter((c) => c.role !== cellEdit.role);
-                  const empty = !value.notNeeded && value.users.length === 0 && value.placeholders.length === 0 && !value.note;
-                  if (empty) return { ...r, cells: others };
-                  const cell = {
-                    role: cellEdit.role,
-                    users: value.users.map((id) => ({ _id: id, name: nameById.get(id) ?? r.cells.flatMap((c) => c.users).find((u) => u._id === id)?.name ?? "…" })),
-                    placeholders: value.placeholders,
-                    notNeeded: value.notNeeded,
-                    note: value.note,
-                  };
-                  const order = roles.map((x) => x.key);
-                  return { ...r, cells: [...others, cell].sort((a, b) => order.indexOf(a.role) - order.indexOf(b.role)) };
-                }),
-              );
-            }}
-          />
           <RowDialog
             open={rowEdit !== null}
             onOpenChange={(open) => !open && setRowEdit(null)}

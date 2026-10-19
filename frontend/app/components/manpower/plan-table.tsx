@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LuChevronLeft, LuChevronRight, LuFolderKanban, LuPencil, LuPlus } from "react-icons/lu";
 import { Link } from "react-router";
 
@@ -46,6 +46,8 @@ export function PlanTable({
   onEditCell,
   onEditRow,
   onAddRow,
+  activeCell,
+  renderCellEditor,
 }: {
   rows: TableRow[];
   roles: ManpowerRoleDef[];
@@ -60,6 +62,9 @@ export function PlanTable({
   onEditCell?: (rowKey: string, role: string) => void;
   onEditRow?: (rowKey: string) => void;
   onAddRow?: (section: ManpowerSection) => void;
+  /** The cell being edited in place (no pop-up) and its editor. */
+  activeCell?: { rowKey: string; role: string } | null;
+  renderCellEditor?: (row: TableRow, role: ManpowerRoleDef) => ReactNode;
 }) {
   const sections: ManpowerSection[] = ["active", "pitch"];
   // Sideways scrolling is always visible: ‹ › buttons and a bar above the table
@@ -179,7 +184,9 @@ export function PlanTable({
                           hit && "bg-primary/10 group-hover:bg-primary/15",
                         )}
                       >
-                        {editing ? (
+                        {editing && activeCell?.rowKey === row.key && activeCell.role === role.key && renderCellEditor ? (
+                          renderCellEditor(row, role)
+                        ) : editing ? (
                           <button
                             type="button"
                             onClick={() => onEditCell?.(row.key, role.key)}
