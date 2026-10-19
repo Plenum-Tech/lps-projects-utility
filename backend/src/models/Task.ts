@@ -141,7 +141,7 @@ export interface ITask extends mongoose.Document {
   lastManualReminderAt?: Date | null;
   /** Employee's notes when submitting completed work. */
   submissionNotes?: string;
-  /** Set when closing: the work was on parity (as scoped / planned) or off parity. */
+  /** Set when closing: the deliverable was generated on Pearity (the production engine) or off it. */
   parity?: "on" | "off";
   /** Rules-era tasks: new work or rework (required at creation). */
   iteration?: TaskIteration | null;

@@ -93,12 +93,12 @@ export function CompletionSummary({ task }: { task: Task }) {
           </dd>
         </div>
         <div className="space-y-0.5">
-          <dt className="text-xs text-muted-foreground">Parity</dt>
+          <dt className="text-xs text-muted-foreground">Pearity</dt>
           <dd>
             {task.parity === "on" ? (
-              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">On parity</span>
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">On Pearity</span>
             ) : task.parity === "off" ? (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">Off parity</span>
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">Off Pearity</span>
             ) : (
               <span className="text-muted-foreground">—</span>
             )}

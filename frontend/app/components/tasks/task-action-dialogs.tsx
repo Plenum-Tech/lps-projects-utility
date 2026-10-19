@@ -76,13 +76,14 @@ export function SubmitTaskDialog({
   const [file, setFile] = useState<File | null>(null);
   const [link, setLink] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  // Mandatory: was the work on parity or off parity?
+  // Mandatory: was the deliverable generated on Pearity (the production engine) or off it?
   const [parity, setParity] = useState<"on" | "off" | "">("");
 
   useEffect(() => {
     if (open) {
       setNotes(task.submissionNotes ?? "");
-      setParity(task.parity ?? "");
+      // A task with a Pearity tag was most likely generated there: pre-pick On Pearity.
+      setParity(task.parity ?? (task.pearityTag ? "on" : ""));
       setLink(task.finalFile?.url ?? "");
       setMode(task.finalFile?.url ? "link" : "file");
       setFile(null);
@@ -301,13 +302,13 @@ export function SubmitTaskDialog({
 
           <fieldset className="space-y-1.5">
             <legend className="mb-1.5 text-sm leading-none font-medium">
-              Parity<span aria-hidden className="ml-0.5 text-destructive">*</span>
+              Pearity<span aria-hidden className="ml-0.5 text-destructive">*</span>
             </legend>
-            <div role="radiogroup" aria-label="Parity" aria-invalid={(submitted && parityMissing) || undefined} className="grid grid-cols-2 gap-2">
+            <div role="radiogroup" aria-label="Pearity" aria-invalid={(submitted && parityMissing) || undefined} className="grid grid-cols-2 gap-2">
               {(
                 [
-                  ["on", "On parity", "Generated as scoped / planned"],
-                  ["off", "Off parity", "Outside the scope or plan"],
+                  ["on", "On Pearity", "Generated in Pearity (the production engine)"],
+                  ["off", "Off Pearity", "Made outside Pearity"],
                 ] as const
               ).map(([value, label, hint]) => (
                 <label
@@ -337,7 +338,7 @@ export function SubmitTaskDialog({
                 </label>
               ))}
             </div>
-            {submitted && parityMissing && <p className="text-xs text-destructive">Choose on parity or off parity.</p>}
+            {submitted && parityMissing && <p className="text-xs text-destructive">Choose On Pearity or Off Pearity.</p>}
           </fieldset>
 
           <OutcomeReadinessBox

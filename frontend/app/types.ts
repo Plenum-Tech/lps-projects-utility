@@ -968,7 +968,7 @@ export interface Task {
   lastReminderSentOn: string | null;
   lastManualReminderAt: string | null;
   submissionNotes?: string;
-  /** Set when closing: on parity (as scoped / planned) or off parity. */
+  /** Set when closing: generated on Pearity (the production engine) or off it. */
   parity?: "on" | "off";
   /** Rules-era tasks: "new" work or "rework". */
   iteration?: TaskIteration | null;
