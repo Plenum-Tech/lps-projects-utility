@@ -968,6 +968,8 @@ export interface Task {
   lastReminderSentOn: string | null;
   lastManualReminderAt: string | null;
   submissionNotes?: string;
+  /** Set when closing: on parity (as scoped / planned) or off parity. */
+  parity?: "on" | "off";
   /** Rules-era tasks: "new" work or "rework". */
   iteration?: TaskIteration | null;
   /** AI brief check: quality score 0–100 (English, clear, on-brand, links score higher). */
@@ -1302,6 +1304,8 @@ export interface TaskSubmitInput {
   /** Or a link to it. */
   finalUrl?: string;
   submissionNotes?: string;
+  /** Mandatory when closing. */
+  parity?: "on" | "off";
 }
 
 /** POST /api/tasks/:id/review body. */

@@ -935,6 +935,7 @@ async function completionBlocker(task: ITask): Promise<string | null> {
   if (!log) missing.push("log the time spent");
   if (!task.finalFile?.fileId && !task.finalFile?.url) missing.push("add the final link or file / image");
   if (!task.submissionNotes?.trim()) missing.push("write an outcome note");
+  if (task.parity !== "on" && task.parity !== "off") missing.push("choose on parity or off parity");
   if (missing.length === 0) return null;
   const list = missing.length === 1 ? missing[0]! : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`;
   return `To close this task, ${list}.`;
@@ -1141,6 +1142,8 @@ interface MoveTaskBody {
 
 interface SubmitTaskBody {
   submissionNotes?: unknown;
+  /** "on" | "off" — mandatory when closing. */
+  parity?: unknown;
   /** A file already uploaded to this task (Files) that is the final deliverable. */
   finalFileId?: unknown;
   /** Or a link to the final deliverable (http/https). */
@@ -1787,7 +1790,11 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { submissionNotes, finalFileId, finalUrl } = (req.body ?? {}) as SubmitTaskBody;
+  const { submissionNotes, finalFileId, finalUrl, parity } = (req.body ?? {}) as SubmitTaskBody;
+  if (parity !== undefined && parity !== "on" && parity !== "off") {
+    res.status(400).json({ error: "parity must be \"on\" or \"off\"" });
+    return;
+  }
   if (submissionNotes !== undefined && (typeof submissionNotes !== "string" || submissionNotes.trim().length > 2000)) {
     res.status(400).json({ error: "submissionNotes must be 2000 characters or fewer" });
     return;
@@ -1812,6 +1819,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     finalFile = { fileId: null, url: finalUrl.trim(), addedAt: new Date() };
   }
   if (finalFile) task.finalFile = finalFile;
+  if (parity !== undefined) task.parity = parity;
   if (submissionNotes !== undefined) {
     task.submissionNotes = typeof submissionNotes === "string" && submissionNotes.trim() ? submissionNotes.trim() : undefined;
   }
@@ -1844,6 +1852,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   recordTaskHistory(taskId, user, "submitted", {
     from: previousStatus,
     submissionNotes: task.submissionNotes,
+    parity: task.parity,
   });
 
   logActivity({
@@ -1852,7 +1861,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     targetType: "task",
     targetId: taskId,
     targetName: task.title,
-    details: { submissionNotes: task.submissionNotes },
+    details: { submissionNotes: task.submissionNotes, parity: task.parity },
     ip: req.ip,
   });
 

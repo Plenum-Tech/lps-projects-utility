@@ -92,6 +92,18 @@ export function CompletionSummary({ task }: { task: Task }) {
             {formatEffort(task.loggedMinutes ?? 0)}
           </dd>
         </div>
+        <div className="space-y-0.5">
+          <dt className="text-xs text-muted-foreground">Parity</dt>
+          <dd>
+            {task.parity === "on" ? (
+              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200">On parity</span>
+            ) : task.parity === "off" ? (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900 dark:bg-amber-950 dark:text-amber-200">Off parity</span>
+            ) : (
+              <span className="text-muted-foreground">—</span>
+            )}
+          </dd>
+        </div>
         <div className="space-y-0.5 sm:col-span-2">
           <dt className="text-xs text-muted-foreground">Outcome note</dt>
           <dd className="break-words whitespace-pre-wrap">
