@@ -1020,6 +1020,20 @@ export interface PearityTagRef {
 
 export type PearityUsageSource = "utility" | "pearity";
 
+/** DAM / outcome link written back from Pearity under this Utility task + tag. */
+export interface PearityOutcomeLink {
+  _id: string;
+  url: string;
+  title: string | null;
+  mimeType: string | null;
+  damAssetId: string | null;
+  damFolderPath: string | null;
+  tagNo: number | null;
+  jobId: string | null;
+  pearityUrl: string | null;
+  createdAt: string;
+}
+
 /** GET /api/tasks/:id/pearity */
 export interface TaskPearityInfo {
   enabled: boolean;
@@ -1029,6 +1043,16 @@ export interface TaskPearityInfo {
   tagUrl: string | null;
   generateUrl: string | null;
   usageCount: number;
+  /** Same as usageCount — Pearity tag generation clicks recorded on the tag. */
+  generationsCount?: number;
+  /** History: times Generate on Pearity ran for this task. */
+  tasksGeneratedOnPearity?: number;
+  jobsStarted?: number;
+  jobsCompleted?: number;
+  jobsFailed?: number;
+  savedToDam?: number;
+  /** Outcome / DAM links written back from Pearity for this task. */
+  outcomes?: PearityOutcomeLink[];
   generatedBy: Array<{
     user: { _id: string; name: string };
     count: number;
