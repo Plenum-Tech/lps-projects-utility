@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LuArrowLeft, LuCircleCheck, LuCircleX, LuExternalLink, LuLoaderCircle, LuTriangleAlert } from "react-icons/lu";
 
 import { ChangeTable, KIND_LABEL } from "@/components/approvals/change-approvals";
+import { ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
 import { PageHeader, QueryError } from "@/components/globals/query-states";
 import { planRowsToTable } from "@/components/manpower/manpower-page";
 import { PlanTable } from "@/components/manpower/plan-table";
@@ -19,7 +20,7 @@ import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { LABEL_COLOR_META } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { ChangeRequestItem, ScopeItem } from "@/types";
+import type { ChangeRequestItem, ScopeDiff, ScopeItem, StoredScopeMatch } from "@/types";
 
 import type { Route } from "./+types/approvals.change";
 
@@ -49,6 +50,10 @@ interface ChangeReview {
     };
     scope?: { changed: boolean; current: string; proposed: string };
     scopeRows?: { changed: boolean; current: ScopeItem[]; proposed: ScopeItem[] };
+    /** Proposed scope rows against the current ones (project or brand scope). */
+    scopeDiff?: ScopeDiff;
+    /** Brand scope: how close the proposed rows are to the agreement (advice only). */
+    scopeMatch?: StoredScopeMatch;
     team?: { changed: boolean; current: TeamView; proposed: TeamView };
     brand?: {
       _id: string;
@@ -151,14 +156,17 @@ function TeamCompare({ current, proposed }: { current: TeamView; proposed: TeamV
   );
 }
 
-function ScopeRowsView({ rows }: { rows: ScopeItem[] }) {
+function ScopeRowsView({ rows }: { rows: Array<ScopeItem & { what?: string }> }) {
   if (rows.length === 0) return <span className="text-muted-foreground">No scope rows</span>;
   const total = rows.reduce((n, r) => n + r.quantity * r.languages * r.sizes, 0);
   return (
     <ul className="space-y-0.5">
       {rows.map((r, i) => (
         <li key={i} className="flex justify-between gap-3 tabular-nums">
-          <span>{r.unit}</span>
+          <span>
+            {r.unit}
+            {r.what && r.what.toLowerCase() !== r.unit.toLowerCase() && <span className="text-muted-foreground"> · {r.what}</span>}
+          </span>
           <span className="text-muted-foreground">
             {r.quantity} × {r.languages} × {r.sizes} = <span className="font-medium text-foreground">{r.quantity * r.languages * r.sizes}</span>
           </span>
@@ -339,6 +347,17 @@ export default function ChangeReviewRoute() {
           {ctx.scope && (
             <Section title="Scope">
               <Compare render="text" changed={ctx.scope.changed} before={ctx.scope.current || "No scope written"} after={ctx.scope.proposed || "No scope written"} />
+            </Section>
+          )}
+          {ctx.scopeDiff && (
+            <Section title="Scope against the current version">
+              <ScopeDiffView diff={ctx.scopeDiff} emptyText="The proposed rows are the same as the current ones." />
+              {ctx.scopeMatch && (
+                <ScopeMatchBox
+                  at={ctx.scopeMatch.at}
+                  match={{ score: ctx.scopeMatch.score, missingFromScope: ctx.scopeMatch.missing ?? [], extraInScope: ctx.scopeMatch.extra ?? [], changedQty: ctx.scopeMatch.changed ?? [], source: ctx.scopeMatch.source }}
+                />
+              )}
             </Section>
           )}
           {ctx.scopeRows && (ctx.scopeRows.current.length > 0 || ctx.scopeRows.proposed.length > 0) && (

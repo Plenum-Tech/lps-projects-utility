@@ -3195,6 +3195,8 @@ export interface BrandSummary {
   active: boolean;
   checks: BrandChecks;
   scopeItems: Array<BrandScopeItem & { what: string; languageList: string[] }>;
+  /** How close the scope is to its agreement (advice only); null = not compared yet. */
+  scopeMatch: StoredScopeMatch | null;
   /** Documents on the brand. */
   scopeFiles: number;
   /** Files on the brand's projects. */
@@ -3280,6 +3282,72 @@ export interface BrandInput {
   scopeItems?: BrandScopeItem[];
 }
 
+/** POST /brands/scope-match — the scope rows against the agreement (advice only). */
+export interface ScopeMatchResult {
+  score: number;
+  matched: string[];
+  missingFromScope: string[];
+  extraInScope: string[];
+  changedQty: Array<{ unit: string; what: string; agreement: number; entered: number }>;
+  source: "ai" | "rules";
+}
+
+/** The match stored on a brand. */
+export interface StoredScopeMatch {
+  score: number;
+  missing: string[];
+  extra: string[];
+  changed: ScopeMatchResult["changedQty"];
+  source: "ai" | "rules";
+  at: string;
+}
+
+/** A scope row as compared / diffed (brand rows have `what`, project rows don't). */
+export interface DiffRow {
+  unit: string;
+  what?: string;
+  quantity: number;
+  languages?: number;
+  languageList?: string[];
+  sizes?: number;
+}
+
+export interface ScopeDiffSide {
+  quantity: number;
+  languages: string;
+  sizes: number;
+}
+
+/** A scope against the previous one: rows added, removed and changed. */
+export interface ScopeDiff {
+  added: DiffRow[];
+  removed: DiffRow[];
+  changed: Array<{ unit: string; what: string; fromWhat?: string; from: ScopeDiffSide; to: ScopeDiffSide }>;
+  same: number;
+}
+
+/** GET /brands/:id/scope-versions — one version of a brand's scope. */
+export interface BrandScopeVersion {
+  version: number;
+  source: "create" | "upload" | "edit" | "approval";
+  by: { _id: string; name: string } | null;
+  approvedBy: { _id: string; name: string } | null;
+  at: string;
+  items: Array<BrandScopeItem & { what: string }>;
+  files: string[];
+  platforms: string[];
+  notes: string[];
+  scopeMatch: { score: number } | null;
+  diff: ScopeDiff;
+}
+
+/** A lead name read from the documents, matched to a user (or not). */
+export interface LeadMatch {
+  name: string;
+  source: string;
+  user: { _id: string; name: string; email: string } | null;
+}
+
 /** POST /brands/scope-extract — what was read from the brief / SOW. */
 export interface ScopeExtraction {
   texts: Array<{ source: string; text: string; read: boolean }>;
@@ -3296,6 +3364,8 @@ export interface ScopeExtraction {
   };
   scope: Array<{ unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string }>;
   notes: string[];
+  /** Lead names read from the documents ("Account Lead: …"), matched to users. */
+  leadMatches?: LeadMatch[];
   usedAI: boolean;
 }
 

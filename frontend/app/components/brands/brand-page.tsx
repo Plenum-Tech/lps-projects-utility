@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
+import { MatchBadge, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
@@ -14,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBrandDetail, useDeleteBrandFile, usePatchBrand, useSplitBrand, useUploadBrandFiles } from "@/hooks/use-brand-dashboard";
+import { useBrandScopeVersions, useScopeMatch } from "@/hooks/use-brand-scope";
 import { useExtractBrandScope } from "@/hooks/use-brands";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { useToast } from "@/hooks/use-toast";
@@ -22,8 +24,9 @@ import { neededRoles, UNIT_ROLE } from "@/lib/brand-roles";
 import { downloadFromApi } from "@/lib/download";
 import { formatDate } from "@/lib/format";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
+import { diffScope } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
-import type { BrandDetailResponse } from "@/types";
+import type { BrandDetailResponse, BrandScopeVersion, ScopeExtraction } from "@/types";
 
 // ---------------------------------------------------------------------------
 // /brands/:id — one brand: scope → who delivers it, documents, team (the month's
@@ -60,8 +63,12 @@ function UtilisationBar({ value, max }: { value: number; max: number }) {
   );
 }
 
-/** Scope upload → read → review → save (brand scope; leadership applies, others send for approval) + attach the files. */
-function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void }) {
+/**
+ * Scope upload → read → review → save, or edit the current rows by hand (brand scope; leadership
+ * applies, others send for approval) + attach the files. Before saving: what changes against the
+ * current version, and how close the rows are to the agreement (advice only).
+ */
+function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: ScopeRow[]; onDone: () => void }) {
   const toast = useToast();
   const extract = useExtractBrandScope();
   const patch = usePatchBrand();
@@ -70,33 +77,50 @@ function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void 
   const [files, setFiles] = useState<File[]>([]);
   const [rows, setRows] = useState<ScopeRow[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  // The read result of the new files: the agreement the rows are compared with (else the brand's).
+  const [extraction, setExtraction] = useState<ScopeExtraction | null>(null);
   const setRow = (i: number, p: Partial<ScopeRow>) => setRows((list) => list!.map((r, j) => (j === i ? { ...r, ...p } : r)));
+  const diff = useMemo(() => (rows ? diffScope(current, rows) : null), [rows, current]);
+  const match = useScopeMatch({ rows: rows ?? [], extraction, brandId: extraction ? null : brandId, enabled: Boolean(rows) });
 
   function read(list: File[]) {
     setFiles(list);
     setRows(null);
+    setExtraction(null);
     extract.mutate(
       { files: list, text: "" },
       {
         onSuccess: (data) => {
           setRows(data.scope.map((r) => ({ ...r })));
           setNotes(data.notes);
+          setExtraction(data);
         },
       },
     );
   }
 
+  function editCurrent() {
+    setFiles([]);
+    setExtraction(null);
+    setNotes([]);
+    setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
+  }
+
   async function save() {
     if (!rows?.length) return;
     try {
+      // Files first, so the new scope version lists them.
+      if (files.length) await upload.mutateAsync({ id: brandId, files });
       await patch.mutateAsync({
         id: brandId,
         scopeItems: rows.map((r) => ({ unit: r.unit, quantity: r.quantity, languages: Math.max(1, r.languageList.length), languageList: r.languageList, sizes: r.sizes, what: r.what, source: r.source })),
+        scopeSource: files.length ? "upload" : "edit",
+        ...(extraction ? { agreement: { scope: extraction.scope, texts: extraction.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
       });
-      if (files.length) await upload.mutateAsync({ id: brandId, files });
       setFiles([]);
       setRows(null);
       setNotes([]);
+      setExtraction(null);
       onDone();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -118,6 +142,11 @@ function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void 
         <Button type="button" variant="outline" size="sm" className="ml-2" disabled={busy} onClick={() => input.current?.click()}>
           {extract.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuPaperclip aria-hidden />} Choose files…
         </Button>
+        {current.length > 0 && !rows && (
+          <Button type="button" variant="ghost" size="sm" className="ml-1" disabled={busy} onClick={editCurrent}>
+            <LuPencil aria-hidden /> Edit rows
+          </Button>
+        )}
         <input
           ref={input}
           type="file"
@@ -135,7 +164,7 @@ function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void 
       </div>
       {rows && (
         <div className="space-y-2">
-          <p className="text-sm font-medium">Scope read from the files — check and edit</p>
+          <p className="text-sm font-medium">{files.length ? "Scope read from the files — check and edit" : "Edit the scope rows"}</p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <thead className="text-xs text-muted-foreground">
@@ -172,12 +201,22 @@ function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void 
             </table>
           </div>
           {notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+          <ScopeMatchBox
+            match={match.data?.match}
+            loading={match.isFetching}
+            note={match.data && !match.data.match ? match.data.reason : match.isError ? "Couldn't compare with the agreement right now." : null}
+          />
+          {diff && (
+            <div className="rounded-lg border p-3">
+              <ScopeDiffView diff={diff} title="What will change against the current version" emptyText="No change against the current version." />
+            </div>
+          )}
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Button type="button" variant="outline" size="sm" onClick={() => setRows([...rows, { unit: "Static", what: "", quantity: 1, languageList: ["English"], sizes: 1, source: "typed" }])}>
               <LuPlus aria-hidden /> Add row
             </Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); }} disabled={busy}>Cancel</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setExtraction(null); }} disabled={busy}>Cancel</Button>
               <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
                 {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
                 Save scope{files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
@@ -187,6 +226,62 @@ function ScopeUpload({ brandId, onDone }: { brandId: string; onDone: () => void 
           <p className="text-xs text-muted-foreground">Leadership's changes apply at once; anyone else's scope change goes to leadership for approval. The files are attached to the brand straight away.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+const SOURCE_LABEL: Record<BrandScopeVersion["source"], string> = { create: "Created", upload: "Uploaded", edit: "Edited", approval: "Approved change" };
+
+/** The brand's scope history: what changed in the latest version, and every older version's diff. */
+function ScopeHistory({ brandId }: { brandId: string }) {
+  const versions = useBrandScopeVersions(brandId);
+  const [open, setOpen] = useState<number | null>(null);
+  const list = versions.data ?? [];
+  if (versions.isPending) return <Skeleton className="mt-3 h-10 w-full" />;
+  if (!list.length) return null;
+  const latest = list[0]!;
+  const who = (v: BrandScopeVersion) =>
+    `${SOURCE_LABEL[v.source]}${v.by ? ` by ${v.by.name}` : ""}${v.approvedBy ? `, approved by ${v.approvedBy.name}` : ""} · ${formatDate(v.at)}`;
+  return (
+    <div className="mt-3 space-y-2">
+      {list.length > 1 && (
+        <div className="rounded-lg border p-3">
+          <ScopeDiffView diff={latest.diff} title={`Changed since the last version (v${latest.version - 1} → v${latest.version})`} emptyText="No row changes in the latest version." />
+          <p className="mt-1 text-xs text-muted-foreground">{who(latest)}</p>
+        </div>
+      )}
+      <details className="rounded-lg border">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-medium">Version history ({list.length})</summary>
+        <ul className="divide-y border-t text-sm">
+          {list.map((v) => (
+            <li key={v.version} className="px-3 py-2">
+              <button type="button" className="flex w-full flex-wrap items-center justify-between gap-2 text-left" aria-expanded={open === v.version} onClick={() => setOpen(open === v.version ? null : v.version)}>
+                <span>
+                  <span className="font-medium">Version {v.version}</span>
+                  {v === latest && <Badge variant="secondary" className="ml-2">current</Badge>}
+                  <span className="ml-2 text-xs text-muted-foreground">{who(v)}</span>
+                </span>
+                <span className="flex items-center gap-2 text-xs text-muted-foreground">
+                  {v.scopeMatch && <MatchBadge score={v.scopeMatch.score} />}
+                  {v.items.length} row{v.items.length === 1 ? "" : "s"}
+                  {v.diff.added.length + v.diff.removed.length + v.diff.changed.length > 0 && (
+                    <span>
+                      · <span className="text-emerald-700 dark:text-emerald-400">+{v.diff.added.length}</span> <span className="text-red-700 dark:text-red-400">−{v.diff.removed.length}</span>{" "}
+                      <span className="text-amber-700 dark:text-amber-400">~{v.diff.changed.length}</span>
+                    </span>
+                  )}
+                </span>
+              </button>
+              {open === v.version && (
+                <div className="mt-2 space-y-2">
+                  <ScopeDiffView diff={v.diff} title={v.version === 1 ? "First version" : `Against version ${v.version - 1}`} emptyText="Same rows as the version before." />
+                  {v.files.length > 0 && <p className="text-xs text-muted-foreground">Documents: {v.files.join(", ")}</p>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      </details>
     </div>
   );
 }
@@ -454,7 +549,21 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         ) : (
           <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">No scope yet — flagged, not blocked. Projects keep their own scope until one is added.</p>
         )}
-        {data.canManage && <ScopeUpload brandId={b._id} onDone={() => void detail.refetch()} />}
+        {b.scopeMatch && (
+          <ScopeMatchBox
+            className="mt-3"
+            at={b.scopeMatch.at}
+            match={{ score: b.scopeMatch.score, missingFromScope: b.scopeMatch.missing, extraInScope: b.scopeMatch.extra, changedQty: b.scopeMatch.changed, source: b.scopeMatch.source }}
+          />
+        )}
+        <ScopeHistory brandId={b._id} />
+        {data.canManage && (
+          <ScopeUpload
+            brandId={b._id}
+            current={b.scopeItems.map((r) => ({ unit: r.unit, what: r.what, quantity: r.quantity, languageList: r.languageList, sizes: r.sizes, source: r.source ?? "" }))}
+            onDone={() => void detail.refetch()}
+          />
+        )}
         <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Documents</h3>
         {b.files.length ? (
           <ul className="space-y-1">

@@ -14,6 +14,10 @@ import { parseScopeItems, scopeText } from "../lib/scopeUnits.js";
 import { User, type IUser } from "../models/User.js";
 import { canManageBrand } from "../lib/brandAccess.js";
 import { isSplitSetup, runBrandSplit } from "../lib/brandSplit.js";
+import { parseAgreement, storedScopeMatch } from "../lib/scopeMatch.js";
+import { ensureBaseVersion, recordScopeVersion } from "../lib/scopeVersions.js";
+import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
+import { brandScopeMatch, storedAgreementFrom } from "./brandScope.js";
 
 /** Tells leadership a brand waits for their approval (bell + email). */
 export async function notifyBrandApprovalRequested(brand: IBrand, user: IUser, extra = ""): Promise<void> {
@@ -272,6 +276,17 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     return;
   }
   const changed = Object.keys(next);
+  // A new scope: compared with the agreement (one sent with it — a scope upload's read result —
+  // else the brand's), stored with it. Advice only; it never blocks the change.
+  const scopeExtra: { scopeMatch?: IBrand["scopeMatch"]; scopeAgreement?: IBrand["scopeAgreement"] } = {};
+  if (next.scopeItems) {
+    const agreement = storedAgreementFrom(body.agreement);
+    if (agreement) scopeExtra.scopeAgreement = agreement;
+    const parsed = agreement ? parseAgreement(agreement) : null;
+    const match = await brandScopeMatch(brand, next.scopeItems, parsed);
+    if (match) scopeExtra.scopeMatch = storedScopeMatch(match);
+  }
+  const scopeSource = body.scopeSource === "upload" ? "upload" : "edit";
   let pendingApproval: string | undefined;
   if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
     const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope" };
@@ -293,7 +308,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
         before: show(key, (brand as unknown as Record<string, unknown>)[key]),
         after: show(key, (next as Record<string, unknown>)[key]),
       })),
-      payload: next,
+      payload: { ...next, ...scopeExtra },
       brand: brand._id as mongoose.Types.ObjectId,
       ip: req.ip,
     });
@@ -301,9 +316,14 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   } else if (changed.length > 0) {
     try {
       const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
-      Object.assign(brand, next);
+      // The scope as it was becomes version 1 when the brand has no history yet.
+      if (next.scopeItems) await ensureBaseVersion(brand);
+      Object.assign(brand, next, scopeExtra);
       await brand.save();
-      if (next.scopeItems) await applyBrandScopeToProjects(brand, previous);
+      if (next.scopeItems) {
+        await applyBrandScopeToProjects(brand, previous);
+        await recordScopeVersion(brand, scopeSource, req.user!._id as mongoose.Types.ObjectId);
+      }
     } catch (err) {
       if (!sendFieldError(res, err)) throw err;
       return;
@@ -335,6 +355,7 @@ export async function deleteBrand(req: Request, res: Response): Promise<void> {
     return;
   }
   await brand.deleteOne();
+  await BrandScopeVersion.deleteMany({ brand: brand._id });
   // Drop it from the delivery settings (same-day allowlist, team map).
   await DeliverySettings.updateOne(
     { key: "delivery" },

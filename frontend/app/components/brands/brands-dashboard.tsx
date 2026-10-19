@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons/lu";
 
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
+import { MatchBadge } from "@/components/brands/scope-compare";
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { Badge } from "@/components/ui/badge";
@@ -276,6 +277,14 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   </td>
                   <td className="px-3 py-2">
                     <span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span>
+                    {b.scopeMatch && (
+                      <span className="ml-1.5">
+                        <MatchBadge
+                          score={b.scopeMatch.score}
+                          title={`Matches the agreement: ${b.scopeMatch.score}/100${b.scopeMatch.missing.length ? ` · ${b.scopeMatch.missing.length} missing` : ""}${b.scopeMatch.extra.length ? ` · ${b.scopeMatch.extra.length} extra` : ""}${b.scopeMatch.changed.length ? ` · ${b.scopeMatch.changed.length} changed` : ""}`}
+                        />
+                      </span>
+                    )}
                     {!b.checks.scope && !b.isPitch && (
                       <Link
                         to={`/brands/${b._id}?month=${month}#scope`}

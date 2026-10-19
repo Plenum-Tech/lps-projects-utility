@@ -73,6 +73,17 @@ export interface IBrand extends mongoose.Document {
   leads?: mongoose.Types.ObjectId[];
   /** Monthly retainer: on the 1st of each month the brand gets that month's project (lib/retainers.ts). */
   monthlyRetainer?: boolean;
+  /** What the agreement says (rows read from it + its text): the base the scope is compared with. */
+  scopeAgreement?: { rows: Array<Record<string, unknown>>; text: string; sources: string[]; at: Date } | null;
+  /** How close the scope rows are to the agreement (lib/scopeMatch.ts) — advice only. */
+  scopeMatch?: {
+    score: number;
+    missing: string[];
+    extra: string[];
+    changed: Array<{ unit: string; what: string; agreement: number; entered: number }>;
+    source: "ai" | "rules";
+    at: Date;
+  } | null;
   /**
    * Brand flow run by someone who isn't leadership: the project, lead tasks and plan
    * line to create once the brand is approved (lib/brandFlow.ts). Cleared after.
@@ -133,6 +144,8 @@ const brandSchema = new Schema<IBrand>(
     },
     leads: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
     monthlyRetainer: { type: Boolean, default: false },
+    scopeAgreement: { type: Schema.Types.Mixed, default: null },
+    scopeMatch: { type: Schema.Types.Mixed, default: null },
     pendingSetup: { type: Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
@@ -168,6 +181,8 @@ brandSchema.set("toJSON", {
     // The setup is the server's to run on approval; clients see only that one is waiting.
     json.setupWaiting = Boolean(json.pendingSetup);
     delete json.pendingSetup;
+    // The agreement's text can be long; clients get it from the scope-match / versions calls.
+    delete json.scopeAgreement;
     return json;
   },
 });

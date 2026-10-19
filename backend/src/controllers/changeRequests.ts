@@ -12,6 +12,8 @@ import { User } from "../models/User.js";
 import { MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { applyAddMembers, applyRemoveMember, updateProjectCore, type ProjectBody } from "./projects.js";
 import { syncPlanToProjects } from "./manpower.js";
+import { diffScope, parseMatchRows } from "../lib/scopeMatch.js";
+import { ensureBaseVersion, recordScopeVersion } from "../lib/scopeVersions.js";
 
 // ---------------------------------------------------------------------------
 // Leadership approvals of scope / team, brand and manpower plan changes
@@ -68,12 +70,16 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     const brand = request.brand ? await Brand.findById(request.brand) : null;
     if (!brand) return "The brand no longer exists";
     const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
+    const scopeChanged = Boolean((payload as Record<string, unknown>).scopeItems);
+    // The scope as it was becomes version 1 when the brand has no history yet.
+    if (scopeChanged) await ensureBaseVersion(brand);
     Object.assign(brand, payload);
     await brand.save();
     // A new brand scope reaches the brand's open projects (their scope is locked to it).
-    if ((payload as Record<string, unknown>).scopeItems) {
+    if (scopeChanged) {
       const { applyBrandScopeToProjects } = await import("../lib/brandFlow.js");
       await applyBrandScopeToProjects(brand, previous);
+      await recordScopeVersion(brand, "approval", request.requestedBy, decider._id as mongoose.Types.ObjectId);
     }
     return null;
   }
@@ -211,6 +217,10 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
           current: project.scopeItems ?? [],
           proposed: Array.isArray(payload.scopeItems) ? payload.scopeItems : (project.scopeItems ?? []),
         },
+        // What is added / removed / changed against the project's current scope.
+        ...(Array.isArray(payload.scopeItems)
+          ? { scopeDiff: diffScope(parseMatchRows(project.scopeItems ?? []), parseMatchRows(payload.scopeItems)) }
+          : {}),
         scope: {
           changed: typeof payload.summary === "string",
           current: project.summary ?? "",
@@ -228,7 +238,18 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
     if (brand) {
       const projects = await Project.countDocuments({ $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null });
       const current = { name: brand.name, shortName: brand.shortName ?? "", color: brand.color, active: brand.active };
-      context = { brand: { _id: String(brand._id), projects, current, proposed: { ...current, ...payload } } };
+      const { name, shortName, color, active } = { ...current, ...payload } as typeof current;
+      context = { brand: { _id: String(brand._id), projects, current, proposed: { name, shortName, color, active } } };
+      // A brand scope change: the rows now and proposed, what is missing / added / changed against
+      // the current version, and how close the proposed rows are to the agreement.
+      if (Array.isArray(payload.scopeItems)) {
+        const currentRows = parseMatchRows(brand.scopeItems ?? []);
+        const proposedRows = parseMatchRows(payload.scopeItems);
+        const match = (payload.scopeMatch ?? null) as { score?: number; missing?: string[]; extra?: string[]; changed?: unknown[] } | null;
+        context.scopeRows = { changed: true, current: brand.scopeItems ?? [], proposed: payload.scopeItems };
+        context.scopeDiff = diffScope(currentRows, proposedRows);
+        if (match && typeof match.score === "number") context.scopeMatch = match;
+      }
     }
   } else if (request.kind === "manpower_plan" && request.month) {
     const [proposed, live] = await Promise.all([

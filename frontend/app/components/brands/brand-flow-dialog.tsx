@@ -12,6 +12,7 @@ import {
   LuX,
 } from "react-icons/lu";
 
+import { ScopeMatchBox } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useScopeMatch } from "@/hooks/use-brand-scope";
 import { useBrands, useCreateBrandFlow, useExtractBrandScope, useReadPitchSheet } from "@/hooks/use-brands";
 import { useManpowerPlan } from "@/hooks/use-manpower";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
@@ -31,7 +33,7 @@ import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
 import { stripComposedPrefix } from "@/lib/projects";
 import { cn } from "@/lib/utils";
-import type { PitchSheetRow, ScopeExtraction } from "@/types";
+import type { LeadMatch, PitchSheetRow, ScopeExtraction } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Brands → New brand: 1. brand (+ potential revenue for a pitch), 2. scope read
@@ -43,7 +45,10 @@ type Row = { unit: string; what: string; quantity: number; languageList: string[
 type LeadTask = { on: boolean; title: string; dueDate: string; from: string };
 
 const MAX_FILES = 10;
-const ACCEPT = "image/*,.pdf,.doc,.docx,.xlsx,.ppt,.pptx,.txt";
+const ACCEPT = "image/*,.pdf,.doc,.docx,.xlsx,.xls,.ppt,.pptx,.txt";
+/** The agreement itself: PDF, image, Word or Excel (required for a brand; a pitch has no agreement yet). */
+const isAgreementFile = (f: File) =>
+  f.type === "application/pdf" || f.type.startsWith("image/") || /\.(pdf|png|jpe?g|webp|gif|heic|docx?|xlsx?)$/i.test(f.name);
 const roleLabel = new Map(MANPOWER_ROLE_FALLBACK.map((r) => [r.key, r.label]));
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const rowTotal = (r: Row) => r.quantity * Math.max(1, r.languageList.length) * r.sizes;
@@ -91,6 +96,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const periodError = startDate && endDate && endDate < startDate ? "The end date must be on or after the start date." : null;
   const [leads, setLeads] = useState<string[]>([]);
+  // Lead names read from the documents (matched to users or not) — shown in step 3.
+  const [leadFound, setLeadFound] = useState<LeadMatch[]>([]);
   const [tasks, setTasks] = useState<LeadTask[]>([]);
   const [team, setTeam] = useState<Record<string, string[]>>({});
   const [teamTouched, setTeamTouched] = useState(false);
@@ -102,7 +109,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setStep(1); setTried(0); setIsPitch(true); setName(""); setOrganisation(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
     setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
-    setStartDate(""); setEndDate(""); setShown(null);
+    setStartDate(""); setEndDate(""); setShown(null); setLeadFound([]);
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -164,12 +171,21 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           if (!startDate && data.dates.startDate) setStartDate(data.dates.startDate);
           if (!endDate && data.dates.endDate) setEndDate(data.dates.endDate);
           if (isPitch && !sheetRow && !revenue && data.revenue) setRevenue(String(data.revenue));
+          // The lead named in the document ("Account Lead: …") is pre-selected when they're a user.
+          const found = data.leadMatches ?? [];
+          setLeadFound(found);
+          const ids = found.flatMap((l) => (l.user ? [l.user._id] : []));
+          if (ids.length) setLeads((current) => [...new Set([...current, ...ids])].slice(0, 5));
         },
       },
     );
   }
   const setRow = (i: number, patch: Partial<Row>) => setRows((list) => list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const pieces = rows.reduce((n, r) => n + r.quantity, 0);
+  const hasAgreement = files.some(isAgreementFile);
+  const agreementMissing = !isPitch && !hasAgreement;
+  // How close the rows (as edited) are to what the agreement says — advice only.
+  const match = useScopeMatch({ rows, extraction: result, enabled: open && step === 2 && Boolean(result) });
   const deliverables = rows.reduce((n, r) => n + rowTotal(r), 0);
 
   // --- Step 3 ---------------------------------------------------------------
@@ -248,7 +264,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       setTried(0);
       setStep(2);
     } else if (step === 2) {
-      if (!rows.length || !title.trim() || periodError) return;
+      if (agreementMissing || !rows.length || !title.trim() || periodError) return;
       setTried(0);
       goStep3();
     }
@@ -302,6 +318,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
         : {}),
       ...(startDate ? { startDate } : {}),
       ...(endDate ? { endDate } : {}),
+      // What the agreement says: stored on the brand and compared with the rows above.
+      ...(result ? { agreement: { scope: result.scope, texts: result.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
     };
     create.mutate(
       { data, files },
@@ -441,15 +459,26 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 addFiles(e.dataTransfer.files);
               }}
             >
+              {!isPitch && (
+                <p className="mb-1 text-sm font-medium">
+                  Upload the agreement<span aria-hidden className="ml-0.5 text-destructive">*</span>
+                  <span className="ml-1 font-normal text-muted-foreground">— the signed agreement / SOW the scope comes from</span>
+                </p>
+              )}
               <p className="text-sm">
                 <span className="font-medium">Drop images or PDFs here</span> or{" "}
                 <button type="button" className="font-medium text-primary underline-offset-4 hover:underline" onClick={() => fileInput.current?.click()}>
                   choose files
                 </button>
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">Brief, SOW, screenshots · images, PDF, Word · up to {MAX_FILES} files, 10 MB each</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {isPitch ? "Brief, SOW, screenshots" : "Agreement, SOW, screenshots"} · PDF, image, Word, Excel · up to {MAX_FILES} files, 10 MB each
+              </p>
               <input ref={fileInput} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
             </div>
+            {tried >= 2 && agreementMissing && (
+              <FieldError>Upload the agreement (PDF, image, Word or Excel) — typed text alone isn&apos;t enough for a brand.</FieldError>
+            )}
             {files.length > 0 && (
               <ul className="flex flex-wrap gap-2">
                 {files.map((f, i) => (
@@ -488,7 +517,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               </div>
             )}
             <div className="space-y-1.5">
-              <Label htmlFor="brand-flow-text">Or type / paste the scope</Label>
+              <Label htmlFor="brand-flow-text">
+                {isPitch ? "Or type / paste the scope" : "Also type / paste"} <span className="font-normal text-muted-foreground">{isPitch ? "" : "(optional — in addition to the agreement)"}</span>
+              </Label>
               <Textarea id="brand-flow-text" rows={4} value={typed} onChange={(e) => setTyped(e.target.value)} placeholder={"e.g. 8x engagement posts, 10x reels, 12x stories in English & Arabic\nClient presentation: 26 Oct 2026"} />
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -598,6 +629,11 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                     <p className="text-sm"><span className="font-semibold tabular-nums">{pieces}</span> pieces · {deliverables} deliverables with languages and sizes</p>
                   </div>
                   {tried >= 2 && !rows.length && <FieldError>Add at least one scope row.</FieldError>}
+                  <ScopeMatchBox
+                    match={match.data?.match}
+                    loading={match.isFetching}
+                    note={match.data && !match.data.match ? match.data.reason : match.isError ? "Couldn't compare with the agreement right now." : null}
+                  />
                 </div>
 
                 {notes.length > 0 && (
@@ -618,6 +654,18 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <Label htmlFor="brand-flow-leads">Lead<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
               <MultiSelect id="brand-flow-leads" options={peopleOptions} value={leads} onValueChange={(v) => setLeads(v.slice(0, 5))} placeholder="Pick the lead(s)…" max={5} invalid={tried >= 3 && !leads.length} />
               {tried >= 3 && !leads.length && <FieldError>Pick the lead.</FieldError>}
+              {leadFound.map((l) =>
+                l.user ? (
+                  <p key={l.name} className="text-xs text-emerald-700 dark:text-emerald-400">
+                    Lead read from {l.source || "your files"}: {l.user.name}
+                    {l.user.name.toLowerCase() !== l.name.toLowerCase() ? ` (“${l.name}”)` : ""}
+                  </p>
+                ) : (
+                  <p key={l.name} className="text-xs text-amber-700 dark:text-amber-400">
+                    Found “{l.name}” in the document{l.source ? ` (${l.source})` : ""} — no matching user
+                  </p>
+                ),
+              )}
               {leads.length > 0 && load.data && (
                 <p className="text-xs text-muted-foreground">
                   {leads.map((id) => `${nameOf(id)}: ${load.data!.load[id] ?? 0}/${max} projects in ${monthLabel}`).join(" · ")}

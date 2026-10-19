@@ -252,6 +252,17 @@ export const scopeExtractRateLimit = rateLimit({
 });
 
 /**
+ * Scope vs agreement similarity (POST /api/brands/scope-match — re-run, debounced, as scope
+ * rows are edited; at most one model call each): 300 per hour per user.
+ */
+export const scopeMatchRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 300,
+  keyGenerator: userOrIpKey,
+  message: "The scope was compared a lot in the last hour. Try again later.",
+});
+
+/**
  * Outcome readiness on the close-task dialog (POST /api/tasks/:id/outcome-readiness —
  * at most one model call each, debounced while typing): 120 per hour per user.
  */

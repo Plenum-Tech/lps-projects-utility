@@ -26,6 +26,12 @@ export interface ExtractedScopeRow {
   source: string;
 }
 
+export interface ExtractedLead {
+  name: string;
+  source: string;
+  weak?: boolean;
+}
+
 export interface ScopeExtraction {
   /** The text read from each input ("Typed text" for the text box). */
   texts: Array<{ source: string; text: string; read: boolean }>;
@@ -42,6 +48,11 @@ export interface ScopeExtraction {
   };
   scope: ExtractedScopeRow[];
   notes: string[];
+  /**
+   * The agency-side lead(s) named in the documents ("Account Lead: X", "Project Lead",
+   * "Point of contact"…). `weak` = only a "Prepared by" line: shown only when it matches a user.
+   */
+  leads: ExtractedLead[];
   /** true when the AI model read the files. */
   usedAI: boolean;
 }
@@ -220,6 +231,42 @@ const WORD_NUMBERS: Record<string, number> = {
   eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30,
 };
 
+const LEAD_LINE =
+  /^(?:the\s+)?(account\s+lead|project\s+lead|client\s+lead|creative\s+lead|lead|account\s+manager|project\s+manager|point\s+of\s+contact|poc|contact\s+person|prepared\s+by)\s*(?:\(s\))?\s*[:\-–]\s*(.+)$/i;
+
+/** "Sara Ali (sara@x.com), John & Mary" → ["Sara Ali", "John", "Mary"] (names only). */
+export function leadNames(raw: string): string[] {
+  return raw
+    .replace(/\(.*?\)|<.*?>|\[.*?\]/g, " ")
+    .split(/\s*(?:,|;|\/|&|\band\b|\||·|\s-\s)\s*/i)
+    .map((part) =>
+      part
+        .replace(/^(?:mr|mrs|ms|dr|miss)\.?\s+/i, "")
+        .replace(/[.:;,]+$/, "")
+        .replace(/\s+/g, " ")
+        .trim()
+    )
+    .filter((name) => /^[\p{L}][\p{L}.' -]{1,58}$/u.test(name) || /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(name))
+    .slice(0, 5);
+}
+
+/** Lead / account lead / point-of-contact lines (rules). "Prepared by" is weak: only kept when it matches a user. */
+export function leadsByRules(texts: Array<{ source: string; text: string }>): ExtractedLead[] {
+  const out: ExtractedLead[] = [];
+  for (const { source, text } of texts) {
+    for (const rawLine of text.split(/\r?\n|•/)) {
+      const m = rawLine.replace(/^[\s\-–*·]+/, "").trim().match(LEAD_LINE);
+      if (!m) continue;
+      const weak = /prepared/i.test(m[1]!);
+      for (const name of leadNames(m[2]!)) {
+        if (out.some((l) => l.name.toLowerCase() === name.toLowerCase())) continue;
+        out.push({ name, source, ...(weak ? { weak: true } : {}) });
+      }
+    }
+  }
+  return out.slice(0, 10);
+}
+
 export function extractByRules(texts: Array<{ source: string; text: string }>): Omit<ScopeExtraction, "texts" | "usedAI"> {
   const all = texts.map((t) => t.text).join("\n");
   const languageList = languagesIn(all);
@@ -293,6 +340,7 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
     },
     scope: cleanRows(rows),
     notes,
+    leads: leadsByRules(texts),
   };
 }
 
@@ -318,9 +366,12 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   list it ONCE with the split in "what" ("Short-form videos (5 storytelling, 7 shorter)").
   If two inputs list the same deliverable, list it once.
 - "notes": short notes for the user to check (shoot days, things that repeat monthly, assumptions, conflicts between inputs).
+- "leads": the AGENCY-side people named as lead: account lead, project lead, point of contact / contact person on the
+  agency's side, or "Prepared by" (mark those {"weak":true}). Not the client's people, not signatories of the client.
+  One entry per person: {"name": the person's name as written, "source": the input name}.
 Reply with JSON only:
 {"texts":[{"source":"<input name>","text":"..."}],"projectName":null,"platforms":[],"revenue":null,
- "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null,"startDate":null,"endDate":null},"scope":[],"notes":[]}`;
+ "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null,"startDate":null,"endDate":null},"scope":[],"notes":[],"leads":[]}`;
 
 async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<Omit<ScopeExtraction, "usedAI">> {
   const content: Array<Record<string, unknown>> = [{ type: "text", text: "Inputs follow. Each starts with its name." }];
@@ -375,10 +426,25 @@ async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<
       },
       scope: cleanRows(Array.isArray(p.scope) ? (p.scope as ExtractedScopeRow[]) : []),
       notes: Array.isArray(p.notes) ? (p.notes as unknown[]).map(String).map((s) => s.slice(0, 300)).slice(0, 20) : [],
+      // The model's leads, plus any the rules see in its transcription (it can miss a "Lead:" line).
+      leads: mergeLeads(
+        (Array.isArray(p.leads) ? (p.leads as Array<Record<string, unknown>>) : [])
+          .filter((l) => typeof l?.name === "string" && l.name.trim())
+          .flatMap((l) =>
+            leadNames(String(l.name)).map((name) => ({ name, source: String(l.source ?? "").slice(0, 255), ...(l.weak === true ? { weak: true } : {}) }))
+          ),
+        leadsByRules(texts)
+      ),
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+function mergeLeads(...lists: ExtractedLead[][]): ExtractedLead[] {
+  const out: ExtractedLead[] = [];
+  for (const l of lists.flat()) if (!out.some((o) => o.name.toLowerCase() === l.name.toLowerCase())) out.push(l);
+  return out.slice(0, 10);
 }
 
 /** Reads the inputs and extracts the scope (AI when configured, else rules on readable text). */

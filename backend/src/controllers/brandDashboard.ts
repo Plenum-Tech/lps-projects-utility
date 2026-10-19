@@ -172,7 +172,7 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
     const current = all.filter(isCurrent);
     const team = new Set<string>(Object.values(roles).flatMap((list) => list.map((x) => x._id)));
     for (const p of current) for (const t of p.team ?? []) for (const u of t.users) team.add(String(u));
-    const scopeItems = (b.scopeItems ?? []).map((r) => ({ unit: r.unit, what: r.what ?? "", quantity: r.quantity, languages: r.languages, languageList: r.languageList ?? [], sizes: r.sizes }));
+    const scopeItems = (b.scopeItems ?? []).map((r) => ({ unit: r.unit, what: r.what ?? "", quantity: r.quantity, languages: r.languages, languageList: r.languageList ?? [], sizes: r.sizes, source: r.source ?? "" }));
     const leads = (b.leads ?? []).map((l) => person(String(l)));
     return {
       _id: id,
@@ -184,6 +184,10 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
       active: current.length > 0 || lines.length > 0,
       checks: { scope: scopeItems.length > 0, docs: (b.scopeFiles ?? []).length > 0, plan: lines.length > 0, lead: leads.length > 0 },
       scopeItems,
+      // How close the scope is to its agreement (advice only; null = not compared yet).
+      scopeMatch: b.scopeMatch && typeof b.scopeMatch.score === "number"
+        ? { score: b.scopeMatch.score, missing: b.scopeMatch.missing ?? [], extra: b.scopeMatch.extra ?? [], changed: b.scopeMatch.changed ?? [], source: b.scopeMatch.source, at: b.scopeMatch.at }
+        : null,
       scopeFiles: (b.scopeFiles ?? []).length,
       projectFiles: fileCounts.get(id) ?? 0,
       planLines: lines.map((l) => ({ key: l.key, name: l.name, section: l.section })),

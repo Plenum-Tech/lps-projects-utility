@@ -14,6 +14,10 @@ import { User, type IUser } from "../models/User.js";
 import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, sendFieldError, serialize } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 import { createTaskCore } from "./tasks.js";
+import { brandScopeMatch, matchLeadUsers, storedAgreementFrom } from "./brandScope.js";
+import { parseMatchRows, storedScopeMatch } from "../lib/scopeMatch.js";
+import { recordScopeVersion } from "../lib/scopeVersions.js";
+import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
 
 // ---------------------------------------------------------------------------
 // Brand flow (Brands → New brand): 1. brand (+ revenue for a pitch),
@@ -36,7 +40,21 @@ export async function extractBrandScope(req: Request, res: Response): Promise<vo
     return;
   }
   const result = await extractScope(files, text);
-  res.json(result);
+  // Lead names read from the documents, matched to users (the flow pre-selects them).
+  res.json({ ...result, leadMatches: await matchLeadUsers(result.leads ?? []) });
+}
+
+/** An agreement document: PDF, image, Word (.docx / .doc) or Excel (.xlsx / .xls). */
+export function isAgreementFile(f: { originalname: string; mimetype: string }): boolean {
+  return (
+    f.mimetype === "application/pdf" ||
+    f.mimetype.startsWith("image/") ||
+    f.mimetype.includes("wordprocessingml") ||
+    f.mimetype === "application/msword" ||
+    f.mimetype.includes("spreadsheetml") ||
+    f.mimetype === "application/vnd.ms-excel" ||
+    /\.(pdf|png|jpe?g|webp|gif|heic|docx?|xlsx?)$/i.test(f.originalname)
+  );
 }
 
 function cellText(value: ExcelJS.CellValue): string {
@@ -302,6 +320,12 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     return;
   }
   const isPitch = data.isPitch === true;
+  // The scope comes from the agreement: a brand (not a pitch — it has no agreement yet) needs the
+  // uploaded agreement itself. Typed text alone isn't enough.
+  if (!isPitch && !files.some(isAgreementFile)) {
+    res.status(400).json({ error: "Upload the agreement (PDF, image, Word or Excel) — typed text alone isn't enough", field: "files" });
+    return;
+  }
   const revenueTbc = isPitch && data.revenueTbc === true;
   const revenueNum = Number(data.revenue);
   const revenue = isPitch && !revenueTbc && Number.isFinite(revenueNum) && revenueNum > 0 ? Math.round(revenueNum) : null;
@@ -333,6 +357,11 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   }
 
   const leader = await isProjectApprover(user._id as mongoose.Types.ObjectId);
+  // What the agreement says (the flow's read result) and how close the rows are to it — advice only.
+  const agreement = storedAgreementFrom(data.agreement);
+  const match = agreement
+    ? await brandScopeMatch({} as IBrand, scopeItems, { rows: parseMatchRows(agreement.rows), text: agreement.text })
+    : null;
   const stored: Array<{ gridFsId: mongoose.Types.ObjectId; filename: string; mimeType: string; size: number }> = [];
   let brand: IBrand;
   try {
@@ -359,6 +388,8 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
       scopeNotes: list(data.notes, BRAND_LIMITS.maxNotes, BRAND_LIMITS.noteMax),
       scopeFiles: stored,
       leads: setup.leads.map((id) => new mongoose.Types.ObjectId(id)),
+      scopeAgreement: agreement,
+      scopeMatch: match ? storedScopeMatch(match) : null,
       pendingSetup: leader ? null : (setup as unknown as Record<string, unknown>),
     });
   } catch (err) {
@@ -376,9 +407,10 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     targetType: "brand",
     targetId: brand._id as mongoose.Types.ObjectId,
     targetName: brand.name,
-    details: { brand: "created", via: "brand_flow", isPitch, scopeRows: scopeItems.length, files: stored.length },
+    details: { brand: "created", via: "brand_flow", isPitch, scopeRows: scopeItems.length, files: stored.length, ...(match ? { scopeMatch: match.score } : {}) },
     ip: req.ip,
   });
+  await recordScopeVersion(brand, "create", user._id as mongoose.Types.ObjectId);
 
   if (!leader) {
     await notifyBrandApprovalRequested(brand, user, `It comes with the project "${setup.title}", lead tasks and a team, created when you approve.`);
@@ -393,6 +425,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   if ("error" in result) {
     // Nothing half-made: the brand and its files go again, so the flow can be retried.
     await Brand.deleteOne({ _id: brand._id });
+    await BrandScopeVersion.deleteMany({ brand: brand._id });
     for (const f of stored) await deleteFromGridFs(f.gridFsId);
     res.status(400).json({ error: result.error });
     return;
