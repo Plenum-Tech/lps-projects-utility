@@ -55,16 +55,27 @@ export function currentAppMonth(now: Date = new Date()): string {
   return `${year}-${month}`;
 }
 
-/** Last day ("YYYY-MM-DD") of the project's month, or null when it never closes. */
+/** Today ("YYYY-MM-DD") in the app timezone. */
+function currentAppDay(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: settingsTimeZone(), year: "numeric", month: "2-digit", day: "2-digit" }).format(now);
+}
+
+/**
+ * Last day ("YYYY-MM-DD") the project takes new work, or null when it never closes:
+ * the last day of its month — or its deadline when that is later (a monthly project
+ * running for a whole contract term).
+ */
 export function projectClosesOn(project: ExpiryFields): string | null {
   const month = projectMonth(project);
   if (!month) return null;
   const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+  const monthEnd = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
+  const deadline = project.deadline ? project.deadline.toISOString().slice(0, 10) : null;
+  return deadline && deadline > monthEnd ? deadline : monthEnd;
 }
 
-/** True once the project's month has ended (app timezone). */
+/** True once the project has closed: its month has ended and so has its deadline (app timezone). */
 export function isProjectExpired(project: ExpiryFields, now: Date = new Date()): boolean {
-  const month = projectMonth(project);
-  return month !== null && month < currentAppMonth(now);
+  const closes = projectClosesOn(project);
+  return closes !== null && closes < currentAppDay(now);
 }
