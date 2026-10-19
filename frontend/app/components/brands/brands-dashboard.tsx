@@ -195,7 +195,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   <tr className="border-b bg-muted/50">
                     <td colSpan={7} className="px-3 py-1.5 text-xs">
                       <span className="font-semibold text-foreground">{g.org}</span>
-                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}, each with its own scope, team and manpower</span>
+                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.filter((b) => b.name.trim().toLowerCase() !== g.org.toLowerCase()).length} brands, each with its own scope, team, manpower and projects</span>
                     </td>
                   </tr>
                 )}
@@ -209,6 +209,11 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                     <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline" onClick={(e) => e.stopPropagation()}>
                       {b.name}
                     </Link>
+                    {g.org && b.name.trim().toLowerCase() === g.org.toLowerCase() && (
+                      <Badge variant="destructive" className="ml-2" title={`${g.org} is the organisation: move each project to its brand`}>
+                        organisation, not a brand — move its projects to a brand
+                      </Badge>
+                    )}
                     {b.status === "pending" && <Badge variant="outline" className="ml-2">waiting for approval</Badge>}
                     {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
