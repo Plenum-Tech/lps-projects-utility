@@ -148,6 +148,31 @@ function cleanRows(rows: ExtractedScopeRow[]): ExtractedScopeRow[] {
     });
     if (out.length >= SCOPE_LIMITS.maxRows) break;
   }
+  return mergeBreakdowns(out);
+}
+
+/**
+ * "12 short-form videos — 5 storytelling, 7 shorter": rows right after a row, of the
+ * same unit, whose quantities add up to it are its breakdown, not extra deliverables.
+ * They are folded into that row's description.
+ */
+function mergeBreakdowns(rows: ExtractedScopeRow[]): ExtractedScopeRow[] {
+  const out: ExtractedScopeRow[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    const parent = rows[i]!;
+    let sum = 0;
+    let j = i + 1;
+    while (j < rows.length && rows[j]!.unit === parent.unit && sum + rows[j]!.quantity <= parent.quantity) {
+      sum += rows[j]!.quantity;
+      j++;
+      if (sum === parent.quantity) break;
+    }
+    if (j - i > 2 && sum === parent.quantity) {
+      const parts = rows.slice(i + 1, j).map((r) => `${r.quantity} ${r.what.toLowerCase()}`);
+      out.push({ ...parent, what: `${parent.what} (${parts.join(", ")})`.slice(0, 80) });
+      i = j - 1;
+    } else out.push(parent);
+  }
   return out;
 }
 
@@ -166,14 +191,26 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
   const rows: ExtractedScopeRow[] = [];
   const notes: string[] = [];
   for (const { source, text } of texts) {
-    for (const rawLine of text.split(/\r?\n|•/)) {
+    // Items also start mid-line ("Mom Store: - 12 Short form video …").
+    for (const rawLine of text.split(/\r?\n|•|\s[-–]\s(?=\d)/)) {
       const line = rawLine.replace(/^[\s\-–*o·]+/, "").trim();
       if (!line) continue;
       const m = line.match(/^(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s*[x×]?\s+(.+)$/i);
       if (!m) continue;
       const quantity = /^\d+$/.test(m[1]!) ? Number(m[1]) : WORD_NUMBERS[m[1]!.toLowerCase()]!;
-      const what = m[2]!.replace(/\s*\(.*?\)\s*/g, " ").replace(/[.:;,]+$/, "").trim();
-      if (/content pieces|deliverables in total|^days?\b|days a week/i.test(what)) continue;
+      // The deliverable itself: no brackets, no "videos will be", nothing after " with / - / for / using".
+      const what = m[2]!
+        .replace(/\s*\(.*?\)\s*/g, " ")
+        .replace(/^(videos?|posts?|pieces?|items?)\s+(will be|are|is)\s+/i, "")
+        .split(/\s+(?:with|for|using|across|-|–)\s+/i)[0]!
+        .replace(/[.:;,]+$/, "")
+        .trim();
+      if (!what || /content pieces|deliverables in total|^days?\b|days a week/i.test(what)) continue;
+      // Talent isn't a deliverable.
+      if (/^(models?|talents?)\b/i.test(what)) {
+        notes.push(`${quantity} ${what.toLowerCase()} — talent, kept as a note.`);
+        continue;
+      }
       if (/\bshoots?\b|\bshooting\b/i.test(what)) {
         notes.push(`${quantity}x ${what} — a production day, kept as a note (not a content piece).`);
         continue;
@@ -188,6 +225,11 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
     }
     return null;
   };
+  // Shoot days written in a sentence ("This will be a 1.5 shoot day …").
+  for (const m of all.matchAll(/(\d+(?:\.\d+)?)\s*(?:full[- ]day\s+)?shoot\s*days?\b/gi)) {
+    const note = `${m[1]} shoot day${m[1] === "1" ? "" : "s"} — kept as a note (not a content piece).`;
+    if (!notes.some((n) => n.startsWith(`${m[1]} shoot`))) notes.push(note);
+  }
   const platforms = PLATFORM_RULES.filter(([re]) => re.test(all)).map(([, name]) => name);
   // Work period: "Start date: …" / "End date: …" (deadline, go-live), or "Period: X to Y".
   const period = () => {
@@ -236,7 +278,9 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   Static for posts/images/visuals, Others for anything else such as tweets), "quantity": integer,
   "languageList": languages from [${SCOPE_LANGUAGES.join(", ")}] the content is in (default ["English"]),
   "sizes": number of sizes/formats if stated else 1, "source": the input name it came from}.
-  Do NOT list totals ("53x content pieces"), shoot / production days, or services without a count as scope rows.
+  Do NOT list totals ("53x content pieces"), shoot / production days, models / talent, or services without a count as scope rows.
+  When a deliverable is broken down into sub-items whose counts add up to it ("12 videos: 5 storytelling, 7 shorter"),
+  list it ONCE with the split in "what" ("Short-form videos (5 storytelling, 7 shorter)").
   If two inputs list the same deliverable, list it once.
 - "notes": short notes for the user to check (shoot days, things that repeat monthly, assumptions, conflicts between inputs).
 Reply with JSON only:

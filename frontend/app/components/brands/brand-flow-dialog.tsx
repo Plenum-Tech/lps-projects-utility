@@ -101,6 +101,10 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  // Review the uploaded files next to the extracted scope (inline, no pop-up).
+  const [shown, setShown] = useState<number | null>(null);
+  const fileUrls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
+  useEffect(() => () => fileUrls.forEach((u) => URL.revokeObjectURL(u)), [fileUrls]);
   // Step 3
   // Project period (optional): read from the files or typed. The project's month follows the start.
   const [startDate, setStartDate] = useState("");
@@ -120,7 +124,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setStep(1); setTried(0); setIsPitch(true); setName(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
     setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
-    setStartDate(""); setEndDate("");
+    setStartDate(""); setEndDate(""); setShown(null);
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -440,15 +444,39 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
             {files.length > 0 && (
               <ul className="flex flex-wrap gap-2">
                 {files.map((f, i) => (
-                  <li key={`${f.name}-${i}`} className="flex items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-xs">
-                    <LuFileText aria-hidden className="size-3.5 text-muted-foreground" />
-                    <span className="max-w-48 truncate">{f.name}</span>
-                    <button type="button" aria-label={`Remove ${f.name}`} onClick={() => setFiles(files.filter((_, j) => j !== i))} className="text-muted-foreground hover:text-foreground">
+                  <li key={`${f.name}-${i}`} className={cn("flex items-center gap-1.5 rounded-md border bg-card px-2 py-1 text-xs", shown === i && "border-primary")}>
+                    {f.type.startsWith("image/") ? (
+                      <img src={fileUrls[i]} alt="" className="size-6 rounded object-cover" />
+                    ) : (
+                      <LuFileText aria-hidden className="size-3.5 text-muted-foreground" />
+                    )}
+                    <button type="button" className="max-w-48 truncate text-left hover:underline" onClick={() => setShown(shown === i ? null : i)} aria-pressed={shown === i}>
+                      {f.name}
+                    </button>
+                    <button type="button" aria-label={`Remove ${f.name}`} onClick={() => { setShown(null); setFiles(files.filter((_, j) => j !== i)); }} className="text-muted-foreground hover:text-foreground">
                       <LuX aria-hidden className="size-3.5" />
                     </button>
                   </li>
                 ))}
               </ul>
+            )}
+            {shown !== null && files[shown] && (
+              <div className="space-y-1.5 rounded-lg border p-2">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <span className="truncate font-medium">{files[shown]!.name}</span>
+                  <span className="flex gap-3">
+                    <a href={fileUrls[shown]} target="_blank" rel="noreferrer" className="text-primary hover:underline">Open in a new tab</a>
+                    <button type="button" className="text-muted-foreground hover:text-foreground" onClick={() => setShown(null)}>Hide</button>
+                  </span>
+                </div>
+                {files[shown]!.type.startsWith("image/") ? (
+                  <img src={fileUrls[shown]} alt={files[shown]!.name} className="max-h-[28rem] w-full rounded object-contain" />
+                ) : files[shown]!.type === "application/pdf" || /\.pdf$/i.test(files[shown]!.name) ? (
+                  <iframe src={fileUrls[shown]} title={files[shown]!.name} className="h-[28rem] w-full rounded border-0 bg-white" />
+                ) : (
+                  <p className="text-xs text-muted-foreground">Word / Excel / PowerPoint files can't be shown here — use “Open in a new tab”, or see the text read from it below.</p>
+                )}
+              </div>
             )}
             <div className="space-y-1.5">
               <Label htmlFor="brand-flow-text">Or type / paste the scope</Label>
