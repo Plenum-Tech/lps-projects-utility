@@ -3,7 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
-import { monthLabel, MonthPicker, poolOptions } from "@/components/brands/brands-dashboard";
+import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
@@ -357,13 +357,19 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           <LuArrowLeft aria-hidden /> Back to Brands
         </Button>
         <Link to={`/brands${month ? `?month=${month}` : ""}`} className="text-primary hover:underline">Brands</Link>
+        {b.organisation && b.organisation.trim().toLowerCase() !== b.name.trim().toLowerCase() && (
+          <>
+            <span className="mx-1.5 text-muted-foreground">›</span>
+            <span className="text-muted-foreground">{b.organisation}</span>
+          </>
+        )}
         <span className="mx-1.5 text-muted-foreground">›</span>
-        <span>{b.name}</span>
+        <span>{b.organisation ? shortName(b.name, b.organisation) : b.name}</span>
       </nav>
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="font-heading text-3xl font-semibold tracking-tight">
-            {b.name}
+            {b.organisation ? shortName(b.name, b.organisation) : b.name}
             {b.status === "pending" && <Badge variant="outline" className="ml-2 align-middle">waiting for approval</Badge>}
             {b.isPitch && <Badge variant="secondary" className="ml-2 align-middle">Pitch</Badge>}
           </h1>

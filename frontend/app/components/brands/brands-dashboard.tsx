@@ -88,8 +88,34 @@ function KpiCard({ label, value, of, on, onClick }: { label: string; value: numb
   );
 }
 
+/**
+ * Brands of one organisation sit together under its heading; a brand without one stands
+ * alone. A brand named after its organisation (old "ENOC") isn't one of its brands: it is
+ * kept aside as `orgBrand` (its projects still need moving to a brand).
+ */
+export function groupByOrg<T extends { name: string; organisation: string }>(list: T[]): Array<{ org: string; brands: T[]; orgBrand?: T }> {
+  const out: Array<{ org: string; brands: T[]; orgBrand?: T }> = [];
+  const byOrg = new Map<string, (typeof out)[number]>();
+  for (const b of list) {
+    const key = b.organisation.trim().toLowerCase();
+    if (!key) {
+      out.push({ org: "", brands: [b] });
+      continue;
+    }
+    let g = byOrg.get(key);
+    if (!g) {
+      g = { org: b.organisation.trim(), brands: [] };
+      byOrg.set(key, g);
+      out.push(g);
+    }
+    if (b.name.trim().toLowerCase() === key) g.orgBrand = b;
+    else g.brands.push(b);
+  }
+  return out.filter((g) => g.brands.length || g.orgBrand);
+}
+
 /** "ENOC - Zoom" under the ENOC heading → "Zoom" (the organisation is already on the heading). */
-function shortName(name: string, org: string): string {
+export function shortName(name: string, org: string): string {
   if (!name.toLowerCase().startsWith(org.toLowerCase())) return name;
   const rest = name.slice(org.length).replace(/^\s*[-–:|]\s*/, "");
   return rest && rest !== name.slice(org.length) ? rest.trim() : name;
@@ -116,28 +142,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
   }, [base, q, filter]);
 
-  // Brands of one organisation sit together under its heading; a brand without one stands alone.
-  const groups = useMemo(() => {
-    const out: Array<{ org: string; brands: typeof list; orgBrand?: (typeof list)[number] }> = [];
-    const byOrg = new Map<string, (typeof out)[number]>();
-    for (const b of list) {
-      const key = b.organisation.trim().toLowerCase();
-      if (!key) {
-        out.push({ org: "", brands: [b] });
-        continue;
-      }
-      let g = byOrg.get(key);
-      if (!g) {
-        g = { org: b.organisation.trim(), brands: [] };
-        byOrg.set(key, g);
-        out.push(g);
-      }
-      // A brand named after its organisation (old "ENOC") isn't one of its brands: shown on the heading.
-      if (b.name.trim().toLowerCase() === key) g.orgBrand = b;
-      else g.brands.push(b);
-    }
-    return out.filter((g) => g.brands.length || g.orgBrand);
-  }, [list]);
+  const groups = useMemo(() => groupByOrg(list), [list]);
 
   if (error && !data) return <QueryError title="Couldn't load the brands" error={error} onRetry={refetch} />;
   if (isPending && !data) return <Skeleton className="h-96 w-full" />;
@@ -273,10 +278,11 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
     const term = q.trim().toLowerCase();
     return (data?.brands ?? [])
       .filter((b) => b.status !== "rejected")
-      .filter((b) => (showAll ? true : b.active && (b.checks.plan || b.checks.scope || b.current.length > 0)))
-      .filter((b) => !term || b.name.toLowerCase().includes(term))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .filter((b) => (showAll ? true : b.active && (b.checks.plan || b.checks.scope || b.current.length > 0 || Boolean(b.organisation))))
+      .filter((b) => !term || b.name.toLowerCase().includes(term) || b.organisation.toLowerCase().includes(term))
+      .sort((a, b) => (a.organisation || a.name).localeCompare(b.organisation || b.name) || a.name.localeCompare(b.name));
   }, [data, showAll, q]);
+  const groups = useMemo(() => groupByOrg(brands), [brands]);
   const onBrand = useMemo(() => {
     const map = new Map<string, Set<string>>();
     for (const b of data?.brands ?? []) map.set(b._id, new Set(Object.values(b.roles).flatMap((l) => l.map((p) => p._id))));
@@ -318,13 +324,24 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
             </tr>
           </thead>
           <tbody>
-            {brands.map((b) => {
+            {groups.map((g) => (
+              <Fragment key={g.org || g.brands[0]!._id}>
+              {g.org && (
+                <tr className="border-b bg-muted/50">
+                  <td className="sticky left-0 z-10 bg-muted px-3 py-1.5 text-xs whitespace-nowrap">
+                    <span className="font-semibold">{g.org}</span>
+                    <span className="ml-1.5 text-muted-foreground">· {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}</span>
+                  </td>
+                  <td colSpan={roles.length} />
+                </tr>
+              )}
+              {g.brands.map((b) => {
               const need = neededRoles(b.scopeItems);
               return (
                 <tr key={b._id} className="border-b last:border-0">
-                  <td className="sticky left-0 z-10 bg-card px-3 py-1.5 whitespace-nowrap">
+                  <td className={cn("sticky left-0 z-10 bg-card px-3 py-1.5 whitespace-nowrap", g.org && "pl-7")}>
                     <span className="inline-flex items-center gap-1.5">
-                      <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline">{b.name}</Link>
+                      <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline">{g.org ? shortName(b.name, g.org) : b.name}</Link>
                       <StatusDot ok={b.checks.scope} label={b.checks.scope ? "Has a scope" : "No scope"} />
                     </span>
                   </td>
@@ -350,7 +367,9 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
                   })}
                 </tr>
               );
-            })}
+              })}
+              </Fragment>
+            ))}
           </tbody>
         </table>
         {brands.length === 0 && <p className="p-4 text-sm text-muted-foreground">No brands to show. Tick “All brands”.</p>}
