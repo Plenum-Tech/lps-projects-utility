@@ -290,7 +290,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
         </div>
         <p className="w-full text-xs text-muted-foreground">
           {data.canEditPlan
-            ? `Click a cell → pick from the dropdown right there. Same people as the Manpower plan (${monthLabel(month)}${data.planVersion ? `, version ${data.planVersion}` : ", no plan yet"}).`
+            ? `Click a cell → pick from the dropdown right there. Same people as the Manpower plan (${monthLabel(month)}${data.planVersion ? `, version ${data.planVersion} — the latest` : ", no plan yet"}).`
             : `Same people as the Manpower plan (${monthLabel(month)}). Only leadership and Nazeer change it.`}
         </p>
       </div>

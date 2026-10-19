@@ -463,7 +463,10 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         )}
       </Section>
 
-      <Section title={`Team · Manpower plan ${monthLabel(month)}`} actions={<CellLegend max={max} />}>
+      <Section
+        title={`Team · Manpower plan ${monthLabel(month)}${data.planVersion ? ` · version ${data.planVersion} (latest)` : " · no plan yet"}`}
+        actions={<CellLegend max={max} />}
+      >
         <p className="mb-2 text-xs text-muted-foreground">
           {b.planLines.length
             ? `Plan lines: ${b.planLines.map((l) => l.name).join(" · ")} — the same data as the Manpower plan.`

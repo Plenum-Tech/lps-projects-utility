@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { brandKeys } from "@/hooks/use-brands";
 import { deliveryKeys } from "@/hooks/use-delivery";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
@@ -54,6 +55,8 @@ export function useSaveManpowerPlan() {
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      // Brands → Overview / Allocation / brand pages read the latest plan version.
+      void queryClient.invalidateQueries({ queryKey: brandKeys.all });
       toast.success(data.pendingApproval ?? `Saved as version ${data.version}`);
     },
     onError: (error) => toast.error(getErrorMessage(error)),
