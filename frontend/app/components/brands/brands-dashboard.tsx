@@ -88,6 +88,13 @@ function KpiCard({ label, value, of, on, onClick }: { label: string; value: numb
   );
 }
 
+/** "ENOC - Zoom" under the ENOC heading → "Zoom" (the organisation is already on the heading). */
+function shortName(name: string, org: string): string {
+  if (!name.toLowerCase().startsWith(org.toLowerCase())) return name;
+  const rest = name.slice(org.length).replace(/^\s*[-–:|]\s*/, "");
+  return rest && rest !== name.slice(org.length) ? rest.trim() : name;
+}
+
 export function BrandsOverview({ month, data, isPending, error, refetch }: { month: string; data: BrandOverviewResponse | undefined; isPending: boolean; error: unknown; refetch: () => void }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<Filter>("all");
@@ -111,7 +118,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
 
   // Brands of one organisation sit together under its heading; a brand without one stands alone.
   const groups = useMemo(() => {
-    const out: Array<{ org: string; brands: typeof list }> = [];
+    const out: Array<{ org: string; brands: typeof list; orgBrand?: (typeof list)[number] }> = [];
     const byOrg = new Map<string, (typeof out)[number]>();
     for (const b of list) {
       const key = b.organisation.trim().toLowerCase();
@@ -125,9 +132,11 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
         byOrg.set(key, g);
         out.push(g);
       }
-      g.brands.push(b);
+      // A brand named after its organisation (old "ENOC") isn't one of its brands: shown on the heading.
+      if (b.name.trim().toLowerCase() === key) g.orgBrand = b;
+      else g.brands.push(b);
     }
-    return out;
+    return out.filter((g) => g.brands.length || g.orgBrand);
   }, [list]);
 
   if (error && !data) return <QueryError title="Couldn't load the brands" error={error} onRetry={refetch} />;
@@ -195,7 +204,16 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   <tr className="border-b bg-muted/50">
                     <td colSpan={7} className="px-3 py-1.5 text-xs">
                       <span className="font-semibold text-foreground">{g.org}</span>
-                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.filter((b) => b.name.trim().toLowerCase() !== g.org.toLowerCase()).length} brands, each with its own scope, team, manpower and projects</span>
+                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}</span>
+                      {g.orgBrand && g.orgBrand.projectCount > 0 && (
+                        <Link
+                          to={`/brands/${g.orgBrand._id}?month=${month}`}
+                          className="ml-2 font-medium text-red-700 hover:underline dark:text-red-400"
+                          title={`These projects are on "${g.orgBrand.name}" itself — move each one to its brand`}
+                        >
+                          {g.orgBrand.projectCount} project{g.orgBrand.projectCount === 1 ? "" : "s"} not on a brand yet →
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 )}
@@ -207,13 +225,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                 >
                   <td className={cn("px-3 py-2", g.org && "pl-7")}>
                     <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline" onClick={(e) => e.stopPropagation()}>
-                      {b.name}
+                      {g.org ? shortName(b.name, g.org) : b.name}
                     </Link>
-                    {g.org && b.name.trim().toLowerCase() === g.org.toLowerCase() && (
-                      <Badge variant="destructive" className="ml-2" title={`${g.org} is the organisation: move each project to its brand`}>
-                        organisation, not a brand — move its projects to a brand
-                      </Badge>
-                    )}
                     {b.status === "pending" && <Badge variant="outline" className="ml-2">waiting for approval</Badge>}
                     {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
