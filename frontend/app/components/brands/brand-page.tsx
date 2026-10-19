@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { LuDownload, LuLoaderCircle, LuPaperclip, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions } from "@/components/brands/brands-dashboard";
@@ -352,7 +352,10 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
 
   return (
     <div className="space-y-4">
-      <nav aria-label="Breadcrumb" className="text-sm">
+      <nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 text-sm">
+        <Button variant="outline" size="sm" className="mr-2" render={<Link to={`/brands${month ? `?month=${month}` : ""}`} />}>
+          <LuArrowLeft aria-hidden /> Back to Brands
+        </Button>
         <Link to={`/brands${month ? `?month=${month}` : ""}`} className="text-primary hover:underline">Brands</Link>
         <span className="mx-1.5 text-muted-foreground">›</span>
         <span>{b.name}</span>
