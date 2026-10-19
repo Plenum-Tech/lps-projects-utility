@@ -127,9 +127,6 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       }
       g.brands.push(b);
     }
-    // The brand named after the organisation (ENOC) holds its organisation-wide projects: listed first.
-    const isOrgRow = (g: (typeof out)[number], b: (typeof list)[number]) => b.name.trim().toLowerCase() === g.org.toLowerCase();
-    for (const g of out) if (g.org) g.brands.sort((a, b) => Number(isOrgRow(g, b)) - Number(isOrgRow(g, a)));
     return out;
   }, [list]);
 
@@ -198,9 +195,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   <tr className="border-b bg-muted/50">
                     <td colSpan={7} className="px-3 py-1.5 text-xs">
                       <span className="font-semibold text-foreground">{g.org}</span>
-                      <span className="ml-1.5 text-muted-foreground">
-                        · organisation · {g.brands.filter((b) => b.name.trim().toLowerCase() !== g.org.toLowerCase()).length} brands, each with its own scope, team and manpower
-                      </span>
+                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}, each with its own scope, team and manpower</span>
                     </td>
                   </tr>
                 )}
@@ -214,7 +209,6 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                     <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline" onClick={(e) => e.stopPropagation()}>
                       {b.name}
                     </Link>
-                    {g.org && b.name.trim().toLowerCase() === g.org.toLowerCase() && <Badge variant="secondary" className="ml-2">organisation-wide projects</Badge>}
                     {b.status === "pending" && <Badge variant="outline" className="ml-2">waiting for approval</Badge>}
                     {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
