@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { LuPlus, LuSearch, LuTags } from "react-icons/lu";
+import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons/lu";
 
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
@@ -150,8 +150,23 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   const count = (k: keyof BrandChecks) => base.filter((b) => b.checks[k]).length;
   const pick = (f: Filter) => setFilter(filter === f && f !== "all" ? "all" : f);
 
+  // Brands (not pitches) without a scope: new projects for them are blocked until it's added.
+  const noScope = base.filter((b) => !b.checks.scope && !b.isPitch && b.status !== "rejected").length;
+
   return (
     <div className="space-y-3">
+      {noScope > 0 && (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/60 dark:text-red-200">
+          <LuTriangleAlert aria-hidden className="size-5 shrink-0" />
+          <p className="min-w-0 flex-1">
+            <span className="font-semibold">{noScope} brand{noScope === 1 ? " has" : "s have"} no scope.</span> New projects for {noScope === 1 ? "it" : "them"} are blocked until the scope is added —
+            open the brand and upload the scope document or a screenshot (.docx, PDF, image or Excel); it&apos;s read automatically.
+          </p>
+          <Button type="button" size="sm" variant="outline" className="border-red-300 bg-transparent dark:border-red-800" onClick={() => setFilter("noscope")}>
+            Show {noScope === 1 ? "it" : "them"}
+          </Button>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
         <KpiCard label={showAll ? "Brands" : "Active brands"} value={n} of={null} on={filter === "all"} onClick={() => setFilter("all")} />
         <KpiCard label="With scope" value={count("scope")} of={n} on={filter === "noscope"} onClick={() => pick("noscope")} />
@@ -240,7 +255,18 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                     )}
                     {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
-                  <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span></td>
+                  <td className="px-3 py-2">
+                    <span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span>
+                    {!b.checks.scope && !b.isPitch && (
+                      <Link
+                        to={`/brands/${b._id}?month=${month}#scope`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="mt-0.5 flex items-center gap-1 text-xs font-medium text-primary hover:underline"
+                      >
+                        <LuUpload aria-hidden className="size-3" /> Add scope
+                      </Link>
+                    )}
+                  </td>
                   <td className="px-3 py-2">
                     <span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.docs} />{b.checks.docs ? b.scopeFiles : "none"}</span>
                     {b.projectFiles > 0 && <span className="ml-1.5 text-xs text-muted-foreground">({b.projectFiles} on projects)</span>}

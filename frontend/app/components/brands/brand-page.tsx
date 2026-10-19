@@ -326,6 +326,11 @@ function LeadsEditor({ data }: { data: BrandDetailResponse }) {
 
 export function BrandPage({ id, month, onMonth }: { id: string; month: string; onMonth: (month: string) => void }) {
   const detail = useBrandDetail(id, month);
+  // "Add scope" links from the Overview land on the scope section once the brand has loaded.
+  const loaded = Boolean(detail.data);
+  useEffect(() => {
+    if (loaded && window.location.hash === "#scope") document.getElementById("scope")?.scrollIntoView({ behavior: "smooth" });
+  }, [loaded]);
   const data = detail.data && detail.data.brand._id === id ? detail.data : undefined;
   const edits = usePlanEdits(month, Boolean(data?.canEditPlan));
   const removeFile = useDeleteBrandFile();
@@ -412,6 +417,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
 
       {splitting && <SplitPanel data={data} onClose={() => setSplitting(false)} />}
 
+      <div id="scope" className="scroll-mt-4" />
       <Section title="Scope → who delivers it">
         {b.scopeItems.length ? (
           <div className="overflow-x-auto">
