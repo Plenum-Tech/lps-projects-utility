@@ -11,6 +11,7 @@ import { FieldError, OptionSelect } from "@/components/projects/project-fields";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -75,6 +76,9 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
   const upload = useUploadBrandFiles();
   const input = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
+  // Scope pasted / typed as text (read the same way as a file).
+  const [text, setText] = useState("");
+  const [usedText, setUsedText] = useState(false);
   const [rows, setRows] = useState<ScopeRow[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
   // The read result of the new files: the agreement the rows are compared with (else the brand's).
@@ -83,12 +87,13 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
   const diff = useMemo(() => (rows ? diffScope(current, rows) : null), [rows, current]);
   const match = useScopeMatch({ rows: rows ?? [], extraction, brandId: extraction ? null : brandId, enabled: Boolean(rows) });
 
-  function read(list: File[]) {
+  function read(list: File[], typed = "") {
     setFiles(list);
+    setUsedText(Boolean(typed.trim()));
     setRows(null);
     setExtraction(null);
     extract.mutate(
-      { files: list, text: "" },
+      { files: list, text: typed },
       {
         onSuccess: (data) => {
           setRows(data.scope.map((r) => ({ ...r })));
@@ -114,10 +119,12 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
       await patch.mutateAsync({
         id: brandId,
         scopeItems: rows.map((r) => ({ unit: r.unit, quantity: r.quantity, languages: Math.max(1, r.languageList.length), languageList: r.languageList, sizes: r.sizes, what: r.what, source: r.source })),
-        scopeSource: files.length ? "upload" : "edit",
+        scopeSource: files.length || usedText ? "upload" : "edit",
         ...(extraction ? { agreement: { scope: extraction.scope, texts: extraction.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
       });
       setFiles([]);
+      setText("");
+      setUsedText(false);
       setRows(null);
       setNotes([]);
       setExtraction(null);
@@ -160,11 +167,29 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
           }}
         />
         {files.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{files.map((f) => f.name).join(", ")}</p>}
+        <div className="mt-3 space-y-1.5 text-left">
+          <Label htmlFor={`scope-text-${brandId}`} className="text-xs text-muted-foreground">
+            …or paste the scope as text (e.g. from an email: “8 static posts, 10 reels in English and Arabic”)
+          </Label>
+          <Textarea
+            id={`scope-text-${brandId}`}
+            value={text}
+            maxLength={20000}
+            rows={3}
+            placeholder="Paste or type the scope…"
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div className="flex justify-end">
+            <Button type="button" variant="outline" size="sm" disabled={busy || !text.trim()} onClick={() => read([], text)}>
+              {extract.isPending && usedText ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSparkles aria-hidden />} Read the text
+            </Button>
+          </div>
+        </div>
         {extract.isError && <FieldError>{getErrorMessage(extract.error)}</FieldError>}
       </div>
       {rows && (
         <div className="space-y-2">
-          <p className="text-sm font-medium">{files.length ? "Scope read from the files — check and edit" : "Edit the scope rows"}</p>
+          <p className="text-sm font-medium">{files.length ? "Scope read from the files — check and edit" : usedText ? "Scope read from the text — check and edit" : "Edit the scope rows"}</p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <thead className="text-xs text-muted-foreground">
@@ -216,7 +241,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
               <LuPlus aria-hidden /> Add row
             </Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setExtraction(null); }} disabled={busy}>Cancel</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setUsedText(false); setExtraction(null); }} disabled={busy}>Cancel</Button>
               <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
                 {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
                 Save scope{files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}

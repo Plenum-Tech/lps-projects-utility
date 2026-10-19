@@ -231,6 +231,30 @@ const WORD_NUMBERS: Record<string, number> = {
   eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30,
 };
 
+/** A quantity starting an item: "8 ", "8x ", "eight ". */
+const QTY = String.raw`(?:\d{1,3}\s*[x×]?\s|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s)`;
+/** Where one scope item ends and the next begins: new line, bullet, ", 10 …", " and 12 …". */
+const LINE_SPLIT = /\r?\n|•|\s[-–]\s(?=\d)/;
+/** Items listed in a sentence: ", 10 …", " and 12 …", ". 2 …". */
+const SENTENCE_SPLIT = new RegExp(String.raw`[,;.]\s*(?:and\s+)?(?=${QTY})|\s+(?:and|&|plus)\s+(?=${QTY})`, "i");
+
+/**
+ * A line's items. A sentence is split only when at least two of its pieces are real
+ * deliverables ("8 static posts, 10 reels and 12 stories"); a breakdown like
+ * "12 videos — 5 storytelling, 7 shorter" stays one item.
+ */
+function itemsOf(text: string): string[] {
+  return text.split(LINE_SPLIT).flatMap((line) => {
+    const parts = line.split(SENTENCE_SPLIT);
+    if (parts.length < 2) return [line];
+    // Split when 2+ pieces are deliverables, or the line opens with something else ("Budget AED 40,000, 3 reels").
+    const deliverables = parts.filter((p) => unitFor(p) !== "Others").length;
+    return deliverables >= 2 || unitFor(parts[0]!) === "Others" ? parts : [line];
+  });
+}
+/** Words before the first quantity of a sentence: "Monthly scope: ", "We need ". */
+const LEAD_IN = new RegExp(String.raw`^[^\d\n]{1,40}?(?:[:\-–]\s*|\s)(?=${QTY})`, "i");
+
 const LEAD_LINE =
   /^(?:the\s+)?(account\s+lead|project\s+lead|client\s+lead|creative\s+lead|lead|account\s+manager|project\s+manager|point\s+of\s+contact|poc|contact\s+person|prepared\s+by)\s*(?:\(s\))?\s*[:\-–]\s*(.+)$/i;
 
@@ -273,9 +297,14 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
   const rows: ExtractedScopeRow[] = [];
   const notes: string[] = [];
   for (const { source, text } of texts) {
-    // Items also start mid-line ("Mom Store: - 12 Short form video …").
-    for (const rawLine of text.split(/\r?\n|•|\s[-–]\s(?=\d)/)) {
-      const line = rawLine.replace(/^[\s\-–*o·]+/, "").trim();
+    // Items also start mid-line ("Mom Store: - 12 Short form video …") or sit in a sentence
+    // ("Monthly scope: 8 static posts, 10 reels and 12 stories in English and Arabic").
+    for (const rawLine of itemsOf(text)) {
+      const line = rawLine
+        .replace(/^[\s\-–*o·]+/, "")
+        // A label before the first item: "Monthly scope: 8 …", "We need 8 …".
+        .replace(LEAD_IN, "")
+        .trim();
       if (!line) continue;
       const m = line.match(/^(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s*[x×]?\s+(.+)$/i);
       if (!m) continue;
@@ -284,7 +313,7 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       const what = m[2]!
         .replace(/\s*\(.*?\)\s*/g, " ")
         .replace(/^(videos?|posts?|pieces?|items?)\s+(will be|are|is)\s+/i, "")
-        .split(/\s+(?:with|for|using|across|-|–)\s+/i)[0]!
+        .split(/\s+(?:with|for|using|across|in|on|per|-|–)\s+/i)[0]!
         .replace(/[.:;,]+$/, "")
         .trim();
       if (!what || /content pieces|deliverables in total|^days?\b|days a week/i.test(what)) continue;
