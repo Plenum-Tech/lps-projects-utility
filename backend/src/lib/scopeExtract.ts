@@ -1,10 +1,11 @@
+import ExcelJS from "exceljs";
 import mammoth from "mammoth";
 import { briefCheckConfigured, briefCheckModel } from "./briefCheck.js";
 import { SCOPE_LANGUAGES, SCOPE_LIMITS, SCOPE_UNITS } from "./scopeUnits.js";
 
 // ---------------------------------------------------------------------------
-// Brand flow, step 2: read the brief / SOW the user gives (images, PDFs, Word
-// files, typed text) and pull out the scope, the project name, platforms and the
+// Brand flow, step 2: read the brief / SOW the user gives (images, PDFs, Word /
+// Excel files, typed text) and pull out the scope, the project name, platforms and the
 // pitch dates. With OPENAI_API_KEY an OpenAI vision model reads every file
 // (images and PDFs included); without it, Word / text files and typed text are
 // read with simple rules and images / PDFs are reported as unreadable.
@@ -52,11 +53,45 @@ const TYPED = "Typed text";
 const isImage = (f: ExtractInputFile) => f.mimetype.startsWith("image/");
 const isPdf = (f: ExtractInputFile) => f.mimetype === "application/pdf" || /\.pdf$/i.test(f.originalname);
 const isDocx = (f: ExtractInputFile) => /\.docx$/i.test(f.originalname) || f.mimetype.includes("wordprocessingml");
+const isXlsx = (f: ExtractInputFile) => /\.xlsx$/i.test(f.originalname) || f.mimetype.includes("spreadsheetml");
 const isPlain = (f: ExtractInputFile) => f.mimetype.startsWith("text/") || /\.(txt|csv|md)$/i.test(f.originalname);
 
-/** Text the server can read without the model (Word, plain text), else null. */
+/** An Excel workbook as text: one line per row (non-empty cells joined by " · "), sheet by sheet. */
+async function workbookText(buffer: Buffer): Promise<string> {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+  const lines: string[] = [];
+  for (const sheet of workbook.worksheets) {
+    sheet.eachRow((row) => {
+      const cells = (row.values as ExcelJS.CellValue[]).map(cellText).filter(Boolean);
+      if (!cells.length) return;
+      // A deliverable row ("Engagement posts | 8") reads as "8 x Engagement posts" for the rules.
+      const numbers = cells.filter((c) => /^\d{1,3}$/.test(c));
+      const words = cells.filter((c) => !/^[\d.,\s%]+$/.test(c));
+      if (numbers.length === 1 && words.length >= 1) lines.push(`${numbers[0]} x ${words.join(" ")}`);
+      else lines.push(cells.join(" · "));
+    });
+  }
+  return lines.join("\n");
+}
+
+function cellText(value: ExcelJS.CellValue): string {
+  if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  if (typeof value === "object") {
+    const v = value as { text?: unknown; result?: unknown; richText?: Array<{ text: string }> };
+    if (Array.isArray(v.richText)) return v.richText.map((t) => t.text).join("").trim();
+    if (v.result !== undefined) return cellText(v.result as ExcelJS.CellValue);
+    if (typeof v.text === "string") return v.text.trim();
+    return "";
+  }
+  return String(value).trim();
+}
+
+/** Text the server can read without the model (Word, Excel, plain text), else null. */
 async function localText(f: ExtractInputFile): Promise<string | null> {
   try {
+    if (isXlsx(f)) return (await workbookText(f.buffer)).trim().slice(0, TEXT_MAX);
     if (isDocx(f)) return (await mammoth.extractRawText({ buffer: f.buffer })).value.trim().slice(0, TEXT_MAX);
     if (isPlain(f)) return f.buffer.toString("utf8").trim().slice(0, TEXT_MAX);
   } catch (err) {

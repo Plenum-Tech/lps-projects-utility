@@ -26,6 +26,7 @@ import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { useTeamLoad } from "@/hooks/use-team-load";
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
+import { rolesFromScope } from "@/lib/brand-roles";
 import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
 import { stripComposedPrefix } from "@/lib/projects";
@@ -42,37 +43,12 @@ type Row = { unit: string; what: string; quantity: number; languageList: string[
 type LeadTask = { on: boolean; title: string; dueDate: string; from: string };
 
 const MAX_FILES = 10;
-const ACCEPT = "image/*,.pdf,.doc,.docx,.ppt,.pptx,.txt";
+const ACCEPT = "image/*,.pdf,.doc,.docx,.xlsx,.ppt,.pptx,.txt";
 const roleLabel = new Map(MANPOWER_ROLE_FALLBACK.map((r) => [r.key, r.label]));
 const thisMonth = () => new Date().toISOString().slice(0, 7);
 const rowTotal = (r: Row) => r.quantity * Math.max(1, r.languageList.length) * r.sizes;
 const fmtDate = (iso: string) =>
   iso ? new Date(`${iso}T00:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }) : "";
-
-/** The roles a scope needs, with the reason shown to the user. */
-function rolesFromScope(rows: Row[], notes: string[], text: string): Array<{ key: string; why: string }> {
-  const qty = (unit: string) => rows.filter((r) => r.unit === unit).reduce((n, r) => n + r.quantity, 0);
-  const total = rows.reduce((n, r) => n + r.quantity, 0);
-  const langs = new Set(rows.flatMap((r) => r.languageList));
-  const all = `${notes.join(" ")} ${text}`.toLowerCase();
-  const out: Array<{ key: string; why: string }> = [
-    { key: "programLead", why: "Account management" },
-    { key: "pm", why: "Runs the project day to day" },
-    { key: "creativeLead", why: "Creative direction" },
-  ];
-  if (total) out.push({ key: "socialMedia", why: `${total} pieces, content calendar` });
-  const design = [qty("Static") && `${qty("Static")} statics`, qty("Story") && `${qty("Story")} stories`, qty("Carousel") && `${qty("Carousel")} carousels`].filter(Boolean);
-  if (design.length) out.push({ key: "designer", why: design.join(", ") }, { key: "artDirector", why: "Art direction for the designs" });
-  const video = [qty("Reel") && `${qty("Reel")} reels`, qty("Video") && `${qty("Video")} videos`].filter(Boolean);
-  if (video.length) out.push({ key: "editor", why: video.join(", ") });
-  if (/video shoot|filming|film shoot|shoot day/.test(all) || qty("Video")) out.push({ key: "videographer", why: /shoot/.test(all) ? "Video shoots" : `${qty("Video")} videos` });
-  if (/shoot/.test(all)) out.push({ key: "producer", why: "Shoot days" });
-  if (/animat|motion/.test(all)) out.push({ key: "animator", why: "Motion / animation" });
-  if (langs.has("English")) out.push({ key: "englishCopy", why: "Copy in English" });
-  if (langs.has("Arabic")) out.push({ key: "arabicCopy", why: "Copy in Arabic" });
-  if (/community manag/.test(all)) out.push({ key: "communityManager", why: "Community management" }, { key: "cmLead", why: "Leads community management" });
-  return out;
-}
 
 export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
   const navigate = useNavigate();
@@ -88,6 +64,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   // Step 1
   const [isPitch, setIsPitch] = useState(true);
   const [name, setName] = useState("");
+  const [organisation, setOrganisation] = useState("");
   const [revenue, setRevenue] = useState("");
   const [tbc, setTbc] = useState(false);
   const [sheetRows, setSheetRows] = useState<PitchSheetRow[] | null>(null);
@@ -122,7 +99,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   useEffect(() => {
     if (!open) return;
-    setStep(1); setTried(0); setIsPitch(true); setName(""); setRevenue(""); setTbc(false);
+    setStep(1); setTried(0); setIsPitch(true); setName(""); setOrganisation(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
     setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
     setStartDate(""); setEndDate(""); setShown(null);
@@ -160,7 +137,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     setRevenue(row.revenue ? String(row.revenue) : "");
     if (row.campaign) setTitle(row.campaign);
     const matched = matchLead(row.lead);
-    if (matched.length) setLeads(matched.slice(0, 3));
+    if (matched.length) setLeads(matched.slice(0, 5));
   }
 
   // --- Step 2 ---------------------------------------------------------------
@@ -293,6 +270,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (!leads.length || pitchDatesMissing.length) return;
     const data = {
       name: name.trim(),
+      organisation: organisation.trim(),
       isPitch,
       revenue: isPitch && !tbc ? Number(revenue) : null,
       revenueTbc: isPitch && tbc,
@@ -424,6 +402,14 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 <Label htmlFor="brand-flow-name">Brand name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <Input id="brand-flow-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="e.g. Ajman Accountability Authority" aria-invalid={(tried >= 1 && Boolean(nameError)) || undefined} />
                 {tried >= 1 && nameError ? <FieldError>{nameError}</FieldError> : similar.length > 0 && <p className="text-xs text-amber-700 dark:text-amber-400">Similar brands: {similar.map((b) => b.name).join(", ")}</p>}
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="brand-flow-org">Organisation <span className="font-normal text-muted-foreground">(optional)</span></Label>
+                <Input id="brand-flow-org" value={organisation} onChange={(e) => setOrganisation(e.target.value)} maxLength={80} placeholder="e.g. Ajmal" list="brand-flow-orgs" />
+                <datalist id="brand-flow-orgs">
+                  {[...new Set((brands.data ?? []).map((b) => b.organisation ?? "").filter(Boolean))].sort().map((o) => <option key={o} value={o} />)}
+                </datalist>
+                <p className="text-xs text-muted-foreground">Groups brands of one client (Ajmal GCC, Ajmal 75, Ajmal UK). Different scope = different brand.</p>
               </div>
               {isPitch && (
                 <div className="space-y-1.5">
@@ -624,7 +610,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           <div className="space-y-5">
             <div className="space-y-1.5">
               <Label htmlFor="brand-flow-leads">Lead<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
-              <MultiSelect id="brand-flow-leads" options={peopleOptions} value={leads} onValueChange={(v) => setLeads(v.slice(0, 3))} placeholder="Pick the lead…" max={3} invalid={tried >= 3 && !leads.length} />
+              <MultiSelect id="brand-flow-leads" options={peopleOptions} value={leads} onValueChange={(v) => setLeads(v.slice(0, 5))} placeholder="Pick the lead(s)…" max={5} invalid={tried >= 3 && !leads.length} />
               {tried >= 3 && !leads.length && <FieldError>Pick the lead.</FieldError>}
               {leads.length > 0 && load.data && (
                 <p className="text-xs text-muted-foreground">

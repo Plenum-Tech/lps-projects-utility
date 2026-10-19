@@ -12,7 +12,7 @@ import { TASK_LABEL_COLORS } from "./TaskLabel.js";
 export const BRAND_COLORS = TASK_LABEL_COLORS;
 export type BrandColor = (typeof BRAND_COLORS)[number];
 
-export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20, maxScopeFiles: 10, noteMax: 300, maxNotes: 20, maxPlatforms: 12 } as const;
+export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20, organisationMax: 80, maxScopeFiles: 10, noteMax: 300, maxNotes: 20, maxPlatforms: 12 } as const;
 
 /** A brand scope row: a project scope row plus what it is and the file it came from. */
 export interface IBrandScopeItem {
@@ -49,6 +49,8 @@ export interface IBrand extends mongoose.Document {
   /** brandNameKey(name) — maintained on validate; set it explicitly in raw updates. */
   nameKey: string;
   shortName?: string;
+  /** Client group shown as a label ("Ajmal" for Ajmal GCC / Ajmal 75 / Ajmal UK); "" = none. */
+  organisation?: string;
   color: BrandColor;
   active: boolean;
   /** New brands wait for leadership: approved brands are usable; pending/rejected aren't. */
@@ -83,6 +85,7 @@ const brandSchema = new Schema<IBrand>(
     name: { type: String, required: true, trim: true, maxlength: BRAND_LIMITS.nameMax },
     nameKey: { type: String },
     shortName: { type: String, trim: true, maxlength: BRAND_LIMITS.shortNameMax, default: "" },
+    organisation: { type: String, trim: true, maxlength: BRAND_LIMITS.organisationMax, default: "" },
     color: { type: String, enum: BRAND_COLORS, default: "chart-1" },
     active: { type: Boolean, default: true },
     status: { type: String, enum: ["approved", "pending", "rejected"], default: "approved", index: true },

@@ -11,7 +11,7 @@ import { extractScope, parseLooseDate } from "../lib/scopeExtract.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
 import type { IProject } from "../models/Project.js";
 import { User, type IUser } from "../models/User.js";
-import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, sendFieldError, serialize } from "./brands.js";
+import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, sendFieldError, serialize } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 import { createTaskCore } from "./tasks.js";
 
@@ -25,7 +25,7 @@ import { createTaskCore } from "./tasks.js";
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
 const MAX_TASKS = 5;
-const MAX_LEADS = 3;
+const MAX_LEADS = 5;
 
 /** POST /api/brands/scope-extract — multipart `files` (+ field `text`): the scope read from them. */
 export async function extractBrandScope(req: Request, res: Response): Promise<void> {
@@ -269,8 +269,8 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
 }
 
 /**
- * POST /api/brands/flow — admins. multipart: `files` (the brief / SOW the scope was
- * read from) + `data` (JSON: name, isPitch, revenue, revenueTbc, scopeItems,
+ * POST /api/brands/flow — brand creators (lib/brandAccess.ts). multipart: `files` (the brief / SOW the scope was
+ * read from) + `data` (JSON: name, organisation, isPitch, revenue, revenueTbc, scopeItems,
  * platforms, notes, projectType, month, title, leads, team, tasks, summary).
  */
 export async function createBrandFlow(req: Request, res: Response): Promise<void> {
@@ -287,8 +287,10 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   let name: string;
   let setup: BrandSetup;
   let scopeItems: ReturnType<typeof parseBrandScope>;
+  let organisation: string;
   try {
     name = parseName(data.name);
+    organisation = parseOrganisation(data.organisation);
     if (name.includes("_")) throw new FieldError("name", "Brand names can't contain “_”");
     scopeItems = parseBrandScope(Array.isArray(data.scopeItems) ? data.scopeItems : []);
     if (scopeItems.length === 0) throw new FieldError("scopeItems", "Add at least one scope row");
@@ -343,6 +345,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     }
     brand = await Brand.create({
       name,
+      organisation,
       status: leader ? "approved" : "pending",
       requestedBy: user._id,
       ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),

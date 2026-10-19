@@ -12,7 +12,7 @@ export interface User {
   email: string;
   role: Role;
   /** What menus may show (from /auth/me). */
-  access?: { timeReport: boolean };
+  access?: { timeReport: boolean; brandCreator?: boolean };
   /** Leadership (project approvers): admin powers everywhere; `role` comes back as "admin". */
   leadership?: boolean;
   /** Department id when assigned (single department per employee). */
@@ -3116,6 +3116,8 @@ export interface Brand {
   _id: string;
   name: string;
   shortName: string;
+  /** Client group label ("Ajmal" for Ajmal GCC / Ajmal UK); "" = none. */
+  organisation?: string;
   color: BrandColor;
   active: boolean;
   /** Absent on older brands (= approved). Pending / rejected brands can't be used yet. */
@@ -3135,6 +3137,114 @@ export interface Brand {
   setupWaiting?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
+// Brands section (/brands): GET /brands/overview and /brands/:id/detail
+// ---------------------------------------------------------------------------
+
+export interface BrandPersonRef {
+  _id: string;
+  name: string;
+}
+
+export interface BrandChecks {
+  scope: boolean;
+  docs: boolean;
+  plan: boolean;
+  lead: boolean;
+}
+
+export interface BrandCurrentProject {
+  _id: string;
+  name: string;
+  code: string;
+  startDate: string | null;
+  deadline: string | null;
+  /** Scope as text ("" = none). */
+  scope: string;
+  planLine: { key: string; name: string } | null;
+}
+
+export interface BrandSummary {
+  _id: string;
+  name: string;
+  organisation: string;
+  status: "approved" | "pending" | "rejected";
+  isPitch: boolean;
+  /** Has current projects or a line in the month's plan. */
+  active: boolean;
+  checks: BrandChecks;
+  scopeItems: Array<BrandScopeItem & { what: string; languageList: string[] }>;
+  /** Documents on the brand. */
+  scopeFiles: number;
+  /** Files on the brand's projects. */
+  projectFiles: number;
+  planLines: Array<{ key: string; name: string; section: ManpowerSection }>;
+  /** Plan role → people on the brand's plan lines. */
+  roles: Record<string, BrandPersonRef[]>;
+  /** Roles marked "not needed" on the brand's lines. */
+  notNeeded: string[];
+  leads: BrandPersonRef[];
+  /** Number of people (plan lines + current projects' teams). */
+  people: number;
+  projectCount: number;
+  current: BrandCurrentProject[];
+}
+
+export interface BrandPersonLoad {
+  name: string;
+  /** The month's projects the person is on (team-load). */
+  projects: number;
+  /** Brands the person is on this month. */
+  brands: number;
+}
+
+interface BrandDashboardBase {
+  month: string;
+  planVersion: number | null;
+  max: number;
+  roles: Array<{ key: string; label: string }>;
+  canCreate: boolean;
+  canManage: boolean;
+  canEditPlan: boolean;
+  canApprove: boolean;
+  canSeeUtilisation: boolean;
+  people: Record<string, BrandPersonLoad>;
+  /** Plan role → people holding it somewhere in the month's plan. */
+  pool: Record<string, string[]>;
+}
+
+export interface BrandOverviewResponse extends BrandDashboardBase {
+  brands: BrandSummary[];
+}
+
+export interface BrandUtilisationRow {
+  user: BrandPersonRef;
+  roles: string[];
+  projects: number;
+  max: number;
+  brands: number;
+  /** Hours logged this month (approved + pending), all work / on this brand. */
+  hours: number;
+  brandHours: number;
+}
+
+export interface BrandDetail extends BrandSummary {
+  shortName: string;
+  revenue: number | null;
+  revenueTbc: boolean;
+  platforms: string[];
+  scopeNotes: string[];
+  setupWaiting: boolean;
+  files: Array<{ _id: string; filename: string; mimeType: string; size: number }>;
+  /** Open projects of the brand (for the split). */
+  projects: Array<{ _id: string; name: string; code: string; current: boolean }>;
+}
+
+export interface BrandDetailResponse extends BrandDashboardBase {
+  brand: BrandDetail;
+  utilisation: BrandUtilisationRow[] | null;
 }
 
 /** A brand scope row: a project scope row plus what it is and the file it came from. */

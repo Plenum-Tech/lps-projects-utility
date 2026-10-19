@@ -1,6 +1,8 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
+import { canCreateBrand } from "../lib/brandAccess.js";
+import type { BrandSetup } from "../lib/brandFlow.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
 import { composeProjectName } from "../lib/projectNaming.js";
 import { parseLooseDate } from "../lib/scopeExtract.js";
@@ -8,6 +10,7 @@ import { Brand, brandNameKey, type IBrand } from "../models/Brand.js";
 import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 import { parsePitchWorkbook, type PitchSheetRow } from "./brandFlow.js";
+import { notifyBrandApprovalRequested } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 
 // ---------------------------------------------------------------------------
@@ -118,7 +121,8 @@ export async function previewPitchImport(req: Request, res: Response): Promise<v
   const existing = new Set((await Project.find({ name: { $in: names }, archivedAt: null }).select("name").lean()).map((p) => p.name));
   res.json({
     rows: rows.map((r) => ({ ...r, exists: existing.has(r.projectName) })),
-    canCreateBrands: await isProjectApprover(req.user!._id as mongoose.Types.ObjectId),
+    // New brands from the sheet: brand creators only (approved at once when they are leadership).
+    canCreateBrands: canCreateBrand(req.user!),
   });
 }
 
@@ -171,7 +175,8 @@ const monthBoundsIso = (month: string) => {
 
 /**
  * POST /api/brands/pitch-import — admins; `{ rows: [...] }` (the previewed rows, as
- * confirmed). Creates brand (leadership only for new ones), Pitch project and lead tasks.
+ * confirmed). Creates brand (brand creators only for new ones; pending unless they are
+ * leadership, with the project made on approval), Pitch project and lead tasks.
  */
 export async function runPitchImport(req: Request, res: Response): Promise<void> {
   const user = req.user!;
@@ -181,6 +186,7 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
     return;
   }
   const leader = await isProjectApprover(user._id as mongoose.Types.ObjectId);
+  const creator = canCreateBrand(user);
   const results: Array<{ client: string; title: string; status: "created" | "skipped" | "failed"; message: string; projectId?: string; tasks?: number }> = [];
 
   for (const raw of input) {
@@ -191,22 +197,47 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
       continue;
     }
     let brand: IBrand | null = await Brand.findOne({ nameKey: brandNameKey(row.client) });
+    // The project spans its month and every task date.
+    const bounds = monthBoundsIso(row.month);
+    const dates = row.tasks.map((t) => t.dueDate).sort();
+    const start = dates[0] && dates[0] < bounds.start ? dates[0] : bounds.start;
+    const end = dates.at(-1) && dates.at(-1)! > bounds.end ? dates.at(-1)! : bounds.end;
     if (!brand) {
-      if (!leader) {
-        results.push({ ...label, status: "failed", message: "New brand: only leadership can create it from the sheet" });
+      if (!creator) {
+        results.push({ ...label, status: "failed", message: `New brand “${row.client}”: only Nazeer can create brands — ask him to add it, then import this row again` });
         continue;
       }
+      // A creator who isn't leadership: the brand waits for approval, and the
+      // Pitch project with its tasks is created when it's approved.
+      const setup: BrandSetup | null = leader
+        ? null
+        : {
+            projectType: TYPE,
+            month: row.month,
+            title: row.title,
+            leads: row.leads,
+            team: [],
+            tasks: [],
+            startDate: start,
+            endDate: end,
+            pitchDates: Object.fromEntries(row.tasks.map((t) => [PITCH_KEY[t.title]!, t.dueDate])) as NonNullable<BrandSetup["pitchDates"]>,
+          };
       brand = await Brand.create({
         name: row.client,
-        status: "approved",
+        status: leader ? "approved" : "pending",
         requestedBy: user._id,
-        decidedBy: user._id,
-        decidedAt: new Date(),
+        ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),
         isPitch: true,
         revenue: row.revenue,
         revenueTbc: row.revenueTbc,
         leads: row.leads.map((id) => new mongoose.Types.ObjectId(id)),
+        pendingSetup: setup as unknown as Record<string, unknown> | null,
       });
+      if (!leader) {
+        await notifyBrandApprovalRequested(brand, user, `It comes with the Pitch project "${row.title}" and its three pitch tasks, created when you approve.`);
+        results.push({ ...label, status: "created", message: `New brand ${brand.name} sent to leadership for approval — the Pitch project and its tasks are created when it's approved` });
+        continue;
+      }
     } else if (brand.status === "pending" || brand.status === "rejected") {
       results.push({ ...label, status: "failed", message: `The brand ${brand.name} is ${brand.status === "pending" ? "waiting for approval" : "not approved"}` });
       continue;
@@ -217,11 +248,6 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
       results.push({ ...label, status: "skipped", message: "Already imported" });
       continue;
     }
-    // The project spans its month and every task date.
-    const bounds = monthBoundsIso(row.month);
-    const dates = row.tasks.map((t) => t.dueDate).sort();
-    const start = dates[0] && dates[0] < bounds.start ? dates[0] : bounds.start;
-    const end = dates.at(-1) && dates.at(-1)! > bounds.end ? dates.at(-1)! : bounds.end;
     const created = await createProjectCore(
       user,
       {

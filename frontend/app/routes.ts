@@ -23,6 +23,7 @@ export default [
     route("tasks", "routes/tasks.tsx"),
     route("tasks/recurring", "routes/tasks.recurring.tsx"),
     route("brands", "routes/brands.tsx"),
+    route("brands/:id", "routes/brands.$id.tsx"),
     route("projects", "routes/projects.tsx"),
     route("projects/:id", "routes/projects.$id.tsx"),
     route("meetings", "routes/meetings.tsx"),

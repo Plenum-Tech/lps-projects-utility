@@ -144,7 +144,7 @@ export function PitchImportDialog({ open, onOpenChange }: { open: boolean; onOpe
                       : r.brand && r.brand.status !== "approved"
                         ? `Brand ${r.brand.status}`
                         : !r.brand && !canCreateBrands
-                          ? "New brand: leadership only"
+                          ? "New brand: only Nazeer can create it"
                           : null;
                     return (
                       <tr key={i} className={cn("border-t align-top", (!r.on || blocked) && "text-muted-foreground")}>

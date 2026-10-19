@@ -256,6 +256,8 @@ export function ProjectFormDialog({
   const navigate = useNavigate();
   const { data: user } = useCurrentUser();
   const isAdmin = user?.role === "admin";
+  // New brands: brand creators only (Nazeer); leadership approves them.
+  const brandCreator = Boolean(user?.access?.brandCreator);
   const isHeadOrAdmin = isAdmin || user?.role === "head";
 
   const createProject = useCreateProject();
@@ -904,7 +906,7 @@ export function ProjectFormDialog({
                       .join(", ")}
                   </p>
                 )}
-                {isAdmin && newBrand === null && (
+                {brandCreator && newBrand === null && (
                   <button
                     type="button"
                     onClick={() => setBrandFlowOpen(true)}
@@ -1391,7 +1393,7 @@ export function ProjectFormDialog({
             )}
           </DialogFooter>
         </form>
-        {isAdmin && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
+        {brandCreator && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
       </DialogContent>
     </Dialog>
   );

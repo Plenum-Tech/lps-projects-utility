@@ -12,6 +12,8 @@ import { notifyUsers } from "../lib/notifications.js";
 import { applyBrandScopeToProjects } from "../lib/brandFlow.js";
 import { parseScopeItems, scopeText } from "../lib/scopeUnits.js";
 import { User, type IUser } from "../models/User.js";
+import { canManageBrand } from "../lib/brandAccess.js";
+import { isSplitSetup, runBrandSplit } from "../lib/brandSplit.js";
 
 /** Tells leadership a brand waits for their approval (bell + email). */
 export async function notifyBrandApprovalRequested(brand: IBrand, user: IUser, extra = ""): Promise<void> {
@@ -76,6 +78,29 @@ function parseShortName(raw: unknown): string {
   return value;
 }
 
+/** Optional client group ("Ajmal"); "" = none. */
+export function parseOrganisation(raw: unknown): string {
+  if (raw === null || raw === undefined) return "";
+  if (typeof raw !== "string") throw new FieldError("organisation", "organisation must be a string");
+  const value = raw.trim().replace(/\s+/g, " ");
+  if (value.length > BRAND_LIMITS.organisationMax) {
+    throw new FieldError("organisation", `organisation must be ${BRAND_LIMITS.organisationMax} characters or fewer`);
+  }
+  return value;
+}
+
+const MAX_LEADS = 5;
+
+/** Lead user ids (existing users), at most MAX_LEADS. */
+async function parseLeads(raw: unknown): Promise<mongoose.Types.ObjectId[]> {
+  if (!Array.isArray(raw)) throw new FieldError("leads", "leads must be a list of user IDs");
+  const ids = [...new Set(raw.map(String))];
+  if (ids.some((id) => !mongoose.isValidObjectId(id))) throw new FieldError("leads", "leads must contain valid user IDs");
+  if (ids.length > MAX_LEADS) throw new FieldError("leads", `At most ${MAX_LEADS} leads`);
+  if ((await User.countDocuments({ _id: { $in: ids } })) !== ids.length) throw new FieldError("leads", "A lead no longer exists");
+  return ids.map((id) => new mongoose.Types.ObjectId(id));
+}
+
 function parseColor(raw: unknown): BrandColor {
   if (typeof raw !== "string" || !(BRAND_COLORS as readonly string[]).includes(raw)) {
     throw new FieldError("color", `color must be one of: ${BRAND_COLORS.join(", ")}`);
@@ -130,7 +155,7 @@ export async function listBrands(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * POST /api/brands — admins; `{ name, shortName?, color?, active? }`. Leadership's
+ * POST /api/brands — brand creators (lib/brandAccess.ts); `{ name, shortName?, organisation?, color?, active? }`. Leadership's
  * brands are approved at once; other admins' wait for leadership approval.
  */
 export async function createBrand(req: Request, res: Response): Promise<void> {
@@ -141,6 +166,7 @@ export async function createBrand(req: Request, res: Response): Promise<void> {
     const brand = await Brand.create({
       name: parseName(body.name),
       shortName: parseShortName(body.shortName),
+      organisation: parseOrganisation(body.organisation),
       color: body.color === undefined ? "chart-1" : parseColor(body.color),
       active: body.active === undefined ? true : parseActive(body.active),
       status: leader ? "approved" : "pending",
@@ -170,11 +196,45 @@ async function findBrandOr404(req: Request, res: Response): Promise<IBrand | nul
   return brand;
 }
 
-/** PATCH /api/brands/:id — admin; any of name, shortName, color, active. */
+/**
+ * PATCH /api/brands/:id — admin; any of name, shortName, color, active, scopeItems
+ * (leadership applies them, other admins send them for approval) and leads,
+ * organisation (creators and leadership, applied at once).
+ */
 export async function updateBrand(req: Request, res: Response): Promise<void> {
   const brand = await findBrandOr404(req, res);
   if (!brand) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
+  // Leads and the organisation label: brand creators and leadership, applied at once (no approval).
+  const direct: { leads?: mongoose.Types.ObjectId[]; organisation?: string } = {};
+  try {
+    if ("leads" in body) direct.leads = await parseLeads(body.leads);
+    if ("organisation" in body) direct.organisation = parseOrganisation(body.organisation);
+  } catch (err) {
+    if (!sendFieldError(res, err)) throw err;
+    return;
+  }
+  const directChanged: string[] = [];
+  if (direct.leads && direct.leads.map(String).join(",") !== (brand.leads ?? []).map(String).join(",")) directChanged.push("leads");
+  if (direct.organisation !== undefined && direct.organisation !== (brand.organisation ?? "")) directChanged.push("organisation");
+  if (directChanged.length) {
+    if (!canManageBrand(req.user!)) {
+      res.status(403).json({ error: "Only leadership and Nazeer can change a brand's leads or organisation" });
+      return;
+    }
+    if (direct.leads && directChanged.includes("leads")) brand.leads = direct.leads;
+    if (direct.organisation !== undefined && directChanged.includes("organisation")) brand.organisation = direct.organisation;
+    await brand.save();
+    logActivity({
+      action: "settings_updated",
+      actor: req.user,
+      targetType: "brand",
+      targetId: brand._id as mongoose.Types.ObjectId,
+      targetName: brand.name,
+      details: { brand: "updated", changed: directChanged },
+      ip: req.ip,
+    });
+  }
   // The requested values (validated), then: leadership applies them, anyone else
   // sends them to leadership for approval (one request per brand, emailed now).
   const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope> } = {};
@@ -251,7 +311,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     });
   }
   const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
-  res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed, ...(pendingApproval ? { pendingApproval } : {}) });
+  res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed: [...directChanged, ...changed], ...(pendingApproval ? { pendingApproval } : {}) });
 }
 
 /** DELETE /api/brands/:id — admin; 409 while projects use it (deactivate instead). */
@@ -315,7 +375,11 @@ export async function decideBrand(req: Request, res: Response): Promise<void> {
   await brand.save();
   // Brand flow: the project, lead tasks and plan line waited for this approval.
   let setupNote = "";
-  if (setup && brand.status === "approved") {
+  if (setup && brand.status === "approved" && isSplitSetup(setup)) {
+    // The approver runs the move (plan lines follow as an approved version).
+    const split = await runBrandSplit(brand, setup, user, req.ip);
+    setupNote = ` ${split.moved} project${split.moved === 1 ? " was" : "s were"} moved to it.`;
+  } else if (setup && brand.status === "approved") {
     const { runBrandSetup } = await import("./brandFlow.js");
     const requester = brand.requestedBy ? await User.findById(brand.requestedBy) : null;
     const result = await runBrandSetup(brand, setup as never, requester ?? user, req.ip);

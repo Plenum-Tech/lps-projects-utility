@@ -29,6 +29,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { useBrands, useCreateBrand, useDeleteBrand, useUpdateBrand } from "@/hooks/use-brands";
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { getErrorMessage } from "@/lib/api";
@@ -38,6 +39,9 @@ import type { Brand, BrandColor } from "@/types";
 /** Settings → Brands (admin): create, rename, colour, deactivate, project counts. */
 export function BrandsSection() {
   const brands = useBrands();
+  const { data: user } = useCurrentUser();
+  // New brands: brand creators only (Nazeer); leadership approves them.
+  const brandCreator = Boolean(user?.access?.brandCreator);
   const [editing, setEditing] = useState<Brand | "new" | null>(null);
   const [flowOpen, setFlowOpen] = useState(false);
   const [deleting, setDeleting] = useState<Brand | null>(null);
@@ -53,12 +57,14 @@ export function BrandsSection() {
           The clients projects belong to. A task&apos;s brand is its project&apos;s brand. Brands in use can&apos;t be deleted —
           deactivate them instead so they can&apos;t be picked for new projects.
         </CardDescription>
-        <CardAction>
-          <Button size="sm" onClick={() => setFlowOpen(true)}>
-            <LuPlus aria-hidden />
-            New brand
-          </Button>
-        </CardAction>
+        {brandCreator && (
+          <CardAction>
+            <Button size="sm" onClick={() => setFlowOpen(true)}>
+              <LuPlus aria-hidden />
+              New brand
+            </Button>
+          </CardAction>
+        )}
       </CardHeader>
       <CardContent>
         {brands.isPending ? (
@@ -76,10 +82,12 @@ export function BrandsSection() {
           />
         ) : brands.data.length === 0 ? (
           <EmptyState icon={LuTags} title="No brands yet" description="Add your first client brand, then pick it on projects.">
-            <Button size="sm" onClick={() => setFlowOpen(true)}>
-              <LuPlus aria-hidden />
-              New brand
-            </Button>
+            {brandCreator && (
+              <Button size="sm" onClick={() => setFlowOpen(true)}>
+                <LuPlus aria-hidden />
+                New brand
+              </Button>
+            )}
           </EmptyState>
         ) : (
           <ul className="divide-y rounded-lg border">

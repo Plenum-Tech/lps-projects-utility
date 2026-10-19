@@ -454,10 +454,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     return;
   }
   // Edits start from the latest approved version; numbering continues after any pending one.
-  const [latest, highest] = await Promise.all([
-    ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean(),
-    ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean(),
-  ]);
+  const latest = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean();
   const base = body.baseVersion === null || body.baseVersion === undefined ? null : Number(body.baseVersion);
   if ((latest?.version ?? null) !== base) {
     res.status(409).json({
@@ -478,52 +475,19 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     maxProjects = n;
   }
   const source = body.source === "copy" ? "copy" : "edit";
-  // Leadership's saves are live at once; others wait for leadership approval.
-  const needsApproval = !(await isLeadershipActor(req.user!));
   try {
-    const plan = await ManpowerPlan.create({
+    const saved = await writePlanVersion({
       month,
-      version: (highest?.version ?? 0) + 1,
+      before: (latest?.rows ?? []) as IManpowerRow[],
+      latestVersion: latest?.version ?? null,
       rows,
       note,
       maxProjectsPerPerson: maxProjects,
       source,
-      status: needsApproval ? "pending" : "approved",
-      createdBy: req.user!._id,
-    });
-    // One pending version per month: a newer save replaces the previous one.
-    await ManpowerPlan.updateMany(
-      { month, status: "pending", version: { $ne: plan.version } },
-      { $set: { status: "superseded" } }
-    );
-    let pendingApproval: string | undefined;
-    if (!needsApproval) {
-      await syncPlanToProjects(month, (latest?.rows ?? []) as IManpowerRow[], rows, req.user!, req.ip);
-    }
-    if (needsApproval) {
-      const changes = await planChanges((latest?.rows ?? []) as IManpowerRow[], rows);
-      await requestChange({
-        kind: "manpower_plan",
-        actor: req.user!,
-        title: `Manpower plan ${month} — version ${plan.version}`,
-        changes: changes.length ? changes : [{ label: "Plan", before: "—", after: "Saved with no line changes" }],
-        payload: { month, version: plan.version },
-        month,
-        version: plan.version,
-        ip: req.ip,
-      });
-      pendingApproval = `Version ${plan.version} was sent to leadership for approval. The plan keeps using version ${latest?.version ?? "—"} until then.`;
-    }
-    logActivity({
-      action: "settings_updated",
-      actor: req.user,
-      targetType: "manpower_plan",
-      targetId: plan._id as mongoose.Types.ObjectId,
-      targetName: `Manpower plan ${month} v${plan.version}`,
-      details: { month, version: plan.version, rows: rows.length, source },
+      actor: req.user!,
       ip: req.ip,
     });
-    res.status(201).json({ month, version: plan.version, ...(pendingApproval ? { pendingApproval } : {}) });
+    res.status(201).json({ month, version: saved.version, ...(saved.pendingApproval ? { pendingApproval: saved.pendingApproval } : {}) });
   } catch (err) {
     if ((err as { code?: number }).code === 11000) {
       res.status(409).json({ error: "Someone saved this month at the same moment. Reload and try again." });
@@ -531,6 +495,68 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     }
     throw err;
   }
+}
+
+/**
+ * Writes the next version of a month's plan (the save path shared by the plan
+ * page, Brands → Allocation and brand splits). Leadership's saves are live at
+ * once (and update the linked projects' teams); anyone else's wait for
+ * leadership approval. Throws a duplicate-key error (11000) on a racing save.
+ */
+export async function writePlanVersion(params: {
+  month: string;
+  /** Rows of the latest approved version (null-safe: [] for a new month). */
+  before: IManpowerRow[];
+  latestVersion: number | null;
+  rows: IManpowerRow[];
+  note: string;
+  maxProjectsPerPerson: number;
+  source: "edit" | "copy";
+  actor: IUser;
+  ip?: string;
+}): Promise<{ version: number; pendingApproval?: string }> {
+  const { month, before, rows, actor, ip } = params;
+  const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
+  const needsApproval = !(await isLeadershipActor(actor));
+  const plan = await ManpowerPlan.create({
+    month,
+    version: (highest?.version ?? 0) + 1,
+    rows,
+    note: params.note,
+    maxProjectsPerPerson: params.maxProjectsPerPerson,
+    source: params.source,
+    status: needsApproval ? "pending" : "approved",
+    createdBy: actor._id,
+  });
+  // One pending version per month: a newer save replaces the previous one.
+  await ManpowerPlan.updateMany({ month, status: "pending", version: { $ne: plan.version } }, { $set: { status: "superseded" } });
+  let pendingApproval: string | undefined;
+  if (!needsApproval) {
+    await syncPlanToProjects(month, before, rows, actor, ip);
+  } else {
+    const changes = await planChanges(before, rows);
+    await requestChange({
+      kind: "manpower_plan",
+      actor,
+      title: `Manpower plan ${month} — version ${plan.version}`,
+      changes: changes.length ? changes : [{ label: "Plan", before: "—", after: "Saved with no line changes" }],
+      payload: { month, version: plan.version },
+      month,
+      version: plan.version,
+      ip,
+    });
+    pendingApproval = `Version ${plan.version} was sent to leadership for approval. The plan keeps using version ${params.latestVersion ?? "—"} until then.`;
+  }
+  logActivity({
+    action: "settings_updated",
+    actor,
+    targetType: "manpower_plan",
+    targetId: plan._id as mongoose.Types.ObjectId,
+    targetName: `Manpower plan ${month} v${plan.version}`,
+    details: { month, version: plan.version, rows: rows.length, source: params.source },
+    ip,
+  });
+  return { version: plan.version, ...(pendingApproval ? { pendingApproval } : {}) };
 }
 
 /**

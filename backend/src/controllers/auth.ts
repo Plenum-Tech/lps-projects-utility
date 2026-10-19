@@ -8,6 +8,7 @@ import { loginAttemptFailed, loginSucceeded, startLoginAttempt } from "../lib/lo
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
+import { canCreateBrand } from "../lib/brandAccess.js";
 
 const DEFAULT_EXPIRES_IN = "7d";
 
@@ -158,6 +159,6 @@ export async function me(req: Request, res: Response): Promise<void> {
   const user = req.user!;
   // What the menus may show (computed server-side).
   res.json({
-    user: { ...user.toJSON(), leadership: isLeadershipUser(user), access: { timeReport: await canViewTimeReport(user) } },
+    user: { ...user.toJSON(), leadership: isLeadershipUser(user), access: { timeReport: await canViewTimeReport(user), brandCreator: canCreateBrand(user) } },
   });
 }

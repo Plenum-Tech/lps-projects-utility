@@ -128,6 +128,8 @@ export function ProjectWorkspace() {
   const { data: user } = useCurrentUser();
   const role: Role = user?.role ?? "employee";
   const isAdmin = role === "admin";
+  // New brands: brand creators only (Nazeer); leadership approves them.
+  const brandCreator = Boolean(user?.access?.brandCreator);
   const isHeadOrAdmin = isAdmin || role === "head";
   // Heads import into their own department, so they need one.
   const canImport = isAdmin || (role === "head" && Boolean(user?.department));
@@ -313,7 +315,7 @@ export function ProjectWorkspace() {
                 <LuPlus aria-hidden />
                 Add project
               </Button>
-              {isAdmin && (
+              {brandCreator && (
                 <Button variant="outline" onClick={() => setBrandFlowOpen(true)}>
                   <LuPlus aria-hidden />
                   New brand
@@ -589,7 +591,7 @@ export function ProjectWorkspace() {
       </FiltersSheet>
 
       <ProjectFormDialog open={createOpen} onOpenChange={setCreateOpen} />
-      {isAdmin && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
+      {brandCreator && <BrandFlowDialog open={brandFlowOpen} onOpenChange={setBrandFlowOpen} />}
       {isAdmin && <PitchImportDialog open={pitchImportOpen} onOpenChange={setPitchImportOpen} />}
 
       {dialog && (

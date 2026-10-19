@@ -2352,6 +2352,11 @@ export async function teamLoad(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "month must be YYYY-MM" });
     return;
   }
+  res.json({ month, ...(await monthTeamLoad(month)) });
+}
+
+/** Per person: how many of the month's projects (naming month) they are on, and the plan's max. */
+export async function monthTeamLoad(month: string): Promise<{ max: number; load: Record<string, number> }> {
   const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId; projects: number }>([
     { $match: { "naming.month": month, archivedAt: null } },
     { $project: { users: { $setUnion: [{ $reduce: { input: "$team.users", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } }, []] } } },
@@ -2359,11 +2364,10 @@ export async function teamLoad(req: Request, res: Response): Promise<void> {
     { $group: { _id: "$users", projects: { $sum: 1 } } },
   ]);
   const settings = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("maxProjectsPerPerson").lean();
-  res.json({
-    month,
+  return {
     max: settings?.maxProjectsPerPerson ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson,
     load: Object.fromEntries(rows.map((r) => [String(r._id), r.projects])),
-  });
+  };
 }
 
 /** GET /api/projects/:id/scope-usage — per scope unit: approved total and used (new work tasks). */

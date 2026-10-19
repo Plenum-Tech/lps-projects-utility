@@ -10,6 +10,6 @@ export function meta({}: Route.MetaArgs) {
 export default function ManpowerRoute() {
   const [searchParams] = useSearchParams();
   const next = new URLSearchParams(searchParams);
-  next.set("tab", "manpower");
+  next.set("section", "manpower");
   return <Navigate to={`/brands?${next.toString()}`} replace />;
 }
