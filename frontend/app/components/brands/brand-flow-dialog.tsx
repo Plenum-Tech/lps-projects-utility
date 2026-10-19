@@ -22,7 +22,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useBrands, useCreateBrandFlow, useExtractBrandScope, useReadPitchSheet } from "@/hooks/use-brands";
 import { useManpowerPlan } from "@/hooks/use-manpower";
-import { useProjectTypes } from "@/hooks/use-project-meta";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { useTeamLoad } from "@/hooks/use-team-load";
 import { useToast } from "@/hooks/use-toast";
@@ -78,7 +77,6 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const navigate = useNavigate();
   const toast = useToast();
   const brands = useBrands(false, open);
-  const types = useProjectTypes(open);
   const people = useAssignableUsers(open);
   const extract = useExtractBrandScope();
   const readSheet = useReadPitchSheet();
@@ -91,7 +89,6 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [name, setName] = useState("");
   const [revenue, setRevenue] = useState("");
   const [tbc, setTbc] = useState(false);
-  const [projectType, setProjectType] = useState("Project");
   const [sheetRows, setSheetRows] = useState<PitchSheetRow[] | null>(null);
   const [sheetRow, setSheetRow] = useState<PitchSheetRow | null>(null);
   const sheetInput = useRef<HTMLInputElement>(null);
@@ -120,7 +117,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   useEffect(() => {
     if (!open) return;
-    setStep(1); setTried(0); setIsPitch(true); setName(""); setRevenue(""); setTbc(false); setProjectType("Project");
+    setStep(1); setTried(0); setIsPitch(true); setName(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
     setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
     setStartDate(""); setEndDate("");
@@ -136,7 +133,6 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     : [];
   const nameError = !name.trim() ? "Enter the brand name" : name.includes("_") ? "Brand names can't contain “_”" : sameBrand ? `“${sameBrand.name}” already exists` : null;
   const revenueError = isPitch && !tbc && !(Number(revenue) > 0) ? "Enter the potential revenue, or tick TBC" : null;
-  const typeOptions = (types.data ?? []).map((t) => t.name).filter((t) => t !== "Pitch").map((t) => ({ value: t, label: t }));
 
   function matchLead(text: string): string[] {
     const list = people.data ?? [];
@@ -271,7 +267,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const nameOf = (id: string) => people.data?.find((u) => u._id === id)?.name ?? holders.get("")?.find((h) => h.id === id)?.name ?? "—";
   const activeTasks = isPitch ? tasks.filter((t) => t.on && t.dueDate) : [];
   const teamPeople = [...new Set(roles.flatMap((r) => team[r.key] ?? []))];
-  const typeForName = isPitch ? "Pitch" : projectType;
+  // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
+  const typeForName = isPitch ? "Pitch" : "Project";
 
   function submit() {
     setTried(3);
@@ -398,12 +395,6 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 <label className="flex items-center gap-2">
                   <input type="radio" name="brand-kind" checked={!isPitch} onChange={() => setIsPitch(false)} className="size-4 accent-primary" /> Not a pitch
                 </label>
-                {!isPitch && (
-                  <div className="flex items-center gap-2">
-                    <Label htmlFor="brand-flow-type" className="text-xs">Project type</Label>
-                    <OptionSelect id="brand-flow-type" className="w-40" value={projectType} onChange={setProjectType} options={typeOptions.length ? typeOptions : [{ value: "Project", label: "Project" }]} />
-                  </div>
-                )}
               </div>
             </fieldset>
 
