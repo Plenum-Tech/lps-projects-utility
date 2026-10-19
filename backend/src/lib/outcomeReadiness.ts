@@ -90,110 +90,178 @@ function unitWords(unit: string): string[] {
   return map[u] ?? [u];
 }
 
-/** Deterministic score: keyword overlap, note length, link, quantity / units, languages. */
+const NUMBER_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+  eleven: 11, twelve: 12, fifteen: 15, twenty: 20, single: 1, both: 2,
+};
+
+/** What the task asked for: quantity + unit (task name first, else its single scope row). */
+export function expectedDeliverable(task: OutcomeTaskInput, project: OutcomeProjectInput | null): { quantity: number | null; unit: string | null } {
+  const scope = matchingScope(task, project);
+  const unit = task.titleParts?.unit?.trim() || (scope.length === 1 ? scope[0]!.unit : null);
+  const quantity = task.titleParts?.quantity ?? (scope.length === 1 ? scope[0]!.quantity : null);
+  return { quantity: quantity && quantity > 0 ? quantity : null, unit: unit || null };
+}
+
+/** Counts the note states next to a unit word: "2 videos", "two reels", "2x final video" → [2, 2, 2]. */
+export function statedCounts(note: string, unit: string): number[] {
+  const unitRe = unitWords(unit)
+    .map((w) => `${w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:e?s|ies)?`)
+    .join("|");
+  const numbers = `\\d{1,3}|${Object.keys(NUMBER_WORDS).join("|")}`;
+  const re = new RegExp(`\\b(${numbers})\\s*(?:x|×)?\\s+(?:[\\p{L}-]+\\s+){0,2}?(?:${unitRe})\\b`, "giu");
+  const out: number[] = [];
+  for (const m of note.matchAll(re)) {
+    const raw = m[1]!.toLowerCase();
+    const n = /^\d+$/.test(raw) ? Number(raw) : NUMBER_WORDS[raw];
+    if (n) out.push(n);
+  }
+  return out;
+}
+
+/** Deliverables handed in: the final file / link plus other links in the note. */
+export function deliveredItems(task: OutcomeTaskInput): number {
+  const urls = new Set<string>();
+  const finalUrl = (task.finalFile?.url ?? "").trim();
+  if (finalUrl) urls.add(finalUrl.replace(/\/+$/, ""));
+  for (const m of (task.submissionNotes ?? "").matchAll(URL_RE)) urls.add(m[0].replace(/[.,;)]+$/, "").replace(/\/+$/, ""));
+  return urls.size + (task.finalFile?.fileId ? 1 : 0);
+}
+
+/** A shared folder link can hold every deliverable. */
+const FOLDER_LINK = /drive\.google\.com\/drive\/folders|sharepoint\.com\/.*(?:AllItems|:f:)|dropbox\.com\/(?:sh|scl\/fo)|wetransfer|box\.com\/s\/|frame\.io/i;
+
+/**
+ * Deterministic score: does what was handed in match what the task asked for?
+ * - The note states the delivered count + unit and it matches the task ("2 videos" for a 2 Video task): 35
+ * - The files / links handed in cover that count (or a folder link): 20
+ * - The note is detailed (15+ words, not just the task name repeated): 20
+ * - It refers to the brief: 15 · it names the scope's languages: 10 (when the scope has them)
+ * Caps: a note under 5 words ≤ 35; a count that contradicts the task ≤ 55; no count stated ≤ 70.
+ */
 export function evaluateOutcomeRules(task: OutcomeTaskInput, project: OutcomeProjectInput | null): OutcomeReadiness {
   const note = (task.submissionNotes ?? "").trim();
-  const noteLower = note.toLowerCase();
-  const link = (task.finalFile?.url ?? "").trim() || (task.finalFile?.fileId ? "file" : "");
   const brief = richTextToPlain(task.description ?? "").trim();
   const scope = matchingScope(task, project);
+  const expected = expectedDeliverable(task, project);
+  const expectedText = expected.quantity && expected.unit ? `${expected.quantity} ${expected.unit}` : (expected.unit ?? null);
   const covered: string[] = [];
   const missing: string[] = [];
   let points = 0;
   let max = 0;
-
-  // 1. Keyword overlap with the brief / title / scope (35 points).
-  max += 35;
-  const briefKeys = keywords(`${task.title ?? ""} ${brief} ${scope.map((r) => r.unit).join(" ")}`);
-  const noteKeys = keywords(note);
-  if (briefKeys.size === 0) {
-    points += noteKeys.size >= 5 ? 20 : 8;
-    missing.push("The brief is empty, so the note can't be matched to it");
-  } else {
-    const hits = [...briefKeys].filter((k) => noteKeys.has(k));
-    // Matching a third of the brief's keywords (or 6) counts as full coverage.
-    const target = Math.max(1, Math.min(6, Math.ceil(briefKeys.size / 3)));
-    const ratio = Math.min(1, hits.length / target);
-    points += Math.round(35 * ratio);
-    if (ratio >= 0.67) covered.push(`Refers to the brief (${hits.slice(0, 4).join(", ")})`);
-    else if (hits.length) missing.push(`Only partly refers to the brief — mention what was asked (matched: ${hits.slice(0, 3).join(", ")})`);
-    else missing.push("Doesn't refer to what the brief asked for");
-  }
-
-  // 2. Note length (20 points).
-  max += 20;
+  let cap = 100;
   const n = words(note);
-  if (n >= MIN_NOTE_WORDS) {
-    points += 20;
-    covered.push(`Outcome note has ${n} words`);
-  } else {
-    points += Math.round((20 * n) / MIN_NOTE_WORDS);
-    missing.push(`Outcome note is short (${n} word${n === 1 ? "" : "s"}; aim for ${MIN_NOTE_WORDS}+)`);
-  }
 
-  // 3. A link / file (15 points).
-  max += 15;
-  if (link) {
-    points += 15;
-    covered.push(link === "file" ? "Final file attached" : "Final link added");
-  } else {
-    missing.push("No final link or file");
-  }
-
-  // 4. Quantity / units, when the scope row has a quantity (15 points).
-  const qty = task.titleParts?.quantity ?? scope.find((r) => r.quantity > 0)?.quantity ?? null;
-  if (qty && scope.length) {
-    max += 15;
-    const unitHit = scope.some((r) => unitWords(r.unit).some((w) => noteLower.includes(w)));
-    const numberHit = new RegExp(`\\b${qty}\\b`).test(note) || /\b\d+\s*(x\b|×|pcs|pieces|posts?|videos?|reels?|stor(y|ies)|statics?|carousels?|frames?|slides?|sizes?|versions?)/i.test(note);
-    if (numberHit && unitHit) {
-      points += 15;
-      covered.push("Says how many were delivered");
-    } else if (numberHit || unitHit) {
-      points += 7;
-      missing.push(`Say how many were delivered (${qty} ${scope[0]!.unit})`);
+  // 1. Expected vs delivered count (35).
+  if (expected.quantity && expected.unit) {
+    max += 35;
+    const counts = statedCounts(note, expected.unit);
+    if (counts.includes(expected.quantity)) {
+      points += 35;
+      covered.push(`Delivered as expected: ${expectedText}`);
+    } else if (counts.length) {
+      points += 8;
+      cap = Math.min(cap, 55);
+      missing.push(`The note says ${counts[0]} ${expected.unit}, but the task is for ${expectedText}`);
     } else {
-      missing.push(`Say how many were delivered (${qty} ${scope[0]!.unit})`);
+      cap = Math.min(cap, 70);
+      const plural = expected.quantity > 1 ? "s" : "";
+      missing.push(`Say what was delivered against the task: ${expectedText} (e.g. "${expected.quantity} ${expected.unit.toLowerCase()}${plural} delivered — …")`);
     }
   }
 
-  // 5. Languages, when the scope row names them (15 points).
+  // 2. Files / links handed in vs the count (20).
+  max += 20;
+  const items = deliveredItems(task);
+  const folder = FOLDER_LINK.test(`${task.finalFile?.url ?? ""} ${note}`);
+  const need = expected.quantity ?? 1;
+  if (items === 0) {
+    missing.push("No final file or link");
+  } else if (items >= need || folder) {
+    points += 20;
+    covered.push(folder && items < need ? "Folder link with the deliverables" : `${items} file${items === 1 ? "" : "s"} / link${items === 1 ? "" : "s"} handed in`);
+  } else {
+    points += Math.round((20 * items) / need);
+    // Deliverables short of the count can't read as "good".
+    cap = Math.min(cap, 74);
+    missing.push(`${expectedText} expected but ${items} file / link handed in — add the others, or one folder link`);
+  }
+
+  // 3. Detail (20): enough words, and not just the task name repeated.
+  max += 20;
+  const titleKeys = keywords(task.title ?? "");
+  const noteKeys = keywords(note);
+  const onlyTitle = noteKeys.size > 0 && [...noteKeys].every((k) => titleKeys.has(k));
+  if (n < 5) cap = Math.min(cap, 35);
+  if (n >= MIN_NOTE_WORDS && !onlyTitle) {
+    points += 20;
+    covered.push(`Detailed note (${n} words)`);
+  } else {
+    points += onlyTitle ? 0 : Math.round((20 * Math.min(n, MIN_NOTE_WORDS)) / MIN_NOTE_WORDS);
+    missing.push(
+      onlyTitle
+        ? "The note only repeats the task name — describe what was delivered"
+        : `Outcome note is short (${n} word${n === 1 ? "" : "s"}; aim for ${MIN_NOTE_WORDS}+)`
+    );
+  }
+
+  // 4. Refers to the brief (15).
+  max += 15;
+  const briefKeys = keywords(`${brief} ${scope.map((r) => r.unit).join(" ")}`);
+  if (briefKeys.size === 0) {
+    points += 8;
+  } else {
+    const hits = [...briefKeys].filter((k) => noteKeys.has(k));
+    const target = Math.max(1, Math.min(5, Math.ceil(briefKeys.size / 3)));
+    const ratio = Math.min(1, hits.length / target);
+    points += Math.round(15 * ratio);
+    if (ratio >= 0.67 && n >= 5) covered.push(`Refers to the brief (${hits.slice(0, 4).join(", ")})`);
+    else missing.push(hits.length ? `Only partly answers the brief (matched: ${hits.slice(0, 3).join(", ")})` : "Doesn't say how the brief was answered");
+  }
+
+  // 5. Languages, when the scope names more than English (10).
   const languages = [...new Set(scope.flatMap((r) => r.languageList ?? []).filter((l) => l && l !== "Others"))];
-  if (languages.length) {
-    max += 15;
-    const said = languages.filter((l) => new RegExp(`\\b${l}\\b`, "i").test(note) || (l === "English" && /\ben\b|\beng\b/i.test(note)) || (l === "Arabic" && /\bar\b|\barb\b/i.test(note)));
-    if (said.length === languages.length) {
-      points += 15;
-      covered.push(`Mentions the language${languages.length > 1 ? "s" : ""} (${languages.join(", ")})`);
-    } else {
-      points += Math.round((15 * said.length) / languages.length);
+  if (languages.length > 1 || (languages.length === 1 && languages[0] !== "English")) {
+    max += 10;
+    const said = languages.filter(
+      (l) =>
+        new RegExp(`\\b${l}\\b`, "i").test(note) ||
+        (l === "English" && /\ben\b|\beng\b/i.test(note)) ||
+        (l === "Arabic" && /\bar\b|\barb\b/i.test(note))
+    );
+    points += Math.round((10 * said.length) / languages.length);
+    if (said.length === languages.length) covered.push(`Languages delivered (${languages.join(", ")})`);
+    else {
       const not = languages.filter((l) => !said.includes(l));
       missing.push(`Mention the language${not.length > 1 ? "s" : ""} delivered (${not.join(", ")})`);
     }
   }
 
-  let score = Math.max(0, Math.min(100, Math.round((100 * points) / max)));
+  let score = Math.max(0, Math.min(cap, Math.round((100 * points) / max)));
   // Two or more gaps can't read as "good".
   if (missing.length >= 2) score = Math.min(score, 74);
   const verdict = verdictFor(score);
+  const lead = expectedText ? `Expected ${expectedText}. ` : "";
+  const first = missing[0];
   const reply =
     verdict === "good"
-      ? `The outcome note answers the brief and scope well.${missing[0] ? ` To finish it off: ${missing[0].charAt(0).toLowerCase()}${missing[0].slice(1)}.` : ""}`
+      ? `${lead}The handover matches what the task asked for.${first ? ` To finish it off: ${first.charAt(0).toLowerCase()}${first.slice(1)}.` : ""}`
       : verdict === "partial"
-        ? `The note covers part of the brief. ${missing[0] ? `${missing[0]}.` : ""}`.trim()
-        : `The note doesn't show the brief was met yet. ${missing[0] ? `${missing[0]}.` : ""}`.trim();
+        ? `${lead}The handover only partly matches the task. ${first ? `${first}.` : ""}`.trim()
+        : `${lead}The handover doesn't show the task was delivered yet. ${first ? `${first}.` : ""}`.trim();
   return { score, verdict, covered, missing, reply, source: "rules" };
 }
 
 const SYSTEM_PROMPT = `You review the outcome of a finished task inside a creative/marketing agency.
 You get the task title, its brief, the project's scope rows for this kind of deliverable,
 the outcome note the creator wrote when closing it, and the final link (you can't open it; judge only its presence and kind).
-Score from 0 to 100 how well the outcome note shows the brief and scope were delivered:
-- Says what was delivered and it matches what the brief asked: up to 45 points.
-- Covers the scope details (quantity, formats / sizes, languages) where the scope has them: up to 25 points.
-- Clear, specific and useful to the reviewer (not "done", "as discussed", placeholders): up to 20 points.
-- A final link or file is given: up to 10 points.
-Notes of a few words or unrelated to the brief score below 40.
+Judge whether what was handed in MATCHES WHAT THE TASK ASKED FOR (expected vs delivered), score 0-100:
+- The note states what was delivered and it matches the expected deliverable, same quantity and kind
+  (e.g. task "2 Video": the note says 2 videos were delivered): up to 40 points. A different count is a mismatch: score at most 55.
+- The files / links handed in cover that quantity (one folder link may hold them all): up to 20 points.
+- Covers the scope details (formats / sizes, languages) where the scope has them: up to 20 points.
+- Clear, specific and useful to the reviewer (not "done", "test", the task name repeated, placeholders): up to 20 points.
+Notes of a few words, or that don't say what was delivered, score below 40.
 Reply with JSON only: {"score":0-100,"covered":["up to 4 short points the note covers"],"missing":["up to 4 short points to add"],"reply":"1-2 short sentences of advice to the creator"}.`;
 
 async function evaluateOutcomeAI(task: OutcomeTaskInput, project: OutcomeProjectInput | null): Promise<OutcomeReadiness> {
@@ -207,7 +275,11 @@ async function evaluateOutcomeAI(task: OutcomeTaskInput, project: OutcomeProject
   const content = [
     `Project: ${project?.name ?? "(none)"}`,
     `Task title: ${task.title ?? ""}`,
-    task.titleParts?.unit ? `Task unit: ${task.titleParts.quantity ?? ""} ${task.titleParts.unit}` : null,
+    (() => {
+      const e = expectedDeliverable(task, project);
+      return e.unit ? `Expected deliverable: ${e.quantity ? `${e.quantity} ` : ""}${e.unit}` : null;
+    })(),
+    `Files / links handed in: ${deliveredItems(task)}`,
     "Brief:",
     richTextToPlain(task.description ?? "").slice(0, 3000) || "(empty)",
     "Scope rows:",
