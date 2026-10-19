@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { LuPlus, LuSearch, LuTags } from "react-icons/lu";
 
@@ -94,7 +94,13 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   const [showAll, setShowAll] = useState(false);
   const [q, setQ] = useState("");
 
-  const base = useMemo(() => (data?.brands ?? []).filter((b) => showAll || b.active), [data, showAll]);
+  // Active brands, plus every brand of an organisation with an active brand (ENOC → Zoom, Autopro, Tasjeel …).
+  const base = useMemo(() => {
+    const all = data?.brands ?? [];
+    if (showAll) return all;
+    const orgs = new Set(all.filter((b) => b.active && b.organisation).map((b) => b.organisation.toLowerCase()));
+    return all.filter((b) => b.active || (b.organisation && orgs.has(b.organisation.toLowerCase())));
+  }, [data, showAll]);
   const list = useMemo(() => {
     const term = q.trim().toLowerCase();
     return base
@@ -102,6 +108,27 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       .filter((b) => filter === "all" || !b.checks[CHECK[filter]])
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
   }, [base, q, filter]);
+
+  // Brands of one organisation sit together under its heading; a brand without one stands alone.
+  const groups = useMemo(() => {
+    const out: Array<{ org: string; brands: typeof list }> = [];
+    const byOrg = new Map<string, (typeof out)[number]>();
+    for (const b of list) {
+      const key = b.organisation.trim().toLowerCase();
+      if (!key) {
+        out.push({ org: "", brands: [b] });
+        continue;
+      }
+      let g = byOrg.get(key);
+      if (!g) {
+        g = { org: b.organisation.trim(), brands: [] };
+        byOrg.set(key, g);
+        out.push(g);
+      }
+      g.brands.push(b);
+    }
+    return out;
+  }, [list]);
 
   if (error && !data) return <QueryError title="Couldn't load the brands" error={error} onRetry={refetch} />;
   if (isPending && !data) return <Skeleton className="h-96 w-full" />;
@@ -162,18 +189,28 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
               </tr>
             </thead>
             <tbody>
-              {list.map((b) => (
+              {groups.map((g) => (
+                <Fragment key={g.org || g.brands[0]!._id}>
+                {g.org && (
+                  <tr className="border-b bg-muted/50">
+                    <td colSpan={7} className="px-3 py-1.5 text-xs">
+                      <span className="font-semibold text-foreground">{g.org}</span>
+                      <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}, each with its own scope, team and manpower</span>
+                    </td>
+                  </tr>
+                )}
+                {g.brands.map((b) => (
                 <tr
                   key={b._id}
                   className="cursor-pointer border-b last:border-0 hover:bg-muted/40"
                   onClick={() => void navigate(`/brands/${b._id}?month=${month}`)}
                 >
-                  <td className="px-3 py-2">
+                  <td className={cn("px-3 py-2", g.org && "pl-7")}>
                     <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline" onClick={(e) => e.stopPropagation()}>
                       {b.name}
                     </Link>
                     {b.status === "pending" && <Badge variant="outline" className="ml-2">waiting for approval</Badge>}
-                    {b.organisation && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
+                    {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
                   </td>
                   <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span></td>
                   <td className="px-3 py-2">
@@ -190,6 +227,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   </td>
                   <td className="px-3 py-2 tabular-nums">{b.current.length}</td>
                 </tr>
+                ))}
+                </Fragment>
               ))}
             </tbody>
           </table>
