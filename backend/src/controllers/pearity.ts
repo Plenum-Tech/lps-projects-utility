@@ -28,6 +28,8 @@ import { API_KEY_SCOPES, ApiKey } from "../models/ApiKey.js";
 import type { ApiKeyScope } from "../models/ApiKey.js";
 import { INTEGRATION_LIMITS, IntegrationSettings } from "../models/IntegrationSettings.js";
 import { PearityTag, PearityTagUsage } from "../models/PearityTag.js";
+import { PearityTaskAsset } from "../models/PearityTaskAsset.js";
+import { TaskHistory } from "../models/TaskHistory.js";
 import { User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
@@ -72,6 +74,59 @@ async function generatedBy(taskId: mongoose.Types.ObjectId) {
   }));
 }
 
+/** Aggregate journey counts + recent outcome / DAM links for the task detail trail. */
+async function pearityTrail(taskId: mongoose.Types.ObjectId) {
+  const [historyCounts, assets] = await Promise.all([
+    TaskHistory.aggregate<{ _id: string; count: number }>([
+      {
+        $match: {
+          task: taskId,
+          action: {
+            $in: [
+              "pearity_generated",
+              "pearity_job_started",
+              "pearity_job_completed",
+              "pearity_job_failed",
+              "pearity_saved_to_dam",
+            ],
+          },
+        },
+      },
+      { $group: { _id: "$action", count: { $sum: 1 } } },
+    ]),
+    PearityTaskAsset.find({ task: taskId })
+      .sort({ createdAt: -1 })
+      .limit(40)
+      .select("url title mimeType damAssetId damFolderPath tagNo jobId pearityUrl createdAt")
+      .lean(),
+  ]);
+  const byAction = Object.fromEntries(historyCounts.map((r) => [r._id, r.count])) as Record<string, number>;
+  const jobsStarted = byAction.pearity_job_started ?? 0;
+  const jobsCompleted = byAction.pearity_job_completed ?? 0;
+  const jobsFailed = byAction.pearity_job_failed ?? 0;
+  const savedToDam = byAction.pearity_saved_to_dam ?? 0;
+  const generateClicks = byAction.pearity_generated ?? 0;
+  return {
+    generateClicks,
+    jobsStarted,
+    jobsCompleted,
+    jobsFailed,
+    savedToDam,
+    outcomes: assets.map((a) => ({
+      _id: a._id.toString(),
+      url: a.url,
+      title: a.title ?? null,
+      mimeType: a.mimeType ?? null,
+      damAssetId: a.damAssetId ?? null,
+      damFolderPath: a.damFolderPath ?? null,
+      tagNo: a.tagNo ?? null,
+      jobId: a.jobId ?? null,
+      pearityUrl: a.pearityUrl ?? null,
+      createdAt: a.createdAt,
+    })),
+  };
+}
+
 /**
  * GET /api/tasks/:id/pearity — any signed-in user; read-only viewers get no
  * engine link (neither `generateUrl` nor a `tagUrl` that falls back to it).
@@ -82,17 +137,31 @@ export async function getTaskPearity(req: Request, res: Response): Promise<void>
   const settings = await pearitySettings();
   const taskId = task._id as mongoose.Types.ObjectId;
   const canGenerate = await canViewTaskAsync(req.user!, task);
-  const [tag, contexts] = await Promise.all([PearityTag.findOne({ task: taskId }), taskContexts([task])]);
+  const [tag, contexts, trail] = await Promise.all([
+    PearityTag.findOne({ task: taskId }),
+    taskContexts([task]),
+    pearityTrail(taskId),
+  ]);
   const context = contexts.get(taskId.toString())!;
   const fullRef = tag ? (await tagRefs([tag], { contexts })).get(taskId.toString()) ?? null : null;
   const ref = canGenerate ? fullRef : readOnlyTagRef(settings, fullRef);
+  const usageCount = tag?.usageCount ?? 0;
   res.json({
     enabled: pearityActive(settings),
     tag: ref,
     tagUrl: ref?.tagUrl ?? null,
     proposedTagName: tag ? tag.tagName : context.fields.taskTag || buildTagName(context),
     generateUrl: tag && canGenerate ? pearityGenerateUrl(settings, tag, taskId, context) : null,
-    usageCount: tag?.usageCount ?? 0,
+    usageCount,
+    /** Alias for clients that prefer a clearer name than usageCount. */
+    generationsCount: usageCount,
+    /** Times someone used Generate on Pearity for this task (history). */
+    tasksGeneratedOnPearity: trail.generateClicks,
+    jobsCompleted: trail.jobsCompleted,
+    jobsStarted: trail.jobsStarted,
+    jobsFailed: trail.jobsFailed,
+    savedToDam: trail.savedToDam,
+    outcomes: trail.outcomes,
     generatedBy: tag ? await generatedBy(taskId) : [],
   });
 }
