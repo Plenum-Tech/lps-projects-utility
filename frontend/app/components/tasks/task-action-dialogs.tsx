@@ -194,7 +194,7 @@ export function SubmitTaskDialog({
 
   return (
     <Dialog open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>
             {direct ? "Mark as complete" : "Submit for review"}
@@ -430,7 +430,7 @@ export function SubmitTaskDialog({
             {submitted && rangeError && <p className="text-xs text-destructive">{rangeError}</p>}
           </fieldset>
 
-          <DialogFooter>
+          <DialogFooter className="sticky -bottom-4 z-10 bg-background">
             <Button
               type="button"
               variant="outline"
