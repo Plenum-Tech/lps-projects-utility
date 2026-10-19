@@ -62,11 +62,14 @@ export function CsvExportButton({
   params,
   filenamePrefix,
   disabled,
+  label = "Export Excel",
 }: {
   path: ExportPath;
   params: object;
   filenamePrefix: string;
   disabled?: boolean;
+  /** Button text (when a page has two Excel exports). */
+  label?: string;
 }) {
   const exporter = useCsvExport();
   return (
@@ -76,7 +79,7 @@ export function CsvExportButton({
         exporter.mutate({
           path,
           params,
-          filename: `${filenamePrefix}-${todayKey()}.csv`,
+          filename: `${filenamePrefix}-${todayKey()}.xlsx`,
         })
       }
       disabled={disabled || exporter.isPending}
@@ -86,7 +89,7 @@ export function CsvExportButton({
       ) : (
         <LuDownload aria-hidden />
       )}
-      Export CSV
+      {label}
     </Button>
   );
 }

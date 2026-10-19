@@ -11,7 +11,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { copyGridFsFile, deleteFromGridFs } from "../lib/gridfs.js";
 import { scopeTotals } from "../lib/scopeUnits.js";
 import { notifyTask } from "../lib/notifications.js";
-import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
+import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendSheet } from "../lib/csv.js";
 import {
   applyAutoActualDates,
   applyManualActualDates,
@@ -2857,7 +2857,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
     ];
   });
 
-  sendCsv(res, "tasks", toCsv(headers, rows), { rows: rows.length, total });
+  await sendSheet(res, "tasks", headers, rows, { rows: rows.length, total });
 }
 
 const BULK_LIMIT = 200;

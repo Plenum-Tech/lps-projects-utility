@@ -146,7 +146,7 @@ export function useDeliveryCsv() {
       downloadCsvExport(
         `/analytics/delivery/${table}`,
         { ...params, format: "csv" },
-        `delivery-${table}.csv`,
+        `delivery-${table}.xlsx`,
       ),
     onSuccess: (result) =>
       toast.success(

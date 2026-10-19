@@ -6,7 +6,7 @@ import { Project } from "../models/Project.js";
 import { Task } from "../models/Task.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { appDateKey, appTimeZone } from "../lib/appTime.js";
-import { EXPORT_ROW_LIMIT, sendCsv, toCsv, type CsvValue } from "../lib/csv.js";
+import { EXPORT_ROW_LIMIT, sendSheet, type CsvValue } from "../lib/csv.js";
 import { briefCheckConfigured, briefCheckModel } from "../lib/briefCheck.js";
 import { BRIEF_RULE_KEYS, briefRules, loadBriefInputs, scoreBrief, type BriefInput, type BriefScore } from "../lib/delivery/briefs.js";
 import { deliveryCached } from "../lib/delivery/cache.js";
@@ -166,7 +166,7 @@ async function respond<T>(
   if (req.query.format === "csv" && options.csv) {
     const sheet = options.csv(data as T);
     const rows = sheet.rows.slice(0, EXPORT_ROW_LIMIT);
-    sendCsv(res, sheet.name, toCsv(sheet.headers, rows), { rows: rows.length, total: sheet.rows.length });
+    await sendSheet(res, sheet.name, sheet.headers, rows, { rows: rows.length, total: sheet.rows.length });
     return;
   }
   res.setHeader("Cache-Control", "private, no-store");

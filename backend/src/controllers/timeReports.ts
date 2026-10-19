@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import ExcelJS from "exceljs";
 import mongoose from "mongoose";
 import { addDays, appDayStart, appToday, zonedParts } from "../lib/appTime.js";
+import { csvHours, toXlsx } from "../lib/csv.js";
 import { parsePagination } from "../lib/pagination.js";
 import { departmentUserIds, isInvalidObjectId } from "../lib/projectAccess.js";
 import { parseDateOnly } from "../lib/taskAccess.js";
@@ -76,20 +77,13 @@ async function userScope(actor: IUser, department: mongoose.Types.ObjectId | nul
   return null;
 }
 
-/** Excel-friendly CSV: BOM, CRLF, quoted cells, formula-injection guard. */
-function toCsv(header: string[], rows: Array<Array<string | number | null | undefined>>): string {
-  const cell = (value: string | number | null | undefined): string => {
-    let text = value === null || value === undefined ? "" : String(value);
-    if (/^[=+\-@\t\r]/.test(text) && typeof value === "string") text = `'${text}`;
-    return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-  };
-  return "﻿" + [header, ...rows].map((r) => r.map(cell).join(",")).join("\r\n") + "\r\n";
-}
-
-function sendCsv(res: Response, filename: string, csv: string): void {
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+/** Sends the rows as an Excel workbook (.xlsx) named `filename`. */
+async function sendXlsx(res: Response, filename: string, header: string[], rows: Array<Array<string | number | null | undefined>>): Promise<void> {
+  const body = await toXlsx(filename.replace(/\.xlsx$/, ""), header, rows);
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
-  res.send(csv);
+  res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
+  res.send(body);
 }
 
 /** "YYYY-MM-DD HH:mm" in the app timezone. */
@@ -228,7 +222,7 @@ export async function timeExport(req: Request, res: Response): Promise<void> {
     .limit(EXPORT_LIMIT)
     .lean();
   type Ref = { name?: string; email?: string; code?: string; title?: string; shortCode?: string } | null;
-  const csv = toCsv(
+  const sheet: [string[], Array<Array<string | number | null | undefined>>] = [
     ["Date", "Employee", "Email", "Project code", "Project", "Task code", "Task", "Start", "End", "Hours", "Break (min)", "Earnings", "Status", "Source", "Memo"],
     logs.map((l) => {
       const user = l.user as unknown as Ref;
@@ -244,7 +238,7 @@ export async function timeExport(req: Request, res: Response): Promise<void> {
         task?.title ?? "",
         localDateTime(l.startTime),
         localDateTime(l.endTime ?? null),
-        hours(l.durationMinutes),
+        csvHours(l.durationMinutes),
         l.breakMinutes,
         l.earnings,
         l.status,
@@ -252,8 +246,8 @@ export async function timeExport(req: Request, res: Response): Promise<void> {
         l.memo,
       ];
     })
-  );
-  sendCsv(res, `time-report-${filter.from ? dateKey(filter.from) : "all"}-${filter.to ? dateKey(filter.to) : "all"}.csv`, csv);
+  ];
+  await sendXlsx(res, `time-report-${filter.from ? dateKey(filter.from) : "all"}-${filter.to ? dateKey(filter.to) : "all"}.xlsx`, ...sheet);
 }
 
 // ---------------------------------------------------------------------------
@@ -847,7 +841,7 @@ export async function taskExport(req: Request, res: Response): Promise<void> {
     res.status(loaded.status).json({ error: loaded.error });
     return;
   }
-  const csv = toCsv(
+  const sheet: [string[], Array<Array<string | number | null | undefined>>] = [
     ["Code", "Title", "Project", "Status", "Priority", "Assignees", "Department", "Created", "Start", "Due", "Completed", "Timeliness"],
     loaded.tasks.map((t) => [
       t.shortCode ?? "",
@@ -863,8 +857,8 @@ export async function taskExport(req: Request, res: Response): Promise<void> {
       t.completedAt ? appDateKey(t.completedAt) : "",
       timeliness(t) ?? "",
     ])
-  );
-  sendCsv(res, `task-report-${loaded.from ? dateKey(loaded.from) : "all"}-${loaded.to ? dateKey(loaded.to) : "all"}.csv`, csv);
+  ];
+  await sendXlsx(res, `task-report-${loaded.from ? dateKey(loaded.from) : "all"}-${loaded.to ? dateKey(loaded.to) : "all"}.xlsx`, ...sheet);
 }
 
 // ---------------------------------------------------------------------------
@@ -950,7 +944,7 @@ export async function timesheetExport(req: Request, res: Response): Promise<void
     .populate("reviewedBy", "name")
     .sort({ weekStart: -1 })
     .limit(EXPORT_LIMIT);
-  const csv = toCsv(
+  const sheet: [string[], Array<Array<string | number | null | undefined>>] = [
     ["Employee", "Email", "Department", "Week start", "Total hours", "Status", "Submitted", "Reviewed", "Reviewer", "Reject reason"],
     sheets.map((s) => {
       const user = s.user as unknown as { name?: string; email?: string; department?: { name?: string } | null } | null;
@@ -960,7 +954,7 @@ export async function timesheetExport(req: Request, res: Response): Promise<void
         user?.email ?? "",
         user?.department?.name ?? "",
         dateKey(s.weekStart),
-        hours(timesheetTotalMinutes(s)),
+        csvHours(timesheetTotalMinutes(s)),
         s.status,
         localDateTime(s.submittedAt ?? null),
         localDateTime(s.reviewedAt ?? null),
@@ -968,6 +962,6 @@ export async function timesheetExport(req: Request, res: Response): Promise<void
         s.rejectReason ?? "",
       ];
     })
-  );
-  sendCsv(res, "weekly-timesheets.csv", csv);
+  ];
+  await sendXlsx(res, "weekly-timesheets.xlsx", ...sheet);
 }

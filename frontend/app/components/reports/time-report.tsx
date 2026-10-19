@@ -166,7 +166,8 @@ export function TimeReport({ role }: { role: Role }) {
             <CsvExportButton
               path="/reports/time/export"
               params={filters}
-              filenamePrefix="time-report"
+              label="Export all logs"
+              filenamePrefix="time-logs"
               disabled={!report.data || report.data.totals.count === 0}
             />
           </div>
@@ -457,7 +458,7 @@ function TimeTable({
         <CardTitle>Breakdown</CardTitle>
         <CardDescription>
           {groupBy === "day" ? "Chronological" : "Sorted by time logged"}. The
-          CSV export lists every individual log.
+          “Export all logs” lists every individual log.
         </CardDescription>
       </CardHeader>
       <CardContent>

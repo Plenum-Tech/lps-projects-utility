@@ -25,7 +25,7 @@ export function CsvButton({
       onClick={() => csv.mutate({ table, params: deliveryParams(filters, extra) })}
     >
       {csv.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuDownload aria-hidden />}
-      CSV
+      Excel
       <span className="sr-only"> export of {table}</span>
     </Button>
   );

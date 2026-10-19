@@ -11,7 +11,7 @@ import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js"
 import { brandsInPlan, currentMonth, notReadyMessage, readinessOf } from "../lib/brandReadiness.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
-import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendCsv, toCsv } from "../lib/csv.js";
+import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendSheet } from "../lib/csv.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { deleteFromGridFs } from "../lib/gridfs.js";
 import { formatDueDate, notifyUsers } from "../lib/notifications.js";
@@ -844,7 +844,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     ];
   });
 
-  sendCsv(res, "projects", toCsv(headers, rows), { rows: rows.length, total });
+  await sendSheet(res, "projects", headers, rows, { rows: rows.length, total });
 }
 
 const BULK_LIMIT = 200;

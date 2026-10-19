@@ -1,4 +1,5 @@
 import type { Response } from "express";
+import ExcelJS from "exceljs";
 import { zonedParts } from "./appTime.js";
 import { appDateKey } from "./taskJobs.js";
 
@@ -20,10 +21,18 @@ export function csvDateTime(value: Date | null | undefined): string {
   return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
 }
 
-/** Minutes → decimal hours with 2 decimals ("" when null). */
+/**
+ * Minutes → the duration as the app shows it: "2h 09m", "8h", "18m" ("" when null).
+ * Text, not decimal hours — 2.15 read like "2h 15m" when it meant 2h 09m.
+ */
 export function csvHours(minutes: number | null | undefined): string {
   if (minutes === null || minutes === undefined) return "";
-  return (Math.round((minutes / 60) * 100) / 100).toFixed(2);
+  const total = Math.max(0, Math.round(minutes));
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  if (hours === 0) return `${rest}m`;
+  if (rest === 0) return `${hours}h`;
+  return `${hours}h ${String(rest).padStart(2, "0")}m`;
 }
 
 /**
@@ -44,18 +53,41 @@ export function toCsv(headers: string[], rows: CsvValue[][]): string {
   return `\uFEFF${lines.join("\r\n")}\r\n`;
 }
 
+/** An Excel workbook (.xlsx) with one sheet: bold, frozen header row with filters, sized columns. */
+export async function toXlsx(sheetName: string, headers: string[], rows: CsvValue[][]): Promise<Buffer> {
+  const workbook = new ExcelJS.Workbook();
+  const sheet = workbook.addWorksheet(sheetName.replace(/[\/?*[\]:]/g, " ").slice(0, 31) || "Export", {
+    views: [{ state: "frozen", ySplit: 1 }],
+  });
+  sheet.addRow(headers);
+  // Cells are written as values (never formulas), so a leading "=" is just text.
+  for (const row of rows) sheet.addRow(row.map((v) => (v === null || v === undefined ? "" : v instanceof Date ? v.toISOString() : v)));
+  sheet.getRow(1).font = { bold: true };
+  sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: Math.max(1, headers.length) } };
+  sheet.columns.forEach((column, i) => {
+    let width = headers[i]?.length ?? 8;
+    column.eachCell?.({ includeEmpty: false }, (cell) => {
+      width = Math.max(width, Math.min(60, String(cell.value ?? "").length));
+    });
+    column.width = Math.max(8, width + 2);
+  });
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
 /**
- * Sends a CSV download named `{basename}-YYYY-MM-DD.csv` (app timezone date).
+ * Sends an Excel download named `{basename}-YYYY-MM-DD.xlsx` (app timezone date).
  * `X-Export-Total` = matching rows, `X-Export-Truncated` = "true" when capped.
  */
-export function sendCsv(
+export async function sendSheet(
   res: Response,
   basename: string,
-  csv: string,
+  headers: string[],
+  rows: CsvValue[][],
   meta: { rows: number; total: number }
-): void {
-  const filename = `${basename}-${appDateKey()}.csv`;
-  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+): Promise<void> {
+  const body = await toXlsx(basename, headers, rows);
+  const filename = `${basename}-${appDateKey()}.xlsx`;
+  res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Export-Rows", String(meta.rows));
@@ -65,7 +97,7 @@ export function sendCsv(
     "Access-Control-Expose-Headers",
     "Content-Disposition, X-Export-Rows, X-Export-Total, X-Export-Truncated"
   );
-  res.send(csv);
+  res.send(body);
 }
 
 /** Parses `?ids=a,b,c` (or repeated `ids`) into unique strings; null when absent. */

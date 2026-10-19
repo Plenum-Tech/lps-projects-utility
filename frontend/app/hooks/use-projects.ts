@@ -464,12 +464,12 @@ export function useBulkProjects() {
   });
 }
 
-/** CSV of the current filters (or `ids`) — downloads `projects-YYYY-MM-DD.csv`. */
+/** CSV of the current filters (or `ids`) — downloads `projects-YYYY-MM-DD.xlsx`. */
 export function useExportProjects() {
   const toast = useToast();
   return useMutation({
     mutationFn: (params: Record<string, string>) =>
-      downloadCsvExport("/projects/export", params, "projects.csv"),
+      downloadCsvExport("/projects/export", params, "projects.xlsx"),
     onSuccess: (result) => toastExportResult(result, result.rows === 1 ? "project" : "projects"),
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });

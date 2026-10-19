@@ -911,12 +911,12 @@ export function useBulkTasks() {
   });
 }
 
-/** CSV of the current filters (or `ids`) — downloads `tasks-YYYY-MM-DD.csv`. */
+/** CSV of the current filters (or `ids`) — downloads `tasks-YYYY-MM-DD.xlsx`. */
 export function useExportTasks() {
   const toast = useToast();
   return useMutation({
     mutationFn: (params: Record<string, string>) =>
-      downloadCsvExport("/tasks/export", params, "tasks.csv"),
+      downloadCsvExport("/tasks/export", params, "tasks.xlsx"),
     onSuccess: (result) =>
       toastExportResult(result, result.rows === 1 ? "task" : "tasks"),
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
