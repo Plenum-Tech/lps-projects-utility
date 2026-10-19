@@ -10,7 +10,7 @@ import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/Manpow
 import { Project } from "../models/Project.js";
 import { User } from "../models/User.js";
 import { MANPOWER_ROLES } from "../lib/manpowerRoles.js";
-import { updateProjectCore, type ProjectBody } from "./projects.js";
+import { applyAddMembers, applyRemoveMember, updateProjectCore, type ProjectBody } from "./projects.js";
 import { syncPlanToProjects } from "./manpower.js";
 
 // ---------------------------------------------------------------------------
@@ -50,7 +50,18 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   if (request.kind === "project_change") {
     const project = request.project ? await Project.findById(request.project) : null;
     if (!project) return "The project no longer exists";
-    const result = await updateProjectCore(decider, project, payload as ProjectBody, ip, { skipApproval: true });
+    // Member adds / removals (POST / DELETE members), then the rest of the change.
+    const { addMembers, removeMembers, memberRate, ...rest } = payload as Record<string, unknown>;
+    const ids = (v: unknown) => (Array.isArray(v) ? v.map(String).filter((id) => mongoose.isValidObjectId(id)) : []);
+    if (ids(addMembers).length) {
+      const added = await applyAddMembers(project, ids(addMembers), typeof memberRate === "number" ? memberRate : 0, decider);
+      if ("error" in added) return added.error;
+    }
+    for (const id of ids(removeMembers)) {
+      if (!(await applyRemoveMember(project, new mongoose.Types.ObjectId(id), decider))) return "The project manager can't be removed — change the manager first";
+    }
+    if (Object.keys(rest).length === 0) return null;
+    const result = await updateProjectCore(decider, project, rest as ProjectBody, ip, { skipApproval: true });
     return "error" in result ? result.error : null;
   }
   if (request.kind === "brand_edit") {

@@ -3,6 +3,7 @@ import { generateInsightFunction } from "./functions/generateInsight.js";
 import { generateReviewFunction } from "./functions/generateReview.js";
 import { hrRemindersFunction } from "./functions/hrJobs.js";
 import {
+  monthlyRetainersFunction,
   pitchMissedDatesFunction,
   projectDeadlineRemindersFunction,
   projectProgressDeadlineModeFunction,
@@ -27,6 +28,7 @@ export const functions = [
   projectDeadlineRemindersFunction,
   projectProgressDeadlineModeFunction,
   pitchMissedDatesFunction,
+  monthlyRetainersFunction,
   autoStopTimersFunction,
   timeTrackerReminderFunction,
   dailyTimeLogReportFunction,

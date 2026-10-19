@@ -6,6 +6,7 @@ import type { IProject } from "../models/Project.js";
 import type { IUser } from "../models/User.js";
 import { Project } from "../models/Project.js";
 import { logActivity } from "./activityLog.js";
+import { isLeadershipActor } from "./changeRequests.js";
 import { linkProjectsToRows } from "./manpower/match.js";
 import { MANPOWER_ROLE_KEYS } from "./manpowerRoles.js";
 import { projectMonth } from "./projectExpiry.js";
@@ -38,6 +39,48 @@ export function cellsFromTeam(current: IManpowerCell[], team: TeamEntry[]): IMan
     out.push({ role, users: users.map((u) => new mongoose.Types.ObjectId(String(u))), placeholders: [], notNeeded: false, note: "" });
   }
   return out;
+}
+
+/**
+ * The team of a (new) project from its brand's line in the month's plan: the line
+ * picked on the project, else the automatic match (lib/manpower/match.ts — the
+ * same as GET /api/manpower/suggest). Plan roles with people only. The latest
+ * approved version is used; `includePending` also takes a newer pending version
+ * (the monthly retainer job builds projects on the plan copy it just wrote).
+ */
+export async function planTeamForProject(
+  input: { brand: mongoose.Types.ObjectId | string; month: string; type?: string | null; title?: string | null; name: string; manpowerRow?: string | null },
+  options: { includePending?: boolean } = {}
+): Promise<{ team: Array<{ role: string; users: mongoose.Types.ObjectId[] }>; rowKey: string | null; version: number | null }> {
+  const none = { team: [], rowKey: null, version: null };
+  const filter: Record<string, unknown> = options.includePending ? { month: input.month, status: { $nin: ["rejected", "superseded"] } } : { month: input.month, ...APPROVED_PLAN };
+  const plan = await ManpowerPlan.findOne(filter as never).sort({ version: -1 }).lean();
+  if (!plan) return none;
+  const rows = plan.rows as IManpowerRow[];
+  let key = input.manpowerRow && rows.some((r) => r.key === input.manpowerRow) ? input.manpowerRow : null;
+  if (!key) {
+    const brandId = String(input.brand);
+    const brand = await Brand.findById(brandId).select("name").lean();
+    const links = linkProjectsToRows(
+      input.month,
+      rows.map((r) => ({ key: r.key, brand: r.brand ? String(r.brand) : null, type: r.type, name: r.name })),
+      [{
+        _id: "candidate",
+        name: input.name,
+        brand: brandId,
+        naming: { type: input.type ?? "", month: input.month, title: input.title ?? "" },
+        deadline: null,
+      }],
+      new Map([[brandId, brand?.name ?? ""]])
+    );
+    key = links.get("candidate") ?? null;
+  }
+  const row = key ? rows.find((r) => r.key === key) : undefined;
+  if (!row) return none;
+  const team = row.cells
+    .filter((c) => (c.users ?? []).length && MANPOWER_ROLE_KEYS.includes(c.role))
+    .map((c) => ({ role: c.role, users: c.users.map((u) => new mongoose.Types.ObjectId(String(u))) }));
+  return { team, rowKey: row.key, version: plan.version };
 }
 
 /** People per role of a plan line (for comparing). */
@@ -108,6 +151,24 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       ];
     }
 
+    // Only leadership's changes go live on the plan; anyone else's become a pending
+    // version for leadership to approve (the shared save path, with its email).
+    if (!(await isLeadershipActor(actor))) {
+      const { writePlanVersion } = await import("../controllers/manpower.js");
+      await writePlanVersion({
+        month,
+        before: rows,
+        latestVersion: plan.version,
+        rows: nextRows,
+        note: `Team of ${project.name} updated on the project`,
+        maxProjectsPerPerson: plan.maxProjectsPerPerson,
+        source: "edit",
+        actor,
+      });
+      // A new line is pinned now (a key the plan doesn't have yet is ignored until approved).
+      if (created) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: key } });
+      return;
+    }
     const saved = await ManpowerPlan.create({
       month,
       version: (highest?.version ?? plan.version) + 1,

@@ -3,7 +3,8 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
 import { syncActualDatesFromLogs } from "../lib/actualDates.js";
-import { isProjectApproved, notApprovedMessage } from "../lib/projectApproval.js";
+import { isProjectApproved, notApprovedMessage, projectApproverIds } from "../lib/projectApproval.js";
+import { notifyNoScopeTask } from "../lib/changeRequests.js";
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
@@ -1167,6 +1168,16 @@ export interface CreateTaskOptions {
   sendEmail?: boolean;
   /** Actual start / end supplied by an import (source "import"; validated by the caller). */
   actual?: { start: Date | null; end: Date | null };
+  /** The pitch tasks and the brand flow's lead tasks may go on a project without scope. */
+  allowNoScope?: boolean;
+}
+
+/** Shown when a task is added to a new project that has no scope yet. */
+export const NO_SCOPE_MESSAGE = "This project has no scope yet — add its scope (or the brand's) before adding tasks.";
+
+/** True when the project's rules refuse tasks: a new project (requiresScope) without scope rows. */
+export function projectBlocksTasks(project: Pick<IProject, "requiresScope" | "scopeItems">): boolean {
+  return Boolean(project.requiresScope) && (project.scopeItems ?? []).length === 0;
 }
 
 /**
@@ -1248,6 +1259,10 @@ export async function createTaskCore(
     }
     if (!options.allowClosedProject && !isProjectApproved(resolved)) {
       return { status: 400, error: await notApprovedMessage(resolved) };
+    }
+    // No tasks before scope (new projects; older ones are only flagged).
+    if (!options.allowNoScope && projectBlocksTasks(resolved)) {
+      return { status: 409, error: NO_SCOPE_MESSAGE };
     }
     project = resolved;
   } else if (actor.role === "employee") {
@@ -1484,9 +1499,14 @@ export async function createTaskCore(
 
   // Rework: the original task's files carry over as attachments (own copies).
   // Over the approved scope: admins are asked to approve the extra.
+  // An older project without scope (flagged): the approvers are told, once per project per day.
+  if (project && !options.allowNoScope && !historyExtra.importJob && !project.requiresScope && (project.scopeItems ?? []).length === 0) {
+    void notifyNoScopeTask(project, actor, String(task.title));
+  }
   if (task.overScope?.status === "pending" && project) {
     notifyUsers({
-      recipients: await adminIds(),
+      // Admins decide; the projects approvers (Aasim) are told too.
+      recipients: [...(await adminIds()), ...(await projectApproverIds())],
       actor,
       type: "task_over_scope",
       title: "Task over the approved scope",
@@ -2111,6 +2131,9 @@ async function applyTaskUpdate(
         }
         if (!isProjectApproved(resolved)) {
           return { status: 400, error: await notApprovedMessage(resolved) };
+        }
+        if (projectBlocksTasks(resolved)) {
+          return { status: 409, error: NO_SCOPE_MESSAGE };
         }
         task.project = resolved._id as mongoose.Types.ObjectId;
         task.milestone = null;

@@ -80,6 +80,14 @@ export interface IProject extends mongoose.Document {
   } | null;
   /** Structured scope: deliverables per unit (lib/scopeUnits.ts). */
   scopeItems?: Array<{ unit: string; quantity: number; languages: number; languageList?: string[]; sizes: number }>;
+  /** The brand's platforms and scope notes, copied from the brand (create / brand change). */
+  platforms?: string[];
+  scopeNotes?: string[];
+  /**
+   * Set on projects created from the brand rules onwards: no tasks until the project has a
+   * scope. Older projects have no flag (exempt; flagged "no scope" in the app instead).
+   */
+  requiresScope?: boolean;
   category?: mongoose.Types.ObjectId | null;
   /** Brand (client); a task's brand is its project's brand. */
   brand?: mongoose.Types.ObjectId | null;
@@ -155,6 +163,9 @@ const projectSchema = new Schema<IProject>(
       ],
       default: [],
     },
+    platforms: { type: [{ type: String, trim: true, maxlength: 40 }], default: undefined },
+    scopeNotes: { type: [{ type: String, trim: true, maxlength: 300 }], default: undefined },
+    requiresScope: { type: Boolean, default: undefined },
     category: { type: Schema.Types.ObjectId, ref: "ProjectCategory", default: null },
     brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
     departments: { type: [{ type: Schema.Types.ObjectId, ref: "Department" }], default: [] },

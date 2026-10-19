@@ -5,6 +5,7 @@ import { appDateKey, zonedParts } from "./appTime.js";
 import { runHrReminders } from "./hrJobs.js";
 import { purgeExpiredImportFiles } from "./imports/jobs.js";
 import { runPitchMissedReminders } from "./pitches.js";
+import { runMonthlyRetainers } from "./retainers.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "./projectJobs.js";
 import { isDbReady, runRecurringTasks, runTaskReminders } from "./taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "./timeJobs.js";
@@ -44,6 +45,8 @@ export const SCHEDULED_JOBS: JobDefinition[] = [
   // Pitch steps past their due date and not done: one email per step per due date.
   { name: "pitch-missed-dates", schedule: { kind: "every", minutes: 60 }, run: runPitchMissedReminders },
   { name: "project-progress-deadline-mode", schedule: { kind: "daily", at: "00:15" }, run: runProjectProgressDeadlineMode },
+  // Monthly retainers: acts on the 1st (Dubai date) — plan copy + the month's retainer projects.
+  { name: "monthly-retainers", schedule: { kind: "daily", at: "06:00" }, run: (now) => runMonthlyRetainers(now) },
   { name: "recurring-tasks", schedule: { kind: "daily", at: "00:30" }, run: runRecurringTasks },
   { name: "task-reminders", schedule: { kind: "daily", at: "08:00" }, run: runTaskReminders },
   { name: "project-deadline-reminders", schedule: { kind: "daily", at: "08:00" }, run: runProjectDeadlineReminders },

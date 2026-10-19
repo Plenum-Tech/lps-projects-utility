@@ -27,6 +27,7 @@ import { runHrReminders } from "./lib/hrJobs.js";
 import { purgeExpiredImportFiles } from "./lib/imports/jobs.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "./lib/projectJobs.js";
 import { runPitchMissedReminders } from "./lib/pitches.js";
+import { runMonthlyRetainers } from "./lib/retainers.js";
 import { isDbReady, runRecurringTasks, runTaskReminders } from "./lib/taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "./lib/timeJobs.js";
 import activityLogsRouter from "./routes/activityLogs.js";
@@ -360,6 +361,7 @@ if (import.meta.main) {
       void runTaskReminders(new Date()).catch((err) => console.error("[jobs] reminders failed:", err));
       void runRecurringTasks(new Date()).catch((err) => console.error("[jobs] recurring failed:", err));
       void runPitchMissedReminders(new Date()).catch((err) => console.error("[jobs] pitch missed dates failed:", err));
+      void runMonthlyRetainers(new Date()).catch((err) => console.error("[jobs] monthly retainers failed:", err));
     };
     setInterval(runJobs, 60 * 60 * 1000).unref();
 

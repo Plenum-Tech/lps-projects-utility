@@ -4,9 +4,9 @@ import { approvalView, isProjectApprover, requestProjectApproval } from "../lib/
 import { scheduleProjectTag } from "../lib/tagAssign.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { ManpowerPlan } from "../models/ManpowerPlan.js";
-import { clip, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
-import { syncProjectTeamToPlan } from "../lib/manpowerSync.js";
-import { attachBrandFiles, brandById, brandLocksScope, pickBrandScope } from "../lib/brandFlow.js";
+import { clip, ExceptionBatch, isLeadershipActor, notifyException, requestChange } from "../lib/changeRequests.js";
+import { planTeamForProject, syncProjectTeamToPlan } from "../lib/manpowerSync.js";
+import { attachBrandFiles, brandById, brandLocksScope, brandScopeForProject, pickBrandScope } from "../lib/brandFlow.js";
 import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
@@ -93,7 +93,9 @@ function bad(error: string, status = 400): Invalid {
 }
 
 function send(res: Response, invalid: Invalid): void {
-  res.status(invalid.status).json({ error: invalid.error });
+  // Extra fields (e.g. field / code / brand on "brand has no scope") go along with the error.
+  const { status, ...rest } = invalid as Invalid & Record<string, unknown>;
+  res.status(status).json(rest);
 }
 
 /** Optional date-only field: undefined = untouched, null/"" = cleared. */
@@ -985,6 +987,14 @@ export interface ProjectWriteOptions {
   skipPlanSync?: boolean;
   /** Excel import: Pitch-type rows don't carry the pitch dates. */
   skipPitchTasks?: boolean;
+  /** Create: the brand may have no scope yet (brand flow — it brings the scope; monthly retainer job). */
+  allowBrandWithoutScope?: boolean;
+  /** Create: don't fill an empty team from the brand's plan line / leads. */
+  skipBrandTeam?: boolean;
+  /** Create: the brand team may come from a pending plan version (the monthly retainer job's copy). */
+  planIncludesPending?: boolean;
+  /** Scope / team changes that skip approval are collected here and sent to the approvers once per run. */
+  exceptions?: ExceptionBatch;
 }
 
 /** The pitch's steps (lib/pitches.ts reads their status from these task titles). */
@@ -1077,6 +1087,21 @@ export async function createProjectCore(
   // A brand with a scope (brand flow) fixes its projects' scope: the project takes some
   // of the brand's rows (picked in the form) or, by default, all of them.
   const brandDoc = await brandById(brand);
+  // A new project needs a brand with a scope (its scope comes from the brand). Pitches,
+  // the brand flow (it brings the scope), imports and the retainer job are exempt.
+  const scopeExempt =
+    naming?.type.toLowerCase() === "pitch" || options.allowBrandWithoutScope || options.allowLegacyName || options.skipApproval;
+  if (!scopeExempt) {
+    if (!brandDoc) return { ...bad("Pick a brand", 400), field: "brand" } as Invalid;
+    if (!brandLocksScope(brandDoc)) {
+      return {
+        ...bad(`${brandDoc.name} has no scope yet — add the brand's scope first, or create a new brand with its scope.`, 409),
+        field: "brand",
+        code: "brand_no_scope",
+        brand: { _id: String(brandDoc._id), name: brandDoc.name },
+      } as Invalid;
+    }
+  }
   if (brandDoc && brandLocksScope(brandDoc)) {
     const picked = pickBrandScope(brandDoc, scopeItems);
     if ("error" in picked) return bad(picked.error, 409);
@@ -1113,9 +1138,27 @@ export async function createProjectCore(
     const parsed = await parseTeam(body.team);
     if (isInvalid(parsed)) return parsed;
     team = parsed;
-    for (const u of teamUserIds(team)) if (!members.some((m) => m.user.equals(u))) members.push({ user: u, hourlyRate: 0 });
-    if (members.length > PROJECT_LIMITS.maxMembers) return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
   }
+  // No team given: the project takes its brand's team — the brand's line in the
+  // month's manpower plan, else the brand's leads (as manager / members).
+  if (team.length === 0 && brandDoc && !options.skipBrandTeam) {
+    const month = naming?.month ?? null;
+    const fromPlan = month
+      ? await planTeamForProject(
+          { brand: brandDoc._id as mongoose.Types.ObjectId, month, type: naming?.type ?? null, title: naming?.title ?? null, name, manpowerRow: manpowerRow ?? null },
+          { includePending: options.planIncludesPending }
+        )
+      : null;
+    if (fromPlan?.team.length) {
+      team = fromPlan.team;
+    } else if ((brandDoc.leads ?? []).length) {
+      const leads = (brandDoc.leads ?? []).map((l) => new mongoose.Types.ObjectId(String(l)));
+      if (!manager) manager = leads[0]!;
+      for (const u of leads) if (!members.some((m) => m.user.equals(u))) members.push({ user: u, hourlyRate: 0 });
+    }
+  }
+  for (const u of teamUserIds(team)) if (!members.some((m) => m.user.equals(u))) members.push({ user: u, hourlyRate: 0 });
+  if (members.length > PROJECT_LIMITS.maxMembers) return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
 
   let status: mongoose.Types.ObjectId;
   if (body.status !== undefined) {
@@ -1168,6 +1211,11 @@ export async function createProjectCore(
       summary: summary || undefined,
       manpowerRow: manpowerRow ?? null,
       scopeItems,
+      // The brand's platforms and scope notes come with the project.
+      ...(brandDoc?.platforms?.length ? { platforms: [...brandDoc.platforms] } : {}),
+      ...(brandDoc?.scopeNotes?.length ? { scopeNotes: [...brandDoc.scopeNotes] } : {}),
+      // New projects take no tasks until they have a scope (imported sheets are exempt).
+      ...(options.allowLegacyName ? {} : { requiresScope: true }),
       category,
       brand,
       departments,
@@ -1258,7 +1306,7 @@ async function createPitchTasks(
       },
       ip,
       { via: "pitch" },
-      { allowClosedProject: true }
+      { allowClosedProject: true, allowNoScope: true }
     );
     if (!("taskId" in result)) console.error("[pitch] task not created", String(project._id), t.title, result.error);
   }
@@ -1322,6 +1370,40 @@ export async function getProject(req: Request, res: Response): Promise<void> {
   await respondDetail(res, project._id as mongoose.Types.ObjectId, req.user!);
 }
 
+/** id → name lookup for messages ("—" for none). */
+async function userNames(
+  ids: Array<mongoose.Types.ObjectId | string | null | undefined>
+): Promise<(id: mongoose.Types.ObjectId | string | null | undefined) => string> {
+  const list = [...new Set(ids.filter(Boolean).map(String))];
+  const found = list.length ? await User.find({ _id: { $in: list } }).select("name").lean() : [];
+  const names = new Map(found.map((u) => [String(u._id), u.name]));
+  return (id) => (id ? (names.get(String(id)) ?? "?") : "—");
+}
+
+/** Before → after lines of a project's scope / team / manager (exception notifications). */
+async function exceptionLines(
+  before: { summary: string; scope: string; team: IProjectTeamEntry[]; manager: mongoose.Types.ObjectId | null },
+  project: IProject
+): Promise<Array<[string, string]>> {
+  const out: Array<[string, string]> = [];
+  if ((project.summary ?? "") !== before.summary) out.push(["Scope", `${clip(before.summary, 150)} → ${clip(project.summary, 150)}`]);
+  const scopeNow = scopeText(project.scopeItems);
+  if (scopeNow !== before.scope) out.push(["Scope rows", `${before.scope || "—"} → ${scopeNow || "—"}`]);
+  const teamNow = project.team ?? [];
+  const ids: Array<mongoose.Types.ObjectId | null> = [...before.team, ...teamNow].flatMap((e) => e.users);
+  ids.push(before.manager, project.manager ?? null);
+  const name = await userNames(ids);
+  const label = new Map<string, string>([...MANPOWER_ROLES.map((r) => [r.key, r.label] as [string, string]), ["others", "Others"]]);
+  const usersOf = (t: IProjectTeamEntry[], role: string) => t.find((e) => e.role === role)?.users.map((u) => name(u)).join(", ") || "—";
+  for (const role of new Set([...before.team, ...teamNow].map((e) => e.role))) {
+    const b = usersOf(before.team, role);
+    const a = usersOf(teamNow, role);
+    if (a !== b) out.push([`Team · ${label.get(role) ?? role}`, `${b} → ${a}`]);
+  }
+  if (String(before.manager ?? "") !== String(project.manager ?? "")) out.push(["Manager", `${name(before.manager)} → ${name(project.manager ?? null)}`]);
+  return out;
+}
+
 /**
  * Updates the given fields of a project (PATCH /api/projects/:id and imports in
  * "Update" mode): permission, validation, activity, notifications, SSE.
@@ -1357,11 +1439,20 @@ export async function updateProjectCore(
   let pendingApproval: string | undefined;
   if (
     !options.skipApproval &&
-    (body.summary !== undefined || body.team !== undefined || body.scopeItems !== undefined) &&
+    (body.summary !== undefined || body.team !== undefined || body.scopeItems !== undefined || body.manager !== undefined) &&
     !(await isLeadershipActor(actor))
   ) {
     const held: Record<string, unknown> = {};
     const lines: Array<{ label: string; before: string; after: string }> = [];
+    if (body.manager !== undefined) {
+      const manager = await parseUserId(body.manager, "manager");
+      if (isInvalid(manager)) return manager;
+      if ((manager ? manager.toString() : null) !== (project.manager ? project.manager.toString() : null)) {
+        held.manager = manager ? manager.toString() : null;
+        const names = await userNames([manager, project.manager ?? null]);
+        lines.push({ label: "Manager", before: names(project.manager ?? null), after: names(manager) });
+      }
+    }
     if (body.summary !== undefined) {
       const summary = parseSummary(body.summary);
       if (isInvalid(summary)) return summary;
@@ -1401,12 +1492,14 @@ export async function updateProjectCore(
     delete body.summary;
     delete body.team;
     delete body.scopeItems;
+    delete body.manager;
     if (lines.length > 0) {
       const brand = project.naming?.brand ?? project.brand ?? null;
+      const teamPart = held.team !== undefined || held.manager !== undefined;
       await requestChange({
         kind: "project_change",
         actor,
-        title: `${project.name} — ${(held.summary !== undefined || held.scopeItems) && held.team ? "scope and team" : held.team ? "team" : "scope"}`,
+        title: `${project.name} — ${(held.summary !== undefined || held.scopeItems) && teamPart ? "scope and team" : teamPart ? "team" : "scope"}`,
         changes: lines,
         payload: held,
         project: project._id as mongoose.Types.ObjectId,
@@ -1420,6 +1513,14 @@ export async function updateProjectCore(
   const changed: string[] = [];
   let newManager: mongoose.Types.ObjectId | null = null;
   const newTeamMembers: mongoose.Types.ObjectId[] = [];
+  // What the approvers see when scope / team change without approval.
+  const before = {
+    summary: project.summary ?? "",
+    scope: scopeText(project.scopeItems),
+    team: (project.team ?? []).map((e) => ({ role: e.role, users: [...e.users] })),
+    manager: project.manager ?? null,
+  };
+  const brandBefore = String(project.naming?.brand ?? project.brand ?? "");
 
   // Name: `naming` converts a legacy name / changes the parts; a brand change on a
   // structured project re-composes the name; a plain `name` only for legacy projects.
@@ -1617,6 +1718,24 @@ export async function updateProjectCore(
     }
   }
 
+  // A new brand brings its scope, platforms, notes and files (when it has a scope).
+  let newBrandDoc: Awaited<ReturnType<typeof brandById>> = null;
+  const brandAfter = String(project.naming?.brand ?? project.brand ?? "");
+  if (brandAfter && brandAfter !== brandBefore) {
+    newBrandDoc = await brandById(new mongoose.Types.ObjectId(brandAfter));
+    if (newBrandDoc && brandLocksScope(newBrandDoc)) {
+      const requested = body.scopeItems !== undefined ? parseScopeItems(body.scopeItems) : [];
+      const picked = pickBrandScope(newBrandDoc, typeof requested === "string" ? [] : requested);
+      project.scopeItems = "error" in picked ? brandScopeForProject(newBrandDoc) : picked.rows;
+      project.markModified("scopeItems");
+      project.platforms = [...(newBrandDoc.platforms ?? [])];
+      project.scopeNotes = [...(newBrandDoc.scopeNotes ?? [])];
+      if (!changed.includes("scopeItems")) changed.push("scopeItems");
+    } else {
+      newBrandDoc = null;
+    }
+  }
+
   if (changed.length === 0) return pendingApproval ? { changed, pendingApproval } : bad("At least one field to update is required");
 
   try {
@@ -1641,6 +1760,18 @@ export async function updateProjectCore(
     details: { fields: changed, ...options.activityExtra },
     ip,
   });
+  if (newBrandDoc?.scopeFiles?.length) await attachBrandFiles(project, newBrandDoc, actor);
+  // Scope / team changed without approval: the approvers are told (leadership's own
+  // edits at once; imports and plan syncs once per run through options.exceptions).
+  if (changed.some((f) => f === "summary" || f === "scopeItems" || f === "team" || f === "manager")) {
+    const direct = !options.skipApproval && (await isLeadershipActor(actor));
+    if (direct || options.exceptions) {
+      const details = await exceptionLines(before, project);
+      const ref = { _id: projectId, name: project.name, code: project.code };
+      if (direct) void notifyException("direct_edit", actor, [{ project: ref, details }]);
+      else options.exceptions!.add(ref, details);
+    }
+  }
   const added = [...(newManager ? [newManager] : []), ...newTeamMembers.filter((u) => !newManager?.equals(u))];
   if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
@@ -1968,22 +2099,15 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
     if (isInvalid(parsed)) return send(res, parsed);
     name = parsed;
   }
-  const clash = await ensureUniqueName(name);
-  if (clash) return send(res, clash);
-  const code = await generateProjectCode(naming, name);
   const includeTasks = optionalBoolean(body.includeTasks, "includeTasks");
   if (isInvalid(includeTasks)) return send(res, includeTasks);
   const startDate = optionalDate(body.startDate, "startDate");
   if (isInvalid(startDate)) return send(res, startDate);
   const deadline = optionalDate(body.deadline, "deadline");
   if (isInvalid(deadline)) return send(res, deadline);
-  const start = startDate ?? appToday();
-  const nextDeadline = deadline === undefined ? null : deadline;
-  if (nextDeadline && nextDeadline.getTime() < start.getTime()) return send(res, bad("deadline must be on or after startDate"));
 
   const departments =
     actor.role === "head" && actor.department ? [actor.department] : source.departments;
-  const status = await getDefaultProjectStatus();
 
   // People the copy may keep: admins keep everyone; heads only their own
   // department (plus themselves). The manager falls back to the actor.
@@ -2000,37 +2124,39 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
     members.push({ user: manager as mongoose.Types.ObjectId, hourlyRate: 0, addedAt: new Date() });
   }
 
-  let copy: IProject;
-  try {
-    copy = await Project.create({
-      name,
-      naming,
-      code,
-      summary: source.summary,
-      category: source.category ?? null,
-      brand: naming?.brand ?? source.brand ?? null,
-      departments,
-      manager,
-      members,
-      status: status._id,
-      startDate: start,
-      deadline: nextDeadline,
+  // The copy is a new project of the brand: created like any other (brand scope,
+  // brand files, platforms / notes, team from the plan / brand leads, approval).
+  const brandDoc = await brandById(naming?.brand ?? source.naming?.brand ?? source.brand ?? null);
+  let scopeItems = (source.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : undefined, sizes: r.sizes }));
+  if (brandDoc && brandLocksScope(brandDoc) && "error" in pickBrandScope(brandDoc, scopeItems)) scopeItems = [];
+  const dateIso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : d);
+  const created = await createProjectCore(
+    actor,
+    {
+      ...(naming
+        ? { naming: { brand: String(naming.brand), type: naming.type, month: naming.month, title: naming.title } }
+        : { name, brand: source.brand ? String(source.brand) : null }),
+      summary: source.summary ?? undefined,
+      scopeItems,
+      category: source.category ? String(source.category) : undefined,
+      departments: departments.map(String),
+      manager: manager ? String(manager) : null,
+      members: members.map((m) => ({ user: String(m.user), hourlyRate: m.hourlyRate })),
+      ...(startDate !== undefined ? { startDate: dateIso(startDate) } : {}),
+      ...(deadline !== undefined ? { deadline: dateIso(deadline) } : startDate ? { deadline: null } : {}),
       progressMode: source.progressMode,
-      progress: 0,
       hoursAllocated: source.hoursAllocated ?? null,
       budget: source.budget ?? null,
       isPublic: source.isPublic,
       manualTimeLogs: source.manualTimeLogs,
       requireTaskApproval: source.requireTaskApproval,
-      createdBy: actor._id,
-    });
-  } catch (error) {
-    if (isDuplicateKeyError(error)) {
-      res.status(409).json({ error: `Project code "${code}" is already in use` });
-      return;
-    }
-    throw error;
-  }
+    },
+    req.ip,
+    { allowLegacyName: !naming, skipPitchTasks: true, activityExtra: { duplicatedFrom: String(source._id) } }
+  );
+  if (isInvalid(created)) return send(res, created);
+  const copy = created.project;
+  const code = copy.code;
   const copyId = copy._id as mongoose.Types.ObjectId;
   const sourceId = source._id as mongoose.Types.ObjectId;
 
@@ -2052,7 +2178,12 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
 
   // Tasks (+ subtasks) → todo with fresh short codes (counter only)
   let taskCount = 0;
-  if (includeTasks) {
+  let tasksSkipped = 0;
+  // A new project without scope takes no tasks (it can't get them any other way either).
+  if (includeTasks && copy.requiresScope && !(copy.scopeItems ?? []).length) {
+    tasksSkipped = await Task.countDocuments({ project: sourceId });
+    console.warn("[projects] duplicate: tasks not copied — the copy has no scope", String(copyId), tasksSkipped);
+  } else if (includeTasks) {
     const memberSet = new Set(copy.members.map((m) => m.user.toString()));
     const tasks = await Task.find({ project: sourceId }).sort({ createdAt: 1 });
     for (const t of tasks) {
@@ -2109,22 +2240,11 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
   }
 
   await recalcProjectProgress(copyId);
-  recordProjectActivity(copyId, actor, "duplicated", { from: sourceId.toString(), tasks: taskCount });
+  // createProjectCore logged the creation, notified the members, asked for approval and pushed it.
+  recordProjectActivity(copyId, actor, "duplicated", { from: sourceId.toString(), tasks: taskCount, milestones: milestones.length, ...(tasksSkipped ? { tasksSkipped } : {}) });
   recordProjectActivity(sourceId, actor, "duplicated", { to: copyId.toString(), code });
-  logActivity({
-    action: "project_created",
-    actor,
-    targetType: "project",
-    targetId: copyId,
-    targetName: `${code} · ${name}`,
-    details: { duplicatedFrom: sourceId.toString(), tasks: taskCount, milestones: milestones.length },
-    ip: req.ip,
-  });
-  notifyMembersAdded(copy, copy.members.map((m) => m.user), actor);
-  scheduleProjectTag(copy._id as mongoose.Types.ObjectId, true);
-  await requestProjectApproval(copy._id as mongoose.Types.ObjectId, actor);
-  pushProjectUpdate(copy, "created", { actorId: actor._id.toString(), duplicatedFrom: sourceId.toString() });
 
+  if (tasksSkipped) res.setHeader("X-Tasks-Skipped", String(tasksSkipped));
   await respondDetail(res, copyId, actor, 201);
 }
 
@@ -2152,16 +2272,56 @@ export async function addMembers(req: Request, res: Response): Promise<void> {
   const ids = [...new Set(userIds as string[])];
   const count = await User.countDocuments({ _id: { $in: ids } });
   if (count !== ids.length) return send(res, bad("User not found", 404));
+  const projectId = project._id as mongoose.Types.ObjectId;
 
+  // A team change: anyone but leadership asks for approval (like team edits).
+  const toAdd = ids.filter((id) => !isProjectMember(new mongoose.Types.ObjectId(id), project));
+  if (toAdd.length > 0 && !(await isLeadershipActor(actor))) {
+    if (project.members.length + toAdd.length > PROJECT_LIMITS.maxMembers) {
+      return send(res, bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`));
+    }
+    const name = await userNames(toAdd);
+    await requestChange({
+      kind: "project_change",
+      actor,
+      title: `${project.name} — team`,
+      changes: toAdd.map((id) => ({ label: `Add member · ${name(id)}`, before: "—", after: name(id) })),
+      payload: { addMembers: toAdd, ...(rate !== undefined && rate !== null ? { memberRate: rate } : {}) },
+      project: projectId,
+      brand: project.naming?.brand ?? project.brand ?? null,
+      ip: req.ip,
+    });
+    return respondDetail(res, projectId, actor, 200, "Adding people to the project was sent to leadership for approval.");
+  }
+
+  const result = await applyAddMembers(project, toAdd, rate ?? 0, actor);
+  if (isInvalid(result)) return send(res, result);
+  if (result.added.length) {
+    const name = await userNames(result.added);
+    void notifyException("direct_edit", actor, [
+      { project: { _id: projectId, name: project.name, code: project.code }, details: result.added.map((u) => ["Member added", name(u)] as [string, string]) },
+    ]);
+  }
+  await respondDetail(res, projectId, actor);
+}
+
+/** Adds members (approved request or leadership): save, activity, notifications, SSE. */
+export async function applyAddMembers(
+  project: IProject,
+  userIds: string[],
+  rate: number,
+  actor: IUser
+): Promise<Invalid | { added: mongoose.Types.ObjectId[] }> {
   const added: mongoose.Types.ObjectId[] = [];
-  for (const id of ids) {
+  for (const id of userIds) {
+    if (isInvalidObjectId(id)) continue;
     const oid = new mongoose.Types.ObjectId(id);
     if (isProjectMember(oid, project)) continue;
-    project.members.push({ user: oid, hourlyRate: rate ?? 0, addedAt: new Date() });
+    project.members.push({ user: oid, hourlyRate: rate, addedAt: new Date() });
     added.push(oid);
   }
   if (project.members.length > PROJECT_LIMITS.maxMembers) {
-    return send(res, bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`));
+    return bad(`A project can have at most ${PROJECT_LIMITS.maxMembers} members`);
   }
   if (added.length > 0) {
     await project.save();
@@ -2170,7 +2330,7 @@ export async function addMembers(req: Request, res: Response): Promise<void> {
     notifyMembersAdded(project, added, actor);
     pushProjectUpdate(project, "members-changed", { added: added.map(String) });
   }
-  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor);
+  return { added };
 }
 
 /** PATCH /api/projects/:id/members/:userId — `{ hourlyRate }`. */
@@ -2235,6 +2395,38 @@ export async function removeMember(req: Request, res: Response): Promise<void> {
     return;
   }
 
+  // A team change: anyone but leadership asks for approval (like team edits).
+  if (!(await isLeadershipActor(actor))) {
+    const name = await userNames([uid]);
+    await requestChange({
+      kind: "project_change",
+      actor,
+      title: `${project.name} — team`,
+      changes: [{ label: `Remove member · ${name(uid)}`, before: name(uid), after: "—" }],
+      payload: { removeMembers: [userId] },
+      project: projectId,
+      brand: project.naming?.brand ?? project.brand ?? null,
+      ip: req.ip,
+    });
+    return respondDetail(res, projectId, actor, 200, "Removing this person from the project was sent to leadership for approval.");
+  }
+
+  await applyRemoveMember(project, uid, actor);
+  const name = await userNames([uid]);
+  void notifyException("direct_edit", actor, [{ project: { _id: projectId, name: project.name, code: project.code }, details: [["Member removed", name(uid)]] }]);
+  await respondDetail(res, projectId, actor);
+}
+
+/**
+ * Removes a member (approved request or leadership): their open tasks move to the
+ * others (or the manager / actor), their timer on the project stops. The manager
+ * can't be removed (returns false).
+ */
+export async function applyRemoveMember(project: IProject, uid: mongoose.Types.ObjectId, actor: IUser): Promise<boolean> {
+  if (!project.members.some((m) => m.user.equals(uid))) return true;
+  if (project.manager && project.manager.equals(uid)) return false;
+  const projectId = project._id as mongoose.Types.ObjectId;
+  const openTasks = await Task.find({ project: projectId, assignees: uid, status: { $ne: "completed" } });
   const fallback = project.manager && !project.manager.equals(uid) ? project.manager : actor._id;
   for (const task of openTasks) {
     const remaining = task.assignees.filter((id) => !id.equals(uid));
@@ -2254,9 +2446,9 @@ export async function removeMember(req: Request, res: Response): Promise<void> {
   await project.save();
   const stopped = await stopTimersWhere({ project: projectId, user: uid }, actor);
 
-  recordProjectActivity(projectId, actor, "member_removed", { user: userId, tasksUnassigned: openTasks.length, timersStopped: stopped });
-  pushProjectUpdate(project, "members-changed", { removed: userId }, [uid]);
-  await respondDetail(res, projectId, actor);
+  recordProjectActivity(projectId, actor, "member_removed", { user: String(uid), tasksUnassigned: openTasks.length, timersStopped: stopped });
+  pushProjectUpdate(project, "members-changed", { removed: String(uid) }, [uid]);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

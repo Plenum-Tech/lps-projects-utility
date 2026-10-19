@@ -1,3 +1,4 @@
+import type { ExceptionBatch } from "../changeRequests.js";
 import mongoose from "mongoose";
 import { applyProjectStatus, createProjectCore, updateProjectCore, type ProjectBody } from "../../controllers/projects.js";
 import { Brand, BRAND_LIMITS, brandNameKey } from "../../models/Brand.js";
@@ -379,7 +380,8 @@ export async function runProjectRow(
   plan: ProjectPlan,
   options: ImportOptions,
   ip: string | undefined,
-  jobId: string
+  jobId: string,
+  exceptions?: ExceptionBatch
 ): Promise<RunRowResult> {
   if (plan.action === "skip") {
     return { status: "skipped", messages: [`Project ${plan.code} already exists`], recordId: new mongoose.Types.ObjectId(plan.existingId!), recordRef: plan.code };
@@ -391,7 +393,7 @@ export async function runProjectRow(
   }
   if (plan.createBrand) body.brand = await ensureBrand(plan.createBrand);
   if (body.naming && typeof body.naming === "object") body.naming = { ...(body.naming as object), brand: body.brand };
-  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId }, allowLegacyName: true, keepCode: true, skipApproval: true, skipPlanSync: true, skipPitchTasks: true };
+  const writeOptions = { sendEmail: options.sendEmails, activityExtra: { importJob: jobId }, allowLegacyName: true, keepCode: true, skipApproval: true, skipPlanSync: true, skipPitchTasks: true, exceptions };
 
   if (plan.action === "create") {
     const result = await createProjectCore(actor, body, ip, writeOptions);

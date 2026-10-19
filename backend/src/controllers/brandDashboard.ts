@@ -4,7 +4,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { canCreateBrand, canManageBrand } from "../lib/brandAccess.js";
 import { runBrandSplit, type BrandSplitSetup } from "../lib/brandSplit.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
-import { deleteFromGridFs, openGridFsDownload, uploadToGridFs } from "../lib/gridfs.js";
+import { copyGridFsFile, deleteFromGridFs, openGridFsDownload, uploadToGridFs } from "../lib/gridfs.js";
 import { isLeadershipUser } from "../lib/leadership.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
@@ -180,6 +180,7 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
       organisation: b.organisation ?? "",
       status: b.status ?? "approved",
       isPitch: Boolean(b.isPitch),
+      monthlyRetainer: Boolean(b.monthlyRetainer),
       active: current.length > 0 || lines.length > 0,
       checks: { scope: scopeItems.length > 0, docs: (b.scopeFiles ?? []).length > 0, plan: lines.length > 0, lead: leads.length > 0 },
       scopeItems,
@@ -378,6 +379,17 @@ export async function splitBrand(req: Request, res: Response): Promise<void> {
   }
   const leader = isLeadershipUser(user) || (await isProjectApprover(user._id as mongoose.Types.ObjectId));
   const setup: BrandSplitSetup = { kind: "split", from: String(source._id), projectIds };
+  // The new brand starts with the source brand's scope, documents (own copies), leads,
+  // platforms, notes and organisation — the moved projects keep their scope.
+  const scopeFiles: NonNullable<IBrand["scopeFiles"]> = [];
+  for (const f of source.scopeFiles ?? []) {
+    try {
+      const gridFsId = await copyGridFsFile(f.gridFsId, f.filename, { contentType: f.mimeType, uploadedBy: user._id, copiedFrom: String(f.gridFsId) });
+      scopeFiles.push({ gridFsId, filename: f.filename, mimeType: f.mimeType, size: f.size });
+    } catch (err) {
+      console.error("[brand-split] couldn't copy a brand file", String(f.gridFsId), err);
+    }
+  }
   let brand: IBrand;
   try {
     brand = await Brand.create({
@@ -385,12 +397,26 @@ export async function splitBrand(req: Request, res: Response): Promise<void> {
       organisation,
       color: source.color,
       isPitch: Boolean(source.isPitch),
+      scopeItems: (source.scopeItems ?? []).map((r) => ({
+        unit: r.unit,
+        quantity: r.quantity,
+        languages: r.languages,
+        ...(r.languageList?.length ? { languageList: [...r.languageList] } : {}),
+        sizes: r.sizes,
+        what: r.what ?? "",
+        source: r.source ?? "",
+      })),
+      scopeFiles,
+      leads: [...(source.leads ?? [])],
+      platforms: [...(source.platforms ?? [])],
+      scopeNotes: [...(source.scopeNotes ?? [])],
       status: leader ? "approved" : "pending",
       requestedBy: user._id,
       ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),
       pendingSetup: leader ? null : (setup as unknown as Record<string, unknown>),
     });
   } catch (err) {
+    for (const f of scopeFiles) await deleteFromGridFs(f.gridFsId);
     if (isDuplicateKeyError(err)) {
       res.status(409).json({ error: `A brand named "${name}" already exists`, field: "name" });
       return;

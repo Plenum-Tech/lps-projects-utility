@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
-import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
+import { ExceptionBatch, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { rowPeopleKey } from "../lib/manpowerSync.js";
 import { scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { updateProjectCore } from "./projects.js";
@@ -653,8 +653,15 @@ export async function syncPlanToProjects(
       new Map(brands.map((b) => [String(b._id), b.name]))
     );
     let updated = 0;
+    // Teams changed from the plan: the approvers get one message for this sync.
+    const exceptions = new ExceptionBatch("plan_sync", actor);
+    // The month's first approved version: projects made before the plan existed are pinned to their line.
+    const firstVersion = before.length === 0;
     for (const light of projects) {
       const rowKey = links.get(String(light._id));
+      if (firstVersion && rowKey && !light.manpowerRow) {
+        await Project.updateOne({ _id: light._id }, { $set: { manpowerRow: rowKey } });
+      }
       const row = rowKey ? changed.get(rowKey) : undefined;
       if (!row) continue;
       const project = await Project.findById(light._id);
@@ -664,9 +671,10 @@ export async function syncPlanToProjects(
         ...row.cells.filter((c) => (c.users ?? []).length).map((c) => ({ role: c.role, users: c.users.map(String) })),
         ...others.map((t) => ({ role: t.role, users: t.users.map(String) })),
       ];
-      const result = await updateProjectCore(actor, project, { team } as never, ip, { skipApproval: true, skipPlanSync: true });
+      const result = await updateProjectCore(actor, project, { team } as never, ip, { skipApproval: true, skipPlanSync: true, exceptions });
       if (!("error" in result)) updated += 1;
     }
+    await exceptions.flush();
     return updated;
   } catch (err) {
     console.error("[manpower] plan → projects sync failed", month, err);

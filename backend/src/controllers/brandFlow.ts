@@ -176,7 +176,7 @@ export async function runBrandSetup(
       ...(setup.pitchDates ? { pitchDates: setup.pitchDates, pitchLeads: setup.leads } : {}),
     } as never,
     ip,
-    { activityExtra: { via: "brand_flow" } }
+    { activityExtra: { via: "brand_flow" }, allowBrandWithoutScope: true }
   );
   if ("status" in created) return bad((created as { error: string }).error);
   const project = created.project;
@@ -195,7 +195,7 @@ export async function runBrandSetup(
       },
       ip,
       { via: "brand_flow" },
-      { allowClosedProject: true }
+      { allowClosedProject: true, allowNoScope: true }
     );
     if ("taskId" in result) tasks++;
     else warnings.push(`${task.title}: ${result.error}`);

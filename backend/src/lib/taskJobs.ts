@@ -199,6 +199,11 @@ async function generateOccurrence(parent: ITask, now: Date): Promise<ITask | nul
   if (parent.project) {
     project = await Project.findById(parent.project);
     if (!project || project.archivedAt || isProjectExpired(project) || !isProjectApproved(project) || (await isProjectStatusCompleted(project))) return null;
+    // A new project without scope takes no tasks (lib rule "no tasks before scope").
+    if (project.requiresScope && (project.scopeItems ?? []).length === 0) {
+      console.warn("[jobs] recurring task skipped — its project has no scope yet", String(parent._id), String(project._id));
+      return null;
+    }
   }
 
   // Deleted users are dropped, and on a project only current members/the

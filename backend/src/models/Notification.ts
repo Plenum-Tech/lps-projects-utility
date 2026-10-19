@@ -29,6 +29,8 @@ export const NOTIFICATION_TYPES = [
   "brand_approval_requested",
   "change_approval_requested",
   "change_decided",
+  "change_exception",
+  "retainer_projects_created",
   "task_over_scope",
   "brand_approved",
   "brand_rejected",

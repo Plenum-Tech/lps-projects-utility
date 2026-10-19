@@ -4,6 +4,7 @@ import { runHrReminders } from "../lib/hrJobs.js";
 import { flushProgressRecalcs } from "../lib/projectProgress.js";
 import mongoose from "mongoose";
 import { runPitchMissedReminders } from "../lib/pitches.js";
+import { runMonthlyRetainers } from "../lib/retainers.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "../lib/projectJobs.js";
 import { runRecurringTasks, runTaskReminders } from "../lib/taskJobs.js";
 import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from "../lib/timeJobs.js";
@@ -17,6 +18,7 @@ import { runAutoStopTimers, runDailyTimeLogReport, runTimeTrackerReminder } from
  *   bun run jobs:hr             → document expiry + probation/notice/internship reminders
  *   bun src/scripts/runJobs.ts pitches [projectId …] → pitch missed-date emails (optionally only these projects)
  *   bun src/scripts/runJobs.ts daily-report → daily time-log report email
+ *   bun src/scripts/runJobs.ts retainers [YYYY-MM] → monthly retainers (plan copy + projects); a month forces that month
  */
 const JOBS: Record<string, () => Promise<Record<string, unknown>>> = {
   reminders: async () => ({ reminders: await runTaskReminders(new Date()) }),
@@ -31,6 +33,10 @@ const JOBS: Record<string, () => Promise<Record<string, unknown>>> = {
   }),
   "daily-report": async () => ({ dailyReport: await runDailyTimeLogReport(new Date()) }),
   hr: async () => ({ hrReminders: await runHrReminders(new Date()) }),
+  retainers: async () => {
+    const month = process.argv[3];
+    return { retainers: await runMonthlyRetainers(new Date(), month && /^\d{4}-\d{2}$/.test(month) ? { month } : {}) };
+  },
   pitches: async () => {
     const ids = process.argv.slice(3).filter((id) => mongoose.isValidObjectId(id));
     const projectIds = ids.length ? ids.map((id) => new mongoose.Types.ObjectId(id)) : undefined;

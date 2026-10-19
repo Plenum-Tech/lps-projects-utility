@@ -206,10 +206,14 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   if (!brand) return;
   const body = (req.body ?? {}) as Record<string, unknown>;
   // Leads and the organisation label: brand creators and leadership, applied at once (no approval).
-  const direct: { leads?: mongoose.Types.ObjectId[]; organisation?: string } = {};
+  const direct: { leads?: mongoose.Types.ObjectId[]; organisation?: string; monthlyRetainer?: boolean } = {};
   try {
     if ("leads" in body) direct.leads = await parseLeads(body.leads);
     if ("organisation" in body) direct.organisation = parseOrganisation(body.organisation);
+    if ("monthlyRetainer" in body) {
+      if (typeof body.monthlyRetainer !== "boolean") throw new FieldError("monthlyRetainer", "monthlyRetainer must be a boolean");
+      direct.monthlyRetainer = body.monthlyRetainer;
+    }
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
@@ -217,13 +221,15 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const directChanged: string[] = [];
   if (direct.leads && direct.leads.map(String).join(",") !== (brand.leads ?? []).map(String).join(",")) directChanged.push("leads");
   if (direct.organisation !== undefined && direct.organisation !== (brand.organisation ?? "")) directChanged.push("organisation");
+  if (direct.monthlyRetainer !== undefined && direct.monthlyRetainer !== Boolean(brand.monthlyRetainer)) directChanged.push("monthlyRetainer");
   if (directChanged.length) {
     if (!canManageBrand(req.user!)) {
-      res.status(403).json({ error: "Only leadership and Nazeer can change a brand's leads or organisation" });
+      res.status(403).json({ error: "Only leadership and Nazeer can change a brand's leads, organisation or monthly retainer" });
       return;
     }
     if (direct.leads && directChanged.includes("leads")) brand.leads = direct.leads;
     if (direct.organisation !== undefined && directChanged.includes("organisation")) brand.organisation = direct.organisation;
+    if (direct.monthlyRetainer !== undefined && directChanged.includes("monthlyRetainer")) brand.monthlyRetainer = direct.monthlyRetainer;
     await brand.save();
     logActivity({
       action: "settings_updated",

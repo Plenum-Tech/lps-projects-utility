@@ -30,6 +30,21 @@ export const pitchMissedDatesFunction = inngest.createFunction(
   }
 );
 
+/** Daily at 00:30 Dubai: on the 1st, the month's plan copy and monthly retainer projects (lib/retainers.ts). */
+export const monthlyRetainersFunction = inngest.createFunction(
+  {
+    id: "monthly-retainers",
+    triggers: [{ cron: "TZ=Asia/Dubai 30 0 * * *" }],
+    retries: 2,
+  },
+  async ({ step }) => {
+    return step.run("run-monthly-retainers", async () => {
+      const { runMonthlyRetainers } = await import("../../lib/retainers.js");
+      return runMonthlyRetainers(new Date());
+    });
+  }
+);
+
 /** Daily at 00:15 IST: recalculates `deadline`-mode project progress. */
 export const projectProgressDeadlineModeFunction = inngest.createFunction(
   {

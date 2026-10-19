@@ -1,3 +1,4 @@
+import { ExceptionBatch } from "../changeRequests.js";
 import mongoose from "mongoose";
 import { applyTaskDelete } from "../../controllers/tasks.js";
 import { ImportJob, IMPORT_LIMITS } from "../../models/ImportJob.js";
@@ -229,6 +230,8 @@ async function executeRun(job: IImportJob, actor: IUser, ip: string | undefined,
   const results: IImportRowResult[] = [];
   const created: IImportCreated[] = [];
   let lastPersist = Date.now();
+  // Scope / team changed by "Update" rows: the approvers get one message for the run.
+  const exceptions = new ExceptionBatch("import_update", actor);
 
   for (const [i, plan] of outcome.plans.entries()) {
     let result: RunRowResult;
@@ -238,7 +241,7 @@ async function executeRun(job: IImportJob, actor: IUser, ip: string | undefined,
       try {
         result =
           job.type === "projects"
-            ? await runProjectRow(actor, plan.plan as ProjectPlan, outcome.options, ip, jobId)
+            ? await runProjectRow(actor, plan.plan as ProjectPlan, outcome.options, ip, jobId, exceptions)
             : await runTaskRow(actor, plan.plan as TaskPlan, outcome.options, ip, jobId);
         if (result.status !== "error") result.messages = [...plan.messages, ...result.messages];
       } catch (err) {
@@ -264,6 +267,8 @@ async function executeRun(job: IImportJob, actor: IUser, ip: string | undefined,
       );
     }
   }
+
+  await exceptions.flush();
 
   const totals: IImportTotals = {
     rows: results.length,

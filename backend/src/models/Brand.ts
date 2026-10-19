@@ -71,6 +71,8 @@ export interface IBrand extends mongoose.Document {
   scopeFiles?: IBrandScopeFile[];
   /** Lead(s) picked in the brand flow. */
   leads?: mongoose.Types.ObjectId[];
+  /** Monthly retainer: on the 1st of each month the brand gets that month's project (lib/retainers.ts). */
+  monthlyRetainer?: boolean;
   /**
    * Brand flow run by someone who isn't leadership: the project, lead tasks and plan
    * line to create once the brand is approved (lib/brandFlow.ts). Cleared after.
@@ -130,6 +132,7 @@ const brandSchema = new Schema<IBrand>(
       default: [],
     },
     leads: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
+    monthlyRetainer: { type: Boolean, default: false },
     pendingSetup: { type: Schema.Types.Mixed, default: null },
   },
   { timestamps: true }
