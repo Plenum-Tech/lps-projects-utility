@@ -37,6 +37,7 @@ import {
 } from "@/hooks/use-tasks";
 import { ACCEPT } from "@/components/tasks/task-files";
 import { ReworkTaskPicker } from "@/components/tasks/rework-panel";
+import { OutcomeReadinessBox } from "@/components/tasks/outcome-readiness";
 import { formatEffort } from "@/lib/tasks";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -291,6 +292,13 @@ export function SubmitTaskDialog({
               <p className="text-xs text-destructive">Write what was delivered.</p>
             )}
           </div>
+
+          <OutcomeReadinessBox
+            taskId={task._id}
+            notes={notes}
+            finalUrl={mode === "link" && !linkInvalid ? linkValue : !file ? (task.finalFile?.url ?? "") : ""}
+            hasFile={(mode === "file" && Boolean(file)) || Boolean(task.finalFile?.fileId)}
+          />
 
           <fieldset className="space-y-1.5">
             <legend className="mb-1.5 text-sm leading-none font-medium">

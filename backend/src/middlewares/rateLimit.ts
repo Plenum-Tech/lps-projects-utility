@@ -250,3 +250,14 @@ export const scopeExtractRateLimit = rateLimit({
   keyGenerator: userOrIpKey,
   message: "You've read a lot of files in the last hour. Try again later.",
 });
+
+/**
+ * Outcome readiness on the close-task dialog (POST /api/tasks/:id/outcome-readiness —
+ * at most one model call each, debounced while typing): 120 per hour per user.
+ */
+export const outcomeReadinessRateLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 120,
+  keyGenerator: userOrIpKey,
+  message: "You've checked a lot of outcome notes in the last hour. Try again later.",
+});

@@ -978,6 +978,8 @@ export interface Task {
   titleParts?: TaskTitleParts | null;
   /** Final deliverable recorded at completion. */
   finalFile?: { fileId?: string | null; url?: string | null; addedAt?: string | null } | null;
+  /** How well the outcome note answers the brief and scope (scored on submit / completion). Advice only. */
+  outcomeReadiness?: (OutcomeReadiness & { at: string }) | null;
   submittedAt: string | null;
   reviewNotes?: string;
   reviewedAt: string | null;
@@ -3326,6 +3328,15 @@ export interface DeliverySettings {
   dashboardTeams: string[] | null;
   reworkKeywords: string[];
   reworkCategories: string[];
+export interface OutcomeReadiness {
+  score: number;
+  verdict: "good" | "partial" | "weak";
+  covered: string[];
+  missing: string[];
+  reply: string;
+  source: "ai" | "rules";
+}
+
   briefingWeekday: number;
   minLeadDays: number;
   sameDayBrands: string[];
@@ -3338,6 +3349,8 @@ export interface DeliverySettings {
   updatedAt: string | null;
 }
 
+  /** Outcome readiness advice when closing tasks (default on). */
+  outcomeReadiness: boolean;
 export type DeliverySettingsInput = Partial<
   Omit<DeliverySettings, "updatedAt">
 >;
@@ -3358,6 +3371,7 @@ export interface DeliverySettingsResponse {
 }
 
 export type DeliveryPeriod = "7d" | "30d" | "90d" | "12m" | "all" | "custom";
+    outcomeReadiness?: boolean;
 
 export interface DeliveryFilters {
   period: DeliveryPeriod;

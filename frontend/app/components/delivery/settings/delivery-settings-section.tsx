@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { useBrands } from "@/hooks/use-brands";
 import { useDeliverySettings, useUpdateDeliverySettings } from "@/hooks/use-delivery";
 import { useDepartments } from "@/hooks/use-departments";
@@ -55,6 +56,7 @@ function toDraft(settings: DeliverySettings): Draft {
     briefMinLength: String(settings.briefMinLength),
     minCompletedToRank: String(settings.minCompletedToRank),
     staleDays: String(settings.staleDays),
+    outcomeReadiness: settings.outcomeReadiness !== false,
     brandTeamMap: map,
     teamMapStartDate: settings.teamMapStartDate,
   };
@@ -270,6 +272,24 @@ export function DeliverySettingsSection() {
             aria-describedby="ds-domains-message"
           />
         </Field>
+      </Group>
+
+      <Group title="Outcome readiness">
+        <div className="flex items-start gap-3">
+          <Switch
+            id="ds-outcome"
+            checked={values.outcomeReadiness}
+            onCheckedChange={(next) => set("outcomeReadiness", next)}
+            aria-describedby="ds-outcome-hint"
+          />
+          <div className="space-y-0.5">
+            <Label htmlFor="ds-outcome">Score outcome notes when tasks are closed</Label>
+            <p id="ds-outcome-hint" className="text-xs text-muted-foreground">
+              The close dialog advises how well the outcome note and final link answer the brief and scope, and the score is kept on the
+              task. Advice only — it never stops a task from closing.
+            </p>
+          </div>
+        </div>
       </Group>
 
       <Group title="Delayed work">

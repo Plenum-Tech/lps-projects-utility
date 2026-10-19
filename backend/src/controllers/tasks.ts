@@ -78,6 +78,7 @@ import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from ".
 import { TaskCategory } from "../models/TaskCategory.js";
 import { TaskComment } from "../models/TaskComment.js";
 import { scheduleBriefCheck } from "../lib/briefCheck.js";
+import { recordOutcomeReadiness } from "../lib/outcomeReadiness.js";
 import { TASK_FILE_LIMITS, TaskFile } from "../models/TaskFile.js";
 import { TaskHistory } from "../models/TaskHistory.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
@@ -1011,6 +1012,8 @@ async function applyStatusChange(
 
   await task.save();
   if (to === "completed") void syncActualDatesFromLogs(task._id as mongoose.Types.ObjectId);
+  // Outcome readiness (advice only — never blocks; errors are swallowed inside).
+  if (statusChanged && (to === "completed" || to === "in_review")) await recordOutcomeReadiness(task._id as mongoose.Types.ObjectId);
   await normalizeColumnIfNeeded(task);
 
   if (statusChanged) {
@@ -1834,6 +1837,8 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
   await task.save();
   if (skipReview) void syncActualDatesFromLogs(task._id as mongoose.Types.ObjectId);
   const taskId = task._id as mongoose.Types.ObjectId;
+  // Outcome readiness (advice only — never blocks; errors are swallowed inside).
+  await recordOutcomeReadiness(taskId);
   scheduleProgressRecalc(task.project ?? null);
 
   recordTaskHistory(taskId, user, "submitted", {
@@ -1923,6 +1928,7 @@ export async function reviewTask(req: Request, res: Response): Promise<void> {
   task.reviewedBy = user._id;
   await task.save();
   const taskId = task._id as mongoose.Types.ObjectId;
+  if (isApproved) await recordOutcomeReadiness(taskId);
 
   recordTaskHistory(taskId, user, "reviewed", { decision, reviewNotes: task.reviewNotes });
   scheduleProgressRecalc(task.project ?? null);

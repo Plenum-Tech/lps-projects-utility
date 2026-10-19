@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { LuCircleCheck, LuExternalLink, LuLoaderCircle, LuTimer } from "react-icons/lu";
 
+import { OutcomeReadinessBadge } from "@/components/tasks/outcome-readiness";
 import { useTaskFiles, viewTaskFile } from "@/hooks/use-tasks";
 import { formatDateTime } from "@/lib/format";
 import { formatEffort } from "@/lib/tasks";
@@ -97,6 +98,14 @@ export function CompletionSummary({ task }: { task: Task }) {
             {task.submissionNotes?.trim() ? task.submissionNotes : <span className="text-muted-foreground">—</span>}
           </dd>
         </div>
+        {task.outcomeReadiness && (
+          <div className="space-y-0.5 sm:col-span-2">
+            <dt className="text-xs text-muted-foreground">Outcome readiness</dt>
+            <dd>
+              <OutcomeReadinessBadge result={task.outcomeReadiness} />
+            </dd>
+          </div>
+        )}
       </dl>
     </section>
   );

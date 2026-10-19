@@ -163,6 +163,16 @@ export interface ITask extends mongoose.Document {
     checkedAt?: Date;
     hash?: string;
   } | null;
+  /** Outcome readiness (lib/outcomeReadiness.ts): how well the outcome note answers the brief and scope. Advice only. */
+  outcomeReadiness?: {
+    score: number;
+    verdict: "good" | "partial" | "weak";
+    covered: string[];
+    missing: string[];
+    reply: string;
+    source: "ai" | "rules";
+    at: Date;
+  } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
   finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
   submittedAt?: Date | null;
@@ -323,6 +333,21 @@ const taskSchema = new Schema<ITask>(
           model: { type: String, trim: true },
           checkedAt: { type: Date },
           hash: { type: String },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+    outcomeReadiness: {
+      type: new Schema(
+        {
+          score: { type: Number, min: 0, max: 100, required: true },
+          verdict: { type: String, enum: ["good", "partial", "weak"], required: true },
+          covered: { type: [{ type: String, maxlength: 300 }], default: [] },
+          missing: { type: [{ type: String, maxlength: 300 }], default: [] },
+          reply: { type: String, maxlength: 400, default: "" },
+          source: { type: String, enum: ["ai", "rules"], required: true },
+          at: { type: Date, required: true },
         },
         { _id: false }
       ),

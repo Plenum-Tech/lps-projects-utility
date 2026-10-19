@@ -23,6 +23,8 @@ export interface DeliverySettingsSnapshot {
   briefMinLength: number;
   minCompletedToRank: number;
   staleDays: number;
+  /** Outcome readiness advice when closing tasks (default on). */
+  outcomeReadiness: boolean;
   brandTeamMap: Array<{ brand: string; users: string[] }>;
   /** "YYYY-MM-DD". */
   teamMapStartDate: string;
@@ -53,6 +55,7 @@ export function toDeliverySnapshot(doc: IDeliverySettings): DeliverySettingsSnap
     briefMinLength: doc.briefMinLength,
     minCompletedToRank: doc.minCompletedToRank,
     staleDays: doc.staleDays,
+    outcomeReadiness: doc.outcomeReadiness !== false,
     brandTeamMap: (doc.brandTeamMap ?? []).map((e) => ({ brand: String(e.brand), users: ids(e.users) })),
     teamMapStartDate: doc.teamMapStartDate ? doc.teamMapStartDate.toISOString().slice(0, 10) : appDateKey(),
     updatedAt: doc.updatedAt ? doc.updatedAt.toISOString() : null,
@@ -73,6 +76,7 @@ async function defaultSnapshot(): Promise<DeliverySettingsSnapshot> {
     briefMinLength: DELIVERY_DEFAULTS.briefMinLength,
     minCompletedToRank: DELIVERY_DEFAULTS.minCompletedToRank,
     staleDays: DELIVERY_DEFAULTS.staleDays,
+    outcomeReadiness: DELIVERY_DEFAULTS.outcomeReadiness,
     brandTeamMap: [],
     teamMapStartDate: appDateKey(),
     updatedAt: null,
@@ -108,6 +112,7 @@ export async function getOrCreateDeliverySettings(): Promise<IDeliverySettings> 
         briefMinLength: DELIVERY_DEFAULTS.briefMinLength,
         minCompletedToRank: DELIVERY_DEFAULTS.minCompletedToRank,
         staleDays: DELIVERY_DEFAULTS.staleDays,
+        outcomeReadiness: DELIVERY_DEFAULTS.outcomeReadiness,
         brandTeamMap: [],
         teamMapStartDate: appToday(),
       },

@@ -25,6 +25,8 @@ export const DELIVERY_DEFAULTS = {
   briefMinLength: 80,
   minCompletedToRank: 5,
   staleDays: 30,
+  /** Outcome readiness advice in the close-task dialog (lib/outcomeReadiness.ts). */
+  outcomeReadiness: true,
 } as const;
 
 export const DELIVERY_LIMITS = {
@@ -63,6 +65,7 @@ export interface IDeliverySettings extends mongoose.Document {
   briefMinLength: number;
   minCompletedToRank: number;
   staleDays: number;
+  outcomeReadiness: boolean;
   brandTeamMap: IBrandTeamMapEntry[];
   /** Date-only (UTC midnight of the app calendar date). */
   teamMapStartDate: Date;
@@ -93,6 +96,7 @@ const deliverySettingsSchema = new Schema<IDeliverySettings>(
     briefMinLength: { type: Number, min: 0, max: DELIVERY_LIMITS.briefMinLengthMax, default: DELIVERY_DEFAULTS.briefMinLength },
     minCompletedToRank: { type: Number, min: 0, max: DELIVERY_LIMITS.minCompletedMax, default: DELIVERY_DEFAULTS.minCompletedToRank },
     staleDays: { type: Number, min: 1, max: DELIVERY_LIMITS.staleDaysMax, default: DELIVERY_DEFAULTS.staleDays },
+    outcomeReadiness: { type: Boolean, default: DELIVERY_DEFAULTS.outcomeReadiness },
     brandTeamMap: { type: [mapEntrySchema], default: [] },
     teamMapStartDate: { type: Date, required: true },
     updatedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },

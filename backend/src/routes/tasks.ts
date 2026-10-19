@@ -47,6 +47,8 @@ import {
   updateSubtask,
 } from "../controllers/taskSubtasks.js";
 import { generateTaskPearity, getTaskPearity } from "../controllers/pearity.js";
+import { checkOutcomeReadiness } from "../controllers/outcomeReadiness.js";
+import { outcomeReadinessRateLimit } from "../middlewares/rateLimit.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
@@ -112,6 +114,9 @@ router.patch("/:id/move", moveTask);
 
 // Assignee: submit completed work.
 router.post("/:id/submit", submitTask);
+
+// Anyone who can view it: score a draft outcome note / link against the brief and scope (advice only, nothing saved).
+router.post("/:id/outcome-readiness", outcomeReadinessRateLimit, checkOutcomeReadiness);
 
 // Creator/admin: review a submission.
 router.post("/:id/review", reviewTask);

@@ -116,7 +116,7 @@ async function teamMap(raw: unknown): Promise<Array<{ brand: mongoose.Types.Obje
 const PATCHABLE = [
   "trafficManagers", "dashboardTeams", "reworkKeywords", "reworkCategories", "briefingWeekday", "minLeadDays",
   "sameDayBrands", "finalAssetDomains", "briefMinLength", "minCompletedToRank", "staleDays", "brandTeamMap",
-  "teamMapStartDate",
+  "teamMapStartDate", "outcomeReadiness",
 ] as const;
 
 async function applyPatch(doc: IDeliverySettings, body: Record<string, unknown>): Promise<string[]> {
@@ -141,6 +141,10 @@ async function applyPatch(doc: IDeliverySettings, body: Record<string, unknown>)
   if ("briefMinLength" in body) set("briefMinLength", intIn("briefMinLength", body.briefMinLength, 0, L.briefMinLengthMax));
   if ("minCompletedToRank" in body) set("minCompletedToRank", intIn("minCompletedToRank", body.minCompletedToRank, 0, L.minCompletedMax));
   if ("staleDays" in body) set("staleDays", intIn("staleDays", body.staleDays, 1, L.staleDaysMax));
+  if ("outcomeReadiness" in body) {
+    if (typeof body.outcomeReadiness !== "boolean") throw new FieldError("outcomeReadiness", "outcomeReadiness must be true or false");
+    set("outcomeReadiness", body.outcomeReadiness);
+  }
   if ("brandTeamMap" in body) set("brandTeamMap", await teamMap(body.brandTeamMap));
   if ("teamMapStartDate" in body) {
     const date = typeof body.teamMapStartDate === "string" ? parseDateOnly(body.teamMapStartDate) : null;
@@ -163,6 +167,7 @@ function serialize(doc: IDeliverySettings) {
       briefMinLength: DELIVERY_DEFAULTS.briefMinLength,
       minCompletedToRank: DELIVERY_DEFAULTS.minCompletedToRank,
       staleDays: DELIVERY_DEFAULTS.staleDays,
+      outcomeReadiness: DELIVERY_DEFAULTS.outcomeReadiness,
     },
   };
 }
