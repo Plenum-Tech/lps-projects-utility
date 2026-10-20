@@ -12,7 +12,7 @@ import {
   LuX,
 } from "react-icons/lu";
 
-import { OtherScopeField, ScopeMatchBox } from "@/components/brands/scope-compare";
+import { OtherScopeField, ScopeMatchBox, ScopeTotalCheck, ScopeTotalField } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
 import { Badge } from "@/components/ui/badge";
@@ -33,7 +33,7 @@ import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
 import { stripComposedPrefix } from "@/lib/projects";
 import { cn } from "@/lib/utils";
-import type { LeadMatch, PitchSheetRow, ScopeExtraction } from "@/types";
+import type { LeadMatch, PitchSheetRow, ScopeExtraction, StatedTotal } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Brands → New brand: 1. brand (+ potential revenue for a pitch), 2. scope read
@@ -85,6 +85,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [notes, setNotes] = useState<string[]>([]);
   // "Other scope": the agreement's scope text that isn't a row (editable, saved with the scope).
   const [otherScope, setOtherScope] = useState("");
+  // The agreement's stated total ("96 content pieces per month"): a check for the rows, not a row.
+  const [scopeTotal, setScopeTotal] = useState<StatedTotal | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   // Review the uploaded files next to the extracted scope (inline, no pop-up).
   const [shown, setShown] = useState<number | null>(null);
@@ -110,7 +112,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (!open) return;
     setStep(1); setTried(0); setIsPitch(true); setName(""); setOrganisation(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
-    setPlatforms([]); setNotes([]); setOtherScope(""); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
+    setPlatforms([]); setNotes([]); setOtherScope(""); setScopeTotal(null); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
     setStartDate(""); setEndDate(""); setShown(null); setLeadFound([]);
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -170,6 +172,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           setPlatforms(data.platforms);
           setNotes(data.notes);
           setOtherScope(data.otherScope ?? "");
+          setScopeTotal(data.statedTotal ?? null);
           if (!title.trim() && data.projectName) setTitle(data.projectName);
           if (!startDate && data.dates.startDate) setStartDate(data.dates.startDate);
           if (!endDate && data.dates.endDate) setEndDate(data.dates.endDate);
@@ -305,6 +308,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       platforms,
       notes,
       scopeText: otherScope.trim(),
+      scopeTotal,
       projectType: typeForName,
       month,
       title: cleanTitle,
@@ -633,6 +637,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                     <p className="text-sm"><span className="font-semibold tabular-nums">{pieces}</span> pieces · {deliverables} deliverables with languages and sizes</p>
                   </div>
                   {tried >= 2 && !rows.length && <FieldError>Add at least one scope row.</FieldError>}
+                  <ScopeTotalField id="brand-flow-scope-total" value={scopeTotal} onChange={setScopeTotal} />
+                  <ScopeTotalCheck total={scopeTotal} rows={rows} />
                   <OtherScopeField id="brand-flow-other-scope" value={otherScope} onChange={setOtherScope} />
                   <ScopeMatchBox
                     match={match.data?.match}

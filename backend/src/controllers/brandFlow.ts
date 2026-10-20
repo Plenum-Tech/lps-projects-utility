@@ -11,7 +11,7 @@ import { extractScope, parseLooseDate } from "../lib/scopeExtract.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
 import type { IProject } from "../models/Project.js";
 import { User, type IUser } from "../models/User.js";
-import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, parseScopeText, sendFieldError, serialize } from "./brands.js";
+import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, parseScopeText, parseScopeTotal, sendFieldError, serialize } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 import { createTaskCore } from "./tasks.js";
 import { brandScopeMatch, matchLeadUsers, storedAgreementFrom } from "./brandScope.js";
@@ -309,6 +309,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   let scopeItems: ReturnType<typeof parseBrandScope>;
   let organisation: string;
   let scopeText: string;
+  let scopeTotal: ReturnType<typeof parseScopeTotal>;
   try {
     name = parseName(data.name);
     organisation = parseOrganisation(data.organisation);
@@ -317,6 +318,8 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     if (scopeItems.length === 0) throw new FieldError("scopeItems", "Add at least one scope row");
     // "Other scope": the agreement's scope text not itemised as rows.
     scopeText = parseScopeText(data.scopeText ?? data.otherScope);
+    // The agreement's stated total ("96 content pieces per month"): a check for the rows.
+    scopeTotal = parseScopeTotal(data.scopeTotal ?? data.statedTotal);
     setup = parseSetup(data);
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
@@ -390,6 +393,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
       platforms: list(data.platforms, BRAND_LIMITS.maxPlatforms, 40),
       scopeNotes: list(data.notes, BRAND_LIMITS.maxNotes, BRAND_LIMITS.noteMax),
       scopeText,
+      scopeTotal,
       scopeFiles: stored,
       leads: setup.leads.map((id) => new mongoose.Types.ObjectId(id)),
       scopeAgreement: agreement,

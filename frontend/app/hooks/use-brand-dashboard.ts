@@ -7,7 +7,7 @@ import { projectKeys } from "@/hooks/use-projects";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
 import { downloadFromApi } from "@/lib/download";
-import type { Brand, BrandDetailResponse, BrandMovePreview, BrandMoveResult, BrandOverviewResponse, PitchesResponse, PitchRow, PitchStepKey } from "@/types";
+import type { Brand, BrandDetailResponse, BrandMovePreview, BrandMoveResult, BrandOverviewResponse, PitchesResponse, PitchRow, PitchStepKey, StatedTotal } from "@/types";
 
 // Brands section (/brands): overview + allocation, the brand page, split, leads, documents.
 
@@ -155,7 +155,7 @@ export function usePatchBrand() {
   const invalidate = useInvalidateAll();
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({ id, ...body }: { id: string; leads?: string[]; organisation?: string; scopeItems?: unknown[]; scopeText?: string; monthlyRetainer?: boolean; scopeSource?: "upload" | "edit"; agreement?: unknown }) =>
+    mutationFn: async ({ id, ...body }: { id: string; leads?: string[]; organisation?: string; scopeItems?: unknown[]; scopeText?: string; scopeTotal?: StatedTotal | null; monthlyRetainer?: boolean; scopeSource?: "upload" | "edit"; agreement?: unknown }) =>
       (await api.patch<{ brand: Brand; changed: string[]; pendingApproval?: string }>(`/brands/${id}`, body)).data,
     onSuccess: (data) => {
       invalidate();

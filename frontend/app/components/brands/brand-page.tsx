@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router";
-import { LuArrowLeft, LuArrowRightLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
+import { Link, useNavigate, useSearchParams } from "react-router";
+import { LuArrowLeft, LuArrowRightLeft, LuCircleX, LuClock, LuDownload, LuExternalLink, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuUndo2, LuX } from "react-icons/lu";
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
-import { MatchBadge, OtherScopeChange, OtherScopeField, OtherScopeText, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
+import { MatchBadge, OtherScopeChange, OtherScopeField, OtherScopeText, ScopeDiffView, ScopeMatchBox, ScopeTotalCheck, ScopeTotalField } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
@@ -20,15 +20,16 @@ import { useBrandScopeVersions, useScopeMatch } from "@/hooks/use-brand-scope";
 import { useBrands, useExtractBrandScope } from "@/hooks/use-brands";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
+import { useDismissChange, useWithdrawChange } from "@/hooks/use-project-approval";
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
 import { neededRoles, UNIT_ROLE } from "@/lib/brand-roles";
 import { downloadFromApi } from "@/lib/download";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
 import { diffScope } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
-import type { BrandDetailResponse, BrandMoveItem, BrandScopeVersion, ScopeExtraction } from "@/types";
+import type { BrandDetailResponse, BrandMoveItem, BrandScopeItem, BrandScopeRequest, BrandScopeVersion, ScopeExtraction, StatedTotal } from "@/types";
 
 // ---------------------------------------------------------------------------
 // /brands/:id — one brand: scope → who delivers it, documents, team (the month's
@@ -71,7 +72,44 @@ function UtilisationBar({ value, max }: { value: number; max: number }) {
  * current version, and how close the rows are to the agreement (advice only). The "Other scope"
  * text (not itemised as rows) is read / edited and saved with the rows.
  */
-function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: string; current: ScopeRow[]; currentText: string; onDone: () => void }) {
+/** A scope change request opened in the editor to fix and send again (waiting or rejected). */
+export interface ScopeResend {
+  requestId: string;
+  status: "pending" | "rejected";
+  rows: ScopeRow[];
+  text: string;
+  total: StatedTotal | null;
+  /** Changes on every "Edit and resend" click, so the editor is filled again. */
+  nonce: number;
+}
+
+const toScopeRow = (r: BrandScopeItem): ScopeRow => ({
+  unit: r.unit,
+  what: r.what ?? "",
+  quantity: r.quantity,
+  languageList: [...(r.languageList?.length ? r.languageList : ["English"])],
+  sizes: r.sizes,
+  source: r.source ?? "",
+});
+
+function ScopeUpload({
+  brandId,
+  current,
+  currentText,
+  currentTotal,
+  resend,
+  onCancelResend,
+  onDone,
+}: {
+  brandId: string;
+  current: ScopeRow[];
+  currentText: string;
+  currentTotal: StatedTotal | null;
+  /** "Edit and resend": the editor starts from that request's proposal (not the current scope). */
+  resend: ScopeResend | null;
+  onCancelResend: () => void;
+  onDone: () => void;
+}) {
   const toast = useToast();
   const extract = useExtractBrandScope();
   const patch = usePatchBrand();
@@ -86,6 +124,22 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
   const [otherScope, setOtherScope] = useState("");
   // The read result of the new files: the agreement the rows are compared with (else the brand's).
   const [extraction, setExtraction] = useState<ScopeExtraction | null>(null);
+  // The agreement's stated total ("96 content pieces per month"): the rows are checked against it.
+  const [total, setTotal] = useState<StatedTotal | null>(null);
+  const editor = useRef<HTMLDivElement>(null);
+  // "Edit and resend": fill the editor with the request's proposal.
+  useEffect(() => {
+    if (!resend) return;
+    setFiles([]);
+    setText("");
+    setUsedText(false);
+    setExtraction(null);
+    setNotes([]);
+    setRows(resend.rows.map((r) => ({ ...r, languageList: [...r.languageList] })));
+    setOtherScope(resend.text);
+    setTotal(resend.total);
+    requestAnimationFrame(() => editor.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  }, [resend?.nonce]); // eslint-disable-line react-hooks/exhaustive-deps
   const setRow = (i: number, p: Partial<ScopeRow>) => setRows((list) => list!.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const diff = useMemo(() => (rows ? diffScope(current, rows) : null), [rows, current]);
   const match = useScopeMatch({ rows: rows ?? [], extraction, brandId: extraction ? null : brandId, otherScope, enabled: Boolean(rows) });
@@ -103,6 +157,7 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
           setRows(data.scope.map((r) => ({ ...r })));
           setNotes(data.notes);
           setOtherScope(data.otherScope ?? "");
+          setTotal(data.statedTotal ?? null);
           setExtraction(data);
         },
       },
@@ -114,7 +169,19 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
     setExtraction(null);
     setNotes([]);
     setOtherScope(currentText);
+    setTotal(currentTotal);
     setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
+  }
+
+  function reset() {
+    setRows(null);
+    setFiles([]);
+    setUsedText(false);
+    setExtraction(null);
+    setOtherScope("");
+    setTotal(null);
+    setNotes([]);
+    if (resend) onCancelResend();
   }
 
   async function save() {
@@ -126,6 +193,7 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
         id: brandId,
         scopeItems: rows.map((r) => ({ unit: r.unit, quantity: r.quantity, languages: Math.max(1, r.languageList.length), languageList: r.languageList, sizes: r.sizes, what: r.what, source: r.source })),
         scopeText: otherScope.trim(),
+        scopeTotal: total,
         scopeSource: files.length || usedText ? "upload" : "edit",
         ...(extraction ? { agreement: { scope: extraction.scope, texts: extraction.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
       });
@@ -135,6 +203,8 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
       setRows(null);
       setNotes([]);
       setExtraction(null);
+      setTotal(null);
+      if (resend) onCancelResend();
       onDone();
     } catch (error) {
       toast.error(getErrorMessage(error));
@@ -195,8 +265,18 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
         {extract.isError && <FieldError>{getErrorMessage(extract.error)}</FieldError>}
       </div>
       {rows && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">{files.length ? "Scope read from the files — check and edit" : usedText ? "Scope read from the text — check and edit" : "Edit the scope rows"}</p>
+        <div ref={editor} className="scroll-mt-4 space-y-2">
+          <p className="text-sm font-medium">
+            {files.length
+              ? "Scope read from the files — check and edit"
+              : usedText
+                ? "Scope read from the text — check and edit"
+                : resend
+                  ? resend.status === "pending"
+                    ? "Edit the scope change waiting for approval — resending replaces it"
+                    : "Fix the rejected scope change and send it again"
+                  : "Edit the scope rows"}
+          </p>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
               <thead className="text-xs text-muted-foreground">
@@ -232,6 +312,8 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
               </tbody>
             </table>
           </div>
+          <ScopeTotalField id={`scope-total-${brandId}`} value={total} onChange={setTotal} />
+          <ScopeTotalCheck total={total} rows={rows} />
           {notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
           <OtherScopeField id={`other-scope-${brandId}`} value={otherScope} onChange={setOtherScope} />
           <ScopeMatchBox
@@ -250,16 +332,150 @@ function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: strin
               <LuPlus aria-hidden /> Add row
             </Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setUsedText(false); setExtraction(null); setOtherScope(""); }} disabled={busy}>Cancel</Button>
+              <Button type="button" variant="outline" size="sm" onClick={reset} disabled={busy}>Cancel</Button>
               <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
                 {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
-                Save scope{files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
+                {resend ? "Resend for approval" : "Save scope"}
+                {files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
               </Button>
             </div>
           </div>
           <p className="text-xs text-muted-foreground">Leadership's changes apply at once; anyone else's scope change goes to leadership for approval. The files are attached to the brand straight away.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** "20 Oct 2026, 4:30 PM". */
+const when = (value: string | null | undefined) => (value ? `${formatDate(value)}, ${formatTimeOfDay(value)}` : "");
+
+/** The proposed rows of a scope request, compact and read-only. */
+function ProposedRows({ rows }: { rows: BrandScopeItem[] }) {
+  if (!rows.length) return <p className="text-sm text-muted-foreground">No scope rows proposed.</p>;
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[28rem] text-sm">
+        <thead className="text-xs text-muted-foreground">
+          <tr className="border-b text-left">
+            <th className="py-1 pr-2 font-medium">Unit</th>
+            <th className="py-1 pr-2 font-medium">What</th>
+            <th className="py-1 pr-2 font-medium">Qty</th>
+            <th className="py-1 font-medium">Languages</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={i} className="border-b last:border-0">
+              <td className="py-1 pr-2">{r.unit}</td>
+              <td className="py-1 pr-2">{r.what || "—"}</td>
+              <td className="py-1 pr-2 tabular-nums">{r.quantity}</td>
+              <td className="py-1 text-xs text-muted-foreground">{(r.languageList ?? []).join(", ") || "—"}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/** What a scope request proposes: rows, the agreement total check and the Other scope sections. */
+function ProposedScope({ request }: { request: BrandScopeRequest }) {
+  return (
+    <div className="mt-3 space-y-2">
+      <p className="flex items-center gap-2 text-sm font-medium">
+        <Badge variant="outline">Proposed</Badge> Scope rows{request.rowsChanged ? "" : " (unchanged)"}
+      </p>
+      <ProposedRows rows={request.scopeItems} />
+      <ScopeTotalCheck total={request.scopeTotal} rows={request.scopeItems} />
+      {request.textChanged && (
+        <OtherScopeText
+          text={request.scopeText}
+          title={
+            <span className="flex items-center gap-2">
+              <Badge variant="outline">Proposed</Badge> Other scope (not itemised)
+            </span>
+          }
+        />
+      )}
+      {request.textChanged && !request.scopeText.trim() && <p className="text-sm text-muted-foreground">Proposed: no Other scope.</p>}
+    </div>
+  );
+}
+
+/** A scope change waiting for approval: who sent it, view / edit and resend / withdraw, and what it proposes. */
+function PendingScopeBanner({ request, onEdit }: { request: NonNullable<BrandDetailResponse["pendingScope"]>; onEdit: () => void }) {
+  const withdraw = useWithdrawChange();
+  return (
+    <div className="mb-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="flex items-center gap-2 text-sm text-amber-900 dark:text-amber-200">
+          <LuClock aria-hidden className="size-4 shrink-0" />
+          <span>
+            <span className="font-semibold">Scope change waiting for approval</span> — sent by {request.requestedBy?.name ?? "someone"} on {when(request.createdAt)}
+          </span>
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" render={<Link to={`/approvals/${request._id}`} />}>
+            <LuExternalLink aria-hidden /> View request
+          </Button>
+          {request.canEdit && (
+            <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+              <LuPencil aria-hidden /> Edit and resend
+            </Button>
+          )}
+          {request.canWithdraw && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={withdraw.isPending}
+              onClick={() => window.confirm("Withdraw this scope change? Leadership won't see it any more; nothing changes on the brand.") && withdraw.mutate(request._id)}
+            >
+              {withdraw.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuUndo2 aria-hidden />} Withdraw
+            </Button>
+          )}
+        </div>
+      </div>
+      <ProposedScope request={request} />
+    </div>
+  );
+}
+
+/** The last scope change was rejected: by whom, why; edit and resend, or dismiss. */
+function RejectedScopeBanner({ request, onEdit }: { request: NonNullable<BrandDetailResponse["lastRejectedScope"]>; onEdit: () => void }) {
+  const dismiss = useDismissChange();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-3 rounded-lg border border-destructive/40 bg-destructive/10 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <p className="flex items-center gap-2 text-sm text-destructive">
+          <LuCircleX aria-hidden className="size-4 shrink-0" />
+          <span>
+            <span className="font-semibold">Scope change rejected</span> by {request.decidedBy?.name ?? "leadership"} on {when(request.decidedAt)}
+            {request.reason ? ` — reason: ${request.reason}` : ""}
+          </span>
+        </p>
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+            {open ? "Hide proposal" : "Show proposal"}
+          </Button>
+          <Button variant="outline" size="sm" render={<Link to={`/approvals/${request._id}`} />}>
+            <LuExternalLink aria-hidden /> View request
+          </Button>
+          {request.canEdit && (
+            <Button type="button" variant="outline" size="sm" onClick={onEdit}>
+              <LuPencil aria-hidden /> Edit and resend
+            </Button>
+          )}
+          {request.canDismiss && (
+            <Button type="button" variant="ghost" size="sm" disabled={dismiss.isPending} onClick={() => dismiss.mutate(request._id)}>
+              <LuX aria-hidden /> Dismiss
+            </Button>
+          )}
+        </div>
+      </div>
+      {open && <ProposedScope request={request} />}
     </div>
   );
 }
@@ -669,6 +885,34 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
     setRenaming(false);
   }, [id]);
   const togglePicked = (pid: string) => setPicked((list) => (list.includes(pid) ? list.filter((x) => x !== pid) : [...list, pid]));
+  // "Edit and resend" of a waiting / rejected scope change: the editor opens with its proposal.
+  const [resend, setResend] = useState<ScopeResend | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const startResend = (request: BrandScopeRequest, status: ScopeResend["status"]) =>
+    setResend({ requestId: request._id, status, rows: request.scopeItems.map(toScopeRow), text: request.scopeText, total: request.scopeTotal, nonce: Date.now() });
+  useEffect(() => setResend(null), [id]);
+  // The request being edited was withdrawn, approved or replaced elsewhere: leave "resend" mode.
+  const liveRequestIds = [detail.data?.pendingScope?._id, detail.data?.lastRejectedScope?._id];
+  useEffect(() => {
+    if (resend && detail.data && !liveRequestIds.includes(resend.requestId)) setResend(null);
+  }, [resend, detail.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  // ?editScope=1 (the rejection notice, Approvals "Edit and resend"): open the editor once the brand has loaded.
+  const editRequested = searchParams.get("editScope") === "1";
+  useEffect(() => {
+    if (!editRequested || !detail.data || detail.data.brand._id !== id) return;
+    const pending = detail.data.pendingScope;
+    const rejected = detail.data.lastRejectedScope;
+    if (pending?.canEdit) startResend(pending, "pending");
+    else if (rejected?.canEdit) startResend(rejected, "rejected");
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete("editScope");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [editRequested, detail.data, id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (detail.error && !data) {
     const notFound = (detail.error as { response?: { status?: number } })?.response?.status === 404;
@@ -758,6 +1002,11 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
 
       <div id="scope" className="scroll-mt-4" />
       <Section title="Scope → who delivers it">
+        {data.pendingScope && <PendingScopeBanner request={data.pendingScope} onEdit={() => startResend(data.pendingScope!, "pending")} />}
+        {!data.pendingScope && data.lastRejectedScope && (
+          <RejectedScopeBanner request={data.lastRejectedScope} onEdit={() => startResend(data.lastRejectedScope!, "rejected")} />
+        )}
+        {(data.pendingScope || data.lastRejectedScope) && b.scopeItems.length > 0 && <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Current approved scope</h3>}
         {b.scopeItems.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
@@ -788,8 +1037,13 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             </table>
           </div>
         ) : (
-          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">No scope yet — flagged, not blocked. Projects keep their own scope until one is added.</p>
+          <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">
+            {data.pendingScope
+              ? "No approved scope yet — a change is waiting for approval. Projects keep their own scope until it's approved."
+              : "No scope yet — flagged, not blocked. Projects keep their own scope until one is added."}
+          </p>
         )}
+        {b.scopeItems.length > 0 && <ScopeTotalCheck className="mt-3" total={b.scopeTotal} rows={b.scopeItems} />}
         <OtherScopeText className="mt-3" text={b.scopeText ?? ""} />
         {b.scopeMatch && (
           <ScopeMatchBox
@@ -799,11 +1053,15 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           />
         )}
         <ScopeHistory brandId={b._id} />
-        {data.canManage && (
+        {(data.canManage || data.pendingScope?.canEdit || data.lastRejectedScope?.canEdit) && (
           <ScopeUpload
+            key={resend ? `resend-${resend.nonce}` : "edit"}
             brandId={b._id}
             current={b.scopeItems.map((r) => ({ unit: r.unit, what: r.what, quantity: r.quantity, languageList: r.languageList, sizes: r.sizes, source: r.source ?? "" }))}
             currentText={b.scopeText ?? ""}
+            currentTotal={b.scopeTotal ?? null}
+            resend={resend}
+            onCancelResend={() => setResend(null)}
             onDone={() => void detail.refetch()}
           />
         )}

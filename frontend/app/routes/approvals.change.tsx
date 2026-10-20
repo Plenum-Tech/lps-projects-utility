@@ -1,10 +1,10 @@
 import { useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { LuArrowLeft, LuCircleCheck, LuCircleX, LuExternalLink, LuLoaderCircle, LuTriangleAlert } from "react-icons/lu";
+import { LuArrowLeft, LuCircleCheck, LuCircleX, LuExternalLink, LuLoaderCircle, LuPencil, LuTriangleAlert, LuUndo2 } from "react-icons/lu";
 
 import { ChangeTable, KIND_LABEL } from "@/components/approvals/change-approvals";
-import { OtherScopeChange, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
+import { OtherScopeChange, ScopeDiffView, ScopeMatchBox, ScopeTotalCheck } from "@/components/brands/scope-compare";
 import { PageHeader, QueryError } from "@/components/globals/query-states";
 import { planRowsToTable } from "@/components/manpower/manpower-page";
 import { PlanTable } from "@/components/manpower/plan-table";
@@ -13,14 +13,14 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useManpowerMonths, useManpowerPlan } from "@/hooks/use-manpower";
-import { useDecideChange } from "@/hooks/use-project-approval";
+import { useDecideChange, useWithdrawChange } from "@/hooks/use-project-approval";
 import { api } from "@/lib/api";
 import { formatDate, formatDateTime } from "@/lib/format";
 import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { LABEL_COLOR_META } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
-import type { ChangeRequestItem, ScopeDiff, ScopeItem, StoredScopeMatch } from "@/types";
+import type { ChangeRequestItem, ScopeDiff, ScopeItem, StatedTotal, StoredScopeMatch } from "@/types";
 
 import type { Route } from "./+types/approvals.change";
 
@@ -56,6 +56,8 @@ interface ChangeReview {
     scopeMatch?: StoredScopeMatch;
     /** Brand "Other scope" (the scope kept as text, not rows): before / after. */
     scopeText?: { changed: boolean; current: string; proposed: string };
+    /** Brand scope: the agreement's stated total, now and proposed (the rows are checked against it). */
+    scopeTotal?: { changed: boolean; current: StatedTotal | null; proposed: StatedTotal | null };
     team?: { changed: boolean; current: TeamView; proposed: TeamView };
     brand?: {
       _id: string;
@@ -73,7 +75,17 @@ interface ChangeReview {
       removed: string[];
     };
   };
+  /** What the viewer may do: decide (leadership), resend / withdraw (the requester). */
+  viewer?: { isRequester: boolean; canDecide: boolean; canWithdraw: boolean; canResend: boolean };
 }
+
+const STATUS_LABEL: Record<ChangeRequestItem["status"], string> = {
+  pending: "Waiting for approval",
+  approved: "Approved",
+  rejected: "Rejected",
+  superseded: "Replaced by a newer change",
+  withdrawn: "Withdrawn",
+};
 
 function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {
   return (
@@ -175,7 +187,7 @@ function ScopeRowsView({ rows }: { rows: Array<ScopeItem & { what?: string }> })
         </li>
       ))}
       <li className="flex justify-between border-t pt-1 font-medium">
-        <span>Total</span>
+        <span>Total (qty × languages × sizes)</span>
         <span>{total}</span>
       </li>
     </ul>
@@ -242,6 +254,7 @@ export default function ChangeReviewRoute() {
   const { id } = useParams();
   const navigate = useNavigate();
   const decide = useDecideChange();
+  const withdraw = useWithdrawChange();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const query = useQuery({
@@ -254,6 +267,9 @@ export default function ChangeReviewRoute() {
   const change = review?.change;
   const ctx = review?.context ?? {};
   const pending = change?.status === "pending";
+  const viewer = review?.viewer;
+  // Older servers don't send `viewer`: then only leadership could open the page.
+  const canDecide = viewer ? viewer.canDecide : true;
 
   function decideNow(decision: "approve" | "reject") {
     if (!change) return;
@@ -282,15 +298,40 @@ export default function ChangeReviewRoute() {
               <Badge variant="outline">{KIND_LABEL[change.kind]}</Badge>
               {change.brand?.name && <Badge variant="secondary">{change.brand.name}</Badge>}
               {pending ? (
-                <span className="text-muted-foreground">Nothing changes until you approve.</span>
+                <span className="text-muted-foreground">{canDecide ? "Nothing changes until you approve." : "Waiting for leadership's approval — nothing changes until then."}</span>
               ) : (
-                <Badge variant={change.status === "approved" ? "secondary" : "destructive"}>
-                  {change.status === "approved" ? "Approved" : change.status === "rejected" ? "Rejected" : "Replaced by a newer change"}
+                <Badge variant={change.status === "approved" ? "secondary" : change.status === "rejected" ? "destructive" : "outline"}>
+                  {STATUS_LABEL[change.status]}
                   {change.decidedBy?.name ? ` · ${change.decidedBy.name}` : ""}
                 </Badge>
               )}
+              {change.status === "rejected" && change.reason && <span className="text-muted-foreground">Reason: {change.reason}</span>}
             </div>
-            {pending && (
+            {/* The requester: fix and send again on the brand page, or take a waiting change back. */}
+            {(viewer?.canResend || viewer?.canWithdraw) && change.brand && (
+              <div className="flex flex-wrap gap-2">
+                {viewer.canResend && (
+                  <Button variant="outline" render={<Link to={`/brands/${change.brand._id}?editScope=1#scope`} />}>
+                    <LuPencil aria-hidden />
+                    Edit and resend
+                  </Button>
+                )}
+                {viewer.canWithdraw && (
+                  <Button
+                    variant="outline"
+                    disabled={withdraw.isPending}
+                    onClick={() =>
+                      window.confirm("Withdraw this change? Leadership won't see it any more; nothing is applied.") &&
+                      withdraw.mutate(change._id, { onSuccess: () => void query.refetch() })
+                    }
+                  >
+                    {withdraw.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuUndo2 aria-hidden />}
+                    Withdraw
+                  </Button>
+                )}
+              </div>
+            )}
+            {pending && canDecide && (
               <div className="flex gap-2">
                 <Button onClick={() => decideNow("approve")} disabled={decide.isPending}>
                   {decide.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuCircleCheck aria-hidden />}
@@ -302,7 +343,7 @@ export default function ChangeReviewRoute() {
                 </Button>
               </div>
             )}
-            {pending && rejecting && (
+            {pending && canDecide && rejecting && (
               <div className="w-full space-y-2">
                 <Textarea
                   value={reason}
@@ -349,6 +390,20 @@ export default function ChangeReviewRoute() {
           {ctx.scope && (
             <Section title="Scope">
               <Compare render="text" changed={ctx.scope.changed} before={ctx.scope.current || "No scope written"} after={ctx.scope.proposed || "No scope written"} />
+            </Section>
+          )}
+          {ctx.scopeTotal && (ctx.scopeTotal.proposed || ctx.scopeTotal.current) && (
+            <Section title={ctx.scopeTotal.changed ? "Agreement total (proposed)" : "Agreement total"}>
+              {ctx.scopeTotal.proposed ? (
+                <ScopeTotalCheck total={ctx.scopeTotal.proposed} rows={(ctx.scopeRows?.proposed ?? []) as Array<ScopeItem & { what?: string }>} />
+              ) : (
+                <p className="text-sm text-muted-foreground">The proposal removes the agreement total.</p>
+              )}
+              {ctx.scopeTotal.changed && (
+                <p className="text-xs text-muted-foreground">
+                  Now: {ctx.scopeTotal.current ? `${ctx.scopeTotal.current.quantity}${ctx.scopeTotal.current.per === "month" ? " per month" : ""}` : "no total"}
+                </p>
+              )}
             </Section>
           )}
           {ctx.scopeDiff && (

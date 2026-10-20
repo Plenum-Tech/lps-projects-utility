@@ -27,6 +27,26 @@ import { parseAgreement, parseMatchRows, storedScopeMatch } from "../lib/scopeMa
 import { ensureBaseVersion, recordScopeVersion, scopeTextDiff } from "../lib/scopeVersions.js";
 import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
 import { brandScopeMatch, storedAgreementFrom } from "./brandScope.js";
+import { parseStatedTotal, type StatedTotal } from "../lib/scopeExtract.js";
+
+/** A brand's stated agreement total from a request body (null = none / cleared). */
+export function parseScopeTotal(raw: unknown): StatedTotal | null {
+  if (raw === null || raw === undefined || raw === "") return null;
+  const total = parseStatedTotal(raw);
+  if (!total) throw new FieldError("scopeTotal", "scopeTotal needs a quantity of at least 1");
+  return total;
+}
+
+/** Comparable form of a stated total ("" when none). */
+export function scopeTotalKey(t: StatedTotal | null | undefined): string {
+  return t ? `${t.quantity}|${t.per ?? ""}|${(t.phases ?? []).map((p) => `${p.phase}:${p.quantity}`).join(";")}` : "";
+}
+
+/** "96 per month", "344 (4 phases)". */
+export function scopeTotalLabel(t: StatedTotal | null | undefined): string {
+  if (!t) return "—";
+  return `${t.quantity}${t.per === "month" ? " per month" : ""}${t.phases?.length ? ` (${t.phases.length} phases)` : ""}`;
+}
 
 /** Tells leadership a brand waits for their approval (bell + email). */
 export async function notifyBrandApprovalRequested(brand: IBrand, user: IUser, extra = ""): Promise<void> {
@@ -267,7 +287,9 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   }
   // The requested values (validated), then: leadership applies them, anyone else
   // sends them to leadership for approval (one request per brand, emailed now).
-  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope>; scopeText?: string } = {};
+  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope>; scopeText?: string; scopeTotal?: StatedTotal | null } = {};
+  // Scope parts sent but equal to the current scope: dropped from a pending request this one replaces.
+  const unchangedScope: Array<{ key: string; label: string }> = [];
   try {
     if ("name" in body) {
       const name = parseName(body.name);
@@ -291,11 +313,19 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     if ("scopeItems" in body) {
       const scopeItems = parseBrandScope(body.scopeItems);
       if (scopeText(scopeItems) !== scopeText(brand.scopeItems ?? [])) next.scopeItems = scopeItems;
+      else unchangedScope.push({ key: "scopeItems", label: "Scope" });
     }
     // "Other scope" (the scope kept as text): the same approval rules as the scope rows.
     if ("scopeText" in body) {
       const text = parseScopeText(body.scopeText);
       if (scopeTextDiff(brand.scopeText, text)) next.scopeText = text;
+      else unchangedScope.push({ key: "scopeText", label: "Other scope" });
+    }
+    // The agreement's stated total (a check for the rows): with the scope, same approval rules.
+    if ("scopeTotal" in body) {
+      const total = parseScopeTotal(body.scopeTotal);
+      if (scopeTotalKey(total) !== scopeTotalKey(brand.scopeTotal)) next.scopeTotal = total;
+      else unchangedScope.push({ key: "scopeTotal", label: "Agreement total" });
     }
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
@@ -339,7 +369,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   const scopeSource = body.scopeSource === "upload" ? "upload" : "edit";
   let pendingApproval: string | undefined;
   if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
-    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope", scopeText: "Other scope" };
+    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope", scopeText: "Other scope", scopeTotal: "Agreement total" };
     const clip = (s: string) => (s.length > 1500 ? `${s.slice(0, 1497)}…` : s);
     const colourName: Record<string, string> = { "chart-1": "Teal", "chart-2": "Sky", "chart-3": "Indigo", "chart-4": "Amber", "chart-5": "Coral" };
     const show = (key: string, value: unknown) =>
@@ -351,7 +381,9 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
             ? scopeText(value as never) || "—"
             : key === "scopeText"
               ? clip(String(value ?? "")) || "—"
-              : String(value ?? "") || "—";
+              : key === "scopeTotal"
+                ? scopeTotalLabel(value as StatedTotal | null)
+                : String(value ?? "") || "—";
     const lines = changed.map((key) => ({
       label: label[key] ?? key,
       before: show(key, (brand as unknown as Record<string, unknown>)[key]),
@@ -365,6 +397,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
       payload: { ...next, ...scopeExtra },
       brand: brand._id as mongoose.Types.ObjectId,
       ip: req.ip,
+      dropKeys: unchangedScope,
     });
     pendingApproval = "Brand changes were sent to leadership for approval.";
   } else if (changed.length > 0) {

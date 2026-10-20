@@ -19,6 +19,9 @@ import { Project } from "../models/Project.js";
 import { ProjectFile } from "../models/ProjectFile.js";
 import { TimeLog } from "../models/TimeLog.js";
 import { User, type IUser } from "../models/User.js";
+import { ChangeRequest } from "../models/ChangeRequest.js";
+import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
+import { isLeadershipActor } from "../lib/changeRequests.js";
 import { FieldError, notifyBrandApprovalRequested, parseName, parseOrganisation, sendFieldError, serialize } from "./brands.js";
 import { monthTeamLoad } from "./projects.js";
 
@@ -262,6 +265,57 @@ async function findBrandOr404(req: Request, res: Response): Promise<IBrand | nul
   return brand;
 }
 
+/**
+ * The brand's latest scope change request (rows, "Other scope" or the agreement total) when it is
+ * still waiting (`pendingScope`) or was rejected and not dismissed (`lastRejectedScope`): what it
+ * proposes, who sent it, and what the viewer may do with it (edit and resend, withdraw).
+ */
+async function scopeRequests(brand: IBrand, user: IUser) {
+  const latest = await ChangeRequest.findOne({
+    kind: "brand_edit",
+    brand: brand._id,
+    status: { $in: ["pending", "approved", "rejected", "withdrawn"] },
+    $or: [{ "payload.scopeItems": { $exists: true } }, { "payload.scopeText": { $exists: true } }, { "payload.scopeTotal": { $exists: true } }],
+  })
+    .sort({ createdAt: -1 })
+    .populate("requestedBy", "name")
+    .populate("decidedBy", "name");
+  if (!latest || (latest.status !== "pending" && !(latest.status === "rejected" && !latest.dismissedAt))) return {};
+  // A rejection the scope has moved on from (leadership saved a new version since) isn't shown.
+  if (latest.status === "rejected" && (await BrandScopeVersion.exists({ brand: brand._id, at: { $gt: latest.decidedAt ?? latest.updatedAt } }))) return {};
+  const payload = (latest.payload ?? {}) as Record<string, unknown>;
+  const requester = latest.requestedBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  const decider = latest.decidedBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  const isRequester = String(requester?._id ?? "") === String(user._id);
+  const rowsChanged = Array.isArray(payload.scopeItems);
+  const textChanged = typeof payload.scopeText === "string";
+  const totalChanged = "scopeTotal" in payload;
+  const view = {
+    _id: String(latest._id),
+    requestedBy: requester ? { _id: String(requester._id), name: requester.name ?? "Someone" } : null,
+    createdAt: latest.createdAt,
+    // What the request proposes; the parts it doesn't change are the current ones.
+    scopeItems: rowsChanged ? (payload.scopeItems as unknown[]) : (brand.scopeItems ?? []),
+    scopeText: textChanged ? String(payload.scopeText) : (brand.scopeText ?? ""),
+    scopeTotal: totalChanged ? (payload.scopeTotal ?? null) : (brand.scopeTotal ?? null),
+    rowsChanged,
+    textChanged,
+    totalChanged,
+    scopeMatch: payload.scopeMatch && typeof (payload.scopeMatch as { score?: unknown }).score === "number" ? payload.scopeMatch : null,
+    canEdit: isRequester || canManageBrand(user),
+  };
+  if (latest.status === "pending") return { pendingScope: { ...view, canWithdraw: isRequester || (await isLeadershipActor(user)) } };
+  return {
+    lastRejectedScope: {
+      ...view,
+      decidedBy: decider ? { _id: String(decider._id), name: decider.name ?? "Leadership" } : null,
+      decidedAt: latest.decidedAt,
+      reason: latest.reason ?? "",
+      canDismiss: view.canEdit,
+    },
+  };
+}
+
 /** GET /api/brands/:id/detail?month=YYYY-MM — the brand page. */
 export async function brandDetail(req: Request, res: Response): Promise<void> {
   const month = monthOf(req);
@@ -333,6 +387,7 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
       platforms: brand.platforms ?? [],
       scopeNotes: brand.scopeNotes ?? [],
       scopeText: brand.scopeText ?? "",
+      scopeTotal: brand.scopeTotal ?? null,
       setupWaiting: Boolean(brand.pendingSetup),
       files: (brand.scopeFiles ?? []).map((f) => ({ _id: String(f.gridFsId), filename: f.filename, mimeType: f.mimeType, size: f.size })),
       projects: all
@@ -342,6 +397,8 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
     utilisation,
     people: showPeople ? ctx.people : {},
     pool: showPeople ? ctx.pool : {},
+    // A scope change waiting for approval, or the last one rejected (to fix and resend).
+    ...(await scopeRequests(brand, user)),
   });
 }
 
@@ -417,6 +474,7 @@ export async function splitBrand(req: Request, res: Response): Promise<void> {
       platforms: [...(source.platforms ?? [])],
       scopeNotes: [...(source.scopeNotes ?? [])],
       scopeText: source.scopeText ?? "",
+      scopeTotal: source.scopeTotal ?? null,
       status: leader ? "approved" : "pending",
       requestedBy: user._id,
       ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),

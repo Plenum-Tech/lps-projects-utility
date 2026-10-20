@@ -3294,6 +3294,8 @@ export interface BrandDetail extends BrandSummary {
   scopeNotes: string[];
   /** "Other scope": the agreement's scope text not itemised as rows. */
   scopeText: string;
+  /** The agreement's stated total (null = none). */
+  scopeTotal: StatedTotal | null;
   setupWaiting: boolean;
   files: Array<{ _id: string; filename: string; mimeType: string; size: number }>;
   /** Open projects of the brand (for the split). */
@@ -3303,6 +3305,10 @@ export interface BrandDetail extends BrandSummary {
 export interface BrandDetailResponse extends BrandDashboardBase {
   brand: BrandDetail;
   utilisation: BrandUtilisationRow[] | null;
+  /** A scope change waiting for approval. */
+  pendingScope?: BrandScopeRequest & { canWithdraw: boolean };
+  /** The last scope change, rejected (until dismissed or resent). */
+  lastRejectedScope?: BrandScopeRequest & { decidedBy: { _id: string; name: string } | null; decidedAt: string | null; reason: string; canDismiss: boolean };
 }
 
 /** A brand scope row: a project scope row plus what it is and the file it came from. */
@@ -3363,6 +3369,32 @@ export interface ScopeMatchResult {
 }
 
 /** The match stored on a brand. */
+/** An agreement's stated total: the rows' quantities are checked against it (advice only). */
+export interface StatedTotal {
+  quantity: number;
+  per: "month" | null;
+  text: string;
+  /** "Total: N" per phase (counts per phase); rows of a phase end with " — <phase>". */
+  phases?: Array<{ phase: string; quantity: number }>;
+}
+
+/** A brand scope change request still waiting (pendingScope) or rejected (lastRejectedScope). */
+export interface BrandScopeRequest {
+  _id: string;
+  requestedBy: { _id: string; name: string } | null;
+  createdAt: string;
+  /** The proposed scope (parts the request doesn't change are the current ones). */
+  scopeItems: BrandScopeItem[];
+  scopeText: string;
+  scopeTotal: StatedTotal | null;
+  rowsChanged: boolean;
+  textChanged: boolean;
+  totalChanged: boolean;
+  scopeMatch: StoredScopeMatch | null;
+  /** The requester, or anyone who may manage the brand scope: edit and resend. */
+  canEdit: boolean;
+}
+
 export interface StoredScopeMatch {
   score: number;
   missing: string[];
@@ -3438,6 +3470,8 @@ export interface ScopeExtraction {
   };
   scope: Array<{ unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string }>;
   notes: string[];
+  /** The total the agreement states ("96 content pieces per month"): a check for the rows, never a row. */
+  statedTotal?: StatedTotal | null;
   /** The rest of the scope text, not itemised as rows or notes (one tidied text). */
   otherScope?: string;
   /** Lead names read from the documents ("Account Lead: …"), matched to users. */
@@ -4196,7 +4230,7 @@ export interface ProjectApprovalQueue {
 export interface ChangeRequestItem {
   _id: string;
   kind: "project_change" | "brand_edit" | "manpower_plan" | "project_move";
-  status: "pending" | "approved" | "rejected" | "superseded";
+  status: "pending" | "approved" | "rejected" | "superseded" | "withdrawn";
   title: string;
   brand: { _id: string; name: string } | null;
   project: { _id: string; name: string; code: string } | null;

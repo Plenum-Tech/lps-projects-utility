@@ -26,6 +26,17 @@ export interface ExtractedScopeRow {
   source: string;
 }
 
+/**
+ * The agreement's own total ("96 content pieces per month", "Total: 62"): a check the rows
+ * should add up to, never a row. `phases`: the "Total: N" of each phase (counts per phase).
+ */
+export interface StatedTotal {
+  quantity: number;
+  per: "month" | null;
+  text: string;
+  phases?: Array<{ phase: string; quantity: number }>;
+}
+
 export interface ExtractedLead {
   name: string;
   source: string;
@@ -48,6 +59,8 @@ export interface ScopeExtraction {
   };
   scope: ExtractedScopeRow[];
   notes: string[];
+  /** The total the agreement states (a check for the rows, advice only); null when none. */
+  statedTotal: StatedTotal | null;
   /**
    * The rest of the scope part of the documents, not itemised as rows or notes (paragraphs,
    * exclusions, " * " items…), tidied, as one text. Saved on the brand as scopeText.
@@ -122,15 +135,58 @@ async function localText(f: ExtractInputFile): Promise<string | null> {
 // Shared normalising (AI and rule results go through the same checks)
 // ---------------------------------------------------------------------------
 
-/** The scope unit a deliverable name belongs to. */
+const UNIT_WORDS: Array<[RegExp, string]> = [
+  [/\breels?\b/, "Reel"],
+  [/\bstor(?:y|ies)\b/, "Story"],
+  [/\bcarousels?\b/, "Carousel"],
+  [/\b(?:videos?|films?|tiktoks?|shorts|youtube|motion|animations?|gifs?)\b/, "Video"],
+  [/\b(?:posts?|statics?|images?|visuals?|designs?|banners?|creatives?|artworks?|key ?visuals?|kv|graphics?|infographics?)\b/, "Static"],
+];
+
+/**
+ * The scope unit a deliverable name belongs to: the unit word that comes first
+ * ("Statics/ motion graphics" → Static, "Reels/Motion Graphics" → Reel, "Native TikTok videos" → Video).
+ */
 export function unitFor(what: string): string {
   const w = what.toLowerCase();
-  if (/\breels?\b/.test(w)) return "Reel";
-  if (/\bstor(y|ies)\b/.test(w)) return "Story";
-  if (/\bcarousels?\b/.test(w)) return "Carousel";
-  if (/\b(videos?|films?|tiktoks?|shorts|youtube|motion|animations?|gifs?)\b/.test(w)) return "Video";
-  if (/\b(posts?|statics?|images?|visuals?|designs?|banners?|creatives?|artworks?|key ?visuals?|kv|graphics?|infographics?)\b/.test(w)) return "Static";
-  return "Others";
+  let best: { at: number; unit: string } | null = null;
+  for (const [re, unit] of UNIT_WORDS) {
+    const m = re.exec(w);
+    if (m && (!best || m.index < best.at)) best = { at: m.index, unit };
+  }
+  return best?.unit ?? "Others";
+}
+
+/** Zero-width characters some documents are full of (U+200B …). */
+const ZERO_WIDTH = /[​-‍⁠﻿]/g;
+
+/** "96 content pieces", "53x content pieces in total", "Total deliverables" — an agreement total, not a row. */
+const TOTAL_WHAT =
+  /\bcontent\s+pieces?\b|\b(?:pieces?|posts|deliverables|assets|items)\s+(?:of\s+content\s+)?in\s+total\b|\btotal\s+(?:deliverables|pieces|content(?:\s+pieces)?|posts|assets)\b|^(?:grand\s+)?total\b/i;
+/** Shoots / production days: a note, not content (what a shoot produces is content). */
+const SHOOT_WHAT = /\b(?:shoots?|shooting|production\s+days?|shoot\s+days?|filming\s+days?)\b/i;
+const SHOOT_OUTPUT = /\(from the shoot\)|\boutputs?\b|\bfrom\s+(?:the\s+)?shoots?\b/i;
+const PER_MONTH = /\bper\s+month\b|\/\s*month\b|\bmonthly\b|\ba\s+month\b/i;
+
+/** "96 content pieces in total (per month) — a total, not a row". */
+function totalNote(quantity: number, what: string): string {
+  const base = what.replace(PER_MONTH, " ").replace(/\s+in\s+total\b/i, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  return `${quantity} ${base} in total${PER_MONTH.test(what) ? " (per month)" : ""} — a total, not a row`;
+}
+
+/** Where cleanRows puts what it takes out of the rows (totals → checks, shoots → notes). */
+export interface CleanSink {
+  notes: string[];
+  totals: StatedTotal[];
+}
+
+/** The stated total of an extraction: the overall one (first found), with the per-phase ones. */
+function statedTotalOf(totals: StatedTotal[], phases: Array<{ phase: string; quantity: number }>): StatedTotal | null {
+  const overall = totals[0] ?? null;
+  if (!phases.length) return overall;
+  if (overall) return { ...overall, phases };
+  const quantity = phases.reduce((n, p) => n + p.quantity, 0);
+  return { quantity, per: null, text: `Totals per phase: ${phases.map((p) => `${p.phase} ${p.quantity}`).join("; ")}`, phases };
 }
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
@@ -178,15 +234,32 @@ function languagesIn(text: string): string[] {
   return found.length ? [...found] : ["English"];
 }
 
-function cleanRows(rows: ExtractedScopeRow[]): ExtractedScopeRow[] {
+/**
+ * Every extracted row (AI and rules) goes through here: units, languages and limits checked, and a
+ * post-pass: totals ("96 Content Pieces") become a stated total, shoots / production days a note
+ * (unless the row is the shoot's output), and an "Others" row whose name is a real unit
+ * ("Native Snap stories", "TikTok videos") gets that unit.
+ */
+export function cleanRows(rows: ExtractedScopeRow[], sink?: CleanSink): ExtractedScopeRow[] {
   const units = new Map(SCOPE_UNITS.map((u) => [u.toLowerCase(), u as string]));
   const langs = new Map(SCOPE_LANGUAGES.map((l) => [l.toLowerCase(), l as string]));
   const out: ExtractedScopeRow[] = [];
   for (const r of rows) {
     const quantity = Math.round(Number(r.quantity));
     if (!Number.isFinite(quantity) || quantity < 1) continue;
-    const what = String(r.what ?? "").trim().slice(0, 80);
-    const unit = units.get(String(r.unit ?? "").toLowerCase()) ?? unitFor(what);
+    const what = String(r.what ?? "").replace(ZERO_WIDTH, "").replace(/\s+/g, " ").trim().slice(0, 80);
+    let unit = units.get(String(r.unit ?? "").toLowerCase()) ?? unitFor(what);
+    if (TOTAL_WHAT.test(what)) {
+      sink?.notes.push(totalNote(quantity, what));
+      sink?.totals.push({ quantity, per: PER_MONTH.test(what) ? "month" : null, text: `${quantity} ${what}` });
+      continue;
+    }
+    if (SHOOT_WHAT.test(what) && !SHOOT_OUTPUT.test(what)) {
+      sink?.notes.push(`${quantity} × ${what} — a shoot / production day, kept as a note (not a content piece).`);
+      continue;
+    }
+    // Brackets don't decide the unit ("Live event coverage (… 3 recap videos)" stays Others).
+    if (unit === "Others") unit = unitFor(what.replace(/\(.*?\)/g, " "));
     const languageList = [...new Set((Array.isArray(r.languageList) ? r.languageList : []).map((l) => langs.get(String(l).toLowerCase())).filter((l): l is string => Boolean(l)))];
     const sizes = Math.min(SCOPE_LIMITS.maxMultiplier, Math.max(1, Math.round(Number(r.sizes) || 1)));
     // The same deliverable named twice (e.g. two pages of one brief) counts once.
@@ -342,6 +415,9 @@ function phaseCounts(lines: string[], languageList: string[], source: string) {
   const ranges = new Map<string, string[]>();
   const phases: string[] = [];
   const totals = new Map<string, number>();
+  // The "Total: N" of each phase (a check, not a row); one without a phase is an overall total.
+  const phaseTotals: Array<{ phase: string; quantity: number }> = [];
+  const overall: number[] = [];
   let phase: string | null = null;
   const nextLine = (i: number) => {
     for (let j = i + 1; j < lines.length; j++) if (lines[j]!.trim()) return j;
@@ -361,7 +437,11 @@ function phaseCounts(lines: string[], languageList: string[], source: string) {
     consumed.add(i);
     if (phase && !phases.includes(phase)) phases.push(phase);
     for (const c of counts) {
-      if (TOTAL_LABEL.test(c.label)) continue;
+      if (TOTAL_LABEL.test(c.label)) {
+        if (phase) phaseTotals.push({ phase, quantity: c.high });
+        else overall.push(c.high);
+        continue;
+      }
       const label = c.label.charAt(0).toUpperCase() + c.label.slice(1);
       const unit = unitFor(label);
       rows.push({ unit, what: phase ? `${label} — ${phase}` : label, quantity: c.high, languageList, sizes: 1, source });
@@ -378,7 +458,7 @@ function phaseCounts(lines: string[], languageList: string[], source: string) {
   if (phases.length >= 2) {
     notes.push(`Across the ${phases.length} phases: ${[...totals].map(([unit, n]) => `${unit} ${n}`).join(", ")}`);
   }
-  return { rows, notes, consumed, phased: phases.length > 0 };
+  return { rows, notes, consumed, phased: phases.length > 0, phaseTotals, overall };
 }
 
 // --- "Other scope": the scope text that isn't a row or a note --------------------
@@ -441,7 +521,7 @@ function joinWrapped(lines: string[]): string[] {
   return out;
 }
 
-const tidy = (s: string) => s.replace(/ /g, " ").replace(/[ \t]+/g, " ").trim();
+const tidy = (s: string) => s.replace(ZERO_WIDTH, "").replace(/ /g, " ").replace(/[ \t]+/g, " ").trim();
 
 /** Marks a bullet that was read in full (a row / note): kept only inside a headed section. */
 const READ_MARK = "\u0001";
@@ -454,7 +534,7 @@ function finishBox(raw: string[]): string {
   const input: string[] = [];
   for (const l of raw) {
     const prev = input[input.length - 1];
-    if (prev !== undefined && bulletLine(prev) && !bulletLine(l) && !/:$/.test(l) && !/^scope\s*:/i.test(l)) {
+    if (prev !== undefined && bulletLine(prev) && !bulletLine(l) && !/:$/.test(l) && !/^(?:scope|platforms?)\s*:/i.test(l)) {
       input[input.length - 1] = `${prev} ${l}`;
       continue;
     }
@@ -467,7 +547,7 @@ function finishBox(raw: string[]): string {
     l !== undefined &&
     !bulletLine(l) &&
     !/[.:;,!?]$/.test(l) &&
-    !/^scope\s*:/i.test(l) &&
+    !/^(?:scope|platforms?)\s*:/i.test(l) &&
     l.length <= 60 &&
     l.split(/\s+/).length <= 8 &&
     /^[\p{Lu}\d]/u.test(l);
@@ -483,7 +563,7 @@ function finishBox(raw: string[]): string {
       return;
     }
     if (shortHeading(l) && !bulletLine(l)) inTitled = false;
-    sectioned.push(inTitled && !bulletLine(l) && !/^scope\s*:/i.test(l) && !shortHeading(l) ? `• ${l}` : l);
+    sectioned.push(inTitled && !bulletLine(l) && !/^(?:scope|platforms?)\s*:/i.test(l) && !shortHeading(l) ? `• ${l}` : l);
   });
   input.splice(0, input.length, ...sectioned);
   // A plain line that bullets follow heads them ("360 Social Media Management - Facebook …" → "…:").
@@ -494,7 +574,7 @@ function finishBox(raw: string[]): string {
       return !(next && !bulletLine(l) && l.length <= 40 && !/:$/.test(l) && next.toLowerCase().includes(l.toLowerCase().replace(/[.:]+$/, "")));
     })
     .map((l, i, all) =>
-      !bulletLine(l) && !/:$/.test(l) && !/^scope\s*:/i.test(l) && l.length <= 120 && bulletLine(all[i + 1]) ? `${l.replace(/[.;,]+$/, "")}:` : l
+      !bulletLine(l) && !/:$/.test(l) && !/^(?:scope|platforms?)\s*:/i.test(l) && l.length <= 120 && bulletLine(all[i + 1]) ? `${l.replace(/[.;,]+$/, "")}:` : l
     );
   const isHeading = (l: string) => /:$/.test(l) && l.length <= 121 && !l.startsWith("•");
   // Fully read bullets stay (as written) only under a heading; a plain list that all became rows adds nothing.
@@ -619,11 +699,188 @@ export function leadsByRules(texts: Array<{ source: string; text: string }>): Ex
   return out.slice(0, 10);
 }
 
-export function extractByRules(texts: Array<{ source: string; text: string }>): Omit<ScopeExtraction, "texts" | "usedAI"> {
+/** Acronyms kept in capitals when an ALL-CAPS cell is tidied. */
+const ACRONYMS = new Set("FB IG KSA UAE KPI KPIS CTR AR VR UGC SM X TV OOH PR LPS SEO SEM CRM FAQ FAQS ROI".split(" "));
+const CASED: Record<string, string> = { TIKTOK: "TikTok", YOUTUBE: "YouTube", LINKEDIN: "LinkedIn", SNAPCHAT: "Snapchat" };
+
+/** "360 SOCIAL MARCOMS & ACCOUNT MANAGEMENT" → "360 Social Marcoms & Account Management" (ALL-CAPS only). */
+function unshout(s: string, sentence = false): string {
+  if (/\p{Ll}/u.test(s) || !/\p{Lu}{2}/u.test(s)) return s;
+  let first = true;
+  return s.replace(/\p{L}[\p{L}'’]*/gu, (w) => {
+    const up = w.toUpperCase();
+    const out = CASED[up] ?? (ACRONYMS.has(up) ? w : first || !sentence ? w.charAt(0) + w.slice(1).toLowerCase() : w.toLowerCase());
+    first = false;
+    return out;
+  });
+}
+
+/** A sub-heading that is only a platform name ("Snapchat:", "Instagram:", "Tiktok"). */
+const PLATFORM_HEADING = new Map<string, string>([
+  ["snapchat", "Snapchat"], ["snap chat", "Snapchat"], ["snap", "Snapchat"],
+  ["instagram", "Instagram"], ["ig", "Instagram"],
+  ["tiktok", "TikTok"], ["tik tok", "TikTok"],
+  ["facebook", "Facebook"], ["fb", "Facebook"], ["meta", "Meta"],
+  ["linkedin", "LinkedIn"], ["linked in", "LinkedIn"],
+  ["youtube", "YouTube"], ["you tube", "YouTube"],
+  ["x", "X"], ["twitter", "X"], ["x (twitter)", "X"],
+]);
+
+/**
+ * Table cells a heading was split into: "360 SOCIAL MARCOMS" / "&" / "ACCOUNT MANAGEMENT" → one line;
+ * "PLATFORMS:" and the platform cells under it → "Platforms: Meta (FB & IG), TikTok, X (Twitter)".
+ */
+function joinFragments(lines: string[]): string[] {
+  const out: string[] = [];
+  const lastFilled = () => {
+    for (let k = out.length - 1; k >= 0; k--) if (tidy(out[k]!)) return k;
+    return -1;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = tidy(lines[i]!);
+    const k = lastFilled();
+    if (/^(?:&|and)$/i.test(line) && k >= 0) {
+      let j = i + 1;
+      while (j < lines.length && !tidy(lines[j]!)) j++;
+      if (j < lines.length) {
+        out.splice(k, out.length - k, unshout(`${tidy(out[k]!)} & ${tidy(lines[j]!)}`));
+        i = j;
+        continue;
+      }
+    }
+    if (/^platforms?\s*:$/i.test(line)) {
+      const names: string[] = [];
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const n = tidy(lines[j]!);
+        if (!n) continue;
+        if (n.length > 30 || /^\d/.test(n) || /:$/.test(n) || DROP_LINE.test(n)) break;
+        names.push(unshout(n));
+      }
+      if (names.length) {
+        out.push(`Platforms: ${names.join(", ")}`);
+        i = j - 1;
+        continue;
+      }
+    }
+    out.push(lines[i]!);
+  }
+  return out;
+}
+
+const KPI_START = /^(?:kpi[’']?s?|full\s+video\s+views|video\s+views|clicks|ctr|impressions|reach|engagement\s+rate)\b/i;
+const KPI_METRIC = /^([\p{L}][\p{L} .’']{1,30}?)\s*[–:-]\s*([\d.,]+\s*[%kKmM]?\s*\+?)$/u;
+
+/**
+ * A KPI table at the end of the scope ("Full Video Views (Expected) · Clicks – 15K + · CTR – 5% +
+ * (Estimated) · (KSA ONLY) · STREAMERS · 2 UNIQUE STATICS ADS …") → one section:
+ * "KPIs & Streamers (KSA only):" with "• Clicks: 15K+" items. Null when there is none.
+ */
+function kpiSection(lines: string[], start: number, end: number): { at: number; consumed: Set<number>; lines: string[] } | null {
+  let first = -1;
+  for (let i = start; i < end; i++) {
+    const l = tidy(lines[i]!);
+    if (l.length <= 40 && KPI_START.test(l)) {
+      first = i;
+      break;
+    }
+  }
+  if (first < 0) return null;
+  const consumed = new Set<number>();
+  const block: string[] = [];
+  for (let i = first; i < end; i++) {
+    const l = tidy(lines[i]!);
+    if (isFooter(l)) break;
+    consumed.add(i);
+    if (l) block.push(l);
+  }
+  // Only a table of metrics ("Clicks – 15K +"), not a "KPIs & Evaluation" paragraph.
+  if (!block.some((l) => KPI_METRIC.test(l)) || block.some((l) => l.length > 60)) return null;
+  // Its "Deliverables" header cell just before.
+  for (let i = first - 1; i >= start; i--) {
+    const l = tidy(lines[i]!);
+    if (!l) continue;
+    if (/^deliverables?$/i.test(l)) consumed.add(i);
+    break;
+  }
+  type Item = { label: string; value: string; note: string; parts: string[] };
+  const items: Item[] = [];
+  const lower = (s: string) => unshout(s, true).replace(/^\p{Lu}(?!\p{Lu})/u, (c) => c.toLowerCase());
+  // "FULL VIDEO VIEWS" / "Full Video Views" → "Full video views" (acronyms kept).
+  const sentence = (s: string) =>
+    unshout(s.replace(/[’']s$/i, "s"), true).replace(/(?<=\s)(\p{Lu})(\p{Ll}+)/gu, (_w, a: string, b: string) => `${a.toLowerCase()}${b}`);
+  let last: Item | null = null;
+  let group: Item | null = null;
+  let parenBefore = false;
+  let qualifier = "";
+  let number: string | null = null;
+  for (const l of block) {
+    if (/^kpi[’']?s?$/i.test(l) || /^deliverables?$/i.test(l)) {
+      group = null;
+      continue;
+    }
+    const paren = l.match(/^\((.+)\)$/);
+    if (paren) {
+      const q = lower(paren[1]!.trim()).replace(/\b(arabic|english|french|hindi|urdu)\b/gi, (w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+      if (last && !parenBefore && !last.note) last.note = q;
+      else qualifier = q;
+      parenBefore = true;
+      continue;
+    }
+    parenBefore = false;
+    const metric = l.match(KPI_METRIC);
+    if (metric) {
+      last = { label: sentence(metric[1]!.trim()), value: metric[2]!.replace(/\s+/g, ""), note: "", parts: [] };
+      items.push(last);
+      group = null;
+      continue;
+    }
+    const num = l.match(/^([\d.,]+\s*(?:million|thousand|billion|bn|m|k)?)$/i);
+    if (num) {
+      number = num[1]!.trim().toLowerCase();
+      continue;
+    }
+    if (number) {
+      const label = sentence(l);
+      const waiting = items.find((x) => x.label.toLowerCase() === label.toLowerCase() && !x.value);
+      if (waiting) waiting.value = number;
+      else items.push({ label, value: number, note: "", parts: [] });
+      number = null;
+      continue;
+    }
+    const count = l.match(/^(\d{1,3})\s*x?\s+(.+)$/i);
+    if (count && group) {
+      group.parts.push(`${count[1]} ${lower(count[2]!).replace(/\b(static|dynamic)s(?=\s+ads?\b)/gi, "$1")}`);
+      last = group;
+      continue;
+    }
+    last = { label: sentence(l), value: "", note: "", parts: [] };
+    items.push(last);
+    group = last;
+  }
+  const shown = items.filter((x) => x.value || x.parts.length);
+  if (!shown.length) return null;
+  const groups = shown.filter((x) => x.parts.length).map((x) => x.label);
+  const title = `KPIs${groups.length ? ` & ${groups.join(" & ")}` : ""}${qualifier ? ` (${qualifier})` : ""}:`;
+  return {
+    at: Math.min(...consumed),
+    consumed,
+    lines: [title, ...shown.map((x) => `• ${x.label}: ${x.parts.length ? x.parts.join(" + ") : x.value}${x.note ? ` (${x.note})` : ""}`)],
+  };
+}
+
+export function extractByRules(rawTexts: Array<{ source: string; text: string }>): Omit<ScopeExtraction, "texts" | "usedAI"> {
+  const texts = rawTexts.map((t) => ({ ...t, text: t.text.replace(ZERO_WIDTH, "") }));
   const all = texts.map((t) => t.text).join("\n");
   const languageList = languagesIn(all);
   const rows: ExtractedScopeRow[] = [];
   const notes: string[] = [];
+  // The agreement's totals ("96 Content Pieces per month", "Total: 62"): checks, not rows.
+  const totals: StatedTotal[] = [];
+  const phaseTotals: Array<{ phase: string; quantity: number }> = [];
+  // A platform sub-heading ("Snapchat:", "Instagram:") names the rows under it; under "Shoots" they are notes.
+  let platformCtx: string | null = null;
+  let shootCtx = false;
   const boxes: Array<{ source: string; text: string }> = [];
   let phased = false;
 
@@ -673,12 +930,23 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       .split(/\s+(?:with|for|using|across|in|on|per|-|–)\s+/i)[0]!
       .replace(/[.:;,]+$/, "")
       .trim();
-    if (!what || /content pieces|deliverables in total|^days?\b|days a week/i.test(what)) return [];
+    if (TOTAL_WHAT.test(what) || /deliverables in total/i.test(what)) {
+      const per = PER_MONTH.test(line) ? "month" : null;
+      totals.push({ quantity, per, text: line.replace(/\s+/g, " ").trim() });
+      notes.push(totalNote(quantity, `${what}${per && !PER_MONTH.test(what) ? " per month" : ""}`));
+      return [line];
+    }
+    if (!what || /^days?\b|days a week/i.test(what)) return [];
     // A date ("Start date: 26 Oct 2026") isn't a count.
     if (/^(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?,?(?:\s+'?\d{2,4})?$/i.test(what)) return [];
     // Talent isn't a deliverable.
     if (/^(models?|talents?)\b/i.test(what)) {
       notes.push(`${quantity} ${what.toLowerCase()} — talent, kept as a note.`);
+      return [line];
+    }
+    // Items under a "Shoots" / "Production" heading are production, not content.
+    if (shootCtx && !OUTPUT_RE.test(line)) {
+      notes.push(`${quantity}x ${what} — production (shoots), kept as a note (not a content piece).`);
       return [line];
     }
     if (/\bshoots?\b|\bshooting\b/i.test(what)) {
@@ -699,29 +967,69 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       ? " (per year)"
       : /\bper\s+quarter\b|\bquarterly\b/i.test(context)
         ? " (per quarter)"
-        : "";
+        : /\bper\s+month\b|\/\s*month\b/i.test(line)
+          ? " (per month)"
+          : "";
     if (range) notes.push(`${range[1]}-${range[2]} ${what.toLowerCase()} — ${Math.max(Number(range[1]), Number(range[2]))} used.`);
-    rows.push({ unit: unitFor(what), what: `${what.charAt(0).toUpperCase()}${what.slice(1)}${often}`, quantity, languageList, sizes: 1, source });
-    return [what];
+    // The platform: the sub-heading the item sits under (tweets are always X).
+    const platform = /\btweets?\b/i.test(what) ? "X" : platformCtx;
+    const name = what.replace(/\s+\/\s*|\s*\/\s+/g, " / ");
+    rows.push({ unit: unitFor(what), what: `${name.charAt(0).toUpperCase()}${name.slice(1)}${platform ? ` — ${platform}` : ""}${often}`, quantity, languageList, sizes: 1, source });
+    return often === " (per month)" ? [what, often] : [what];
   };
 
   for (const { source, text } of texts) {
-    const lines = joinWrapped(text.split(/\r?\n/));
+    const lines = joinFragments(joinWrapped(text.split(/\r?\n/)));
     // "Label: N" counts (per phase) first; those lines aren't read again.
     const counted = phaseCounts(lines, languageList, source);
     rows.push(...counted.rows);
     notes.push(...counted.notes);
+    phaseTotals.push(...counted.phaseTotals);
+    for (const quantity of counted.overall) totals.push({ quantity, per: null, text: `Total: ${quantity}` });
+    platformCtx = null;
+    shootCtx = false;
+    let serviceSection = false;
+    let listSection = false;
     phased ||= counted.phased;
     // The scope part of the document: from its "Agreed deliverables" / "Scope of work" heading (else all of it).
     const start = Math.max(0, lines.findIndex((l) => SCOPE_HEADING.test(tidy(l))) + 1);
     // An out-of-scope rate card after the scope isn't scope: nothing from it is read.
     const stop = lines.findIndex((l, i) => i >= start && OUT_OF_SCOPE.test(tidy(l)));
     if (stop >= 0) notes.push("The document's out-of-scope rate card isn't part of the scope (not read).");
+    // A KPI table (views, clicks, CTR, streamers…) is one "other scope" section, never rows.
+    const kpi = kpiSection(lines, start, stop >= 0 ? stop : lines.length);
     const box: string[] = [];
     lines.forEach((rawLine, idx) => {
       if (counted.consumed.has(idx) || (stop >= 0 && idx >= stop)) return;
+      if (kpi?.consumed.has(idx)) {
+        if (idx === kpi.at) box.push(...kpi.lines);
+        return;
+      }
       const line = normaliseCounts(tidy(rawLine));
       if (!line) return;
+      // "Total: 62" alone: the agreement's total (a check, not a row).
+      const total = line.match(/^(?:grand\s+)?total\s*[:\-–]\s*(\d{1,4})\.?$/i);
+      if (total) {
+        totals.push({ quantity: Number(total[1]), per: null, text: line });
+        return;
+      }
+      // Platform sub-headings ("Snapchat:", "Instagram:", "Tiktok") and "Shoots" set what the items under them are.
+      const heading = line.replace(/[\s:]+$/, "");
+      const platform = PLATFORM_HEADING.get(heading.toLowerCase().replace(/\s+/g, " "));
+      if (platform) {
+        platformCtx = platform;
+        shootCtx = false;
+        return;
+      }
+      if (/^(?:shoots?|shooting|production(?:\s+days?)?)$/i.test(heading)) {
+        shootCtx = true;
+        platformCtx = null;
+        return;
+      }
+      if (!new RegExp(String.raw`^(?:[-–*o·•]\s*)?(?:\d|${QTY})`, "i").test(line)) {
+        platformCtx = null;
+        shootCtx = false;
+      }
       // "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)" → its breakdown.
       const posts = postsPerMonth(line);
       if (posts) {
@@ -762,7 +1070,40 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       if (!keep.some(Boolean)) return;
       const mark = readAll ? READ_MARK : "";
       if (!inline) {
-        box.push(bullet ? `${mark}• ${parts[0] ?? ""}` : line);
+        if (bullet) {
+          box.push(`${mark}• ${parts[0] ?? ""}`);
+          return;
+        }
+        // A heading cell followed by its "Platforms:" line: its service lines are its items.
+        if (/:$/.test(line) || /^notes?$/i.test(line)) serviceSection = false;
+        const next = lines.slice(idx + 1).find((l) => tidy(l));
+        if (!/:$/.test(line) && next && /^platforms?\s*:/i.test(tidy(next))) {
+          box.push(`${line.replace(/[.;,]+$/, "")}:`);
+          serviceSection = true;
+          return;
+        }
+        if (/^platforms?\s*:/i.test(line)) {
+          box.push(line);
+          return;
+        }
+        if (serviceSection) {
+          box.push(`• ${line}`);
+          return;
+        }
+        // "Special Activations (additional scope on request):" — the lines under it are its items
+        // ("Seasonal Campaigns; Live Q&A on X, Influencer engagements" → one item each).
+        if (/:$/.test(line)) {
+          listSection = /\b(?:on request|additional scope|optional|special activations?)\b/i.test(line);
+          box.push(line);
+          return;
+        }
+        if (listSection) {
+          const items = line.split(/\s*[;,]\s*/).filter(Boolean);
+          const short = items.length > 1 && items.every((x) => x.length <= 40 && !/\d/.test(x));
+          for (const x of short ? items : [line]) box.push(`• ${x}`);
+          return;
+        }
+        box.push(line);
         return;
       }
       parts.forEach((part, pi) => {
@@ -814,8 +1155,9 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       milestone2: parseLooseDate(find(/milestone\s*2[^:\n]*[:\-–]\s*([^\n]+)/i)),
       ...period(),
     },
-    scope: cleanRows(rows),
+    scope: cleanRows(rows, { notes, totals }),
     notes,
+    statedTotal: statedTotalOf(totals, phaseTotals),
     otherScope,
     leads: leadsByRules(texts),
   };
@@ -834,8 +1176,10 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
 - "dates": {"clientPresentation","milestone1","milestone2","startDate","endDate"} as YYYY-MM-DD if stated, else null.
   startDate / endDate are the period of the work (contract or campaign start; end date, deadline or go-live).
 - "scope": the countable content deliverables, one row each: {"what": the deliverable as written (e.g. "Engagement posts"),
-  "unit": one of ${SCOPE_UNITS.join(", ")} (Reel for reels, Story for stories, Carousel, Video for videos/TikToks/films,
-  Static for posts/images/visuals, Others for anything else such as tweets), "quantity": integer,
+  "unit": one of ${SCOPE_UNITS.join(", ")} (Reel for reels, Story for stories — "Snap stories", "Native Snap stories",
+  "Instagram stories" are Story —, Carousel, Video for videos / "TikTok videos" / "Native TikTok videos" / films,
+  Static for posts / statics / images / visuals, Others ONLY for anything else such as tweets). Never use Others for an item
+  whose name says story, video, reel, post, static or carousel. "quantity": integer,
   "languageList": languages from [${SCOPE_LANGUAGES.join(", ")}] the content is in (default ["English"]),
   "sizes": number of sizes/formats if stated else 1, "source": the input name it came from}.
   Services WITHOUT a count (strategy, community management, reporting, client meetings, content calendars, posting,
@@ -844,12 +1188,15 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   A shoot is not content, but what it produces is: "1 Half Day Shoot - Output is 5 Reel size Videos" → 5 × Reel (and the shoot as a note).
   Items joined with " * " on one line are separate items ("10 Brand Stories * Half a day shoot * 2 round" → 10 × Story;
   the shoot and "2 rounds of revisions" as notes).
-  Do NOT list totals ("53x content pieces"), shoot / production days, revision rounds or models / talent as scope rows.
+  Do NOT list totals ("96 Content Pieces per month", "53x content pieces in total", "Total: 62"), shoots / shoot days /
+  production days / "full day video shoots", revision rounds or models / talent as scope rows. A total goes in
+  "statedTotal" (the rows are checked against it); shoots and production visits go in "notes".
   When a deliverable is broken down into sub-items whose counts add up to it ("12 videos: 5 storytelling, 7 shorter"),
   list it ONCE with the split in "what" ("Short-form videos (5 storytelling, 7 shorter)").
   If two inputs list the same deliverable, list it once.
   Counts written as "Label: N" ("Static:4; Carousel:6; Reels/Motion Graphics:13 to 15; Stories:35") are rows: unit from
-  the label (Reels/Motion Graphics → Reel, Stories → Story, Static → Static, Carousel → Carousel). Ignore "Total: N".
+  the label (Reels/Motion Graphics → Reel, Stories → Story, Static → Static, Carousel → Carousel). "Total: N" is not a row:
+  per phase it goes in "statedTotal.phases" ({"phase","quantity"}).
   A range ("13 to 15", "13-15") uses the HIGHER number, with a note "Reels/Motion Graphics: 13 to 15 — 15 used".
   When such counts sit under phase / period headings ("Pre – Pre Event : Sep '26", "Event : Dec '26", "Phase 1",
   "Month 1", "Week 1", a month), list one row per label AND phase: "what" = "<Label> — <phase>"
@@ -867,6 +1214,22 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   (per year; per event: 20 edited photos + 3 recap videos)" — the per-event items are not separate rows.
   An "Out-of-Scope Rate Card" (or any rate card / price list) is NOT scope: no rows, no notes, nothing in "otherScope" from it
   — add one note "The document's out-of-scope rate card isn't part of the scope".
+  Platform sub-headings ("Snapchat:", "Instagram:", "Tiktok") name the rows under them: "what" = "<item> — <platform>".
+  Example (a monthly retainer agreement):
+    "96 Content Pieces per month / Snapchat: 15-18 Native Snap stories per month / Instagram: 5x reels (Instagram),
+    15x brand planned stories, 8x statics/ motion graphics / Tiktok: 8x native TikTok videos, 30x tweets /
+    Shoots: 3x lean (mobile shot) storytelling visits + 2 x full day video shoots" →
+    rows 18 × Story "Native Snap stories — Snapchat (per month)" (note "15-18 Native Snap stories — 18 used"),
+    5 × Reel "Reels — Instagram", 15 × Story "Brand planned stories — Instagram", 8 × Static "Statics / motion graphics — Instagram",
+    8 × Video "Native TikTok videos — TikTok", 30 × Others "Tweets — X"; "statedTotal" {"quantity":96,"per":"month",
+    "text":"96 Content Pieces per month"}; the storytelling visits and the full day video shoots as notes (production).
+    Its services under "360 SOCIAL MARCOMS & ACCOUNT MANAGEMENT / PLATFORMS: META (FB & IG), TIKTOK, X (TWITTER)" are the
+    section "360 Social Marcoms & Account Management:" with "Platforms: Meta (FB & IG), TikTok, X (Twitter)" and one
+    "• item" per service; "Special Activations (additional scope on request):" with one "• item" each (split "Seasonal
+    Campaigns; Live Q&A on X, Influencer engagements"); a KPI table → "KPIs & Streamers (KSA only):" with
+    "• Full video views: 1.2 million (expected)", "• Clicks: 15K+", "• CTR: 5%+ (estimated)",
+    "• Streamers: 2 unique static ads + 2 unique dynamic ads (Arabic only)". KPI figures are never rows.
+  Ignore zero-width characters.
   Documents whose sections are plain headings ("Strategy & Planning", "Community Management") followed by sentences:
   each heading is a section in "otherScope" and each sentence a "• item" line under it.
 - "otherScope": ONE string with the rest of the scope / deliverables part of the documents that is NOT a scope row or a
@@ -878,13 +1241,16 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   Start at the "Agreed deliverables" / "Deliverables" / "Scope of work" heading if there is one. Leave out table headers
   (ITEM / DETAILS / NOTES), "NIL" / "N/A", the address / phone / email footer and the team / resources list.
   "" when nothing is left.
+- "statedTotal": the overall number of content pieces the agreement states ("96 Content Pieces per month" →
+  {"quantity":96,"per":"month","text":"96 Content Pieces per month"}; "per" is "month" or null), with "phases" when
+  there are "Total: N" lines per phase; null when the agreement states no total. It is a check, never a row.
 - "notes": short notes for the user to check (shoot days, things that repeat monthly, assumptions, conflicts between inputs).
 - "leads": the AGENCY-side people named as lead: account lead, project lead, point of contact / contact person on the
   agency's side, or "Prepared by" (mark those {"weak":true}). Not the client's people, not signatories of the client.
   One entry per person: {"name": the person's name as written, "source": the input name}.
 Reply with JSON only:
 {"texts":[{"source":"<input name>","text":"..."}],"projectName":null,"platforms":[],"revenue":null,
- "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null,"startDate":null,"endDate":null},"scope":[],"notes":[],"otherScope":"","leads":[]}`;
+ "dates":{"clientPresentation":null,"milestone1":null,"milestone2":null,"startDate":null,"endDate":null},"scope":[],"statedTotal":null,"notes":[],"otherScope":"","leads":[]}`;
 
 /** The model's "otherScope" (any type) as tidy text: spaces collapsed per line, at most OTHER_SCOPE_MAX. */
 function parseOtherScope(raw: unknown): string {
@@ -909,6 +1275,26 @@ function parseOtherScope(raw: unknown): string {
     .replace(/\n{3,}/g, "\n\n")
     .trim()
     .slice(0, OTHER_SCOPE_MAX);
+}
+
+/** The model's "statedTotal" (any shape) checked; null when it isn't a positive count. */
+export function parseStatedTotal(raw: unknown): StatedTotal | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  const phases = (Array.isArray(o.phases) ? o.phases : [])
+    .map((x) => x as Record<string, unknown>)
+    .map((x) => ({ phase: String(x?.phase ?? "").replace(ZERO_WIDTH, "").trim().slice(0, 80), quantity: Math.round(Number(x?.quantity)) }))
+    .filter((x) => x.phase && Number.isFinite(x.quantity) && x.quantity > 0)
+    .slice(0, 24);
+  let quantity = Math.round(Number(o.quantity));
+  if (!(Number.isFinite(quantity) && quantity > 0) && phases.length) quantity = phases.reduce((n, x) => n + x.quantity, 0);
+  if (!Number.isFinite(quantity) || quantity < 1 || quantity > 100_000) return null;
+  return {
+    quantity,
+    per: o.per === "month" ? "month" : null,
+    text: String(o.text ?? "").replace(ZERO_WIDTH, "").replace(/\s+/g, " ").trim().slice(0, 200),
+    ...(phases.length ? { phases } : {}),
+  };
 }
 
 async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<Omit<ScopeExtraction, "usedAI">> {
@@ -950,6 +1336,10 @@ async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<
       ? (p.texts as Array<Record<string, unknown>>).map((t) => ({ source: String(t.source ?? ""), text: String(t.text ?? "").slice(0, TEXT_MAX), read: true }))
       : [];
     const dates = (p.dates ?? {}) as Record<string, unknown>;
+    // Rows the model still made of totals / shoots are taken out here (totals become the stated total).
+    const sink: CleanSink = { notes: [], totals: [] };
+    const scope = cleanRows(Array.isArray(p.scope) ? (p.scope as ExtractedScopeRow[]) : [], sink);
+    const notes = [...(Array.isArray(p.notes) ? (p.notes as unknown[]).map(String).map((s) => s.replace(ZERO_WIDTH, "").slice(0, 300)) : []), ...sink.notes].slice(0, 24);
     return {
       texts,
       projectName: typeof p.projectName === "string" && p.projectName.trim() ? p.projectName.trim().slice(0, 80) : null,
@@ -962,8 +1352,9 @@ async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<
         startDate: parseLooseDate(dates.startDate),
         endDate: parseLooseDate(dates.endDate),
       },
-      scope: cleanRows(Array.isArray(p.scope) ? (p.scope as ExtractedScopeRow[]) : []),
-      notes: Array.isArray(p.notes) ? (p.notes as unknown[]).map(String).map((s) => s.slice(0, 300)).slice(0, 20) : [],
+      scope,
+      notes,
+      statedTotal: parseStatedTotal(p.statedTotal) ?? statedTotalOf(sink.totals, []),
       otherScope: parseOtherScope(p.otherScope),
       // The model's leads, plus any the rules see in its transcription (it can miss a "Lead:" line).
       leads: mergeLeads(

@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { LuLoaderCircle, LuPlus, LuSparkles, LuX } from "react-icons/lu";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { LuCircleCheck, LuLoaderCircle, LuPlus, LuSparkles, LuTriangleAlert, LuX } from "react-icons/lu";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { diffIsEmpty } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
-import type { DiffRow, ScopeDiff, ScopeDiffSide, ScopeMatchResult } from "@/types";
+import type { DiffRow, ScopeDiff, ScopeDiffSide, ScopeMatchResult, StatedTotal } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Scope comparisons shared by the brand flow, the brand page and Approvals:
@@ -314,12 +314,12 @@ export function ScopeSectionsList({ text }: { text: string }) {
 }
 
 /** The saved "Other scope", read-only: one box per section. */
-export function OtherScopeText({ text, className }: { text: string; className?: string }) {
+export function OtherScopeText({ text, className, title = "Other scope (not itemised)" }: { text: string; className?: string; title?: ReactNode }) {
   if (!text.trim()) return null;
   const sections = parseScopeSections(text);
   return (
     <div className={cn("space-y-1.5", className)}>
-      <p className="text-sm font-medium">Other scope (not itemised)</p>
+      <p className="text-sm font-medium">{title}</p>
       <div className="grid gap-2 lg:grid-cols-2">
         {sections.map((section, i) => (
           <div key={i} className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
@@ -371,6 +371,96 @@ export function OtherScopeChange({ from, to, className }: { from: string; to: st
           <SectionCards text={to} tone="after" />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The agreement's stated total ("96 content pieces per month") against the rows:
+// "Agreement total: 96 per month · rows add up to 84 — 12 short". Advice only.
+// The rows' QUANTITIES are added (not × languages × sizes); service rows can't be
+// told apart from content rows, so every row counts.
+// ---------------------------------------------------------------------------
+
+type QtyRow = { quantity: number; what?: string };
+
+/** Rows' quantities added up; per phase: the rows whose name ends with " — <phase>". */
+export function scopeTotalCheck(total: StatedTotal, rows: QtyRow[]) {
+  const sum = rows.reduce((n, r) => n + (Number(r.quantity) || 0), 0);
+  const phases = (total.phases ?? []).map((p) => {
+    const inPhase = rows.filter((r) => (r.what ?? "").trim().toLowerCase().endsWith(`— ${p.phase}`.toLowerCase()));
+    return { ...p, sum: inPhase.reduce((n, r) => n + (Number(r.quantity) || 0), 0), rows: inPhase.length };
+  });
+  return { sum, diff: sum - total.quantity, phases };
+}
+
+function gapText(diff: number) {
+  return diff === 0 ? "✓" : diff < 0 ? `— ${-diff} short` : `— ${diff} over`;
+}
+
+export function ScopeTotalCheck({ total, rows, className }: { total: StatedTotal | null | undefined; rows: QtyRow[]; className?: string }) {
+  if (!total) return null;
+  const check = scopeTotalCheck(total, rows);
+  const ok = check.diff === 0;
+  return (
+    <div
+      role="status"
+      className={cn(
+        "rounded-lg px-3 py-2 text-sm",
+        ok ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-300" : "bg-amber-500/10 text-amber-800 dark:text-amber-300",
+        className,
+      )}
+    >
+      <p className="flex flex-wrap items-center gap-1.5">
+        {ok ? <LuCircleCheck aria-hidden className="size-4 shrink-0" /> : <LuTriangleAlert aria-hidden className="size-4 shrink-0" />}
+        <span>
+          Agreement total: <span className="font-semibold tabular-nums">{total.quantity}</span>
+          {total.per === "month" ? " per month" : ""} · rows add up to <span className="font-semibold tabular-nums">{check.sum}</span> {gapText(check.diff)}
+        </span>
+      </p>
+      {check.phases.some((p) => p.rows > 0) && (
+        <ul className="mt-1 space-y-0.5 pl-6 text-xs">
+          {check.phases.map((p) => (
+            <li key={p.phase} className={cn(p.sum === p.quantity ? "text-emerald-700 dark:text-emerald-400" : "")}>
+              {p.phase}: {p.quantity} · rows {p.sum} {gapText(p.sum - p.quantity)}
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-0.5 pl-6 text-xs opacity-80">
+        {total.text ? `“${total.text}” — ` : ""}the quantities of all rows are added (languages and sizes not multiplied). Advice only.
+      </p>
+    </div>
+  );
+}
+
+/** Edit the stated total in a scope editor: the number and "per month"; empty = no total. */
+export function ScopeTotalField({ id, value, onChange }: { id: string; value: StatedTotal | null; onChange: (value: StatedTotal | null) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <label htmlFor={id} className="text-muted-foreground">Agreement total</label>
+      <Input
+        id={id}
+        type="number"
+        min={1}
+        className="h-8 w-24"
+        placeholder="none"
+        value={value?.quantity ?? ""}
+        onChange={(e) => {
+          const n = Math.round(Number(e.target.value));
+          onChange(e.target.value === "" || !Number.isFinite(n) || n < 1 ? null : { per: value?.per ?? null, text: value?.text ?? "", ...(value?.phases ? { phases: value.phases } : {}), quantity: n });
+        }}
+      />
+      <label className="flex items-center gap-1 text-xs">
+        <input
+          type="checkbox"
+          className="size-3.5 accent-primary"
+          disabled={!value}
+          checked={value?.per === "month"}
+          onChange={(e) => value && onChange({ ...value, per: e.target.checked ? "month" : null })}
+        />
+        per month
+      </label>
     </div>
   );
 }

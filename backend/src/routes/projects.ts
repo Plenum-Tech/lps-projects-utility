@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { generateProjectPearity } from "../controllers/pearity.js";
 import { decideInApp, listApprovals, requestAgain } from "../controllers/projectApproval.js";
-import { decideChangeRequest, getChangeRequest } from "../controllers/changeRequests.js";
+import { decideChangeRequest, dismissChangeRequest, getChangeRequest, withdrawChangeRequest } from "../controllers/changeRequests.js";
 import {
   deleteProjectFile,
   downloadProjectFile,
@@ -66,6 +66,9 @@ router.post("/summary-check", summaryCheckRateLimit, summaryCheck);
 router.get("/:id/scope-usage", scopeUsage);
 router.get("/approvals/changes/:id", getChangeRequest);
 router.post("/approvals/changes/:id", decideChangeRequest);
+// The requester (or leadership) takes a pending change back; a rejected brand scope change's banner is dismissed.
+router.post("/approvals/changes/:id/withdraw", withdrawChangeRequest);
+router.post("/approvals/changes/:id/dismiss", dismissChangeRequest);
 router.get("/unbranded", listUnbrandedProjects);
 router.get("/:id", getProject);
 router.get("/:id/naming-suggestion", getNamingSuggestion);

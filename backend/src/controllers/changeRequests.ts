@@ -1,7 +1,8 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { notifyDecision } from "../lib/changeRequests.js";
+import { isLeadershipActor, isScopeChange, notifyDecision } from "../lib/changeRequests.js";
+import { canManageBrand } from "../lib/brandAccess.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
@@ -186,12 +187,86 @@ async function teamView(team: Array<{ role: string; users: Array<mongoose.Types.
     .map((e) => ({ role: e.role, label: ROLE_LABEL.get(e.role) ?? e.role, people: e.users.map((u) => names.get(String(u)) ?? "Unknown") }));
 }
 
-export async function getChangeRequest(req: Request, res: Response): Promise<void> {
+/** What the viewer of a change may do: decide (leadership), resend / withdraw / dismiss (the requester). */
+async function viewerOf(request: IChangeRequest, user: NonNullable<Request["user"]>) {
+  const requesterId = (request.requestedBy as unknown as { _id?: mongoose.Types.ObjectId })?._id ?? request.requestedBy;
+  const isRequester = String(requesterId) === String(user._id);
+  const leadership = await isLeadershipActor(user);
+  const scope = request.kind === "brand_edit" && Boolean(request.brand) && isScopeChange(request);
+  return {
+    isRequester,
+    canDecide: await isProjectApprover(user._id as mongoose.Types.ObjectId),
+    canWithdraw: request.status === "pending" && (isRequester || leadership),
+    // A brand scope change waiting or rejected: edit it on the brand page and send it again.
+    canResend: scope && (request.status === "pending" || request.status === "rejected") && (isRequester || canManageBrand(user)),
+  };
+}
+
+/**
+ * POST /api/projects/approvals/changes/:id/withdraw — the requester or leadership; only while pending.
+ * The request is "withdrawn": it leaves the approvals list and counts, nothing is applied.
+ */
+export async function withdrawChangeRequest(req: Request, res: Response): Promise<void> {
   const user = req.user!;
-  if (!(await isProjectApprover(user._id as mongoose.Types.ObjectId))) {
-    res.status(403).json({ error: "Only leadership can review changes" });
+  const id = param(req, "id");
+  const request = id && !isInvalidObjectId(id) ? await ChangeRequest.findById(id) : null;
+  if (!request) {
+    res.status(404).json({ error: "Change request not found" });
     return;
   }
+  const isRequester = String(request.requestedBy) === String(user._id);
+  if (!isRequester && !(await isLeadershipActor(user))) {
+    res.status(403).json({ error: "Only the person who asked for the change (or leadership) can withdraw it" });
+    return;
+  }
+  if (request.status !== "pending") {
+    res.status(409).json({ error: `This change is already ${request.status}` });
+    return;
+  }
+  request.status = "withdrawn";
+  request.decidedBy = user._id as mongoose.Types.ObjectId;
+  request.decidedAt = new Date();
+  await request.save();
+  logActivity({
+    action: "settings_updated",
+    actor: user,
+    targetType: "change_request",
+    targetId: request._id as mongoose.Types.ObjectId,
+    targetName: request.title,
+    details: { change: "withdrawn", kind: request.kind, by: isRequester ? "requester" : "leadership" },
+    ip: req.ip,
+  });
+  res.json({ change: request.toJSON() });
+}
+
+/** POST /api/projects/approvals/changes/:id/dismiss — hides a rejected brand scope change's banner on the brand page. */
+export async function dismissChangeRequest(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
+  const id = param(req, "id");
+  const request = id && !isInvalidObjectId(id) ? await ChangeRequest.findById(id) : null;
+  if (!request) {
+    res.status(404).json({ error: "Change request not found" });
+    return;
+  }
+  const isRequester = String(request.requestedBy) === String(user._id);
+  if (!isRequester && !canManageBrand(user) && !(await isLeadershipActor(user))) {
+    res.status(403).json({ error: "Only the person who asked for the change can dismiss it" });
+    return;
+  }
+  if (request.status !== "rejected") {
+    res.status(409).json({ error: "Only a rejected change can be dismissed" });
+    return;
+  }
+  if (!request.dismissedAt) {
+    request.dismissedAt = new Date();
+    await request.save();
+  }
+  res.json({ change: request.toJSON() });
+}
+
+/** GET /api/projects/approvals/changes/:id — leadership, or the person who asked for the change. */
+export async function getChangeRequest(req: Request, res: Response): Promise<void> {
+  const user = req.user!;
   const id = param(req, "id");
   const request =
     id && !isInvalidObjectId(id)
@@ -204,6 +279,11 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
       : null;
   if (!request) {
     res.status(404).json({ error: "Change request not found" });
+    return;
+  }
+  const viewer = await viewerOf(request, user);
+  if (!viewer.canDecide && !viewer.isRequester) {
+    res.status(403).json({ error: "Only leadership can review changes" });
     return;
   }
   const payload = (request.payload ?? {}) as Record<string, unknown>;
@@ -275,6 +355,16 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
         context.scopeDiff = diffScope(currentRows, proposedRows);
         if (match && typeof match.score === "number") context.scopeMatch = match;
       }
+      // The agreement's stated total: the rows are checked against it (advice only).
+      if ("scopeTotal" in payload || brand.scopeTotal) {
+        context.scopeTotal = {
+          changed: "scopeTotal" in payload,
+          current: brand.scopeTotal ?? null,
+          proposed: "scopeTotal" in payload ? (payload.scopeTotal ?? null) : (brand.scopeTotal ?? null),
+        };
+        // The rows the check is made on, when the request doesn't change them.
+        if (!context.scopeRows) context.scopeRows = { changed: false, current: brand.scopeItems ?? [], proposed: brand.scopeItems ?? [] };
+      }
       // "Other scope" (the scope kept as text): before / after in full.
       if (typeof payload.scopeText === "string") {
         context.scopeText = { changed: true, current: brand.scopeText ?? "", proposed: payload.scopeText };
@@ -310,5 +400,5 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
       };
     }
   }
-  res.json({ change: request.toJSON(), context });
+  res.json({ change: request.toJSON(), context, viewer });
 }

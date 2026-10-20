@@ -70,6 +70,8 @@ export interface IBrand extends mongoose.Document {
   scopeNotes?: string[];
   /** "Other scope": the agreement's scope text not itemised as rows (paragraphs, exclusions…), editable. */
   scopeText?: string;
+  /** The agreement's stated total ("96 content pieces per month"): the rows are checked against it (advice only). */
+  scopeTotal?: { quantity: number; per: "month" | null; text: string; phases?: Array<{ phase: string; quantity: number }> } | null;
   scopeFiles?: IBrandScopeFile[];
   /** Lead(s) picked in the brand flow. */
   leads?: mongoose.Types.ObjectId[];
@@ -131,6 +133,7 @@ const brandSchema = new Schema<IBrand>(
     platforms: { type: [{ type: String, trim: true, maxlength: 40 }], default: [] },
     scopeNotes: { type: [{ type: String, trim: true, maxlength: BRAND_LIMITS.noteMax }], default: [] },
     scopeText: { type: String, trim: true, maxlength: BRAND_LIMITS.scopeTextMax, default: "" },
+    scopeTotal: { type: Schema.Types.Mixed, default: null },
     scopeFiles: {
       type: [
         new Schema(

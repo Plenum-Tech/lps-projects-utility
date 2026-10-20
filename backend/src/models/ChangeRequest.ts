@@ -13,7 +13,8 @@ import mongoose, { Schema } from "mongoose";
 
 export const CHANGE_KINDS = ["project_change", "brand_edit", "manpower_plan", "project_move"] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
-export const CHANGE_STATUSES = ["pending", "approved", "rejected", "superseded"] as const;
+// "withdrawn": the requester (or leadership) took a pending request back.
+export const CHANGE_STATUSES = ["pending", "approved", "rejected", "superseded", "withdrawn"] as const;
 export type ChangeStatus = (typeof CHANGE_STATUSES)[number];
 
 export interface IChangeLine {
@@ -40,6 +41,8 @@ export interface IChangeRequest extends mongoose.Document {
   decidedBy: mongoose.Types.ObjectId | null;
   decidedAt: Date | null;
   reason: string;
+  /** A rejected brand scope change whose banner was dismissed on the brand page. */
+  dismissedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,6 +71,7 @@ const changeRequestSchema = new Schema<IChangeRequest>(
     decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     decidedAt: { type: Date, default: null },
     reason: { type: String, default: "", maxlength: 500 },
+    dismissedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );

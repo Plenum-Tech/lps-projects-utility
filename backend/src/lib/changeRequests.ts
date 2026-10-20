@@ -49,6 +49,11 @@ export async function requestChange(params: {
   ip?: string;
   /** Also notify the actor when they are an approver (system jobs acting as leadership). */
   notifyActor?: boolean;
+  /**
+   * Payload keys (and their change lines) the new request puts back to the current value: dropped
+   * from the pending request it replaces (a resent scope whose "Other scope" is unchanged again).
+   */
+  dropKeys?: Array<{ key: string; label: string }>;
 }): Promise<IChangeRequest> {
   const target: Record<string, unknown> =
     params.kind === "project_change"
@@ -74,6 +79,10 @@ export async function requestChange(params: {
       payload.removeMembers = remove;
     }
     const labels = new Set(params.changes.map((c) => c.label));
+    for (const d of params.dropKeys ?? []) {
+      delete payload[d.key];
+      labels.add(d.label);
+    }
     changes = [...previous.changes.filter((c) => !labels.has(c.label)), ...params.changes];
   }
   if (previous) {
@@ -98,7 +107,7 @@ export async function requestChange(params: {
     targetType: "change_request",
     targetId: request._id as mongoose.Types.ObjectId,
     targetName: params.title,
-    details: { change: "requested", kind: params.kind, lines: changes.length },
+    details: { change: previous ? "resent" : "requested", kind: params.kind, lines: changes.length, ...(previous ? { replaces: String(previous._id) } : {}) },
     ip: params.ip,
   });
   const shown = changes.slice(0, 40);
@@ -107,13 +116,15 @@ export async function requestChange(params: {
     actor: params.actor,
     includeActor: Boolean(params.notifyActor),
     type: "change_approval_requested",
-    title: `${KIND_LABEL[params.kind]} to approve`,
+    title: `${KIND_LABEL[params.kind]} to approve${previous ? " (updated)" : ""}`,
     message: `${params.actor.name}: ${params.title} (${changes.length} change${changes.length === 1 ? "" : "s"}).`,
-    link: "/approvals",
+    link: `/approvals/${String(request._id)}`,
     email: {
-      subject: `Approval needed: ${params.title}`,
+      subject: `Approval needed: ${params.title}${previous ? " (updated)" : ""}`,
       heading: `${KIND_LABEL[params.kind]} Awaiting Approval`,
-      intro: `${params.actor.name} made ${changes.length === 1 ? "a change" : `${changes.length} changes`} that need your approval. Nothing changes until it's approved.`,
+      intro: previous
+        ? `${params.actor.name} updated a change waiting for your approval (it replaces the earlier request). Nothing changes until it's approved.`
+        : `${params.actor.name} made ${changes.length === 1 ? "a change" : `${changes.length} changes`} that need your approval. Nothing changes until it's approved.`,
       cardTitle: params.title,
       rows: [
         ...shown.map((c): [string, string] => [c.label, c.before === "—" && c.after ? c.after : `${c.before} → ${c.after}`]),
@@ -123,6 +134,12 @@ export async function requestChange(params: {
     },
   });
   return request;
+}
+
+/** A brand_edit request that changes the brand scope (rows, "Other scope" or the agreement total). */
+export function isScopeChange(request: Pick<IChangeRequest, "payload">): boolean {
+  const p = (request.payload ?? {}) as Record<string, unknown>;
+  return Array.isArray(p.scopeItems) || typeof p.scopeText === "string" || "scopeTotal" in p;
 }
 
 /** Tells the requester the outcome. */
@@ -136,7 +153,16 @@ export function notifyDecision(request: IChangeRequest, decider: IUser, approved
     message: approved
       ? `${decider.name} approved: ${request.title}.`
       : `${decider.name} didn't approve: ${request.title}${reason ? ` — ${reason}` : "."}`,
-    link: request.project ? `/projects/${request.project.toString()}` : request.kind === "manpower_plan" ? "/manpower" : "/approvals",
+    // A rejected brand scope change: the brand page opens its scope editor with the proposal, to fix and resend.
+    link: request.project
+      ? `/projects/${request.project.toString()}`
+      : request.kind === "manpower_plan"
+        ? "/manpower"
+        : request.kind === "brand_edit" && request.brand && !approved && isScopeChange(request)
+          ? `/brands/${request.brand.toString()}?editScope=1#scope`
+          : request.kind === "brand_edit" && request.brand
+            ? `/brands/${request.brand.toString()}#scope`
+            : "/approvals",
     email: {
       subject: approved ? `Approved: ${request.title}` : `Not approved: ${request.title}`,
       heading: approved ? "Change Approved" : "Change Not Approved",

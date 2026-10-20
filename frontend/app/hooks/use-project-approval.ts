@@ -90,6 +90,34 @@ export function useDecideChange() {
   });
 }
 
+/** The requester (or leadership): take a pending change back ("withdrawn"; nothing is applied). */
+export function useWithdrawChange() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.post(`/projects/approvals/changes/${id}/withdraw`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["project-approvals"] });
+      void queryClient.invalidateQueries({ queryKey: ["brands"] });
+      toast.success("Request withdrawn");
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
+/** Hide a rejected brand scope change's banner on the brand page. */
+export function useDismissChange() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async (id: string) => (await api.post(`/projects/approvals/changes/${id}/dismiss`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["brands"] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
 /** Leadership: approve / reject a proposed brand. */
 export function useDecideBrand() {
   const queryClient = useQueryClient();
