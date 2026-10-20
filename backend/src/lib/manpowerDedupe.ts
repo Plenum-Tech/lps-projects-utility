@@ -124,14 +124,14 @@ export async function firstSeenVersion(month: string): Promise<Map<string, numbe
   return seen;
 }
 
-/** Line key → the version of `month` in which the line (its name or people) last changed: the most recently edited line wins a dedupe. */
+/** Line key → the version of `month` in which the line's people last changed: the most recently edited line wins a dedupe. */
 export async function lastChangedVersion(month: string): Promise<Map<string, number>> {
   const versions = await ManpowerPlan.find({ month }).sort({ version: 1 }).select("version rows.key rows.name rows.cells").lean();
   const sig = new Map<string, string>();
   const changed = new Map<string, number>();
   for (const v of versions)
     for (const r of v.rows ?? []) {
-      const s = JSON.stringify([r.name, (r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort()])]);
+      const s = JSON.stringify((r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort()]));
       if (sig.get(r.key) !== s) {
         sig.set(r.key, s);
         changed.set(r.key, v.version);
@@ -151,8 +151,12 @@ export async function dropDuplicateLinesOnSave(
   rows: IManpowerRow[]
 ): Promise<{ rows: IManpowerRow[]; repin: Map<string, string> }> {
   const repin = new Map<string, string>();
+  // Brand-linked lines carry the brand's exact name first (lines spelt differently can then meet).
+  const { nameLinesAfterBrands } = await import("./manpowerLineNames.js");
+  rows = await nameLinesAfterBrands(rows);
   if (duplicateBrandLines(rows).size === 0) return { rows, repin };
-  const sig = (r: IManpowerRow) => JSON.stringify([r.name, (r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort(), Boolean(c.notNeeded)])]);
+  // "Edited in this save": its people changed (a name only re-spelt to the brand's doesn't count).
+  const sig = (r: IManpowerRow) => JSON.stringify([(r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort(), Boolean(c.notNeeded)])]);
   const before = new Map(previous.map((r) => [r.key, sig(r)]));
   const changed = await lastChangedVersion(month);
   for (const r of rows) if (before.get(r.key) !== sig(r)) changed.set(r.key, Number.MAX_SAFE_INTEGER);

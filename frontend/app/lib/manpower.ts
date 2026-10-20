@@ -59,6 +59,36 @@ export function newRowKey(): string {
     : `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/** Edit distance between two short strings. */
+function editDistance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
+/**
+ * Where a name starts with the brand abbreviated ("HRU" for "Homes R Us") or misspelt before a
+ * " - " or as the whole name ("Sketchers - Ramadan", "Dxb Commerce City"): the index after it, else -1.
+ */
+function nearBrandPrefix(n: string, b: string): number {
+  const squash = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const words = b.split(/[\s|&]+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  const first = n.match(/^[\p{L}\p{N}]+/u)?.[0] ?? "";
+  if (words.length >= 2 && first.toLowerCase() === words.map((w) => w[0]!.toLowerCase()).join("")) return first.length;
+  const target = squash(b);
+  const allowed = Math.floor(target.length * 0.3);
+  if (allowed < 1) return -1;
+  const cuts = [...n.matchAll(/\s[-–|:]\s/g)].map((m) => m.index!).concat(n.length);
+  // Common short forms of places: "Dxb Commerce City" for "Dubai Commercity".
+  const long = (s: string) => s.replace(/\bdxb\b/gi, "dubai").replace(/\bauh\b/gi, "abu dhabi");
+  for (const k of cuts) if (editDistance(squash(long(n.slice(0, k))), target) <= allowed) return k;
+  return -1;
+}
+
 /**
  * A brand-linked plan line starts with the brand's name; what follows tells the brand's
  * lines apart and is kept ("Ajmal AA videos"). A name without the brand gets it in front
@@ -86,6 +116,13 @@ export function brandLineName(name: string, brandName: string): string {
       break;
     }
   }
+  // The brand abbreviated or misspelt: "HRU Safa Collection" → "Homes R Us - Safa Collection".
+  const near = nearBrandPrefix(n, b);
+  if (near >= 0) {
+    const rest = n.slice(near).replace(/^[\s\-–_:|]+/, "");
+    return rest ? `${b} - ${rest}` : b;
+  }
+
   return `${b} - ${n}`;
 }
 
