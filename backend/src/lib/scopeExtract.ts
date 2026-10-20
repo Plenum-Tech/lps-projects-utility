@@ -247,7 +247,7 @@ const INLINE_BULLET = /\s\*\s|•/;
 /** Items after a dash: "IG and FB - 4 Static Posts". */
 const DASH_SPLIT = /\s[-–]\s(?=\d)/;
 /** Items listed in a sentence: ", 10 …", " and 12 …", ". 2 …". */
-const SENTENCE_SPLIT = new RegExp(String.raw`[,;.]\s*(?:and\s+)?(?=${QTY})|\s+(?:and|&|plus)\s+(?=${QTY})`, "i");
+const SENTENCE_SPLIT = new RegExp(String.raw`[,;.]\s*(?:and\s+)?(?=${QTY})|\s+(?:and|&|plus)\s+(?=${QTY})|\s\+\s(?=\d)`, "i");
 
 /**
  * A piece of text's items. A sentence is split only when at least two of its pieces are
@@ -387,7 +387,7 @@ function phaseCounts(lines: string[], languageList: string[], source: string) {
 const SCOPE_HEADING = /^(?:agreed\s+)?(?:deliverables|scope(?:\s+of\s+(?:work|services))?|statement\s+of\s+work)\s*:?$/i;
 /** Table headers, empty cells, totals, and lines read into other fields (dates, budget). */
 const DROP_LINE =
-  /^(?:items?|details?|notes?|description|qty|quantity|remarks?|comments?|nil|n\/?a|none|tbc|-+|—)$|^(?:grand\s+)?total\s*[:\-–]\s*\d+\.?$|^(?:client\s+pres(?:entation)?|milestone\s*\d|start(?:ing)?\s*date|end\s*date|deadline|go[- ]live|launch\s*date|budget|revenue|fee)\b[^:\n]{0,30}[:\-–]/i;
+  /^(?:items?|details?|notes?|description|qty|quantity|remarks?|comments?|nil|n\/?a|none|tbc|-+|—|\*{3,}|={3,})$|^(?:grand\s+)?total\s*[:\-–]\s*\d+\.?$|^(?:client\s+pres(?:entation)?|milestone\s*\d|start(?:ing)?\s*date|end\s*date|deadline|go[- ]live|launch\s*date|budget|revenue|fee)\b[^:\n]{0,30}[:\-–]/i;
 
 /** Footer lines: address, phone, email, website, page numbers. */
 function isFooter(line: string): boolean {
@@ -460,6 +460,32 @@ function finishBox(raw: string[]): string {
     }
     input.push(l);
   }
+  // Plain-text documents: a short Title-like line ("Strategy & Planning", "KPIs & Evaluation") heads the
+  // sentences under it; its sentences become "• item" lines. Two such lines in a row: the first is only a
+  // group label ("Monthly Payment (Once per Month)") and is dropped.
+  const titleLike = (l: string | undefined) =>
+    l !== undefined &&
+    !bulletLine(l) &&
+    !/[.:;,!?]$/.test(l) &&
+    !/^scope\s*:/i.test(l) &&
+    l.length <= 60 &&
+    l.split(/\s+/).length <= 8 &&
+    /^[\p{Lu}\d]/u.test(l);
+  const sectioned: string[] = [];
+  let inTitled = false;
+  input.forEach((l, i) => {
+    const next = input[i + 1];
+    const shortHeading = (x: string) => /:$/.test(x) && x.length <= 60;
+    if (titleLike(l) && next !== undefined && !shortHeading(next) && !bulletLine(next)) {
+      if (titleLike(next)) return;
+      sectioned.push(`${l}:`);
+      inTitled = true;
+      return;
+    }
+    if (shortHeading(l) && !bulletLine(l)) inTitled = false;
+    sectioned.push(inTitled && !bulletLine(l) && !/^scope\s*:/i.test(l) && !shortHeading(l) ? `• ${l}` : l);
+  });
+  input.splice(0, input.length, ...sectioned);
   // A plain line that bullets follow heads them ("360 Social Media Management - Facebook …" → "…:").
   const lines0 = input
     .filter((l, i) => {
@@ -488,6 +514,66 @@ function finishBox(raw: string[]): string {
   }
   return out.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
+/**
+ * Counts written out: "Four (4) campaigns" → "4 campaigns", "four-to-six (4-6) bursts" → "4-6 bursts",
+ * "x6 on-ground coverage" → "6x on-ground coverage".
+ */
+function normaliseCounts(line: string): string {
+  const words = Object.keys(WORD_NUMBERS).join("|");
+  return line
+    .replace(new RegExp(String.raw`\b(?:${words})(?:\s*(?:-\s*to\s*-|to|-)\s*(?:${words}))?\s*\((\d{1,3}(?:\s*[-–]\s*\d{1,3})?)\)`, "gi"), "$1")
+    .replace(/(^|[\s:(])x(\d{1,3})\b/gi, "$1$2x");
+}
+
+/** Unit of an item inside a posts breakdown: "videos", "animations" / "animated" (= reels / motion), "statics". */
+function breakdownUnit(word: string): string {
+  const w = word.toLowerCase();
+  if (/animat|motion|gif/.test(w)) return "Reel";
+  return unitFor(w);
+}
+
+/**
+ * "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)" → 5 Video, 10 Reel, 5 Static
+ * (the 20 is their total); "On LinkedIn & X: 4 static posts/month" → 4 Static. Else null.
+ */
+function postsPerMonth(line: string): { rows: Array<{ unit: string; what: string; quantity: number }>; note: string | null } | null {
+  const per = String.raw`\s*(?:\/|per|a)\s*(month|week|year)`;
+  const m = line.match(new RegExp(String.raw`^(?:on\s+(.{1,40}?)\s*:\s*)?(\d{1,3})\s+([\p{L} -]{0,30}?)posts?${per}\s*(?:\(([^)]*)\))?`, "iu"));
+  if (!m) return null;
+  const where = m[1]?.trim() ?? "";
+  const kind = m[3]!.trim();
+  const period = m[4]!.toLowerCase();
+  const tail = `${where ? ` — ${where}` : ""} (per ${period})`;
+  const inner = m[5]?.trim();
+  if (inner) {
+    const parts = [...inner.matchAll(/(\d{1,3})\s+([\p{L}-]+)/gu)].map((x) => ({ n: Number(x[1]), word: x[2]! }));
+    if (parts.length) {
+      const sum = parts.reduce((a, b) => a + b.n, 0);
+      return {
+        rows: parts.map((x) => ({ unit: breakdownUnit(x.word), what: `${x.word.charAt(0).toUpperCase()}${x.word.slice(1)}${tail}`, quantity: x.n })),
+        note:
+          sum === Number(m[2])
+            ? `${m[2]} posts/${period}${where ? ` on ${where}` : ""} = ${parts.map((x) => `${x.n} ${x.word}`).join(" + ")} (animations read as Reel).`
+            : `${m[2]} posts/${period}${where ? ` on ${where}` : ""}, but the breakdown adds up to ${sum} — check.`,
+      };
+    }
+  }
+  const label = `${kind ? `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ` : ""}posts`;
+  return { rows: [{ unit: kind ? breakdownUnit(kind) : "Static", what: `${label}${tail}`, quantity: Number(m[2]) }], note: null };
+}
+
+/** "x6 on-ground coverage per year … Deliverables: 20 edited photos + 3 recap videos per event" → one row. */
+function eventCoverage(line: string): { quantity: number; what: string } | null {
+  const m = line.match(/(\d{1,3})x?\s+(?:on[- ]ground\s+|live\s+|event\s+)*(?:event\s+)?coverage\b[^.]*?\bper\s+(year|month|quarter)/i);
+  if (!m) return null;
+  const per = line.match(/deliverables?\s*:\s*([^.]*?)\s+per\s+event/i);
+  const what = `Live event coverage (per ${m[2]!.toLowerCase()}${per ? `; per event: ${per[1]!.trim()}` : ""})`;
+  return { quantity: Number(m[1]), what: what.length > 80 ? `${what.slice(0, 77)}…)` : what };
+}
+
+/** The out-of-scope / rate-card part of a document: not scope, not read. */
+const OUT_OF_SCOPE = /^(?:out[- ]of[- ]scope|rate\s*card)\b/i;
+
 /** Words before the first quantity of a sentence: "Monthly scope: ", "We need ". */
 const LEAD_IN = new RegExp(String.raw`^[^\d\n]{1,40}?(?:[:\-–]\s*|\s)(?=${QTY})`, "i");
 
@@ -545,6 +631,8 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
    * One item → rows / notes. Returns the texts it was turned into (empty = nothing read),
    * used to tell whether the item's words all have a home.
    */
+  // The whole line an item came from ("4 campaigns + 4-6 bursts per year": "per year" covers both).
+  let lineText = "";
   const readItem = (rawItem: string, bullet: boolean, source: string): string[] => {
     const line = rawItem
       .replace(/^[\s\-–*o·]+/, "")
@@ -561,7 +649,12 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       notes.push(`${rounds[1]} round${rounds[1] === "1" || /^one$/i.test(rounds[1]!) ? "" : "s"} of revisions — kept as a note.`);
       return [line];
     }
-    const m = line.match(/^(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s*[x×]?\s+(.+)$/i);
+    // A range ("4-6 smaller tactical bursts") uses the higher number (noted).
+    const range = line.match(/^(\d{1,3})\s*(?:-|–|to)\s*(\d{1,3})\s+(.+)$/i);
+    const counted = range ? `${Math.max(Number(range[1]), Number(range[2]))} ${range[3]}` : line;
+    const m = counted.match(/^(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s*[x×]?\s+(.+)$/i);
+    // Hours, minutes, days, percentages and amounts aren't deliverables ("6 hrs × 7 days moderation", "within 24 hrs").
+    if (m && /^(?:hrs?|hours?|mins?|minutes?|secs?|seconds?|days?|weeks?|months?|years?|%|percent|aed|usd|dirhams?)\b/i.test(m[2]!)) return [];
     if (!m) {
       // A shoot without a count ("Half a day shoot") is a note.
       if (/\bshoots?\b|\bshooting\b/i.test(line) && line.length <= 60) {
@@ -600,7 +693,15 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       }
       return [what];
     }
-    rows.push({ unit: unitFor(what), what: what.charAt(0).toUpperCase() + what.slice(1), quantity, languageList, sizes: 1, source });
+    // How often: "… per year" / "annually" / "per quarter" stays with the row.
+    const context = `${line} ${lineText}`;
+    const often = /\bper\s+(?:year|annum)\b|\bannual(?:ly)?\b|\ba\s+year\b/i.test(context)
+      ? " (per year)"
+      : /\bper\s+quarter\b|\bquarterly\b/i.test(context)
+        ? " (per quarter)"
+        : "";
+    if (range) notes.push(`${range[1]}-${range[2]} ${what.toLowerCase()} — ${Math.max(Number(range[1]), Number(range[2]))} used.`);
+    rows.push({ unit: unitFor(what), what: `${what.charAt(0).toUpperCase()}${what.slice(1)}${often}`, quantity, languageList, sizes: 1, source });
     return [what];
   };
 
@@ -613,14 +714,32 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
     phased ||= counted.phased;
     // The scope part of the document: from its "Agreed deliverables" / "Scope of work" heading (else all of it).
     const start = Math.max(0, lines.findIndex((l) => SCOPE_HEADING.test(tidy(l))) + 1);
+    // An out-of-scope rate card after the scope isn't scope: nothing from it is read.
+    const stop = lines.findIndex((l, i) => i >= start && OUT_OF_SCOPE.test(tidy(l)));
+    if (stop >= 0) notes.push("The document's out-of-scope rate card isn't part of the scope (not read).");
     const box: string[] = [];
     lines.forEach((rawLine, idx) => {
-      if (counted.consumed.has(idx)) return;
-      const line = tidy(rawLine);
+      if (counted.consumed.has(idx) || (stop >= 0 && idx >= stop)) return;
+      const line = normaliseCounts(tidy(rawLine));
       if (!line) return;
+      // "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)" → its breakdown.
+      const posts = postsPerMonth(line);
+      if (posts) {
+        for (const x of posts.rows) rows.push({ ...x, languageList, sizes: 1, source });
+        if (posts.note) notes.push(posts.note);
+        return;
+      }
+      // "x6 on-ground coverage per year … per event" → one row; the line stays in its section.
+      const coverage = eventCoverage(line);
+      if (coverage) {
+        rows.push({ unit: "Others", what: coverage.what, quantity: coverage.quantity, languageList, sizes: 1, source });
+        if (idx >= start) box.push(line);
+        return;
+      }
       // Items also start mid-line ("Mom Store: - 12 Short form video …"), sit in a sentence
       // ("Monthly scope: 8 static posts, 10 reels and 12 stories in English and Arabic") or
       // between inline bullets ("* Plan … * 1 weekly status meeting … * …").
+      lineText = line;
       const { parts, bullet, inline } = partsOf(line);
       // Per part: kept for the box unless every item in it became a row / note.
       const keep = parts.map((part, pi) => {
@@ -737,6 +856,19 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   (e.g. "Static — Pre-Pre Event, Sep '26"), and add a note with the totals per unit across the phases
   (e.g. "Across the 4 phases: Static 29, Carousel 39, Reel 100, Story 173").
   A counted item inside a services list ("1 weekly status meeting at LPS Office") can still be a row.
+  "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)": the 20 is the TOTAL — list the breakdown
+  (5 × Video, 10 × Reel for animations / animated / motion, 5 × Static), "what" with the platforms and "(per month)".
+  "On LinkedIn & X: 4 static posts/month" → 4 × Static ("Static posts — LinkedIn & X (per month)").
+  Hours, minutes, days, SLAs, percentages and amounts are NOT quantities ("6 hrs × 7 days moderation", "within 24 hrs",
+  "up to 15 seconds") — those lines are service details for "otherScope".
+  "Four (4) major integrated campaigns + four-to-six (4-6) smaller tactical bursts per year" → 4 × Others "Major integrated
+  campaigns (per year)" and 6 × Others "Smaller tactical bursts (per year)" (range → higher number, noted).
+  "x6 on-ground coverage per year … 20 edited photos + 3 recap videos per event" → ONE row: 6 × Others "Live event coverage
+  (per year; per event: 20 edited photos + 3 recap videos)" — the per-event items are not separate rows.
+  An "Out-of-Scope Rate Card" (or any rate card / price list) is NOT scope: no rows, no notes, nothing in "otherScope" from it
+  — add one note "The document's out-of-scope rate card isn't part of the scope".
+  Documents whose sections are plain headings ("Strategy & Planning", "Community Management") followed by sentences:
+  each heading is a section in "otherScope" and each sentence a "• item" line under it.
 - "otherScope": ONE string with the rest of the scope / deliverables part of the documents that is NOT a scope row or a
   note, as SECTIONS. Each section is its heading on its own line ending with ":" (e.g. "Account Management & Content
   Planning:", "Content Creation & Management:", "360 Social Media Management – Facebook, Instagram, YouTube, LinkedIn and
