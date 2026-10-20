@@ -112,7 +112,11 @@ export function groupByOrg<T extends { name: string; organisation: string }>(lis
     if (b.name.trim().toLowerCase() === key) g.orgBrand = b;
     else g.brands.push(b);
   }
-  return out.filter((g) => g.brands.length || g.orgBrand);
+  // A brand named like its organisation is "the organisation itself" only when the organisation has
+  // other brands (ENOC → Zoom, Autopro…). Alone (C4, MAHE, GITEX…), it's just a brand: a normal row.
+  return out
+    .map((g) => (g.orgBrand && g.brands.length === 0 ? { org: "", brands: [g.orgBrand] } : g))
+    .filter((g) => g.brands.length || g.orgBrand);
 }
 
 /** "ENOC - Zoom" under the ENOC heading → "Zoom" (the organisation is already on the heading). */
@@ -273,7 +277,9 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                         Monthly retainer
                       </Badge>
                     )}
-                    {b.organisation && !g.org && <p className="text-xs text-muted-foreground">{b.organisation}</p>}
+                    {b.organisation && !g.org && b.organisation.trim().toLowerCase() !== b.name.trim().toLowerCase() && (
+                      <p className="text-xs text-muted-foreground">{b.organisation}</p>
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     <span className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks.scope} />{b.checks.scope ? `${b.scopeItems.length} item${b.scopeItems.length === 1 ? "" : "s"}` : "no scope"}</span>
