@@ -17,7 +17,7 @@ import { useManpowerMonths, useManpowerPlan, useSaveManpowerPlan } from "@/hooks
 import { useProjectTypes } from "@/hooks/use-project-meta";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { formatDateTime } from "@/lib/format";
-import { MANPOWER_ROLE_FALLBACK, newRowKey, shiftMonth } from "@/lib/manpower";
+import { brandLineName, MANPOWER_ROLE_FALLBACK, newRowKey, shiftMonth } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { todayKey } from "@/lib/tasks";
 import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/types";
@@ -35,7 +35,8 @@ export function planRowsToTable(data: ManpowerPlanResponse): TableRow[] {
     section: r.section,
     brand: r.brand ? { _id: r.brand._id, name: r.brand.name, color: r.brand.color } : null,
     type: r.type,
-    name: r.name,
+    // A brand's line shows the brand's name (the server names it so on save).
+    name: r.brand ? brandLineName(r.name, r.brand.name) : r.name,
     cells: r.cells.map((c) => ({ ...c, users: c.users.map((u) => ({ _id: u._id, name: u.name })) })),
   }));
 }

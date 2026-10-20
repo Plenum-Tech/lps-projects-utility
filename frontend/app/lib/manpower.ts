@@ -58,3 +58,18 @@ export function newRowKey(): string {
     ? crypto.randomUUID()
     : `row-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
+
+/**
+ * A brand-linked plan line is named after its brand: "Ajmal", or "Ajmal - Campaign" (a
+ * sub-project suffix after the brand name is kept). Same rule as the server
+ * (backend lib/manpowerLineNames.ts), which applies it on save.
+ */
+export function brandLineName(name: string, brandName: string): string {
+  const n = name.replace(/\s+/g, " ").trim();
+  const b = brandName.replace(/\s+/g, " ").trim();
+  const lower = n.toLowerCase();
+  const key = b.toLowerCase();
+  if (lower === key) return b;
+  if (lower.startsWith(`${key} -`) || lower.startsWith(`${key}_`)) return `${b}${n.slice(b.length)}`;
+  return b;
+}

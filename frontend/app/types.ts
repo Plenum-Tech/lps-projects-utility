@@ -12,7 +12,7 @@ export interface User {
   email: string;
   role: Role;
   /** What menus may show (from /auth/me). */
-  access?: { timeReport: boolean; brandCreator?: boolean };
+  access?: { timeReport: boolean; brandCreator?: boolean; /** Admins (not the brand creators): rename brands, applied at once. */ brandRename?: boolean };
   /** Leadership (project approvers): admin powers everywhere; `role` comes back as "admin". */
   leadership?: boolean;
   /** Department id when assigned (single department per employee). */
@@ -2147,7 +2147,8 @@ export type ProjectActivityAction =
   | "note_deleted"
   | "archived"
   | "restored"
-  | "duplicated";
+  | "duplicated"
+  | "brand_moved";
 
 export interface ProjectActivity {
   _id: string;
@@ -3260,6 +3261,8 @@ interface BrandDashboardBase {
   roles: Array<{ key: string; label: string }>;
   canCreate: boolean;
   canManage: boolean;
+  /** Admins only (not the brand creators): rename the brand, applied at once. */
+  canRename?: boolean;
   canEditPlan: boolean;
   canApprove: boolean;
   canSeeUtilisation: boolean;
@@ -3306,6 +3309,37 @@ export interface BrandDetailResponse extends BrandDashboardBase {
 export interface BrandScopeItem extends ScopeItem {
   what?: string;
   source?: string;
+}
+
+/** POST /brands/:id/move-projects(/preview) — what moving projects to another brand does. */
+export interface BrandMoveItem {
+  projectId: string;
+  code: string;
+  oldName: string;
+  newName: string;
+  type: string | null;
+  month: string | null;
+  /** The target brand's scope replaces the project's, or the project keeps its own. */
+  scope: "replace" | "keep";
+  line: { action: "relink" | "move" | "new" | "none"; key: string | null; name: string | null; from: string | null };
+}
+
+export interface BrandMovePreview {
+  from: { _id: string; name: string };
+  to: { _id: string; name: string; hasScope: boolean };
+  items: BrandMoveItem[];
+  notes: string[];
+  /** true = leadership: the move applies at once; false = it goes for approval. */
+  applies: boolean;
+}
+
+export interface BrandMoveResult {
+  moved?: number;
+  items: BrandMoveItem[];
+  notes: string[];
+  errors?: string[];
+  plans?: Array<{ month: string; version: number; pendingApproval?: string }>;
+  pendingApproval?: string;
 }
 
 export interface BrandInput {
@@ -4161,7 +4195,7 @@ export interface ProjectApprovalQueue {
 /** A change waiting for (or decided by) leadership. */
 export interface ChangeRequestItem {
   _id: string;
-  kind: "project_change" | "brand_edit" | "manpower_plan";
+  kind: "project_change" | "brand_edit" | "manpower_plan" | "project_move";
   status: "pending" | "approved" | "rejected" | "superseded";
   title: string;
   brand: { _id: string; name: string } | null;

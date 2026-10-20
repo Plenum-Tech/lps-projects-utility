@@ -157,6 +157,9 @@ function BrandDialog({
   const create = useCreateBrand();
   const update = useUpdateBrand();
   const mutation = brand ? update : create;
+  // Renaming an existing brand: admins only (not the brand creators), applied at once.
+  const { data: user } = useCurrentUser();
+  const nameLocked = Boolean(brand) && !user?.access?.brandRename;
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [color, setColor] = useState<BrandColor>("chart-1");
@@ -206,15 +209,23 @@ function BrandDialog({
             <DialogTitle>{brand ? `Edit ${brand.name}` : "New brand"}</DialogTitle>
             <DialogDescription>The colour is used for the brand&apos;s dot in tables and charts.</DialogDescription>
           </DialogHeader>
-          <TextField
-            id="brand-name"
-            label="Name"
-            required
-            value={name}
-            onChange={setName}
-            maxLength={80}
-            error={(submitted && nameError) || (serverField === "name" ? errorMessage(mutation.error) : null)}
-          />
+          {nameLocked ? (
+            <div className="space-y-1.5">
+              <Label>Name</Label>
+              <p className="text-sm font-medium">{brand?.name}</p>
+              <p className="text-xs text-muted-foreground">Only an admin can rename a brand.</p>
+            </div>
+          ) : (
+            <TextField
+              id="brand-name"
+              label="Name"
+              required
+              value={name}
+              onChange={setName}
+              maxLength={80}
+              error={(submitted && nameError) || (serverField === "name" ? errorMessage(mutation.error) : null)}
+            />
+          )}
           <TextField
             id="brand-short"
             label="Short name"

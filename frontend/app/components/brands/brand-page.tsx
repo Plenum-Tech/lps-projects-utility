@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
+import { LuArrowLeft, LuArrowRightLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuX } from "react-icons/lu";
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
@@ -15,9 +15,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useBrandDetail, useDeleteBrandFile, usePatchBrand, useSplitBrand, useUploadBrandFiles } from "@/hooks/use-brand-dashboard";
+import { useBrandDetail, useDeleteBrandFile, useMovePreview, useMoveProjects, usePatchBrand, useRenameBrand, useSplitBrand, useUploadBrandFiles } from "@/hooks/use-brand-dashboard";
 import { useBrandScopeVersions, useScopeMatch } from "@/hooks/use-brand-scope";
-import { useExtractBrandScope } from "@/hooks/use-brands";
+import { useBrands, useExtractBrandScope } from "@/hooks/use-brands";
+import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
@@ -27,7 +28,7 @@ import { formatDate } from "@/lib/format";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
 import { diffScope } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
-import type { BrandDetailResponse, BrandScopeVersion, ScopeExtraction } from "@/types";
+import type { BrandDetailResponse, BrandMoveItem, BrandScopeVersion, ScopeExtraction } from "@/types";
 
 // ---------------------------------------------------------------------------
 // /brands/:id — one brand: scope → who delivers it, documents, team (the month's
@@ -459,6 +460,192 @@ function LeadsEditor({ data }: { data: BrandDetailResponse }) {
   );
 }
 
+/** Inline rename (brand header; admins only, applied at once): name, short name, and whether the projects' names follow. */
+function RenameBar({ data, onClose }: { data: BrandDetailResponse; onClose: () => void }) {
+  const b = data.brand;
+  const rename = useRenameBrand();
+  const [name, setName] = useState(b.name);
+  const [short, setShort] = useState(b.shortName ?? "");
+  const [renameProjects, setRenameProjects] = useState(true);
+  const [tried, setTried] = useState(false);
+  const trimmed = name.trim().replace(/\s+/g, " ");
+  const nameError = !trimmed ? "Enter the brand's name" : trimmed.length > 80 ? "Max 80 characters" : trimmed.includes("_") ? "Brand names can't contain “_”" : null;
+  const shortError = short.trim().length > 20 ? "Max 20 characters" : null;
+  const unchanged = trimmed === b.name && short.trim() === (b.shortName ?? "");
+  // A structured name starts with the brand: "Brand_Type_MonYYYY_Title".
+  const structured = b.projects.filter((p) => p.name.toLowerCase().startsWith(`${b.name.toLowerCase()}_`));
+  const example = structured[0];
+
+  function save() {
+    setTried(true);
+    if (nameError || shortError || unchanged) return;
+    rename.mutate({ id: b._id, name: trimmed, shortName: short.trim(), renameProjects }, { onSuccess: onClose });
+  }
+
+  return (
+    <div className="mt-2 w-full max-w-2xl space-y-2 rounded-lg border bg-muted/30 p-3" role="group" aria-label="Rename brand">
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <div className="space-y-1">
+          <Label htmlFor="brand-rename">Brand name</Label>
+          <Input
+            id="brand-rename"
+            value={name}
+            maxLength={80}
+            autoFocus
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") save();
+              if (e.key === "Escape") onClose();
+            }}
+            aria-invalid={(tried && Boolean(nameError)) || undefined}
+          />
+          {tried && nameError && <FieldError>{nameError}</FieldError>}
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="brand-rename-short">Short name <span className="font-normal text-muted-foreground">(optional)</span></Label>
+          <Input id="brand-rename-short" value={short} maxLength={20} onChange={(e) => setShort(e.target.value)} placeholder="e.g. EMR" />
+          {shortError && <FieldError>{shortError}</FieldError>}
+        </div>
+      </div>
+      <label className="flex items-start gap-2 text-sm">
+        <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={renameProjects} onChange={(e) => setRenameProjects(e.target.checked)} />
+        <span>
+          Also rename its projects
+          <span className="block text-xs text-muted-foreground">
+            {structured.length
+              ? `${structured.length} open project${structured.length === 1 ? "" : "s"} named ${b.name}_…${example && trimmed && !nameError ? ` — e.g. ${example.name} → ${trimmed}${example.name.slice(b.name.length)}` : ""}. Codes stay; free-form names are left alone.`
+              : "Projects named Brand_Type_Month_Name get the new brand name; codes stay."}{" "}
+            Manpower plan lines of the brand always take the new name.
+          </span>
+        </span>
+      </label>
+      {rename.isError && <FieldError>{getErrorMessage(rename.error)}</FieldError>}
+      <div className="flex flex-wrap items-center justify-end gap-2">
+        <Button type="button" variant="ghost" size="sm" onClick={onClose} disabled={rename.isPending}>Cancel</Button>
+        <Button type="button" size="sm" onClick={save} disabled={rename.isPending || unchanged}>
+          {rename.isPending && <LuLoaderCircle aria-hidden className="animate-spin" />}
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const LINE_ACTION: Record<BrandMoveItem["line"]["action"], (l: BrandMoveItem["line"]) => string> = {
+  relink: (l) => `joins ${l.name}`,
+  move: (l) => `${l.from} moves with it${l.name !== l.from ? ` (as ${l.name})` : ""}`,
+  new: (l) => `new line ${l.name}`,
+  none: () => "no plan for its month",
+};
+
+/** Inline "Move to another brand…" bar for the ticked projects: target picker, per-project preview, Move. */
+function MoveBar({ data, picked, onDone, onCancel }: { data: BrandDetailResponse; picked: string[]; onDone: () => void; onCancel: () => void }) {
+  const b = data.brand;
+  const toast = useToast();
+  const brands = useBrands(true);
+  const [target, setTarget] = useState<string | null>(null);
+  const preview = useMovePreview(b._id, picked, target);
+  const move = useMoveProjects();
+  const options = useMemo(
+    () =>
+      (brands.data ?? [])
+        .filter((x) => x._id !== b._id && x.active && (x.status ?? "approved") === "approved")
+        .map((x) => ({ value: x._id, label: x.name })),
+    [brands.data, b._id],
+  );
+
+  function submit() {
+    if (!target) return;
+    move.mutate(
+      { id: b._id, projectIds: picked, targetBrandId: target },
+      {
+        onSuccess: (res) => {
+          if (res.pendingApproval) toast.success(res.pendingApproval);
+          else toast.success(`${res.moved ?? 0} project${res.moved === 1 ? "" : "s"} moved${res.plans?.length ? ` — plan ${res.plans.map((p) => `${p.month} v${p.version}`).join(", ")}` : ""}.`);
+          if (res.errors?.length) toast.error(res.errors.join(" "));
+          onDone();
+        },
+      },
+    );
+  }
+
+  const p = preview.data;
+  return (
+    <div className="mb-3 space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3" role="group" aria-label="Move projects to another brand">
+      <div className="flex flex-wrap items-end gap-2">
+        <div className="min-w-56 flex-1 space-y-1">
+          <Label htmlFor="move-target">Move {picked.length} project{picked.length === 1 ? "" : "s"} to</Label>
+          <Combobox
+            items={options}
+            value={options.find((o) => o.value === target) ?? null}
+            onValueChange={(item: { value: string; label: string } | null) => setTarget(item?.value ?? null)}
+            disabled={brands.isPending}
+            autoHighlight
+          >
+            <ComboboxInput id="move-target" placeholder={brands.isPending ? "Loading brands…" : "Search brands…"} className="w-full" />
+            <ComboboxContent sideOffset={4}>
+              <ComboboxEmpty>No brands found.</ComboboxEmpty>
+              <ComboboxList>
+                {(item: { value: string; label: string }) => (
+                  <ComboboxItem key={item.value} value={item}>
+                    {item.label}
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
+        </div>
+        <Button type="button" variant="ghost" size="sm" onClick={onCancel} disabled={move.isPending}>Cancel</Button>
+        <Button type="button" size="sm" onClick={submit} disabled={!target || !p || move.isPending || preview.isFetching}>
+          {move.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuArrowRightLeft aria-hidden />}
+          {p && !p.applies ? "Send move for approval" : "Move"}
+        </Button>
+      </div>
+      {!target ? (
+        <p className="text-xs text-muted-foreground">Pick the brand. Names follow the new brand (codes stay), the manpower plan line follows, and the new brand&apos;s scope replaces the project&apos;s when it has one.</p>
+      ) : preview.isPending || preview.isFetching ? (
+        <Skeleton className="h-16 w-full" />
+      ) : preview.isError ? (
+        <FieldError>{getErrorMessage(preview.error)}</FieldError>
+      ) : p ? (
+        <div className="space-y-2">
+          <p className="text-xs">
+            Scope:{" "}
+            {p.to.hasScope ? (
+              <span className="font-medium">replaced by {p.to.name}&apos;s scope (its rows, other scope, platforms, notes and documents)</span>
+            ) : (
+              <span className="font-medium">kept — {p.to.name} has no scope</span>
+            )}
+            {!p.applies && <span className="text-muted-foreground"> · Leadership approves the move before anything changes.</span>}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-xs">
+              <thead className="text-muted-foreground">
+                <tr className="border-b text-left">
+                  <th className="py-1 pr-2 font-medium">Project</th>
+                  <th className="py-1 pr-2 font-medium">New name</th>
+                  <th className="py-1 font-medium">Plan line</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.items.map((i) => (
+                  <tr key={i.projectId} className="border-b align-top last:border-0">
+                    <td className="py-1 pr-2"><span className="break-all">{i.oldName}</span> <span className="text-muted-foreground">{i.code}</span></td>
+                    <td className="py-1 pr-2 break-all">{i.newName === i.oldName ? <span className="text-muted-foreground">unchanged (free-form name)</span> : i.newName}</td>
+                    <td className="py-1">{LINE_ACTION[i.line.action](i.line)}{i.month ? <span className="text-muted-foreground"> · {monthLabel(i.month)}</span> : null}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {p.notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{p.notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+        </div>
+      ) : null}
+      {move.isError && <FieldError>{getErrorMessage(move.error)}</FieldError>}
+    </div>
+  );
+}
+
 export function BrandPage({ id, month, onMonth }: { id: string; month: string; onMonth: (month: string) => void }) {
   const detail = useBrandDetail(id, month);
   // "Add scope" links from the Overview land on the scope section once the brand has loaded.
@@ -470,7 +657,18 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const edits = usePlanEdits(month, Boolean(data?.canEditPlan));
   const removeFile = useDeleteBrandFile();
   const [splitting, setSplitting] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  // Projects list: the month's projects, or every open one; ticked ones can move to another brand.
+  const [allProjects, setAllProjects] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [moving, setMoving] = useState(false);
   const toast = useToast();
+  useEffect(() => {
+    setPicked([]);
+    setMoving(false);
+    setRenaming(false);
+  }, [id]);
+  const togglePicked = (pid: string) => setPicked((list) => (list.includes(pid) ? list.filter((x) => x !== pid) : [...list, pid]));
 
   if (detail.error && !data) {
     const notFound = (detail.error as { response?: { status?: number } })?.response?.status === 404;
@@ -529,7 +727,13 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             {b.status === "pending" && <Badge variant="outline" className="ml-2 align-middle">waiting for approval</Badge>}
             {b.isPitch && <Badge variant="secondary" className="ml-2 align-middle">Pitch</Badge>}
             {b.monthlyRetainer && <Badge variant="outline" className="ml-2 align-middle">Monthly retainer</Badge>}
+            {data.canRename && !renaming && (
+              <Button type="button" variant="ghost" size="sm" className="ml-1 align-middle" onClick={() => setRenaming(true)} aria-label={`Rename ${b.name}`}>
+                <LuPencil aria-hidden /> Rename
+              </Button>
+            )}
           </h1>
+          {renaming && <RenameBar data={data} onClose={() => setRenaming(false)} />}
           <p className="mt-1 text-sm text-muted-foreground">
             {b.organisation && <span className="mr-2 font-medium text-foreground">{b.organisation}</span>}
             {b.projectCount} open project{b.projectCount === 1 ? "" : "s"} · {b.current.length} current in {monthLabel(month)}
@@ -719,12 +923,74 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         </Section>
       )}
 
-      <Section title="Current projects">
-        {b.current.length ? (
+      <Section
+        title={allProjects ? `Open projects (${b.projects.length})` : "Current projects"}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAllProjects((v) => !v)} aria-pressed={allProjects}>
+              {allProjects ? `Only ${monthLabel(month)}` : `All open projects (${b.projects.length})`}
+            </Button>
+            {data.canManage && picked.length > 0 && !moving && (
+              <Button type="button" variant="outline" size="sm" onClick={() => setMoving(true)}>
+                <LuArrowRightLeft aria-hidden /> Move to another brand…
+              </Button>
+            )}
+          </div>
+        }
+      >
+        {moving && picked.length > 0 && (
+          <MoveBar
+            data={data}
+            picked={picked}
+            onCancel={() => setMoving(false)}
+            onDone={() => {
+              setMoving(false);
+              setPicked([]);
+              void detail.refetch();
+            }}
+          />
+        )}
+        {allProjects ? (
+          b.projects.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[32rem] text-sm">
+                <tbody>
+                  {b.projects.map((p) => (
+                    <tr key={p._id} className="border-b last:border-0">
+                      {data.canManage && (
+                        <td className="w-8 py-1.5 pr-2 align-top">
+                          <input type="checkbox" className="size-4 accent-primary" aria-label={`Select ${p.name}`} checked={picked.includes(p._id)} onChange={() => togglePicked(p._id)} />
+                        </td>
+                      )}
+                      <td className="py-1.5 pr-2"><Link to={`/projects/${p._id}`} className="break-all hover:underline">{p.name}</Link></td>
+                      <td className="py-1.5 pr-2 text-xs text-muted-foreground">{p.code}</td>
+                      <td className="py-1.5 text-xs">{p.current && <Badge variant="secondary">current</Badge>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">This brand has no open projects.</p>
+          )
+        ) : b.current.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[40rem] text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr className="border-b text-left">
+                  {data.canManage && (
+                    <th className="w-8 py-1.5 pr-2 font-medium">
+                      <input
+                        type="checkbox"
+                        className="size-4 accent-primary"
+                        aria-label="Select all current projects"
+                        checked={b.current.every((p) => picked.includes(p._id))}
+                        onChange={(e) =>
+                          setPicked((list) => (e.target.checked ? [...new Set([...list, ...b.current.map((p) => p._id)])] : list.filter((x) => !b.current.some((p) => p._id === x))))
+                        }
+                      />
+                    </th>
+                  )}
                   <th className="py-1.5 pr-2 font-medium">Project</th>
                   <th className="py-1.5 pr-2 font-medium">Dates</th>
                   <th className="py-1.5 pr-2 font-medium">Scope</th>
@@ -734,6 +1000,11 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
               <tbody>
                 {b.current.map((p) => (
                   <tr key={p._id} className="border-b last:border-0">
+                    {data.canManage && (
+                      <td className="w-8 py-1.5 pr-2 align-top">
+                        <input type="checkbox" className="size-4 accent-primary" aria-label={`Select ${p.name}`} checked={picked.includes(p._id)} onChange={() => togglePicked(p._id)} />
+                      </td>
+                    )}
                     <td className="py-1.5 pr-2"><Link to={`/projects/${p._id}`} className="break-all hover:underline">{p.name}</Link></td>
                     <td className="py-1.5 pr-2 text-xs whitespace-nowrap">{formatDate(p.startDate)} → {formatDate(p.deadline)}</td>
                     <td className="py-1.5 pr-2 text-xs">{p.scope || "—"}</td>
@@ -744,7 +1015,15 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             </table>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">None in {monthLabel(month)}.</p>
+          <p className="text-sm text-muted-foreground">None in {monthLabel(month)}.{b.projects.length ? " Show all open projects to move older ones." : ""}</p>
+        )}
+        {data.canManage && picked.length > 0 && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            {picked.length} selected ·{" "}
+            <button type="button" className="text-primary hover:underline" onClick={() => setPicked([])}>
+              clear
+            </button>
+          </p>
         )}
       </Section>
       {extractHint}

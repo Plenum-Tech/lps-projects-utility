@@ -168,6 +168,7 @@ export const PROJECT_ACTIVITY_LABELS: Record<ProjectActivityAction, string> = {
   archived: "archived the project",
   restored: "restored the project",
   duplicated: "duplicated the project",
+  brand_moved: "moved the project to another brand",
 };
 
 /**

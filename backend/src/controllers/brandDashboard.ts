@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { canCreateBrand, canManageBrand } from "../lib/brandAccess.js";
+import { canCreateBrand, canManageBrand, canRenameBrand } from "../lib/brandAccess.js";
 import { runBrandSplit, type BrandSplitSetup } from "../lib/brandSplit.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { copyGridFsFile, deleteFromGridFs, openGridFsDownload, uploadToGridFs } from "../lib/gridfs.js";
@@ -219,6 +219,7 @@ async function permissions(user: IUser) {
   return {
     canCreate: canCreateBrand(user),
     canManage: canManageBrand(user),
+    canRename: canRenameBrand(user),
     canEditPlan: canEditManpower(user),
     canApprove: await isProjectApprover(user._id as mongoose.Types.ObjectId),
     canSeeUtilisation: canSeeUtilisation(user),

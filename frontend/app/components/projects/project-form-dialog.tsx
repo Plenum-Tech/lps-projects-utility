@@ -392,6 +392,8 @@ export function ProjectFormDialog({
 
   /** Brand / type change (the code preview follows them). */
   function changeNamePart(patch: Partial<Pick<FormState, "brand" | "type">>) {
+    // Another brand: its scope rows are picked afresh (all of them by default).
+    if (patch.brand !== undefined && patch.brand !== form.brand) setPickedRows(null);
     setForm((current) => ({ ...current, ...patch }));
   }
 
@@ -564,8 +566,10 @@ export function ProjectFormDialog({
   // A brand with a scope (brand flow) fixes the scope of its projects: shown read-only.
   const brandScope = selectedBrand?.scopeItems?.length ? selectedBrand.scopeItems : null;
   // Rows picked for this project (default: all; editing: the ones the project has).
+  // Editing and moving to another brand: the new brand's scope replaces the project's (all rows by default).
+  const brandChanged = Boolean(project) && form.brand !== NONE && form.brand !== (project?.naming?.brand ?? project?.brand?._id ?? NONE);
   const picked: boolean[] = brandScope
-    ? (pickedRows ?? (project ? matchBrandRows(brandScope, project.scopeItems ?? []) : brandScope.map(() => true)))
+    ? (pickedRows ?? (project && !brandChanged ? matchBrandRows(brandScope, project.scopeItems ?? []) : brandScope.map(() => true)))
     : [];
   const brandScopeRows: ScopeItem[] | null = brandScope
     ? brandScope
@@ -785,9 +789,10 @@ export function ProjectFormDialog({
     if (form.category !== original.category) input.category = category;
     if (form.manpowerRow !== original.manpowerRow)
       input.manpowerRow = form.manpowerRow === AUTO_ROW ? null : form.manpowerRow;
-    if (brandScope) {
+    // A brand move brings the new brand's scope (server side): no scope rows with it.
+    if (!brandChanged && brandScope) {
       if (pickedRows && JSON.stringify(brandScopeRows) !== JSON.stringify(original.scopeItems)) input.scopeItems = brandScopeRows!;
-    } else if (JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
+    } else if (!brandChanged && JSON.stringify(form.scopeItems) !== JSON.stringify(original.scopeItems)) input.scopeItems = form.scopeItems;
     if (form.startDate !== original.startDate) input.startDate = form.startDate;
     if (form.deadline !== original.deadline) input.deadline = form.deadline || null;
     if (isAdmin && !sameIds(form.departments, original.departments)) {
@@ -981,6 +986,13 @@ export function ProjectFormDialog({
                   </div>
                 )}
                 {show(brandError) && <FieldError>{brandError}</FieldError>}
+                {brandChanged && selectedBrand && (
+                  <p className="text-xs text-muted-foreground">
+                    Moving to {selectedBrand.name}: the name becomes {selectedBrand.name}_…, the code stays, the manpower plan
+                    line follows{brandScope ? ` and ${selectedBrand.name}'s scope replaces the project's` : " and the project keeps its scope"}.
+                    {" "}Leadership's moves apply at once; anyone else's go for approval.
+                  </p>
+                )}
                 {newBrand !== null && newBrand.includes(NAMING_SEPARATOR) && (
                   <FieldError>Brand names can’t contain “_”.</FieldError>
                 )}

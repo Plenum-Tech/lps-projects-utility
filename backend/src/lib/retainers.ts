@@ -67,7 +67,9 @@ async function copyPlan(month: string, actor: IUser): Promise<RetainerRunResult[
   const from = previousMonth(month);
   const prev = await latestPlan(from);
   if (!prev) return { skipped: `No approved plan for ${from} to copy` };
-  const rows = prev.toObject().rows as IManpowerRow[];
+  // The copy's brand lines carry the brands' current names.
+  const { nameLinesAfterBrands } = await import("./manpowerLineNames.js");
+  const rows = await nameLinesAfterBrands(prev.toObject().rows as IManpowerRow[], []);
   let version = 1;
   try {
     await ManpowerPlan.create({

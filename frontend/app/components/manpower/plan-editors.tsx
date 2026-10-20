@@ -13,8 +13,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { brandLineName } from "@/lib/manpower";
 import type { ManpowerSection } from "@/types";
 import type { TableRow } from "./plan-table";
 
@@ -132,13 +134,16 @@ export function RowDialog({
     setSubmitted(false);
   }, [open, row, section]);
 
-  const nameError = !name.trim() ? "A name is required." : name.trim().length > 120 ? "Max 120 characters." : null;
+  // A brand's line is named after the brand (a sub-project suffix already there is kept): locked here.
+  const brandName = brand === NONE ? null : (brands.find((b) => b._id === brand)?.name ?? row?.brand?.name ?? null);
+  const shownName = brandName ? brandLineName(name, brandName) : name;
+  const nameError = !shownName.trim() ? "A name is required." : shownName.trim().length > 120 ? "Max 120 characters." : null;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
     if (nameError) return;
-    onSave({ name: name.trim(), brand: brand === NONE ? null : brand, type: type === NONE ? null : type, section: sec });
+    onSave({ name: shownName.trim(), brand: brand === NONE ? null : brand, type: type === NONE ? null : type, section: sec });
     onOpenChange(false);
   }
 
@@ -162,11 +167,20 @@ export function RowDialog({
             <Label htmlFor="mp-row-name">Name</Label>
             <Input
               id="mp-row-name"
-              value={name}
+              value={shownName}
               onChange={(e) => setName(e.target.value)}
+              readOnly={Boolean(brandName)}
+              aria-readonly={Boolean(brandName) || undefined}
+              aria-describedby={brandName ? "mp-row-name-hint" : undefined}
+              className={cn(brandName && "bg-muted/50 text-muted-foreground")}
               placeholder="e.g. ENOC - Zoom TikTok"
               aria-invalid={submitted && Boolean(nameError)}
             />
+            {brandName && (
+              <p id="mp-row-name-hint" className="text-xs text-muted-foreground">
+                Named after the brand — rename the brand to change it.
+              </p>
+            )}
             {submitted && nameError && <p className="text-sm text-destructive">{nameError}</p>}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">

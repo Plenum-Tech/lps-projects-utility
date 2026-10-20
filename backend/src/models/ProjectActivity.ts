@@ -21,6 +21,7 @@ export const PROJECT_ACTIVITY_ACTIONS = [
   "archived",
   "restored",
   "duplicated",
+  "brand_moved",
 ] as const;
 
 export type ProjectActivityAction = (typeof PROJECT_ACTIVITY_ACTIONS)[number];

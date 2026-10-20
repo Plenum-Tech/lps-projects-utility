@@ -66,17 +66,39 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     const result = await updateProjectCore(decider, project, rest as ProjectBody, ip, { skipApproval: true });
     return "error" in result ? result.error : null;
   }
+  if (request.kind === "project_move") {
+    const { from, to, projectIds } = payload as { from?: string; to?: string; projectIds?: string[] };
+    if (!from || !to || !Array.isArray(projectIds)) return "This move request is incomplete";
+    const { applyBrandMove } = await import("../lib/brandMove.js");
+    const result = await applyBrandMove(from, to, projectIds.map(String), decider, ip);
+    if ("error" in result) return result.error;
+    if (result.moved === 0 && result.errors.length) return result.errors.join(" ");
+    return null;
+  }
   if (request.kind === "brand_edit") {
     const brand = request.brand ? await Brand.findById(request.brand) : null;
     if (!brand) return "The brand no longer exists";
+    // Renames don't go through approval any more (admins rename at once); a name in an older
+    // pending request is still applied with its follow-ups. Still free?
+    const { renameProjects, ...changes } = payload as Record<string, unknown>;
+    if (typeof changes.name === "string" && changes.name !== brand.name) {
+      const { brandNameKey } = await import("../models/Brand.js");
+      if (await Brand.exists({ nameKey: brandNameKey(changes.name), _id: { $ne: brand._id } })) return `A brand named "${changes.name}" already exists`;
+    }
+    const oldName = brand.name;
     const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
     const rowsChanged = Boolean((payload as Record<string, unknown>).scopeItems);
     const textChanged = typeof (payload as Record<string, unknown>).scopeText === "string";
     const scopeChanged = rowsChanged || textChanged;
     // The scope as it was becomes version 1 when the brand has no history yet.
     if (scopeChanged) await ensureBaseVersion(brand);
-    Object.assign(brand, payload);
+    Object.assign(brand, changes);
     await brand.save();
+    // The name: structured project names (unless the requester unticked it) and plan lines follow.
+    if (typeof changes.name === "string" && changes.name !== oldName) {
+      const { afterBrandRename } = await import("./brands.js");
+      await afterBrandRename(brand, oldName, renameProjects !== false, decider, ip);
+    }
     // A new brand scope reaches the brand's open projects (their scope is locked to it).
     if (scopeChanged) {
       const { applyBrandScopeToProjects, applyBrandScopeTextToProjects } = await import("../lib/brandFlow.js");

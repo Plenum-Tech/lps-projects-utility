@@ -14,6 +14,7 @@ export const KIND_LABEL: Record<ChangeRequestItem["kind"], string> = {
   project_change: "Scope / team",
   brand_edit: "Brand",
   manpower_plan: "Manpower plan",
+  project_move: "Brand move",
 };
 
 /** Before → after table of a request's changes. */

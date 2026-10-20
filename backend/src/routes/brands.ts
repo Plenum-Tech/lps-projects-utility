@@ -3,9 +3,9 @@ import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controlle
 import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
 import { exportPitches, listPitches, updatePitch } from "../controllers/pitches.js";
 import { brandReadiness } from "../controllers/brandReadiness.js";
-import { createBrand, decideBrand, deleteBrand, listBrands, updateBrand } from "../controllers/brands.js";
+import { createBrand, decideBrand, deleteBrand, listBrands, moveProjects, previewMoveProjects, renameBrand, updateBrand } from "../controllers/brands.js";
 import { brandDetail, brandOverview, deleteBrandFile, downloadBrandFile, splitBrand, uploadBrandFiles } from "../controllers/brandDashboard.js";
-import { requireBrandCreator, requireBrandManager } from "../lib/brandAccess.js";
+import { requireBrandCreator, requireBrandManager, requireBrandRenamer } from "../lib/brandAccess.js";
 import { uploadTaskFilesMiddleware } from "../controllers/taskFiles.js";
 import { scopeExtractRateLimit, scopeMatchRateLimit } from "../middlewares/rateLimit.js";
 import { listScopeVersions, scopeMatch } from "../controllers/brandScope.js";
@@ -43,6 +43,10 @@ router.get("/:id/detail", brandDetail);
 // The brand's scope history: every version with what changed against the one before.
 router.get("/:id/scope-versions", listScopeVersions);
 router.post("/:id/split", requireBrandCreator, splitBrand);
+// Rename (admins only, applied at once) and moving projects to another brand (leadership; others → approval).
+router.post("/:id/rename", requireBrandRenamer, renameBrand);
+router.post("/:id/move-projects/preview", previewMoveProjects);
+router.post("/:id/move-projects", moveProjects);
 // The brand's scope documents: everyone downloads; creators and leadership add / remove.
 router.get("/:id/files/:fileId", downloadBrandFile);
 router.post("/:id/files", requireBrandManager, uploadTaskFilesMiddleware, uploadBrandFiles);

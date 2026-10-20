@@ -145,7 +145,8 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
           section: "active",
           brand: brand as mongoose.Types.ObjectId | null,
           type: project.naming?.type ?? null,
-          name: (project.naming?.title ?? project.name).slice(0, 80),
+          // A brand's line carries the brand's name (lib/manpowerLineNames.ts).
+          name: (brand ? ((await Brand.findById(brand).select("name").lean())?.name ?? project.naming?.title ?? project.name) : (project.naming?.title ?? project.name)).slice(0, 80),
           cells: cellsFromTeam([], team),
         },
       ];

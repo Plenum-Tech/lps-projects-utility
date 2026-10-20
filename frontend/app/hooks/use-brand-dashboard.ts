@@ -7,7 +7,7 @@ import { projectKeys } from "@/hooks/use-projects";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
 import { downloadFromApi } from "@/lib/download";
-import type { Brand, BrandDetailResponse, BrandOverviewResponse, PitchesResponse, PitchRow, PitchStepKey } from "@/types";
+import type { Brand, BrandDetailResponse, BrandMovePreview, BrandMoveResult, BrandOverviewResponse, PitchesResponse, PitchRow, PitchStepKey } from "@/types";
 
 // Brands section (/brands): overview + allocation, the brand page, split, leads, documents.
 
@@ -179,6 +179,42 @@ export function useSplitBrand() {
   return useMutation({
     mutationFn: async ({ id, ...body }: { id: string; name: string; projectIds: string[]; organisation?: string }) =>
       (await api.post<BrandSplitResult>(`/brands/${id}/split`, body)).data,
+    onSuccess: () => invalidate(),
+  });
+}
+
+/** Rename a brand (admins only, applied at once). Structured project names follow by default; plan lines always. */
+export function useRenameBrand() {
+  const invalidate = useInvalidateAll();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: string; name: string; shortName?: string; renameProjects: boolean }) =>
+      (await api.post<{ brand: Brand; projectsRenamed?: number; skipped?: string[] }>(`/brands/${id}/rename`, body)).data,
+    onSuccess: (data) => {
+      invalidate();
+      toast.success(`Renamed to ${data.brand.name}${data.projectsRenamed ? ` — ${data.projectsRenamed} project name${data.projectsRenamed === 1 ? "" : "s"} updated` : ""}.`);
+      if (data.skipped?.length) toast.error(`Not renamed: ${data.skipped.join("; ")}`);
+    },
+  });
+}
+
+/** What moving the ticked projects to another brand would do (no changes). */
+export function useMovePreview(id: string, projectIds: string[], targetBrandId: string | null) {
+  return useQuery({
+    queryKey: ["brands", "move-preview", id, targetBrandId, [...projectIds].sort().join(",")],
+    queryFn: async () => (await api.post<BrandMovePreview>(`/brands/${id}/move-projects/preview`, { projectIds, targetBrandId })).data,
+    enabled: Boolean(targetBrandId) && projectIds.length > 0,
+    staleTime: 0,
+    retry: false,
+  });
+}
+
+/** Move projects to another brand (leadership at once; creators / project managers → approval). */
+export function useMoveProjects() {
+  const invalidate = useInvalidateAll();
+  return useMutation({
+    mutationFn: async ({ id, ...body }: { id: string; projectIds: string[]; targetBrandId: string }) =>
+      (await api.post<BrandMoveResult>(`/brands/${id}/move-projects`, body)).data,
     onSuccess: () => invalidate(),
   });
 }

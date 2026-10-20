@@ -5,6 +5,7 @@ import {
   LuArchive,
   LuArchiveRestore,
   LuArrowRight,
+  LuArrowRightLeft,
   LuCircleCheck,
   LuCirclePlus,
   LuCopy,
@@ -53,6 +54,7 @@ const ACTION_ICONS: Record<ProjectActivityAction, { icon: IconType; tone: string
   archived: { icon: LuArchive, tone: "bg-muted text-muted-foreground" },
   restored: { icon: LuArchiveRestore, tone: "bg-primary/10 text-primary" },
   duplicated: { icon: LuCopy, tone: "bg-muted text-muted-foreground" },
+  brand_moved: { icon: LuArrowRightLeft, tone: "bg-chart-2/15 text-foreground" },
 };
 
 function text(value: unknown): string | null {
@@ -79,6 +81,15 @@ function detailSuffix(entry: ProjectActivity): string | null {
       return text(details.filename);
     case "duplicated":
       return text(details.code) ? `as ${text(details.code)}` : null;
+    case "brand_moved": {
+      // "from Brand A to Brand B (renamed X → Y)"
+      const from = text(details.from);
+      const to = text(details.to);
+      const oldName = text(details.oldName);
+      const newName = text(details.newName);
+      const renamed = oldName && newName && oldName !== newName ? ` (renamed ${oldName} → ${newName})` : "";
+      return from && to ? `from ${from} to ${to}${renamed}` : null;
+    }
     case "milestone_created":
     case "milestone_updated":
     case "milestone_completed":

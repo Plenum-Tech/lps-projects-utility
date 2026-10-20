@@ -22,6 +22,7 @@ const KIND_LABEL: Record<ChangeKind, string> = {
   project_change: "Project scope / team change",
   brand_edit: "Brand change",
   manpower_plan: "Manpower plan change",
+  project_move: "Projects moving to another brand",
 };
 
 /** Short text for list / email cells. */
@@ -55,7 +56,8 @@ export async function requestChange(params: {
       : params.kind === "brand_edit"
         ? { brand: params.brand }
         : { month: params.month };
-  const previous = await ChangeRequest.findOne({ kind: params.kind, status: "pending", ...target });
+  // Moves are separate requests (each its own projects); the others replace the pending one.
+  const previous = params.kind === "project_move" ? null : await ChangeRequest.findOne({ kind: params.kind, status: "pending", ...target });
   let payload = params.payload;
   let changes = params.changes;
   if (previous && params.kind !== "manpower_plan") {
@@ -153,7 +155,7 @@ export function notifyDecision(request: IChangeRequest, decider: IUser, approved
 // in-app and by email — never the person who made the change.
 // ---------------------------------------------------------------------------
 
-export type ExceptionKind = "direct_edit" | "import_update" | "plan_sync" | "over_scope_task" | "no_scope_task";
+export type ExceptionKind = "direct_edit" | "import_update" | "plan_sync" | "over_scope_task" | "no_scope_task" | "brand_change";
 
 const EXCEPTION_LABEL: Record<ExceptionKind, string> = {
   direct_edit: "Changed without approval",
@@ -161,6 +163,7 @@ const EXCEPTION_LABEL: Record<ExceptionKind, string> = {
   plan_sync: "Changed from the manpower plan",
   over_scope_task: "Task over the approved scope",
   no_scope_task: "Task on a project without scope",
+  brand_change: "Moved to another brand without approval",
 };
 
 export interface ExceptionProject {

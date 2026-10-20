@@ -3,7 +3,16 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
-import { Brand, BRAND_COLORS, BRAND_LIMITS, type BrandColor, type IBrand } from "../models/Brand.js";
+import { Brand, BRAND_COLORS, BRAND_LIMITS, brandNameKey, type BrandColor, type IBrand } from "../models/Brand.js";
+import {
+  applyBrandMove,
+  followBrandRename,
+  moveAccess,
+  moveCandidates,
+  planBrandMove,
+  requestBrandMove,
+  targetError,
+} from "../lib/brandMove.js";
 import { DeliverySettings } from "../models/DeliverySettings.js";
 import { Project } from "../models/Project.js";
 import { isProjectApprover, projectApproverIds } from "../lib/projectApproval.js";
@@ -12,7 +21,7 @@ import { notifyUsers } from "../lib/notifications.js";
 import { applyBrandScopeTextToProjects, applyBrandScopeToProjects } from "../lib/brandFlow.js";
 import { parseScopeItems, scopeText } from "../lib/scopeUnits.js";
 import { User, type IUser } from "../models/User.js";
-import { canManageBrand } from "../lib/brandAccess.js";
+import { canManageBrand, canRenameBrand } from "../lib/brandAccess.js";
 import { isSplitSetup, runBrandSplit } from "../lib/brandSplit.js";
 import { parseAgreement, parseMatchRows, storedScopeMatch } from "../lib/scopeMatch.js";
 import { ensureBaseVersion, recordScopeVersion, scopeTextDiff } from "../lib/scopeVersions.js";
@@ -262,7 +271,10 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   try {
     if ("name" in body) {
       const name = parseName(body.name);
-      if (name !== brand.name) next.name = name;
+      if (name !== brand.name) {
+        if (name.includes("_")) throw new FieldError("name", "Brand names can't contain “_” (it separates the parts of project names)");
+        next.name = name;
+      }
     }
     if ("shortName" in body) {
       const shortName = parseShortName(body.shortName);
@@ -288,6 +300,29 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
+  }
+  // A new name: admins only, applied at once (no approval); the brand's structured project
+  // names follow unless `renameProjects: false`, its plan lines always.
+  if (next.name) {
+    if (!canRenameBrand(req.user!)) {
+      res.status(403).json({ error: "Only an admin can rename a brand", field: "name" });
+      return;
+    }
+    if (await Brand.exists({ nameKey: brandNameKey(next.name), _id: { $ne: brand._id } })) {
+      res.status(409).json({ error: `A brand named "${next.name}" already exists`, field: "name" });
+      return;
+    }
+    const oldName = brand.name;
+    brand.name = next.name;
+    try {
+      await brand.save();
+    } catch (err) {
+      if (!sendFieldError(res, err)) throw err;
+      return;
+    }
+    await afterBrandRename(brand, oldName, body.renameProjects !== false, req.user!, req.ip);
+    directChanged.push("name");
+    delete next.name;
   }
   const changed = Object.keys(next);
   // A new scope: compared with the agreement (one sent with it — a scope upload's read result —
@@ -317,15 +352,16 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
             : key === "scopeText"
               ? clip(String(value ?? "")) || "—"
               : String(value ?? "") || "—";
+    const lines = changed.map((key) => ({
+      label: label[key] ?? key,
+      before: show(key, (brand as unknown as Record<string, unknown>)[key]),
+      after: show(key, (next as Record<string, unknown>)[key]),
+    }));
     await requestChange({
       kind: "brand_edit",
       actor: req.user!,
       title: `Brand ${brand.name}`,
-      changes: changed.map((key) => ({
-        label: label[key] ?? key,
-        before: show(key, (brand as unknown as Record<string, unknown>)[key]),
-        after: show(key, (next as Record<string, unknown>)[key]),
-      })),
+      changes: lines,
       payload: { ...next, ...scopeExtra },
       brand: brand._id as mongoose.Types.ObjectId,
       ip: req.ip,
@@ -358,6 +394,161 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   }
   const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
   res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed: [...directChanged, ...changed], ...(pendingApproval ? { pendingApproval } : {}) });
+}
+
+// ---------------------------------------------------------------------------
+// Rename (brand page header; admins only, applied at once) and moving projects to
+// another brand (brand page projects list: leadership at once, the approvers are
+// told; brand creators and the projects' managers send it for approval).
+// ---------------------------------------------------------------------------
+
+/** After a rename is applied: project names / plan lines follow and the activity is logged (no approval, no notice). */
+export async function afterBrandRename(brand: IBrand, oldName: string, renameProjects: boolean, actor: IUser, ip: string | undefined) {
+  const follow = await followBrandRename(brand, oldName, renameProjects, actor, ip);
+  logActivity({
+    action: "settings_updated",
+    actor,
+    targetType: "brand",
+    targetId: brand._id as mongoose.Types.ObjectId,
+    targetName: brand.name,
+    details: {
+      brand: "renamed",
+      from: oldName,
+      to: brand.name,
+      projects: follow.projects,
+      skipped: follow.skipped.length || undefined,
+      plans: follow.plans.map((p) => (p.inPlace ? `${p.month} (names)` : `${p.month} v${p.version}`)),
+    },
+    ip,
+  });
+  return follow;
+}
+
+/**
+ * POST /api/brands/:id/rename — admins only (lib/brandAccess.ts canRenameBrand), applied at once;
+ * `{ name, shortName?, renameProjects? (default true) }`. Structured project names follow (codes
+ * kept) when renameProjects; the brand's manpower plan lines always take the new name.
+ */
+export async function renameBrand(req: Request, res: Response): Promise<void> {
+  const brand = await findBrandOr404(req, res);
+  if (!brand) return;
+  const user = req.user!;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const next: { name?: string; shortName?: string } = {};
+  try {
+    const name = parseName(body.name);
+    if (name !== brand.name) {
+      if (name.includes("_")) throw new FieldError("name", "Brand names can't contain “_” (it separates the parts of project names)");
+      next.name = name;
+    }
+    if ("shortName" in body) {
+      const shortName = parseShortName(body.shortName);
+      if (shortName !== (brand.shortName ?? "")) next.shortName = shortName;
+    }
+  } catch (err) {
+    if (!sendFieldError(res, err)) throw err;
+    return;
+  }
+  if (!next.name && next.shortName === undefined) {
+    res.status(400).json({ error: "Nothing to change — enter a different name", field: "name" });
+    return;
+  }
+  if (next.name && (await Brand.exists({ nameKey: brandNameKey(next.name), _id: { $ne: brand._id } }))) {
+    res.status(409).json({ error: `A brand named "${next.name}" already exists`, field: "name" });
+    return;
+  }
+  const oldName = brand.name;
+  Object.assign(brand, next);
+  try {
+    await brand.save();
+  } catch (err) {
+    if (!sendFieldError(res, err)) throw err;
+    return;
+  }
+  let follow: Awaited<ReturnType<typeof afterBrandRename>> | null = null;
+  if (next.name) follow = await afterBrandRename(brand, oldName, body.renameProjects !== false, user, req.ip);
+  else
+    logActivity({
+      action: "settings_updated",
+      actor: user,
+      targetType: "brand",
+      targetId: brand._id as mongoose.Types.ObjectId,
+      targetName: brand.name,
+      details: { brand: "updated", changed: ["shortName"] },
+      ip: req.ip,
+    });
+  const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
+  res.json({
+    brand: serialize(brand, counts.get(String(brand._id)) ?? 0),
+    projectsRenamed: follow?.projects ?? 0,
+    skipped: follow?.skipped ?? [],
+    plans: follow?.plans ?? [],
+  });
+}
+
+/** Body of a move: `{ projectIds, targetBrandId }` → the source brand, target and projects (or a response sent). */
+async function moveInput(req: Request, res: Response) {
+  const from = await findBrandOr404(req, res);
+  if (!from) return null;
+  const body = (req.body ?? {}) as { projectIds?: unknown; targetBrandId?: unknown };
+  const targetId = typeof body.targetBrandId === "string" && mongoose.isValidObjectId(body.targetBrandId) ? body.targetBrandId : null;
+  const target = targetId ? await Brand.findById(targetId) : null;
+  const bad = targetId ? targetError(from, target) : "Pick the brand to move them to";
+  if (bad) {
+    res.status(400).json({ error: bad, field: "targetBrandId" });
+    return null;
+  }
+  const projects = await moveCandidates(from._id as mongoose.Types.ObjectId, Array.isArray(body.projectIds) ? body.projectIds.map(String) : []);
+  if ("error" in projects) {
+    res.status(400).json({ error: projects.error, field: "projectIds" });
+    return null;
+  }
+  return { from, target: target!, projects };
+}
+
+const moveView = (plan: Awaited<ReturnType<typeof planBrandMove>>) => ({ from: plan.from, to: plan.to, items: plan.items, notes: plan.notes });
+
+/** POST /api/brands/:id/move-projects/preview — what a move would do (new names, scope, plan lines). */
+export async function previewMoveProjects(req: Request, res: Response): Promise<void> {
+  const input = await moveInput(req, res);
+  if (!input) return;
+  const access = await moveAccess(req.user!, await Project.find({ _id: { $in: input.projects.map((p) => p._id) } }).select("manager createdBy").lean());
+  if (!access) {
+    res.status(403).json({ error: "Only leadership, brand creators and the projects' managers can move projects" });
+    return;
+  }
+  res.json({ ...moveView(await planBrandMove(input.from, input.target, input.projects)), applies: access === "apply" });
+}
+
+/**
+ * POST /api/brands/:id/move-projects — `{ projectIds, targetBrandId }`. Leadership moves at once
+ * (approvers told); brand creators and the projects' managers send a project_move request; others 403.
+ */
+export async function moveProjects(req: Request, res: Response): Promise<void> {
+  const input = await moveInput(req, res);
+  if (!input) return;
+  const user = req.user!;
+  const access = await moveAccess(user, await Project.find({ _id: { $in: input.projects.map((p) => p._id) } }).select("manager createdBy").lean());
+  if (!access) {
+    res.status(403).json({ error: "Only leadership, brand creators and the projects' managers can move projects" });
+    return;
+  }
+  if (access === "request") {
+    const plan = await planBrandMove(input.from, input.target, input.projects);
+    const change = await requestBrandMove(plan, user, req.ip);
+    res.status(202).json({
+      ...moveView(plan),
+      changeRequest: String(change._id),
+      pendingApproval: `Moving ${plan.items.length} project${plan.items.length === 1 ? "" : "s"} to ${input.target.name} was sent to leadership for approval.`,
+    });
+    return;
+  }
+  const result = await applyBrandMove(input.from._id as mongoose.Types.ObjectId, input.target._id as mongoose.Types.ObjectId, input.projects.map((p) => String(p._id)), user, req.ip, { notify: true });
+  if ("error" in result) {
+    res.status(result.status ?? 400).json({ error: result.error });
+    return;
+  }
+  res.json(result);
 }
 
 /** DELETE /api/brands/:id — admin; 409 while projects use it (deactivate instead). */

@@ -987,6 +987,8 @@ export interface ProjectWriteOptions {
   keepCode?: boolean;
   /** Apply scope / team changes directly (leadership approving a request, imports). */
   skipApproval?: boolean;
+  /** The caller already checked who may do this (a brand move: leadership, or its approval). */
+  skipPermission?: boolean;
   /** Don't copy the team onto the manpower plan (the plan is the source of this change). */
   skipPlanSync?: boolean;
   /** Excel import: Pitch-type rows don't carry the pitch dates. */
@@ -1445,7 +1447,7 @@ export async function updateProjectCore(
   ip: string | undefined,
   options: ProjectWriteOptions = {}
 ): Promise<Invalid | { changed: string[]; pendingApproval?: string }> {
-  if (!canManageProject(actor, project)) {
+  if (!options.skipPermission && !canManageProject(actor, project)) {
     return bad("Only the project manager, its creator or an admin can edit this project", 403);
   }
   if (project.archivedAt) return bad("This project is archived and read-only. Restore it first.", 409);
@@ -1821,9 +1823,65 @@ export async function updateProject(req: Request, res: Response): Promise<void> 
     return;
   }
   if (!ensureNotArchived(project, res)) return;
-  const result = await updateProjectCore(actor, project, (req.body ?? {}) as ProjectBody, req.ip);
-  if (isInvalid(result)) return send(res, result);
-  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor, 200, result.pendingApproval);
+  const body = { ...((req.body ?? {}) as ProjectBody) };
+  // A different brand moves the project (lib/brandMove.ts): the name, plan line and scope
+  // follow, and anyone but leadership sends it for approval. The rest of the save applies now.
+  const brandNow = project.naming?.brand ?? project.brand ?? null;
+  let moveTo: string | null = null;
+  if (brandNow) {
+    const naming = body.naming && typeof body.naming === "object" ? (body.naming as Record<string, unknown>) : null;
+    const requested = naming && naming.brand !== undefined ? naming.brand : body.brand;
+    if (typeof requested === "string" && mongoose.isValidObjectId(requested) && requested !== String(brandNow)) {
+      moveTo = requested;
+      if (naming) {
+        const current = project.naming;
+        const rest: Record<string, unknown> = { ...naming, brand: String(brandNow) };
+        // Only the brand changed: nothing else to save for the name.
+        if (current && rest.type === current.type && rest.month === current.month && rest.title === current.title) delete body.naming;
+        else body.naming = rest;
+      }
+      delete body.brand;
+    }
+  }
+  let pendingApproval: string | undefined;
+  if (!moveTo || Object.keys(body).length > 0) {
+    const result = await updateProjectCore(actor, project, body, req.ip);
+    if (isInvalid(result)) return send(res, result);
+    pendingApproval = result.pendingApproval;
+  }
+  if (moveTo) {
+    const move = await import("../lib/brandMove.js");
+    const [from, target] = await Promise.all([Brand.findById(brandNow), Brand.findById(moveTo)]);
+    const error = from ? move.targetError(from, target) : "The project's brand no longer exists";
+    if (error) {
+      res.status(400).json({ error, field: "brand" });
+      return;
+    }
+    const access = await move.moveAccess(actor, [project]);
+    if (access === "apply") {
+      const done = await move.applyBrandMove(from!._id as mongoose.Types.ObjectId, target!._id as mongoose.Types.ObjectId, [String(project._id)], actor, req.ip, { notify: true });
+      if ("error" in done) {
+        res.status(done.status ?? 400).json({ error: done.error, field: "brand" });
+        return;
+      }
+      if (done.errors.length) {
+        res.status(409).json({ error: done.errors.join(" "), field: "brand" });
+        return;
+      }
+    } else if (access === "request") {
+      const candidates = await move.moveCandidates(from!._id as mongoose.Types.ObjectId, [String(project._id)]);
+      if ("error" in candidates) {
+        res.status(400).json({ error: candidates.error, field: "brand" });
+        return;
+      }
+      await move.requestBrandMove(await move.planBrandMove(from!, target!, candidates), actor, req.ip);
+      pendingApproval = [pendingApproval, `Moving it to ${target!.name} was sent to leadership for approval.`].filter(Boolean).join(" ");
+    } else {
+      res.status(403).json({ error: "Only leadership, brand creators and the project's manager can move it to another brand" });
+      return;
+    }
+  }
+  await respondDetail(res, project._id as mongoose.Types.ObjectId, actor, 200, pendingApproval);
 }
 
 const ARCHIVED_READ_ONLY = "This project is archived and read-only. Restore it first.";

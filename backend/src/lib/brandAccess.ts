@@ -30,6 +30,24 @@ export function canManageBrand(user: IUser): boolean {
   return canCreateBrand(user) || isLeadershipUser(user);
 }
 
+/**
+ * Who may rename a brand (applied at once, no approval): admins — leadership counts (requireAuth
+ * marks them admin). The brand creators (Nazeer) propose brands but don't rename them, even
+ * when their account is an admin.
+ */
+export function canRenameBrand(user: IUser): boolean {
+  if (isLeadershipUser(user)) return true;
+  return user.role === "admin" && !canCreateBrand(user);
+}
+
+export function requireBrandRenamer(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user || !canRenameBrand(req.user)) {
+    res.status(403).json({ error: "Only an admin can rename a brand" });
+    return;
+  }
+  next();
+}
+
 export function requireBrandCreator(req: Request, res: Response, next: NextFunction): void {
   if (!req.user || !canCreateBrand(req.user)) {
     res.status(403).json({ error: "Only Nazeer can create brands. Ask him to add it; leadership approves it." });

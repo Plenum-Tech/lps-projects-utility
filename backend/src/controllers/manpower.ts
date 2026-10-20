@@ -515,7 +515,10 @@ export async function writePlanVersion(params: {
   actor: IUser;
   ip?: string;
 }): Promise<{ version: number; pendingApproval?: string }> {
-  const { month, before, rows, actor, ip } = params;
+  const { month, before, actor, ip } = params;
+  // Brand-linked lines are named after their brand (new, relinked or renamed lines).
+  const { nameLinesAfterBrands } = await import("../lib/manpowerLineNames.js");
+  const rows = await nameLinesAfterBrands(params.rows, before);
   const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
   const needsApproval = !(await isLeadershipActor(actor));
   const plan = await ManpowerPlan.create({

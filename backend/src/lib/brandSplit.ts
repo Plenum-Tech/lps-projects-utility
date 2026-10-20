@@ -5,6 +5,7 @@ import { Project } from "../models/Project.js";
 import type { IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { linkProjectsToRows } from "./manpower/match.js";
+import { renamedLineName } from "./manpowerLineNames.js";
 import { composeProjectName } from "./projectNaming.js";
 import { projectMonth } from "./projectExpiry.js";
 import { scheduleProjectTag } from "./tagAssign.js";
@@ -97,9 +98,9 @@ export async function runBrandSplit(brand: IBrand, setup: BrandSplitSetup, actor
         else if (row) result.notes.push(`${row.name} (${month}) is shared with projects that stay on ${from?.name ?? "the old brand"}: the line was kept, the moved projects stay linked to it.`);
       }
       if (moveRows.size === 0) continue;
-      const oldName = (from?.name ?? "").trim().toLowerCase();
+      // The moved lines take the new brand's name ("Ajmal - Campaign" → "Ajmal GCC - Campaign").
       const nextRows = rows.map((r) =>
-        moveRows.has(r.key) ? { ...r, brand: toId, name: r.name.trim().toLowerCase() === oldName ? brand.name : r.name } : r
+        moveRows.has(r.key) ? { ...r, brand: toId, name: renamedLineName(r.name, from?.name ?? "", brand.name) } : r
       );
       planWrites.push({ month, before: rows, latestVersion: plan.version, rows: nextRows, max: plan.maxProjectsPerPerson });
     }
