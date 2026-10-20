@@ -31,13 +31,11 @@ export function canManageBrand(user: IUser): boolean {
 }
 
 /**
- * Who may rename a brand (applied at once, no approval): admins — leadership counts (requireAuth
- * marks them admin). The brand creators (Nazeer) propose brands but don't rename them, even
- * when their account is an admin.
+ * Who may rename a brand (applied at once, no approval): every admin, Nazeer included;
+ * leadership counts too (requireAuth marks them admin).
  */
 export function canRenameBrand(user: IUser): boolean {
-  if (isLeadershipUser(user)) return true;
-  return user.role === "admin" && !canCreateBrand(user);
+  return isLeadershipUser(user) || user.role === "admin";
 }
 
 export function requireBrandRenamer(req: Request, res: Response, next: NextFunction): void {
