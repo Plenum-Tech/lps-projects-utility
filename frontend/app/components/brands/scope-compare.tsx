@@ -1,6 +1,8 @@
-import { LuLoaderCircle, LuSparkles } from "react-icons/lu";
+import { useEffect, useRef, useState } from "react";
+import { LuLoaderCircle, LuPlus, LuSparkles, LuX } from "react-icons/lu";
 
-import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { diffIsEmpty } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
@@ -152,35 +154,164 @@ export function ScopeDiffView({ diff, title, emptyText, className }: { diff: Sco
 
 export const OTHER_SCOPE_MAX = 10_000;
 
-/** The editable "Other scope (not itemised)" box under the scope rows. */
+/** One section of the "other scope": its heading ("Account Management & Content Planning") and its lines. */
+export interface ScopeSection {
+  title: string;
+  body: string;
+}
+
+const isSectionHeading = (line: string) => /:$/.test(line) && line.length <= 121 && !/^[•*\-–]/.test(line) && !/^scope\s*:/i.test(line);
+
+/** "Heading:\n• item\n• item\n\nHeading 2:\n…" → sections (lines before the first heading: an untitled one). */
+export function parseScopeSections(text: string): ScopeSection[] {
+  const out: ScopeSection[] = [];
+  let current: { title: string; lines: string[] } = { title: "", lines: [] };
+  const push = () => {
+    const body = current.lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+    if (current.title || body) out.push({ title: current.title, body });
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trimEnd();
+    if (isSectionHeading(line.trim())) {
+      push();
+      current = { title: line.trim().replace(/:$/, "").trim(), lines: [] };
+    } else current.lines.push(line);
+  }
+  push();
+  return out;
+}
+
+/** Sections → the stored text (a heading line ending with ":", its lines, a blank line between sections). */
+export function joinScopeSections(sections: ScopeSection[]): string {
+  return sections
+    .map((x) => ({ title: x.title.trim().replace(/:$/, ""), body: x.body.trim() }))
+    .filter((x) => x.title || x.body)
+    .map((x) => (x.title ? `${x.title}:${x.body ? `\n${x.body}` : ""}` : x.body))
+    .join("\n\n");
+}
+
+/**
+ * The editable "Other scope (not itemised)" under the scope rows: one box per section of the
+ * agreement ("Account Management & Content Planning", "Content Creation & Management"…), each
+ * with its heading and its "• item" lines. Stored as one text (headings end with ":").
+ */
 export function OtherScopeField({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+  const [sections, setSections] = useState<ScopeSection[]>(() => parseScopeSections(value));
+  // Re-read the sections only when the text changes from outside (a new file read), not while typing.
+  const emitted = useRef(value);
+  useEffect(() => {
+    if (value === emitted.current) return;
+    emitted.current = value;
+    setSections(parseScopeSections(value));
+  }, [value]);
+  const update = (next: ScopeSection[]) => {
+    setSections(next);
+    const text = joinScopeSections(next);
+    emitted.current = text;
+    onChange(text);
+  };
+  const total = joinScopeSections(sections).length;
   return (
-    <div className="space-y-1.5">
+    <div className="space-y-2">
       <div className="flex items-baseline justify-between gap-2">
-        <Label htmlFor={id}>Other scope (not itemised)</Label>
-        <span className="text-xs text-muted-foreground tabular-nums">{value.length.toLocaleString()} / {OTHER_SCOPE_MAX.toLocaleString()}</span>
+        <p className="text-sm font-medium" id={`${id}-label`}>
+          Other scope (not itemised)
+        </p>
+        <span className={cn("text-xs tabular-nums", total > OTHER_SCOPE_MAX ? "text-destructive" : "text-muted-foreground")}>
+          {total.toLocaleString()} / {OTHER_SCOPE_MAX.toLocaleString()}
+        </span>
       </div>
-      <Textarea
-        id={id}
-        rows={6}
-        className="max-h-80 font-normal"
-        value={value}
-        maxLength={OTHER_SCOPE_MAX}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Scope from the agreement that isn't a row: services, exclusions, conditions…"
-      />
-      <p className="text-xs text-muted-foreground">Kept with the scope as written. What it covers isn’t counted as missing from the rows.</p>
+      {sections.length === 0 && (
+        <p className="rounded-lg border border-dashed px-3 py-2 text-xs text-muted-foreground">
+          Nothing else in the agreement. Add a section for services, exclusions or conditions that aren&apos;t rows.
+        </p>
+      )}
+      <div role="group" aria-labelledby={`${id}-label`} className="space-y-2">
+        {sections.map((section, i) => (
+          <div key={i} className="space-y-1.5 rounded-lg border bg-muted/20 p-2.5">
+            <div className="flex items-center gap-2">
+              <Input
+                aria-label={`Section ${i + 1} heading`}
+                value={section.title}
+                placeholder="Section heading, e.g. Account Management & Content Planning"
+                className="h-8 font-medium"
+                onChange={(e) => update(sections.map((x, j) => (j === i ? { ...x, title: e.target.value } : x)))}
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Remove section ${section.title || i + 1}`}
+                onClick={() => update(sections.filter((_, j) => j !== i))}
+              >
+                <LuX aria-hidden />
+              </Button>
+            </div>
+            <Textarea
+              id={i === 0 ? id : undefined}
+              aria-label={`${section.title || `Section ${i + 1}`} — items`}
+              rows={Math.min(14, Math.max(3, section.body.split("\n").length + 1))}
+              className="font-normal"
+              value={section.body}
+              onChange={(e) => update(sections.map((x, j) => (j === i ? { ...x, body: e.target.value } : x)))}
+              placeholder={"• One item per line"}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={() => update([...sections, { title: "", body: "• " }])}>
+          <LuPlus aria-hidden /> Add section
+        </Button>
+        <p className="text-xs text-muted-foreground">Kept with the scope as written. What it covers isn’t counted as missing from the rows.</p>
+      </div>
     </div>
   );
 }
 
-/** The saved "Other scope" text, read-only. */
+/** One section's lines: "• item" lines as a list, other lines as text. */
+function SectionBody({ body }: { body: string }) {
+  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  const blocks: Array<{ list: boolean; lines: string[] }> = [];
+  for (const line of lines) {
+    const list = /^[•*\-–]\s*/.test(line);
+    const text = list ? line.replace(/^[•*\-–]\s*/, "") : line;
+    const last = blocks[blocks.length - 1];
+    if (last && last.list === list && list) last.lines.push(text);
+    else blocks.push({ list, lines: [text] });
+  }
+  return (
+    <div className="space-y-1">
+      {blocks.map((b, i) =>
+        b.list ? (
+          <ul key={i} className="list-disc space-y-0.5 pl-5">
+            {b.lines.map((l, j) => (
+              <li key={j}>{l}</li>
+            ))}
+          </ul>
+        ) : (
+          <p key={i} className="text-muted-foreground">{b.lines.join(" ")}</p>
+        )
+      )}
+    </div>
+  );
+}
+
+/** The saved "Other scope", read-only: one box per section. */
 export function OtherScopeText({ text, className }: { text: string; className?: string }) {
   if (!text.trim()) return null;
+  const sections = parseScopeSections(text);
   return (
-    <div className={cn("space-y-1", className)}>
+    <div className={cn("space-y-1.5", className)}>
       <p className="text-sm font-medium">Other scope (not itemised)</p>
-      <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 px-3 py-2 text-sm">{text}</div>
+      <div className="grid gap-2 lg:grid-cols-2">
+        {sections.map((section, i) => (
+          <div key={i} className="rounded-lg border bg-muted/30 px-3 py-2 text-sm">
+            {section.title && <p className="mb-1 font-semibold">{section.title}</p>}
+            <SectionBody body={section.body} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

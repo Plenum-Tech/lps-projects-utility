@@ -417,7 +417,8 @@ function contentWords(text: string): string[] {
 
 /** True when the row / note text covers every word of the item (bar languages, platforms and filler). */
 function covered(item: string, by: string[]): boolean {
-  const words = contentWords(item);
+  // Counts ("8", "8x", "x8") are read into the row's quantity.
+  const words = contentWords(item).filter((w) => !/^(?:\d+x?|x\d+)$/i.test(w));
   if (!words.length) return true;
   if (!by.length) return false;
   const have = new Set(contentWords(by.join(" ")));
@@ -442,10 +443,39 @@ function joinWrapped(lines: string[]): string[] {
 
 const tidy = (s: string) => s.replace(/ /g, " ").replace(/[ \t]+/g, " ").trim();
 
+/** Marks a bullet that was read in full (a row / note): kept only inside a headed section. */
+const READ_MARK = "\u0001";
+
 /** The box's text: headings on their own lines, " * " items as "• item", no orphan headings. */
-function finishBox(lines: string[]): string {
+function finishBox(raw: string[]): string {
   const out: string[] = [];
-  const isHeading = (l: string) => /:$/.test(l) && l.length <= 80 && !l.startsWith("•");
+  const bulletLine = (l: string | undefined) => Boolean(l?.replace(READ_MARK, "").startsWith("•"));
+  // A plain line right after a bullet continues it (a wrapped line), unless it is a heading ("…:").
+  const input: string[] = [];
+  for (const l of raw) {
+    const prev = input[input.length - 1];
+    if (prev !== undefined && bulletLine(prev) && !bulletLine(l) && !/:$/.test(l) && !/^scope\s*:/i.test(l)) {
+      input[input.length - 1] = `${prev} ${l}`;
+      continue;
+    }
+    input.push(l);
+  }
+  // A plain line that bullets follow heads them ("360 Social Media Management - Facebook …" → "…:").
+  const lines0 = input
+    .filter((l, i) => {
+      const next = input[i + 1];
+      // "Social Media Management" right before "360 Social Media Management - …" says nothing more.
+      return !(next && !bulletLine(l) && l.length <= 40 && !/:$/.test(l) && next.toLowerCase().includes(l.toLowerCase().replace(/[.:]+$/, "")));
+    })
+    .map((l, i, all) =>
+      !bulletLine(l) && !/:$/.test(l) && !/^scope\s*:/i.test(l) && l.length <= 120 && bulletLine(all[i + 1]) ? `${l.replace(/[.;,]+$/, "")}:` : l
+    );
+  const isHeading = (l: string) => /:$/.test(l) && l.length <= 121 && !l.startsWith("•");
+  // Fully read bullets stay (as written) only under a heading; a plain list that all became rows adds nothing.
+  const headed = lines0.some(isHeading);
+  const lines = lines0
+    .filter((l) => headed || !l.startsWith(READ_MARK))
+    .map((l) => l.replace(READ_MARK, ""));
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i]!;
     if (isHeading(l)) {
@@ -461,21 +491,11 @@ function finishBox(lines: string[]): string {
 /** Words before the first quantity of a sentence: "Monthly scope: ", "We need ". */
 const LEAD_IN = new RegExp(String.raw`^[^\d\n]{1,40}?(?:[:\-–]\s*|\s)(?=${QTY})`, "i");
 
-/** Services listed without a count; they are scope rows (unit Others, quantity 1). */
-const SERVICE_RE =
-  /\b(strategy|strategic|community management|community response|moderation|scheduling|reporting|reports?|analytics|insights|consult(?:ation)?s?|meetings?|flat ?plan|content calendar|social media management|account management|media (?:buying|planning)|influencer (?:management|outreach)|paid (?:media|social)|audit)\b/i;
-
 /** "Output is 5 Reel size Videos", "producing 3 reels" — the content a shoot produces. */
 const OUTPUT_RE = new RegExp(
   String.raw`\b(?:output(?:\s+is)?|outputs?|producing|delivering|resulting in)\s*[:\-–]?\s*(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+([\p{L} -]{0,30}\b(?:videos?|reels?|posts?|stor(?:y|ies)|statics?|carousels?|images?|visuals?|edits?))\b`,
   "iu"
 );
-
-/** A service row: "Strategy – Quarterly (Audit / Content Pillars …)" → Others × 1. */
-function serviceRow(text: string, languageList: string[], source: string): ExtractedScopeRow {
-  const what = text.replace(/\s+/g, " ").replace(/[.:;,\s]+$/, "").trim();
-  return { unit: "Others", what: what.length > 80 ? `${what.slice(0, 77)}…` : what, quantity: 1, languageList, sizes: 1, source };
-}
 
 const LEAD_LINE =
   /^(?:the\s+)?(account\s+lead|project\s+lead|client\s+lead|creative\s+lead|lead|account\s+manager|project\s+manager|point\s+of\s+contact|poc|contact\s+person|prepared\s+by)\s*(?:\(s\))?\s*[:\-–]\s*(.+)$/i;
@@ -533,11 +553,8 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       .trim();
     if (!line) return [];
     // "360 Social Media Management" — 360 names the service, it isn't a count.
-    const m360 = line.match(/^360\s*(?:°|degree)?\s+(.+)$/i);
-    if (m360) {
-      rows.push(serviceRow(`360 ${m360[1]!}`, languageList, source));
-      return [line];
-    }
+    // It isn't a row either: it heads the services listed under it (the "other scope" sections).
+    if (/^360\s*(?:°|degree)?\s+\p{L}/iu.test(line)) return [];
     // Revision rounds ("2 round", "2 rounds of revisions") are a note, not content.
     const rounds = line.match(/^(\d{1,2}|one|two|three)\s+rounds?\b/i);
     if (rounds) {
@@ -551,11 +568,8 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
         notes.push(`${line.replace(/[.:;,]+$/, "")} — a production day, kept as a note (not a content piece).`);
         return [line];
       }
-      // Services without a count (strategy, community management, reporting, meetings…) are scope rows too.
-      if (bullet && SERVICE_RE.test(line)) {
-        rows.push(serviceRow(line, languageList, source));
-        return [line];
-      }
+      // Services without a count (strategy, community management, reporting…) aren't rows: they stay,
+      // grouped under their heading, in the "other scope" sections.
       return [];
     }
     const quantity = /^\d+$/.test(m[1]!) ? Number(m[1]) : WORD_NUMBERS[m[1]!.toLowerCase()]!;
@@ -623,15 +637,19 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
         return !(read && all);
       });
       if (idx < start || DROP_LINE.test(line) || isFooter(line) || LEAD_LINE.test(line.replace(/^[\s\-–*·]+/, ""))) return;
+      // Bulleted items stay in their section as written (a counted one is a row as well), marked when read in full.
+      const readAll = !keep.some(Boolean);
+      if (bullet || inline) keep.fill(true);
       if (!keep.some(Boolean)) return;
+      const mark = readAll ? READ_MARK : "";
       if (!inline) {
-        box.push(bullet ? `• ${parts[0] ?? ""}` : line);
+        box.push(bullet ? `${mark}• ${parts[0] ?? ""}` : line);
         return;
       }
       parts.forEach((part, pi) => {
         if (!keep[pi]) return;
         // Text before the first inline bullet ("Scope: Concept, Planning …") stays a plain line.
-        box.push(pi === 0 && !bullet ? part : `• ${part}`);
+        box.push(pi === 0 && !bullet ? part : `${mark}• ${part}`);
       });
     });
     const textOut = finishBox(box);
@@ -701,9 +719,8 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   Static for posts/images/visuals, Others for anything else such as tweets), "quantity": integer,
   "languageList": languages from [${SCOPE_LANGUAGES.join(", ")}] the content is in (default ["English"]),
   "sizes": number of sizes/formats if stated else 1, "source": the input name it came from}.
-  ALSO list each service the agency delivers even without a count — strategy, community management, reporting, client
-  consult meetings / flat plan prep, social media management — as its own row: unit "Others", quantity 1, "what" = the
-  service as written (e.g. "Strategy – Quarterly (Audit / Content Pillars / Content & Ops)").
+  Services WITHOUT a count (strategy, community management, reporting, client meetings, content calendars, posting,
+  copywriting, quality control, account management…) are NOT scope rows: they go in "otherScope", under their heading.
   "360" in "360 Social Media Management" is part of the service name, never a quantity.
   A shoot is not content, but what it produces is: "1 Half Day Shoot - Output is 5 Reel size Videos" → 5 × Reel (and the shoot as a note).
   Items joined with " * " on one line are separate items ("10 Brand Stories * Half a day shoot * 2 round" → 10 × Story;
@@ -719,11 +736,13 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   "Month 1", "Week 1", a month), list one row per label AND phase: "what" = "<Label> — <phase>"
   (e.g. "Static — Pre-Pre Event, Sep '26"), and add a note with the totals per unit across the phases
   (e.g. "Across the 4 phases: Static 29, Carousel 39, Reel 100, Story 173").
-  Long paragraphs of " * " items (account management, content creation, copywriting…) are NOT service rows; they go in
-  "otherScope". A counted item inside them ("1 weekly status meeting at LPS Office") can still be a row.
+  A counted item inside a services list ("1 weekly status meeting at LPS Office") can still be a row.
 - "otherScope": ONE string with the rest of the scope / deliverables part of the documents that is NOT a scope row or a
-  note — verbatim, tidied: runs of spaces collapsed, each inline " * " item as its own "• item" line, headings
-  ("Account Management & Content Planning:") on their own lines, exclusions kept ("Subtitling is not included").
+  note, as SECTIONS. Each section is its heading on its own line ending with ":" (e.g. "Account Management & Content
+  Planning:", "Content Creation & Management:", "360 Social Media Management – Facebook, Instagram, YouTube, LinkedIn and
+  TikTok:"), then its lines: a lead-in line as written ("Scope: Platforms: Native: FB/IG/LI/X/Tiktok.") and each item as
+  its own "• item" line (inline " * " items split). Separate sections with ONE blank line. Keep each item under the heading
+  it belongs to, verbatim but tidied (runs of spaces collapsed), exclusions kept ("Subtitling is not included").
   Start at the "Agreed deliverables" / "Deliverables" / "Scope of work" heading if there is one. Leave out table headers
   (ITEM / DETAILS / NOTES), "NIL" / "N/A", the address / phone / email footer and the team / resources list.
   "" when nothing is left.
@@ -737,7 +756,19 @@ Reply with JSON only:
 
 /** The model's "otherScope" (any type) as tidy text: spaces collapsed per line, at most OTHER_SCOPE_MAX. */
 function parseOtherScope(raw: unknown): string {
-  const text = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.filter((x) => typeof x === "string").join("\n") : "";
+  // A string, a list of lines, or a list of sections ({ title / heading, items / lines / text }).
+  const section = (x: unknown): string => {
+    if (typeof x === "string") return x;
+    if (!x || typeof x !== "object") return "";
+    const o = x as Record<string, unknown>;
+    const title = String(o.title ?? o.heading ?? "").trim().replace(/:$/, "");
+    const items = o.items ?? o.lines ?? o.bullets;
+    const body = Array.isArray(items)
+      ? items.filter((i) => typeof i === "string").map((i) => (/^[•*\-–]/.test(i.trim()) ? i.trim() : `• ${i.trim()}`)).join("\n")
+      : String(o.text ?? o.body ?? "");
+    return [title ? `${title}:` : "", body].filter(Boolean).join("\n");
+  };
+  const text = typeof raw === "string" ? raw : Array.isArray(raw) ? raw.map(section).filter(Boolean).join("\n\n") : section(raw);
   return text
     .replace(/\r\n?/g, "\n")
     .split("\n")
