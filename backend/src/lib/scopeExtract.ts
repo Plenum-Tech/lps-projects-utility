@@ -234,7 +234,7 @@ const WORD_NUMBERS: Record<string, number> = {
 /** A quantity starting an item: "8 ", "8x ", "eight ". */
 const QTY = String.raw`(?:\d{1,3}\s*[x×]?\s|(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s)`;
 /** Where one scope item ends and the next begins: new line, bullet, ", 10 …", " and 12 …". */
-const LINE_SPLIT = /\r?\n|•|\s[-–]\s(?=\d)/;
+const LINE_SPLIT = /\r?\n|•|\s[-–]\s(?=\d)|\s\*\s/;
 /** Items listed in a sentence: ", 10 …", " and 12 …", ". 2 …". */
 const SENTENCE_SPLIT = new RegExp(String.raw`[,;.]\s*(?:and\s+)?(?=${QTY})|\s+(?:and|&|plus)\s+(?=${QTY})`, "i");
 
@@ -254,6 +254,22 @@ function itemsOf(text: string): string[] {
 }
 /** Words before the first quantity of a sentence: "Monthly scope: ", "We need ". */
 const LEAD_IN = new RegExp(String.raw`^[^\d\n]{1,40}?(?:[:\-–]\s*|\s)(?=${QTY})`, "i");
+
+/** Services listed without a count; they are scope rows (unit Others, quantity 1). */
+const SERVICE_RE =
+  /\b(strategy|strategic|community management|community response|moderation|scheduling|reporting|reports?|analytics|insights|consult(?:ation)?s?|meetings?|flat ?plan|content calendar|social media management|account management|media (?:buying|planning)|influencer (?:management|outreach)|paid (?:media|social)|audit)\b/i;
+
+/** "Output is 5 Reel size Videos", "producing 3 reels" — the content a shoot produces. */
+const OUTPUT_RE = new RegExp(
+  String.raw`\b(?:output(?:\s+is)?|outputs?|producing|delivering|resulting in)\s*[:\-–]?\s*(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|twelve)\s+([\p{L} -]{0,30}\b(?:videos?|reels?|posts?|stor(?:y|ies)|statics?|carousels?|images?|visuals?|edits?))\b`,
+  "iu"
+);
+
+/** A service row: "Strategy – Quarterly (Audit / Content Pillars …)" → Others × 1. */
+function serviceRow(text: string, languageList: string[], source: string): ExtractedScopeRow {
+  const what = text.replace(/\s+/g, " ").replace(/[.:;,\s]+$/, "").trim();
+  return { unit: "Others", what: what.length > 80 ? `${what.slice(0, 77)}…` : what, quantity: 1, languageList, sizes: 1, source };
+}
 
 const LEAD_LINE =
   /^(?:the\s+)?(account\s+lead|project\s+lead|client\s+lead|creative\s+lead|lead|account\s+manager|project\s+manager|point\s+of\s+contact|poc|contact\s+person|prepared\s+by)\s*(?:\(s\))?\s*[:\-–]\s*(.+)$/i;
@@ -300,14 +316,36 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
     // Items also start mid-line ("Mom Store: - 12 Short form video …") or sit in a sentence
     // ("Monthly scope: 8 static posts, 10 reels and 12 stories in English and Arabic").
     for (const rawLine of itemsOf(text)) {
+      const bullet = /^\s*[-–*o·]\s/.test(rawLine);
       const line = rawLine
         .replace(/^[\s\-–*o·]+/, "")
         // A label before the first item: "Monthly scope: 8 …", "We need 8 …".
         .replace(LEAD_IN, "")
         .trim();
       if (!line) continue;
+      // "360 Social Media Management" — 360 names the service, it isn't a count.
+      const m360 = line.match(/^360\s*(?:°|degree)?\s+(.+)$/i);
+      if (m360) {
+        rows.push(serviceRow(`360 ${m360[1]!}`, languageList, source));
+        continue;
+      }
+      // Revision rounds ("2 round", "2 rounds of revisions") are a note, not content.
+      const rounds = line.match(/^(\d{1,2}|one|two|three)\s+rounds?\b/i);
+      if (rounds) {
+        notes.push(`${rounds[1]} round${rounds[1] === "1" || /^one$/i.test(rounds[1]!) ? "" : "s"} of revisions — kept as a note.`);
+        continue;
+      }
       const m = line.match(/^(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s*[x×]?\s+(.+)$/i);
-      if (!m) continue;
+      if (!m) {
+        // A shoot without a count ("Half a day shoot") is a note.
+        if (/\bshoots?\b|\bshooting\b/i.test(line) && line.length <= 60) {
+          notes.push(`${line.replace(/[.:;,]+$/, "")} — a production day, kept as a note (not a content piece).`);
+          continue;
+        }
+        // Services without a count (strategy, community management, reporting, meetings…) are scope rows too.
+        if (bullet && SERVICE_RE.test(line)) rows.push(serviceRow(line, languageList, source));
+        continue;
+      }
       const quantity = /^\d+$/.test(m[1]!) ? Number(m[1]) : WORD_NUMBERS[m[1]!.toLowerCase()]!;
       // The deliverable itself: no brackets, no "videos will be", nothing after " with / - / for / using".
       const what = m[2]!
@@ -324,6 +362,13 @@ export function extractByRules(texts: Array<{ source: string; text: string }>): 
       }
       if (/\bshoots?\b|\bshooting\b/i.test(what)) {
         notes.push(`${quantity}x ${what} — a production day, kept as a note (not a content piece).`);
+        // What the shoot produces is content: "… Shoot - Output is 5 Reel size Videos …".
+        const output = line.slice(m[1]!.length).match(OUTPUT_RE);
+        if (output) {
+          const n = /^\d+$/.test(output[1]!) ? Number(output[1]) : WORD_NUMBERS[output[1]!.toLowerCase()]!;
+          const made = output[2]!.trim();
+          rows.push({ unit: unitFor(made), what: `${made.charAt(0).toUpperCase()}${made.slice(1)} (from the shoot)`, quantity: n, languageList, sizes: 1, source });
+        }
         continue;
       }
       rows.push({ unit: unitFor(what), what: what.charAt(0).toUpperCase() + what.slice(1), quantity, languageList, sizes: 1, source });
@@ -390,7 +435,14 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   Static for posts/images/visuals, Others for anything else such as tweets), "quantity": integer,
   "languageList": languages from [${SCOPE_LANGUAGES.join(", ")}] the content is in (default ["English"]),
   "sizes": number of sizes/formats if stated else 1, "source": the input name it came from}.
-  Do NOT list totals ("53x content pieces"), shoot / production days, models / talent, or services without a count as scope rows.
+  ALSO list each service the agency delivers even without a count — strategy, community management, reporting, client
+  consult meetings / flat plan prep, social media management — as its own row: unit "Others", quantity 1, "what" = the
+  service as written (e.g. "Strategy – Quarterly (Audit / Content Pillars / Content & Ops)").
+  "360" in "360 Social Media Management" is part of the service name, never a quantity.
+  A shoot is not content, but what it produces is: "1 Half Day Shoot - Output is 5 Reel size Videos" → 5 × Reel (and the shoot as a note).
+  Items joined with " * " on one line are separate items ("10 Brand Stories * Half a day shoot * 2 round" → 10 × Story;
+  the shoot and "2 rounds of revisions" as notes).
+  Do NOT list totals ("53x content pieces"), shoot / production days, revision rounds or models / talent as scope rows.
   When a deliverable is broken down into sub-items whose counts add up to it ("12 videos: 5 storytelling, 7 shorter"),
   list it ONCE with the split in "what" ("Short-form videos (5 storytelling, 7 shorter)").
   If two inputs list the same deliverable, list it once.
