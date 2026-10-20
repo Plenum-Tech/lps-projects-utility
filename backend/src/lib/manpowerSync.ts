@@ -181,6 +181,9 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       createdBy: actor._id,
     });
     if (created) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: key } });
+    // A version waiting for approval is carried onto this approved one (its changes aren't lost).
+    const { rebasePendingPlan } = await import("../controllers/manpower.js");
+    await rebasePendingPlan(month, { version: saved.version, rows: nextRows }, actor, undefined, rows);
     logActivity({
       action: "settings_updated",
       actor,

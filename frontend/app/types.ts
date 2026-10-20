@@ -3239,6 +3239,8 @@ export interface BrandSummary {
   roles: Record<string, BrandPersonRef[]>;
   /** Roles marked "not needed" on the brand's lines. */
   notNeeded: string[];
+  /** The team as proposed by the month's plan version waiting for approval (null: none pending). */
+  pending?: { roles: Record<string, BrandPersonRef[]>; notNeeded: string[] } | null;
   leads: BrandPersonRef[];
   /** Number of people (plan lines + current projects' teams). */
   people: number;
@@ -3254,9 +3256,24 @@ export interface BrandPersonLoad {
   brands: number;
 }
 
+/** The month's manpower plan version waiting for leadership approval. */
+export interface PendingPlanInfo {
+  version: number;
+  by: BrandPersonRef | null;
+  at: string;
+  note: string;
+  /** The approval request to open (null when there is none). */
+  changeRequestId: string | null;
+}
+
 interface BrandDashboardBase {
   month: string;
   planVersion: number | null;
+  pendingPlan?: PendingPlanInfo | null;
+  /** The viewer's plan saves are approved at once (leadership); else they wait for approval. */
+  planSavesApproved?: boolean;
+  /** Names of everyone referenced (plan, pending plan, leads, teams). */
+  names?: Record<string, string>;
   max: number;
   roles: Array<{ key: string; label: string }>;
   canCreate: boolean;
@@ -4121,6 +4138,8 @@ export interface ManpowerPlanResponse {
   latestVersion: number | null;
   /** A version waiting for leadership approval, if any. */
   pendingVersion?: number | null;
+  /** The viewer's saves are approved at once (leadership); else they wait for approval. */
+  savesApproved?: boolean;
   /** Status of the version shown. */
   status?: ManpowerVersionStatus;
   versions: ManpowerVersionSummary[];

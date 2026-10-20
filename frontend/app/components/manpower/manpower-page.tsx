@@ -140,6 +140,15 @@ export function ManpowerPage() {
     setHighlight(null);
   }, [month, version]);
 
+  // A non-leader's "Edit plan" while a version waits for approval: open that version, then edit
+  // from it (their earlier changes show; the save adds to them).
+  const [editPending, setEditPending] = useState(false);
+  useEffect(() => {
+    if (!editPending || !data || data.pendingVersion == null || data.version !== data.pendingVersion) return;
+    setEditPending(false);
+    startEdit(planRowsToTable(data), data.pendingVersion, "edit");
+  }, [editPending, data]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Warn before leaving with unsaved edits.
   useEffect(() => {
     if (!draft?.dirty) return;
@@ -287,12 +296,25 @@ export function ManpowerPage() {
                   </SelectContent>
                 </Select>
               )}
-              {canEdit && data && (
-                <Button size="sm" onClick={() => startEdit(planRowsToTable(data), data.latestVersion, "edit")}>
-                  <LuPencil aria-hidden />
-                  {data.version === data.latestVersion ? "Edit plan" : "Edit from this version"}
-                </Button>
-              )}
+              {canEdit && data && (() => {
+                // Edits from the waiting version use it as their base (the server adds them to it).
+                const onPending = data.pendingVersion != null && data.version === data.pendingVersion;
+                const pendingFirst = !data.savesApproved && data.pendingVersion != null && !onPending && data.version === data.latestVersion;
+                return (
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      if (pendingFirst) {
+                        setEditPending(true);
+                        setParam({ v: String(data.pendingVersion) });
+                      } else startEdit(planRowsToTable(data), onPending ? data.pendingVersion! : data.latestVersion, "edit");
+                    }}
+                  >
+                    <LuPencil aria-hidden />
+                    {pendingFirst ? `Edit plan (from version ${data.pendingVersion}, waiting)` : data.version === data.latestVersion || onPending ? "Edit plan" : "Edit from this version"}
+                  </Button>
+                );
+              })()}
             </>
           )
         }
@@ -305,7 +327,8 @@ export function ManpowerPage() {
           <div className="min-w-0 flex-1 space-y-1">
             <p className="text-sm font-medium text-foreground">
               Editing {namingMonthLabel(month)}
-              {draft.baseVersion ? ` · saves as version ${draft.baseVersion + 1}` : " · saves as version 1"}
+              {` · saves as version ${(data?.versions[0]?.version ?? 0) + 1}`}
+              {draft.baseVersion != null && data?.pendingVersion === draft.baseVersion ? ` (adds to version ${draft.baseVersion}, waiting for approval)` : ""}
             </p>
             <Input
               value={draft.note}

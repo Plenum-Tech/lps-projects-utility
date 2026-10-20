@@ -4,7 +4,7 @@ import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons
 
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { MatchBadge } from "@/components/brands/scope-compare";
-import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
+import { AllocCell, CellLegend, cellTone, PendingPlanBanner, planVersionText, SaveBar, StatusDot, teamCell, useNameOf, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -329,14 +329,16 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
 }
 
 /** Pool for a role: people holding it somewhere in the month's plan, least busy first. */
-export function poolOptions(data: Pick<BrandOverviewResponse, "pool" | "people">, role: string, brandsOf: (id: string) => number): CellOption[] {
+export function poolOptions(data: Pick<BrandOverviewResponse, "pool" | "people" | "names">, role: string, brandsOf: (id: string) => number): CellOption[] {
   return (data.pool[role] ?? [])
-    .map((id) => ({ id, name: data.people[id]?.name ?? "Unknown", brands: brandsOf(id) }))
+    .map((id) => ({ id, name: data.people[id]?.name ?? data.names?.[id] ?? "Unknown", brands: brandsOf(id) }))
     .sort((a, b) => a.brands - b.brands || a.name.localeCompare(b.name));
 }
 
 export function BrandsAllocation({ month, data, isPending, error, refetch }: { month: string; data: BrandOverviewResponse | undefined; isPending: boolean; error: unknown; refetch: () => void }) {
-  const edits = usePlanEdits(month, Boolean(data?.canEditPlan));
+  // A non-leader's edits start from the version waiting for approval (their earlier changes show and add up).
+  const edits = usePlanEdits(month, Boolean(data?.canEditPlan), !data?.planSavesApproved ? (data?.pendingPlan?.version ?? null) : null);
+  const nameOf = useNameOf(data?.names, data?.people);
   const [showAll, setShowAll] = useState(false);
   const [q, setQ] = useState("");
   const roles = data?.roles ?? [];
@@ -359,13 +361,12 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
   if (isPending || !data) return <Skeleton className="h-96 w-full" />;
   const max = data.max;
   const brandsOf = (id: string) => (data.people[id]?.brands ?? 0) + edits.brandDelta(id, (brand) => onBrand.get(brand)?.has(id) ?? false);
-  const nameOf = (id: string) => data.people[id]?.name ?? "Unknown";
   const brandInfo = new Map((data.brands ?? []).map((b) => [b._id, { name: b.name, isPitch: b.isPitch }]));
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card p-3">
-        <CellLegend max={max} />
+        <CellLegend max={max} pending={Boolean(data.pendingPlan)} />
         <div className="flex flex-wrap items-center gap-3">
           <label className="flex items-center gap-1.5 text-xs">
             <input type="checkbox" className="size-4 accent-primary" checked={showAll} onChange={(e) => setShowAll(e.target.checked)} />
@@ -375,10 +376,11 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
         </div>
         <p className="w-full text-xs text-muted-foreground">
           {data.canEditPlan
-            ? `Click a cell → pick from the dropdown right there. Same people as the Manpower plan (${monthLabel(month)}${data.planVersion ? `, version ${data.planVersion} — the latest` : ", no plan yet"}).`
-            : `Same people as the Manpower plan (${monthLabel(month)}). Only leadership and Nazeer change it.`}
+            ? `Click a cell → pick from the dropdown right there. Same people as the Manpower plan (${monthLabel(month)}: ${planVersionText(data.planVersion, data.pendingPlan)}).`
+            : `Same people as the Manpower plan (${monthLabel(month)}: ${planVersionText(data.planVersion, data.pendingPlan)}). Only leadership and Nazeer change it.`}
         </p>
       </div>
+      {data.pendingPlan && <PendingPlanBanner pending={data.pendingPlan} savesApproved={data.planSavesApproved} />}
       <div className="overflow-x-auto rounded-xl border bg-card">
         <table className="w-full text-sm">
           <thead className="text-xs text-muted-foreground">
@@ -412,9 +414,10 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
                     </span>
                   </td>
                   {roles.map((r) => {
-                    const current = (b.roles[r.key] ?? []).map((p) => p._id);
+                    // Shown (and edited from): the proposed people when a plan version waits for approval.
+                    const { current, approved, pending } = teamCell(b, r.key);
                     const people = edits.get(b._id, r.key, current);
-                    const isNeeded = need.has(r.key) && !b.notNeeded.includes(r.key);
+                    const isNeeded = need.has(r.key) && !(b.pending?.notNeeded ?? b.notNeeded).includes(r.key);
                     return (
                       <td key={r.key} className="px-1 py-1">
                         <AllocCell
@@ -425,6 +428,8 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
                           tone={cellTone(people, isNeeded, brandsOf, max)}
                           editable={data.canEditPlan && b.status !== "rejected"}
                           edited={edits.isEdited(b._id, r.key)}
+                          pending={pending && !edits.isEdited(b._id, r.key)}
+                          approved={approved}
                           brandsOf={brandsOf}
                           onChange={(ids) => edits.set(b._id, r.key, current, ids)}
                         />

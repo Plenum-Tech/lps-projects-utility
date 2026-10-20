@@ -46,6 +46,12 @@ export interface IManpowerPlan extends mongoose.Document {
   source: ManpowerSource;
   /** Leadership approval: only approved versions are used (older versions have none = approved). */
   status: "approved" | "pending" | "rejected" | "superseded";
+  /**
+   * Pending versions: the approved version their changes were made on (null = none, or saved
+   * before this was recorded). Their changes are re-applied on top of a newer approved
+   * version when one is written (lib/manpowerMerge.ts).
+   */
+  baseVersion?: number | null;
   createdBy: mongoose.Types.ObjectId | null;
   createdAt: Date;
   updatedAt: Date;
@@ -88,6 +94,7 @@ const manpowerPlanSchema = new Schema<IManpowerPlan>(
     },
     source: { type: String, enum: MANPOWER_SOURCES, default: "edit" },
     status: { type: String, enum: ["approved", "pending", "rejected", "superseded"], default: "approved" },
+    baseVersion: { type: Number, default: null },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }

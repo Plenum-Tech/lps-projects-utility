@@ -14,7 +14,7 @@ import { isProjectApprover } from "../lib/projectApproval.js";
 import { currentAppMonth, projectMonth } from "../lib/projectExpiry.js";
 import { scopeText, type ScopeItem } from "../lib/scopeUnits.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
-import { latestPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
+import { latestPlan, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
 import { ProjectFile } from "../models/ProjectFile.js";
 import { TimeLog } from "../models/TimeLog.js";
@@ -76,12 +76,53 @@ interface LeanProject {
 
 const brandOf = (p: LeanProject) => (p.brand ? String(p.brand) : p.naming?.brand ? String(p.naming.brand) : null);
 
+/**
+ * The month's plan version waiting for leadership approval (if any): who saved it, when, its
+ * note and the change request to open. Its rows are shown as the proposed team on the Brands pages.
+ */
+async function pendingPlanOf(month: string) {
+  const pending = await ManpowerPlan.findOne({ month, status: "pending" }).sort({ version: -1 }).populate("createdBy", "name").lean();
+  if (!pending) return null;
+  const request = await ChangeRequest.findOne({ kind: "manpower_plan", status: "pending", month, version: pending.version }).select("_id").lean();
+  const by = pending.createdBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  return {
+    info: {
+      version: pending.version,
+      by: by ? { _id: String(by._id), name: by.name ?? "Someone" } : null,
+      at: pending.createdAt,
+      note: pending.note ?? "",
+      changeRequestId: request ? String(request._id) : null,
+    },
+    rows: (pending.rows ?? []) as IManpowerRow[],
+  };
+}
+
+/** A brand's plan lines → people per role (each person once) and the roles marked not needed. */
+function rolesOfLines(lines: IManpowerRow[], person: (id: string) => Person): { roles: RoleMap; notNeeded: string[] } {
+  const roles: RoleMap = {};
+  const notNeeded: string[] = [];
+  for (const line of lines) {
+    for (const c of line.cells) {
+      if (c.notNeeded) {
+        if (!notNeeded.includes(c.role)) notNeeded.push(c.role);
+        continue;
+      }
+      for (const u of c.users ?? []) {
+        const list = (roles[c.role] ??= []);
+        if (!list.some((x) => x._id === String(u))) list.push(person(String(u)));
+      }
+    }
+  }
+  return { roles, notNeeded: notNeeded.filter((r) => !roles[r]?.length) };
+}
+
 /** Everything the Brands pages need for one month, computed once. */
 async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Types.ObjectId) {
   const brandFilter = onlyBrand ? { _id: onlyBrand } : visibleBrands(user);
-  const [brands, plan, projects, allBrandNames, load] = await Promise.all([
+  const [brands, plan, pending, projects, allBrandNames, load] = await Promise.all([
     Brand.find(brandFilter).sort({ nameKey: 1, name: 1 }).lean(),
     latestPlan(month),
+    pendingPlanOf(month),
     Project.find({ archivedAt: null })
       .select("name code brand naming startDate deadline manpowerRow scopeItems team")
       .lean<LeanProject[]>(),
@@ -120,7 +161,10 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
   for (const r of rows) for (const c of r.cells) for (const u of c.users ?? []) userIds.add(String(u));
   for (const b of brands) for (const l of b.leads ?? []) userIds.add(String(l));
   for (const p of projects) if (isCurrent(p)) for (const t of p.team ?? []) for (const u of t.users) userIds.add(String(u));
-  const users = await User.find({ _id: { $in: [...userIds] } }).select("name").lean();
+  // The pending version's people are named too (proposed cells), but don't count in the load.
+  const pendingIds = new Set<string>();
+  for (const r of pending?.rows ?? []) for (const c of r.cells) for (const u of c.users ?? []) if (!userIds.has(String(u))) pendingIds.add(String(u));
+  const users = await User.find({ _id: { $in: [...userIds, ...pendingIds] } }).select("name").lean();
   const nameOf = new Map(users.map((u) => [String(u._id), u.name]));
   const person = (id: string): Person => ({ _id: id, name: nameOf.get(id) ?? "Unknown" });
 
@@ -157,20 +201,9 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
   const summaries = brands.map((b) => {
     const id = String(b._id);
     const lines = rows.filter((r) => r.brand && String(r.brand) === id);
-    const roles: RoleMap = {};
-    const notNeeded: string[] = [];
-    for (const line of lines) {
-      for (const c of line.cells) {
-        if (c.notNeeded) {
-          if (!notNeeded.includes(c.role)) notNeeded.push(c.role);
-          continue;
-        }
-        for (const u of c.users ?? []) {
-          const list = (roles[c.role] ??= []);
-          if (!list.some((x) => x._id === String(u))) list.push(person(String(u)));
-        }
-      }
-    }
+    const { roles, notNeeded } = rolesOfLines(lines, person);
+    // The team as proposed by the version waiting for approval (null: nothing pending this month).
+    const pendingTeam = pending ? rolesOfLines(pending.rows.filter((r) => r.brand && String(r.brand) === id), person) : null;
     const all = projectsByBrand.get(id) ?? [];
     const current = all.filter(isCurrent);
     const team = new Set<string>(Object.values(roles).flatMap((list) => list.map((x) => x._id)));
@@ -195,7 +228,8 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
       projectFiles: fileCounts.get(id) ?? 0,
       planLines: lines.map((l) => ({ key: l.key, name: l.name, section: l.section })),
       roles,
-      notNeeded: notNeeded.filter((r) => !roles[r]?.length),
+      notNeeded,
+      pending: pendingTeam,
       leads,
       people: [...team],
       projectCount: all.length,
@@ -215,7 +249,9 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
   for (const id of new Set([...userIds])) {
     people[id] = { name: nameOf.get(id) ?? "Unknown", projects: load.load[id] ?? 0, brands: brandsOfPerson.get(id)?.size ?? 0 };
   }
-  return { month, plan, rows, summaries, people, pool, max: load.max, projectsByBrand, isCurrent };
+  // Every referenced person's name (plan, proposed plan, leads, teams), for everyone who sees the cells.
+  const names = Object.fromEntries(users.map((u) => [String(u._id), u.name]));
+  return { month, plan, pendingPlan: pending?.info ?? null, rows, summaries, people, names, pool, max: load.max, projectsByBrand, isCurrent };
 }
 
 async function permissions(user: IUser) {
@@ -225,6 +261,8 @@ async function permissions(user: IUser) {
     canRename: canRenameBrand(user),
     canEditPlan: canEditManpower(user),
     canApprove: await isProjectApprover(user._id as mongoose.Types.ObjectId),
+    // Plan saves are approved at once (leadership); else they wait for approval and edits start from the pending version.
+    planSavesApproved: await isLeadershipActor(user),
     canSeeUtilisation: canSeeUtilisation(user),
   };
 }
@@ -242,10 +280,12 @@ export async function brandOverview(req: Request, res: Response): Promise<void> 
   res.json({
     month,
     planVersion: ctx.plan?.version ?? null,
+    pendingPlan: ctx.pendingPlan,
     max: ctx.max,
     roles: MANPOWER_ROLES,
     ...(await permissions(user)),
     brands: ctx.summaries.map((b) => ({ ...b, people: b.people.length })),
+    names: ctx.names,
     people: showPeople ? ctx.people : {},
     pool: showPeople ? ctx.pool : {},
   });
@@ -375,9 +415,11 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
   res.json({
     month,
     planVersion: ctx.plan?.version ?? null,
+    pendingPlan: ctx.pendingPlan,
     max: ctx.max,
     roles: MANPOWER_ROLES,
     ...(await permissions(user)),
+    names: ctx.names,
     brand: {
       ...summary,
       people: summary.people.length,

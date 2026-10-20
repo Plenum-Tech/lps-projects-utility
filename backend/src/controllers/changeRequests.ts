@@ -112,7 +112,16 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   const plan = await ManpowerPlan.findOne({ month: request.month, version: request.version });
   if (!plan) return "That plan version no longer exists";
   if (plan.status !== "pending") return `That plan version is ${plan.status}`;
-  const live = await ManpowerPlan.findOne({ month: request.month, ...APPROVED_PLAN }).sort({ version: -1 }).select("rows").lean();
+  const live = await ManpowerPlan.findOne({ month: request.month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version rows").lean();
+  // Approved saves rebase the pending version, so it is normally made on `live`. If the approved
+  // plan moved on anyway, its changes are kept: the pending changes are laid onto it.
+  if (live && plan.baseVersion != null && plan.baseVersion !== live.version) {
+    const { applyPlanDelta, planDelta, withoutConflicts } = await import("../lib/manpowerMerge.js");
+    const base = ((await ManpowerPlan.findOne({ month: request.month, version: plan.baseVersion }).select("rows").lean())?.rows ?? []) as IManpowerRow[];
+    const liveRows = live.rows as IManpowerRow[];
+    plan.set("rows", applyPlanDelta(liveRows, withoutConflicts(planDelta(base, plan.rows as IManpowerRow[]), planDelta(base, liveRows))));
+    plan.baseVersion = live.version;
+  }
   plan.status = "approved";
   await plan.save();
   // The approved lines' people become the linked projects' teams.
@@ -227,6 +236,10 @@ export async function withdrawChangeRequest(req: Request, res: Response): Promis
   request.decidedBy = user._id as mongoose.Types.ObjectId;
   request.decidedAt = new Date();
   await request.save();
+  // A withdrawn plan request takes its pending version with it (it no longer shows as waiting).
+  if (request.kind === "manpower_plan" && request.month && request.version != null) {
+    await ManpowerPlan.updateOne({ month: request.month, version: request.version, status: "pending" }, { $set: { status: "superseded" } });
+  }
   logActivity({
     action: "settings_updated",
     actor: user,

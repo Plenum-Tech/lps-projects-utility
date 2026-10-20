@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { LuArrowLeft, LuArrowRightLeft, LuCircleX, LuClock, LuDownload, LuExternalLink, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuUndo2, LuX } from "react-icons/lu";
 
-import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
+import { AllocCell, CellLegend, cellTone, PendingPlanBanner, planVersionText, SaveBar, StatusDot, teamCell, useNameOf, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
 import { MatchBadge, OtherScopeChange, OtherScopeField, OtherScopeText, ScopeDiffView, ScopeMatchBox, ScopeTotalCheck, ScopeTotalField } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
@@ -870,7 +870,10 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
     if (loaded && window.location.hash === "#scope") document.getElementById("scope")?.scrollIntoView({ behavior: "smooth" });
   }, [loaded]);
   const data = detail.data && detail.data.brand._id === id ? detail.data : undefined;
-  const edits = usePlanEdits(month, Boolean(data?.canEditPlan));
+  // A non-leader's edits start from the version waiting for approval (their earlier changes show and add up).
+  const edits = usePlanEdits(month, Boolean(data?.canEditPlan), !data?.planSavesApproved ? (data?.pendingPlan?.version ?? null) : null);
+  const leadName = useCallback((pid: string) => data?.brand.leads.find((l) => l._id === pid)?.name, [data]);
+  const nameOf = useNameOf(data?.names, data?.people, leadName);
   const removeFile = useDeleteBrandFile();
   const [splitting, setSplitting] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -927,10 +930,11 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const max = data.max;
   const onBrand = new Set(Object.values(b.roles).flatMap((l) => l.map((p) => p._id)));
   const brandsOf = (pid: string) => (data.people[pid]?.brands ?? 0) + edits.brandDelta(pid, (brand) => brand === b._id && onBrand.has(pid));
-  const nameOf = (pid: string) => data.people[pid]?.name ?? b.leads.find((l) => l._id === pid)?.name ?? "Unknown";
   const need = neededRoles(b.scopeItems);
+  const notNeeded = b.pending?.notNeeded ?? b.notNeeded;
   const cell = (role: string, label: string, needed: boolean) => {
-    const current = (b.roles[role] ?? []).map((p) => p._id);
+    // Shown (and edited from): the proposed people when a plan version waits for approval.
+    const { current, approved, pending } = teamCell(b, role);
     const people = edits.get(b._id, role, current);
     return (
       <AllocCell
@@ -938,9 +942,11 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         people={people}
         nameOf={nameOf}
         options={poolOptions(data, role, brandsOf)}
-        tone={cellTone(people, needed && !b.notNeeded.includes(role), brandsOf, max)}
+        tone={cellTone(people, needed && !notNeeded.includes(role), brandsOf, max)}
         editable={data.canEditPlan}
         edited={edits.isEdited(b._id, role)}
+        pending={pending && !edits.isEdited(b._id, role)}
+        approved={approved}
         brandsOf={brandsOf}
         onChange={(ids) => edits.set(b._id, role, current, ids)}
       />
@@ -1109,9 +1115,10 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
       </Section>
 
       <Section
-        title={`Team · Manpower plan ${monthLabel(month)}${data.planVersion ? ` · version ${data.planVersion} (latest)` : " · no plan yet"}`}
-        actions={<CellLegend max={max} />}
+        title={`Team · Manpower plan ${monthLabel(month)} · ${planVersionText(data.planVersion, data.pendingPlan)}`}
+        actions={<CellLegend max={max} pending={Boolean(data.pendingPlan)} />}
       >
+        {data.pendingPlan && <PendingPlanBanner className="mb-2" pending={data.pendingPlan} savesApproved={data.planSavesApproved} />}
         <p className="mb-2 text-xs text-muted-foreground">
           {b.planLines.length
             ? `Plan lines: ${b.planLines.map((l) => l.name).join(" · ")} — the same data as the Manpower plan.`

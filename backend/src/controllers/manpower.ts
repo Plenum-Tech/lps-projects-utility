@@ -6,6 +6,8 @@ import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
 import { ExceptionBatch, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { rowPeopleKey } from "../lib/manpowerSync.js";
+import { applyPlanDelta, combineNotes, deltaIsEmpty, planDelta, withoutConflicts } from "../lib/manpowerMerge.js";
+import { ChangeRequest } from "../models/ChangeRequest.js";
 import { scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { updateProjectCore } from "./projects.js";
 import type { IUser } from "../models/User.js";
@@ -270,6 +272,8 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     // The version edits start from (the latest approved one).
     latestVersion: latestApproved?.version ?? null,
     pendingVersion,
+    // The viewer's plan saves are approved at once (leadership); else they wait for approval.
+    savesApproved: await isLeadershipActor(req.user!),
     status: plan.status ?? "approved",
     versions: versions.map((v) => ({
       version: v.version,
@@ -381,7 +385,7 @@ async function parseRows(raw: unknown): Promise<IManpowerRow[] | Invalid> {
  * a newer save in between returns 409 so nobody overwrites someone else.
  */
 /** Every difference between two versions' rows, as lines for the approval email. */
-async function planChanges(before: IManpowerRow[], after: IManpowerRow[]): Promise<Array<{ label: string; before: string; after: string }>> {
+export async function planChanges(before: IManpowerRow[], after: IManpowerRow[]): Promise<Array<{ label: string; before: string; after: string }>> {
   const ids = new Set<string>();
   const brandIds = new Set<string>();
   for (const r of [...before, ...after]) {
@@ -453,10 +457,17 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "Version note is too long" });
     return;
   }
-  // Edits start from the latest approved version; numbering continues after any pending one.
-  const latest = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean();
+  // The base check: edits start from the latest approved version, or from the version waiting
+  // for approval (a non-leader editing further from what is already pending, so their earlier
+  // changes show). Any other base means someone saved in between: 409, reload. The save is
+  // turned into a delta against its base and laid onto the right version (writePlanVersion).
+  const [latest, pending] = await Promise.all([
+    ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean(),
+    ManpowerPlan.findOne({ month, status: "pending" }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean(),
+  ]);
   const base = body.baseVersion === null || body.baseVersion === undefined ? null : Number(body.baseVersion);
-  if ((latest?.version ?? null) !== base) {
+  const fromPending = Boolean(pending) && base === pending!.version;
+  if (!fromPending && (latest?.version ?? null) !== base) {
     res.status(409).json({
       error: latest
         ? `Someone saved version ${latest.version} while you were editing. Reload to see it, then make your change again.`
@@ -465,7 +476,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     });
     return;
   }
-  let maxProjects = latest?.maxProjectsPerPerson ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson;
+  let maxProjects = (fromPending ? pending!.maxProjectsPerPerson : latest?.maxProjectsPerPerson) ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson;
   if (body.maxProjectsPerPerson !== undefined) {
     const n = Number(body.maxProjectsPerPerson);
     if (!Number.isInteger(n) || n < 1 || n > MANPOWER_LIMITS.maxProjectsPerPersonMax) {
@@ -478,8 +489,9 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
   try {
     const saved = await writePlanVersion({
       month,
-      before: (latest?.rows ?? []) as IManpowerRow[],
+      before: ((fromPending ? pending!.rows : latest?.rows) ?? []) as IManpowerRow[],
       latestVersion: latest?.version ?? null,
+      baseVersion: base,
       rows,
       note,
       maxProjectsPerPerson: maxProjects,
@@ -499,15 +511,29 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
 
 /**
  * Writes the next version of a month's plan (the save path shared by the plan
- * page, Brands → Allocation and brand splits). Leadership's saves are live at
- * once (and update the linked projects' teams); anyone else's wait for
- * leadership approval. Throws a duplicate-key error (11000) on a racing save.
+ * page, Brands → Allocation, brand splits / moves / renames and project team
+ * edits). Leadership's saves are live at once (and update the linked projects'
+ * teams); anyone else's wait for leadership approval. Throws a duplicate-key
+ * error (11000) on a racing save.
+ *
+ * One pending version per month, and pending work is never dropped:
+ *  - a non-leader's save is a delta against the rows it was made on (`before`),
+ *    laid onto the version already pending (if any): the changes add up and the
+ *    request shows everything waiting against the approved plan;
+ *  - a leadership save is laid onto the latest approved version (only its own
+ *    delta, when it was made on the pending version), then the pending version
+ *    is rebased on the new approved one (rebasePendingPlan).
+ * When the save was made on the very version it lands on, its rows are used as
+ * they are (order, everything).
  */
 export async function writePlanVersion(params: {
   month: string;
-  /** Rows of the latest approved version (null-safe: [] for a new month). */
+  /** Rows the save was made on (`baseVersion`'s rows; [] for a new month). */
   before: IManpowerRow[];
+  /** The latest approved version (null: none yet). */
   latestVersion: number | null;
+  /** The version `before` is (defaults to `latestVersion`: callers that build on the approved plan). */
+  baseVersion?: number | null;
   rows: IManpowerRow[];
   note: string;
   maxProjectsPerPerson: number;
@@ -518,26 +544,41 @@ export async function writePlanVersion(params: {
   const { month, before, actor, ip } = params;
   // Brand-linked lines are named after their brand (new, relinked or renamed lines).
   const { nameLinesAfterBrands } = await import("../lib/manpowerLineNames.js");
-  const rows = await nameLinesAfterBrands(params.rows, before);
-  const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
+  const saved = await nameLinesAfterBrands(params.rows, before);
+  const [approved, pending, highest] = await Promise.all([
+    ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version rows").lean(),
+    ManpowerPlan.findOne({ month, status: "pending" }).sort({ version: -1 }).select("version rows note").lean(),
+    ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean(),
+  ]);
+  const approvedRows = (approved?.rows ?? []) as IManpowerRow[];
+  const approvedVersion = approved?.version ?? null;
+  const baseVersion = params.baseVersion === undefined ? params.latestVersion : params.baseVersion;
   const needsApproval = !(await isLeadershipActor(actor));
+  // Where the save lands: the pending version for a non-leader (changes add up), else the approved plan.
+  const onto = needsApproval && pending ? { version: pending.version, rows: pending.rows as IManpowerRow[] } : { version: approvedVersion, rows: approvedRows };
+  const rows = baseVersion === onto.version ? saved : applyPlanDelta(onto.rows, planDelta(before, saved));
+  const addsUp = needsApproval && Boolean(pending);
   const plan = await ManpowerPlan.create({
     month,
     version: (highest?.version ?? 0) + 1,
     rows,
-    note: params.note,
+    note: addsUp ? combineNotes(pending!.note ?? "", params.note, MANPOWER_LIMITS.versionNoteMax) : params.note,
     maxProjectsPerPerson: params.maxProjectsPerPerson,
     source: params.source,
     status: needsApproval ? "pending" : "approved",
+    // A pending version records the approved version its changes are made on (for rebasing).
+    baseVersion: needsApproval ? approvedVersion : null,
     createdBy: actor._id,
   });
-  // One pending version per month: a newer save replaces the previous one.
-  await ManpowerPlan.updateMany({ month, status: "pending", version: { $ne: plan.version } }, { $set: { status: "superseded" } });
   let pendingApproval: string | undefined;
   if (!needsApproval) {
-    await syncPlanToProjects(month, before, rows, actor, ip);
+    await syncPlanToProjects(month, approvedRows, rows, actor, ip);
+    // The work waiting for approval is carried onto the new approved version.
+    if (pending) await rebasePendingPlan(month, { version: plan.version, rows }, actor, ip, approvedRows);
   } else {
-    const changes = await planChanges(before, rows);
+    // One pending version per month: this one (which includes the earlier pending changes) replaces it.
+    await ManpowerPlan.updateMany({ month, status: "pending", version: { $ne: plan.version } }, { $set: { status: "superseded" } });
+    const changes = await planChanges(approvedRows, rows);
     await requestChange({
       kind: "manpower_plan",
       actor,
@@ -548,7 +589,7 @@ export async function writePlanVersion(params: {
       version: plan.version,
       ip,
     });
-    pendingApproval = `Version ${plan.version} was sent to leadership for approval. The plan keeps using version ${params.latestVersion ?? "—"} until then.`;
+    pendingApproval = `Version ${plan.version} was sent to leadership for approval${addsUp ? ` (together with the changes already waiting in version ${pending!.version})` : ""}. The plan keeps using version ${approvedVersion ?? "—"} until then.`;
   }
   logActivity({
     action: "settings_updated",
@@ -560,6 +601,75 @@ export async function writePlanVersion(params: {
     ip,
   });
   return { version: plan.version, ...(pendingApproval ? { pendingApproval } : {}) };
+}
+
+/**
+ * After leadership writes approved version `approved`, the month's pending version
+ * (if any) is rebased on it: a new pending version = the approved rows + the
+ * pending version's own changes (its delta against the approved version it was
+ * made on). Where both changed the same cell / line field, leadership's direct
+ * edit wins. The old pending version is superseded and the pending change request
+ * moves to the new one (its lines recomputed), so there is still exactly one.
+ * When nothing of the pending changes is left, the request is closed as superseded.
+ * `previousApproved`: the approved rows before `approved` (used when the pending
+ * version has no recorded base). Returns the new pending version number, or null.
+ */
+export async function rebasePendingPlan(
+  month: string,
+  approved: { version: number; rows: IManpowerRow[] },
+  actor: IUser,
+  ip?: string,
+  previousApproved: IManpowerRow[] = []
+): Promise<number | null> {
+  const pending = await ManpowerPlan.findOne({ month, status: "pending", version: { $lt: approved.version } }).sort({ version: -1 });
+  if (!pending) return null;
+  const baseDoc = pending.baseVersion != null ? await ManpowerPlan.findOne({ month, version: pending.baseVersion }).select("rows").lean() : null;
+  const baseRows = (baseDoc?.rows ?? previousApproved) as IManpowerRow[];
+  const approvedRows = approved.rows;
+  const own = withoutConflicts(planDelta(baseRows, pending.rows as IManpowerRow[]), planDelta(baseRows, approvedRows));
+  const request = await ChangeRequest.findOne({ kind: "manpower_plan", status: "pending", month }).sort({ createdAt: -1 });
+  if (deltaIsEmpty(own)) {
+    await ManpowerPlan.updateMany({ month, status: "pending", version: { $lt: approved.version } }, { $set: { status: "superseded" } });
+    if (request) {
+      request.status = "superseded";
+      request.decidedAt = new Date();
+      await request.save();
+    }
+    return null;
+  }
+  const rows = applyPlanDelta(approvedRows, own);
+  const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
+  const next = await ManpowerPlan.create({
+    month,
+    version: (highest?.version ?? approved.version) + 1,
+    rows,
+    note: pending.note,
+    maxProjectsPerPerson: pending.maxProjectsPerPerson,
+    source: pending.source,
+    status: "pending",
+    baseVersion: approved.version,
+    createdBy: pending.createdBy,
+  });
+  await ManpowerPlan.updateMany({ month, status: "pending", version: { $ne: next.version } }, { $set: { status: "superseded" } });
+  if (request) {
+    const changes = await planChanges(approvedRows, next.rows as IManpowerRow[]);
+    request.version = next.version;
+    request.payload = { ...(request.payload ?? {}), month, version: next.version };
+    request.title = /version \d+/.test(request.title) ? request.title.replace(/version \d+/, `version ${next.version}`) : `Manpower plan ${month} — version ${next.version}`;
+    request.changes = (changes.length ? changes : [{ label: "Plan", before: "—", after: "Saved with no line changes" }]).slice(0, 300);
+    request.markModified("payload");
+    await request.save();
+  }
+  logActivity({
+    action: "settings_updated",
+    actor,
+    targetType: "manpower_plan",
+    targetId: next._id as mongoose.Types.ObjectId,
+    targetName: `Manpower plan ${month} v${next.version}`,
+    details: { month, version: next.version, rebasedFrom: pending.version, onto: approved.version, status: "pending" },
+    ip,
+  });
+  return next.version;
 }
 
 /**

@@ -1,12 +1,14 @@
-import { useId, useMemo, useState, type ReactNode } from "react";
-import { LuLoaderCircle, LuSave, LuUndo2 } from "react-icons/lu";
+import { useCallback, useId, useMemo, useState, type ReactNode } from "react";
+import { Link } from "react-router";
+import { LuHourglass, LuLoaderCircle, LuSave, LuUndo2 } from "react-icons/lu";
 
 import { Button } from "@/components/ui/button";
 import { useManpowerPlan, useSaveManpowerPlan } from "@/hooks/use-manpower";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
+import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { firstName, newRowKey, rowToInput } from "@/lib/manpower";
 import { cn } from "@/lib/utils";
-import type { ManpowerRowInput } from "@/types";
+import type { BrandPersonLoad, BrandSummary, ManpowerRowInput, PendingPlanInfo } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Colour-only allocation cells (Brands → Allocation, the brand page, New brand):
@@ -36,7 +38,10 @@ export function StatusDot({ ok, label }: { ok: boolean; label?: string }) {
   );
 }
 
-export function CellLegend({ max, className }: { max: number; className?: string }) {
+/** A cell whose proposed people (plan version waiting for approval) differ from the approved ones. */
+export const PENDING_CELL = "outline-2 outline-dashed outline-amber-500 outline-offset-1";
+
+export function CellLegend({ max, className, pending }: { max: number; className?: string; pending?: boolean }) {
   const items: Array<[CellTone, string]> = [
     ["ok", "Assigned"],
     ["miss", "Needed by scope, nobody"],
@@ -51,6 +56,69 @@ export function CellLegend({ max, className }: { max: number; className?: string
           {label}
         </span>
       ))}
+      {pending && (
+        <span className="inline-flex items-center gap-1.5">
+          <i aria-hidden className={cn("inline-block size-3.5 rounded", PENDING_CELL)} />
+          Waiting for approval
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
+ * A brand's cell for a role: the people shown (the proposed ones when the month has a plan
+ * version waiting for approval), the approved ones, and whether they differ.
+ */
+export function teamCell(b: Pick<BrandSummary, "roles" | "pending">, role: string): { current: string[]; approved: string[]; pending: boolean } {
+  const approved = (b.roles[role] ?? []).map((p) => p._id);
+  if (!b.pending) return { current: approved, approved, pending: false };
+  const proposed = (b.pending.roles[role] ?? []).map((p) => p._id);
+  const same = [...approved].sort().join(",") === [...proposed].sort().join(",");
+  return { current: proposed, approved, pending: !same };
+}
+
+/**
+ * A person's name for the Brands pages: the names the server sent (plan, pending plan, leads),
+ * the people map, then anyone assignable (someone just picked via the full list) — never "Unknown"
+ * for a real person.
+ */
+export function useNameOf(names: Record<string, string> | undefined, people: Record<string, BrandPersonLoad> | undefined, extra?: (id: string) => string | undefined) {
+  const everyone = useAssignableUsers(true);
+  const byId = useMemo(() => new Map((everyone.data ?? []).map((u) => [u._id, u.name])), [everyone.data]);
+  return useCallback(
+    (id: string) => names?.[id] ?? people?.[id]?.name ?? extra?.(id) ?? byId.get(id) ?? "Unknown",
+    [names, people, extra, byId],
+  );
+}
+
+/** "version 10 (latest approved) · version 13 waiting for approval". */
+export function planVersionText(planVersion: number | null, pending: PendingPlanInfo | null | undefined): string {
+  const approved = planVersion ? `version ${planVersion} (latest approved)` : "no approved plan yet";
+  return pending ? `${approved} · version ${pending.version} waiting for approval` : approved;
+}
+
+/** "Plan changes waiting for approval — version 13 by Nazeer, 20 Oct 4:04 PM (View request)". */
+export function PendingPlanBanner({ pending, savesApproved, className }: { pending: PendingPlanInfo; savesApproved?: boolean; className?: string }) {
+  return (
+    <div role="status" className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground", className)}>
+      <LuHourglass aria-hidden className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+      <span>
+        <span className="font-medium">Plan changes waiting for approval</span> — version {pending.version}
+        {pending.by ? ` by ${pending.by.name}` : ""}, {formatDate(pending.at)} {formatTimeOfDay(pending.at)}
+        {pending.note ? <span className="text-muted-foreground"> · {pending.note}</span> : null}
+      </span>
+      {pending.changeRequestId && (
+        <Link to={`/approvals/${pending.changeRequestId}`} className="text-primary underline underline-offset-2">
+          View request
+        </Link>
+      )}
+      <span className="w-full text-xs text-muted-foreground">
+        Cells with a dashed amber outline show the proposed people.
+        {savesApproved
+          ? " Your changes are approved at once; the waiting changes are kept on top of them."
+          : " Your changes are added to the ones waiting."}
+      </span>
     </div>
   );
 }
@@ -81,6 +149,8 @@ export function AllocCell({
   onChange,
   edited,
   brandsOf,
+  pending,
+  approved,
 }: {
   /** "Designer for Ajmal GCC" (select label). */
   label: string;
@@ -95,19 +165,28 @@ export function AllocCell({
   edited?: boolean;
   /** Brands a person is on (for people outside the pool). */
   brandsOf?: (id: string) => number;
+  /** The people shown are proposed by a plan version waiting for approval (they differ from `approved`). */
+  pending?: boolean;
+  /** The approved people (shown in the title of a pending cell). */
+  approved?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const text = people.length ? people.map((id) => firstName(nameOf(id))).join(", ") : tone === "miss" ? "nobody" : "—";
-  const title = people.length ? people.map((id) => nameOf(id)).join("\n") : tone === "miss" ? "Needed by the scope" : "";
+  const names = people.length ? people.map((id) => nameOf(id)).join("\n") : tone === "miss" ? "Needed by the scope" : "";
+  const title = pending
+    ? `⏳ Waiting for approval\nProposed: ${people.length ? people.map((id) => nameOf(id)).join(", ") : "nobody"}\nApproved: ${approved?.length ? approved.map((id) => nameOf(id)).join(", ") : "nobody"}`
+    : names;
   const cls = cn(
     "block min-w-[5.5rem] max-w-[14rem] truncate rounded-md px-2 py-1 text-left text-xs",
     CELL_TONE[tone],
+    pending && PENDING_CELL,
     edited && "ring-2 ring-primary/60",
   );
+  const shown = pending ? `⏳ ${text}` : text;
   if (!editable) {
     return (
       <span className={cls} title={title}>
-        {text}
+        {shown}
       </span>
     );
   }
@@ -126,8 +205,14 @@ export function AllocCell({
     );
   }
   return (
-    <button type="button" className={cn(cls, "cursor-pointer hover:brightness-95")} title={title || "Click to choose"} aria-label={`${label}: ${people.length ? people.map(nameOf).join(", ") : "nobody"}. Change`} onClick={() => setOpen(true)}>
-      {text}
+    <button
+      type="button"
+      className={cn(cls, "cursor-pointer hover:brightness-95")}
+      title={title || "Click to choose"}
+      aria-label={`${label}: ${people.length ? people.map(nameOf).join(", ") : "nobody"}${pending ? " (waiting for approval)" : ""}. Change`}
+      onClick={() => setOpen(true)}
+    >
+      {shown}
     </button>
   );
 }
@@ -309,17 +394,22 @@ export function applyCellEdits(rows: ManpowerRowInput[], edits: Record<string, s
 /**
  * Cell edits for one month: `get(brand, role, current)` gives the people shown,
  * `set` records a change, `save()` writes one plan version (approval rules as on
- * the Manpower page).
+ * the Manpower page). `fromPending`: the version waiting for approval when the
+ * viewer's saves wait for approval too — their edits are made on it (base = that
+ * version), so what they changed before stays and adds up.
  */
-export function usePlanEdits(month: string, enabled: boolean) {
-  const plan = useManpowerPlan(month, null, enabled);
+export function usePlanEdits(month: string, enabled: boolean, fromPending: number | null = null) {
+  const latest = useManpowerPlan(month, null, enabled && fromPending === null);
+  const pendingPlan = useManpowerPlan(month, fromPending, enabled && fromPending !== null);
+  const plan = fromPending !== null ? pendingPlan : latest;
   const save = useSaveManpowerPlan();
   const [edits, setEdits] = useState<Record<string, string[]>>({});
   const [original, setOriginal] = useState<Record<string, string[]>>({});
   const count = Object.keys(edits).length;
   // 404 = no plan for the month yet: the first save creates version 1.
   const noPlan = (plan.error as { response?: { status?: number } } | null)?.response?.status === 404;
-  const ready = Boolean((plan.data && plan.data.month === month) || noPlan);
+  const loaded = Boolean(plan.data && plan.data.month === month && (fromPending === null || plan.data.version === fromPending));
+  const ready = loaded || noPlan;
 
   const api = useMemo(
     () => ({
@@ -364,10 +454,10 @@ export function usePlanEdits(month: string, enabled: boolean) {
 
   function submit(brands: Map<string, BrandInfo>, note: string, onDone?: () => void) {
     if (!ready || count === 0) return;
-    const base = plan.data && plan.data.month === month ? plan.data : null;
+    const base = loaded ? plan.data! : null;
     const rows = base ? base.plan.rows.map(rowToInput) : [];
     save.mutate(
-      { month, baseVersion: base?.latestVersion ?? null, rows: applyCellEdits(rows, edits, brands), note },
+      { month, baseVersion: base ? (fromPending ?? base.latestVersion) : null, rows: applyCellEdits(rows, edits, brands), note },
       {
         onSuccess: () => {
           reset();
