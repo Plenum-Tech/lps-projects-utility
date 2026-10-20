@@ -110,8 +110,9 @@ export async function login(req: Request, res: Response): Promise<void> {
   logActivity({ action: "login", actor: user, ip: req.ip });
 
   issueSessionCookie(res, user);
-  const leadership = await applyLeadership(user);
-  res.json({ user: { ...user.toJSON(), leadership } });
+  await applyLeadership(user);
+  // The same user shape as GET /auth/me (with `access`), so the menus are right straight after sign-in.
+  res.json({ user: await currentUserJson(user) });
 }
 
 /**
@@ -154,11 +155,16 @@ export async function logout(req: Request, res: Response): Promise<void> {
   res.json({ message: "Logged out" });
 }
 
+/** The signed-in user as the app reads it: profile, leadership and what the menus may show (computed server-side). */
+async function currentUserJson(user: NonNullable<Request["user"]>) {
+  return {
+    ...user.toJSON(),
+    leadership: isLeadershipUser(user),
+    access: { timeReport: await canViewTimeReport(user), brandCreator: canCreateBrand(user), brandRename: canRenameBrand(user) },
+  };
+}
+
 /** Returns the authenticated user (requireAuth guarantees req.user is present). */
 export async function me(req: Request, res: Response): Promise<void> {
-  const user = req.user!;
-  // What the menus may show (computed server-side).
-  res.json({
-    user: { ...user.toJSON(), leadership: isLeadershipUser(user), access: { timeReport: await canViewTimeReport(user), brandCreator: canCreateBrand(user), brandRename: canRenameBrand(user) } },
-  });
+  res.json({ user: await currentUserJson(req.user!) });
 }
