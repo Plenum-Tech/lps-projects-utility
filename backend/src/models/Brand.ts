@@ -12,7 +12,7 @@ import { TASK_LABEL_COLORS } from "./TaskLabel.js";
 export const BRAND_COLORS = TASK_LABEL_COLORS;
 export type BrandColor = (typeof BRAND_COLORS)[number];
 
-export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20, organisationMax: 80, maxScopeFiles: 10, noteMax: 300, maxNotes: 20, maxPlatforms: 12 } as const;
+export const BRAND_LIMITS = { nameMax: 80, shortNameMax: 20, organisationMax: 80, maxScopeFiles: 10, noteMax: 300, maxNotes: 20, maxPlatforms: 12, scopeTextMax: 10000 } as const;
 
 /** A brand scope row: a project scope row plus what it is and the file it came from. */
 export interface IBrandScopeItem {
@@ -68,6 +68,8 @@ export interface IBrand extends mongoose.Document {
   scopeItems?: IBrandScopeItem[];
   platforms?: string[];
   scopeNotes?: string[];
+  /** "Other scope": the agreement's scope text not itemised as rows (paragraphs, exclusions…), editable. */
+  scopeText?: string;
   scopeFiles?: IBrandScopeFile[];
   /** Lead(s) picked in the brand flow. */
   leads?: mongoose.Types.ObjectId[];
@@ -128,6 +130,7 @@ const brandSchema = new Schema<IBrand>(
     },
     platforms: { type: [{ type: String, trim: true, maxlength: 40 }], default: [] },
     scopeNotes: { type: [{ type: String, trim: true, maxlength: BRAND_LIMITS.noteMax }], default: [] },
+    scopeText: { type: String, trim: true, maxlength: BRAND_LIMITS.scopeTextMax, default: "" },
     scopeFiles: {
       type: [
         new Schema(

@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { LuArrowLeft, LuCircleCheck, LuCircleX, LuExternalLink, LuLoaderCircle, LuTriangleAlert } from "react-icons/lu";
 
 import { ChangeTable, KIND_LABEL } from "@/components/approvals/change-approvals";
-import { ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
+import { OtherScopeChange, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
 import { PageHeader, QueryError } from "@/components/globals/query-states";
 import { planRowsToTable } from "@/components/manpower/manpower-page";
 import { PlanTable } from "@/components/manpower/plan-table";
@@ -54,6 +54,8 @@ interface ChangeReview {
     scopeDiff?: ScopeDiff;
     /** Brand scope: how close the proposed rows are to the agreement (advice only). */
     scopeMatch?: StoredScopeMatch;
+    /** Brand "Other scope" (the scope kept as text, not rows): before / after. */
+    scopeText?: { changed: boolean; current: string; proposed: string };
     team?: { changed: boolean; current: TeamView; proposed: TeamView };
     brand?: {
       _id: string;
@@ -354,6 +356,18 @@ export default function ChangeReviewRoute() {
               <ScopeDiffView diff={ctx.scopeDiff} emptyText="The proposed rows are the same as the current ones." />
               {ctx.scopeMatch && (
                 <ScopeMatchBox
+                  at={ctx.scopeMatch.at}
+                  match={{ score: ctx.scopeMatch.score, missingFromScope: ctx.scopeMatch.missing ?? [], extraInScope: ctx.scopeMatch.extra ?? [], changedQty: ctx.scopeMatch.changed ?? [], source: ctx.scopeMatch.source }}
+                />
+              )}
+            </Section>
+          )}
+          {ctx.scopeText && (
+            <Section title="Other scope (not itemised)">
+              <OtherScopeChange from={ctx.scopeText.current} to={ctx.scopeText.proposed} />
+              {!ctx.scopeDiff && ctx.scopeMatch && (
+                <ScopeMatchBox
+                  className="mt-3"
                   at={ctx.scopeMatch.at}
                   match={{ score: ctx.scopeMatch.score, missingFromScope: ctx.scopeMatch.missing ?? [], extraInScope: ctx.scopeMatch.extra ?? [], changedQty: ctx.scopeMatch.changed ?? [], source: ctx.scopeMatch.source }}
                 />

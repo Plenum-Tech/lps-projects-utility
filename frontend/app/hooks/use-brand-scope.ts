@@ -22,9 +22,12 @@ export function useScopeMatch({
   rows,
   extraction,
   brandId,
+  otherScope,
   enabled = true,
 }: {
   rows: DiffRow[];
+  /** The scope kept as text ("Other scope"): what it names isn't missing. */
+  otherScope?: string;
   extraction?: Pick<ScopeExtraction, "scope" | "texts"> | null;
   brandId?: string | null;
   enabled?: boolean;
@@ -33,6 +36,7 @@ export function useScopeMatch({
     rows: rows.map((r) => ({ unit: r.unit, what: r.what ?? "", quantity: r.quantity, languageList: r.languageList ?? [], languages: r.languages, sizes: r.sizes ?? 1 })),
     ...(extraction ? { extraction: { scope: extraction.scope, texts: extraction.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
     ...(!extraction && brandId ? { brandId } : {}),
+    ...(otherScope !== undefined ? { otherScope } : {}),
   };
   const key = useDebouncedValue(JSON.stringify(body), 700);
   return useQuery({

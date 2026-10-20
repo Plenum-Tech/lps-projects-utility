@@ -331,6 +331,7 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
       revenueTbc: Boolean(brand.revenueTbc),
       platforms: brand.platforms ?? [],
       scopeNotes: brand.scopeNotes ?? [],
+      scopeText: brand.scopeText ?? "",
       setupWaiting: Boolean(brand.pendingSetup),
       files: (brand.scopeFiles ?? []).map((f) => ({ _id: String(f.gridFsId), filename: f.filename, mimeType: f.mimeType, size: f.size })),
       projects: all
@@ -414,6 +415,7 @@ export async function splitBrand(req: Request, res: Response): Promise<void> {
       leads: [...(source.leads ?? [])],
       platforms: [...(source.platforms ?? [])],
       scopeNotes: [...(source.scopeNotes ?? [])],
+      scopeText: source.scopeText ?? "",
       status: leader ? "approved" : "pending",
       requestedBy: user._id,
       ...(leader ? { decidedBy: user._id, decidedAt: new Date() } : {}),

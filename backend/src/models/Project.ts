@@ -84,6 +84,8 @@ export interface IProject extends mongoose.Document {
   /** The brand's platforms and scope notes, copied from the brand (create / brand change). */
   platforms?: string[];
   scopeNotes?: string[];
+  /** The brand's "other scope" text (not itemised as rows), copied like the scope notes. */
+  scopeText?: string;
   /**
    * Set on projects created from the brand rules onwards: no tasks until the project has a
    * scope. Older projects have no flag (exempt; flagged "no scope" in the app instead).
@@ -166,6 +168,7 @@ const projectSchema = new Schema<IProject>(
     },
     platforms: { type: [{ type: String, trim: true, maxlength: 40 }], default: undefined },
     scopeNotes: { type: [{ type: String, trim: true, maxlength: 300 }], default: undefined },
+    scopeText: { type: String, maxlength: 10000, default: undefined },
     requiresScope: { type: Boolean, default: undefined },
     category: { type: Schema.Types.ObjectId, ref: "ProjectCategory", default: null },
     brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },

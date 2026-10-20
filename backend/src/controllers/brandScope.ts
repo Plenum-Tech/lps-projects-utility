@@ -5,7 +5,7 @@ import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { extractScope, type ExtractedLead, type ScopeExtraction } from "../lib/scopeExtract.js";
 import { computeScopeMatch, parseAgreement, parseMatchRows, type MatchRow, type ScopeAgreement } from "../lib/scopeMatch.js";
 import { scopeVersionsOf } from "../lib/scopeVersions.js";
-import { Brand, type IBrand } from "../models/Brand.js";
+import { Brand, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
 import { User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
@@ -73,12 +73,14 @@ export async function agreementForBrand(brand: IBrand): Promise<ScopeAgreement |
 
 /**
  * POST /api/brands/scope-match — admins; `{ rows, extraction }` (the flow's read result) or
- * `{ rows, brandId }` (the brand's stored agreement / documents). Advice only.
+ * `{ rows, brandId }` (the brand's stored agreement / documents). `otherScope` = the scope kept as
+ * text (default: the brand's); what it names isn't missing. Advice only.
  */
 export async function scopeMatch(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const rows = parseMatchRows(body.rows);
   let agreement = parseAgreement(body.extraction);
+  let brandText = "";
   if (!agreement && typeof body.brandId === "string") {
     if (isInvalidObjectId(body.brandId)) {
       res.status(400).json({ error: "brandId is not valid" });
@@ -90,19 +92,24 @@ export async function scopeMatch(req: Request, res: Response): Promise<void> {
       return;
     }
     agreement = await agreementForBrand(brand);
+    brandText = brand.scopeText ?? "";
   }
   if (!agreement) {
     res.json({ match: null, reason: "No agreement to compare with — upload the agreement (PDF, image, Word or Excel)." });
     return;
   }
-  res.json({ match: await computeScopeMatch(agreement, rows) });
+  const otherScope = typeof body.otherScope === "string" ? body.otherScope.slice(0, BRAND_LIMITS.scopeTextMax) : brandText;
+  res.json({ match: await computeScopeMatch(agreement, rows, otherScope) });
 }
 
-/** The match of `rows` against the brand's agreement (or the given one); null when there's none. */
-export async function brandScopeMatch(brand: IBrand, rows: MatchRow[], agreement?: ScopeAgreement | null) {
+/**
+ * The match of `rows` against the brand's agreement (or the given one); null when there's none.
+ * `otherScope` (default: the brand's) is the scope kept as text — what it names counts as covered.
+ */
+export async function brandScopeMatch(brand: IBrand, rows: MatchRow[], agreement?: ScopeAgreement | null, otherScope?: string) {
   const base = agreement ?? (await agreementForBrand(brand));
   if (!base) return null;
-  return computeScopeMatch(base, rows);
+  return computeScopeMatch(base, rows, otherScope ?? brand.scopeText ?? "");
 }
 
 /** GET /api/brands/:id/scope-versions — anyone who can see the brand: its scope history, newest first. */

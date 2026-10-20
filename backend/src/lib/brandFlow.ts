@@ -130,6 +130,17 @@ export async function applyBrandScopeToProjects(brand: IBrand, previous: ScopeRo
   return changed;
 }
 
+/** A brand's new "other scope" text reaches its open projects (copied like the scope notes). */
+export async function applyBrandScopeTextToProjects(brand: IBrand): Promise<number> {
+  const brandId = brand._id as mongoose.Types.ObjectId;
+  const text = brand.scopeText ?? "";
+  const result = await Project.updateMany(
+    { $or: [{ brand: brandId }, { "naming.brand": brandId }], archivedAt: null },
+    text ? { $set: { scopeText: text } } : { $unset: { scopeText: 1 } }
+  );
+  return result.modifiedCount ?? 0;
+}
+
 /** Loads a brand by id (for the project write path). */
 export async function brandById(id: mongoose.Types.ObjectId | null | undefined) {
   return id ? Brand.findById(id) : null;

@@ -1236,6 +1236,7 @@ export async function createProjectCore(
       // The brand's platforms and scope notes come with the project.
       ...(brandDoc?.platforms?.length ? { platforms: [...brandDoc.platforms] } : {}),
       ...(brandDoc?.scopeNotes?.length ? { scopeNotes: [...brandDoc.scopeNotes] } : {}),
+      ...(brandDoc?.scopeText ? { scopeText: brandDoc.scopeText } : {}),
       // New projects take no tasks until they have a scope (imported sheets are exempt).
       ...(options.allowLegacyName ? {} : { requiresScope: true }),
       category,
@@ -1758,6 +1759,7 @@ export async function updateProjectCore(
       project.markModified("scopeItems");
       project.platforms = [...(newBrandDoc.platforms ?? [])];
       project.scopeNotes = [...(newBrandDoc.scopeNotes ?? [])];
+      project.scopeText = newBrandDoc.scopeText || undefined;
       if (!changed.includes("scopeItems")) changed.push("scopeItems");
     } else {
       newBrandDoc = null;

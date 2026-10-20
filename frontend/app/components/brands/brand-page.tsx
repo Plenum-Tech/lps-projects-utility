@@ -4,7 +4,7 @@ import { LuArrowLeft, LuDownload, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus,
 
 import { AllocCell, CellLegend, cellTone, SaveBar, StatusDot, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
-import { MatchBadge, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
+import { MatchBadge, OtherScopeChange, OtherScopeField, OtherScopeText, ScopeDiffView, ScopeMatchBox } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
@@ -67,9 +67,10 @@ function UtilisationBar({ value, max }: { value: number; max: number }) {
 /**
  * Scope upload → read → review → save, or edit the current rows by hand (brand scope; leadership
  * applies, others send for approval) + attach the files. Before saving: what changes against the
- * current version, and how close the rows are to the agreement (advice only).
+ * current version, and how close the rows are to the agreement (advice only). The "Other scope"
+ * text (not itemised as rows) is read / edited and saved with the rows.
  */
-function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: ScopeRow[]; onDone: () => void }) {
+function ScopeUpload({ brandId, current, currentText, onDone }: { brandId: string; current: ScopeRow[]; currentText: string; onDone: () => void }) {
   const toast = useToast();
   const extract = useExtractBrandScope();
   const patch = usePatchBrand();
@@ -81,11 +82,13 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
   const [usedText, setUsedText] = useState(false);
   const [rows, setRows] = useState<ScopeRow[] | null>(null);
   const [notes, setNotes] = useState<string[]>([]);
+  const [otherScope, setOtherScope] = useState("");
   // The read result of the new files: the agreement the rows are compared with (else the brand's).
   const [extraction, setExtraction] = useState<ScopeExtraction | null>(null);
   const setRow = (i: number, p: Partial<ScopeRow>) => setRows((list) => list!.map((r, j) => (j === i ? { ...r, ...p } : r)));
   const diff = useMemo(() => (rows ? diffScope(current, rows) : null), [rows, current]);
-  const match = useScopeMatch({ rows: rows ?? [], extraction, brandId: extraction ? null : brandId, enabled: Boolean(rows) });
+  const match = useScopeMatch({ rows: rows ?? [], extraction, brandId: extraction ? null : brandId, otherScope, enabled: Boolean(rows) });
+  const textChanged = rows !== null && otherScope.replace(/\s+/g, " ").trim() !== currentText.replace(/\s+/g, " ").trim();
 
   function read(list: File[], typed = "") {
     setFiles(list);
@@ -98,6 +101,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
         onSuccess: (data) => {
           setRows(data.scope.map((r) => ({ ...r })));
           setNotes(data.notes);
+          setOtherScope(data.otherScope ?? "");
           setExtraction(data);
         },
       },
@@ -108,6 +112,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
     setFiles([]);
     setExtraction(null);
     setNotes([]);
+    setOtherScope(currentText);
     setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
   }
 
@@ -119,6 +124,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
       await patch.mutateAsync({
         id: brandId,
         scopeItems: rows.map((r) => ({ unit: r.unit, quantity: r.quantity, languages: Math.max(1, r.languageList.length), languageList: r.languageList, sizes: r.sizes, what: r.what, source: r.source })),
+        scopeText: otherScope.trim(),
         scopeSource: files.length || usedText ? "upload" : "edit",
         ...(extraction ? { agreement: { scope: extraction.scope, texts: extraction.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
       });
@@ -149,9 +155,9 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
         <Button type="button" variant="outline" size="sm" className="ml-2" disabled={busy} onClick={() => input.current?.click()}>
           {extract.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuPaperclip aria-hidden />} Choose files…
         </Button>
-        {current.length > 0 && !rows && (
+        {(current.length > 0 || currentText.trim() !== "") && !rows && (
           <Button type="button" variant="ghost" size="sm" className="ml-1" disabled={busy} onClick={editCurrent}>
-            <LuPencil aria-hidden /> Edit rows
+            <LuPencil aria-hidden /> Edit scope
           </Button>
         )}
         <input
@@ -226,6 +232,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
             </table>
           </div>
           {notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+          <OtherScopeField id={`other-scope-${brandId}`} value={otherScope} onChange={setOtherScope} />
           <ScopeMatchBox
             match={match.data?.match}
             loading={match.isFetching}
@@ -233,7 +240,8 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
           />
           {diff && (
             <div className="rounded-lg border p-3">
-              <ScopeDiffView diff={diff} title="What will change against the current version" emptyText="No change against the current version." />
+              <ScopeDiffView diff={diff} title="What will change against the current version" emptyText={textChanged ? "No row changes against the current version." : "No change against the current version."} />
+              {textChanged && <OtherScopeChange className="mt-2" from={currentText} to={otherScope} />}
             </div>
           )}
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -241,7 +249,7 @@ function ScopeUpload({ brandId, current, onDone }: { brandId: string; current: S
               <LuPlus aria-hidden /> Add row
             </Button>
             <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setUsedText(false); setExtraction(null); }} disabled={busy}>Cancel</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => { setRows(null); setFiles([]); setUsedText(false); setExtraction(null); setOtherScope(""); }} disabled={busy}>Cancel</Button>
               <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
                 {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
                 Save scope{files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
@@ -272,6 +280,7 @@ function ScopeHistory({ brandId }: { brandId: string }) {
       {list.length > 1 && (
         <div className="rounded-lg border p-3">
           <ScopeDiffView diff={latest.diff} title={`Changed since the last version (v${latest.version - 1} → v${latest.version})`} emptyText="No row changes in the latest version." />
+          {latest.textDiff && <OtherScopeChange className="mt-2" from={latest.textDiff.from} to={latest.textDiff.to} />}
           <p className="mt-1 text-xs text-muted-foreground">{who(latest)}</p>
         </div>
       )}
@@ -295,11 +304,14 @@ function ScopeHistory({ brandId }: { brandId: string }) {
                       <span className="text-amber-700 dark:text-amber-400">~{v.diff.changed.length}</span>
                     </span>
                   )}
+                  {v.textDiff && v.version > 1 && <span>· other scope changed</span>}
                 </span>
               </button>
               {open === v.version && (
                 <div className="mt-2 space-y-2">
                   <ScopeDiffView diff={v.diff} title={v.version === 1 ? "First version" : `Against version ${v.version - 1}`} emptyText="Same rows as the version before." />
+                  {v.textDiff && v.version > 1 && <OtherScopeChange from={v.textDiff.from} to={v.textDiff.to} />}
+                  {v.version === 1 && <OtherScopeText text={v.scopeText} />}
                   {v.files.length > 0 && <p className="text-xs text-muted-foreground">Documents: {v.files.join(", ")}</p>}
                 </div>
               )}
@@ -574,6 +586,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         ) : (
           <p className="rounded-lg bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-300">No scope yet — flagged, not blocked. Projects keep their own scope until one is added.</p>
         )}
+        <OtherScopeText className="mt-3" text={b.scopeText ?? ""} />
         {b.scopeMatch && (
           <ScopeMatchBox
             className="mt-3"
@@ -586,6 +599,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           <ScopeUpload
             brandId={b._id}
             current={b.scopeItems.map((r) => ({ unit: r.unit, what: r.what, quantity: r.quantity, languageList: r.languageList, sizes: r.sizes, source: r.source ?? "" }))}
+            currentText={b.scopeText ?? ""}
             onDone={() => void detail.refetch()}
           />
         )}

@@ -103,8 +103,29 @@ function textSupports(text: string, r: MatchRow): boolean {
   });
 }
 
-/** Rules: pair rows by unit / name, then compare quantity, languages and sizes. */
-export function scopeMatchByRules(agreement: ScopeAgreement, entered: MatchRow[]): ScopeMatchResult {
+/**
+ * True when the "other scope" text (kept as text on the brand, not as rows) names this
+ * agreement row: most of its words on one line / bullet. The count isn't needed there.
+ */
+function boxCovers(box: string, r: MatchRow): boolean {
+  if (!box.trim()) return false;
+  const ws = words(r.what ?? "");
+  const want = ws.length ? ws : words(r.unit);
+  if (!want.length) return false;
+  return box
+    .toLowerCase()
+    .split(/\r?\n|•|;/)
+    .some((line) => {
+      const lw = new Set(words(line));
+      return want.filter((w) => lw.has(w)).length / want.length >= 0.6;
+    });
+}
+
+/**
+ * Rules: pair rows by unit / name, then compare quantity, languages and sizes.
+ * `otherScope` is the scope kept as text ("Other scope"): agreement rows it names count as covered.
+ */
+export function scopeMatchByRules(agreement: ScopeAgreement, entered: MatchRow[], otherScope = ""): ScopeMatchResult {
   const pairs: Array<{ a: number; e: number; s: number }> = [];
   agreement.rows.forEach((a, ai) =>
     entered.forEach((e, ei) => {
@@ -138,14 +159,22 @@ export function scopeMatchByRules(agreement: ScopeAgreement, entered: MatchRow[]
     count++;
     if (a.quantity === e.quantity) matched.push(rowLabel(e));
   }
-  const missingFromScope = agreement.rows.filter((_, i) => !usedA.has(i)).map(rowLabel);
-  count += missingFromScope.length;
+  const missingFromScope: string[] = [];
+  agreement.rows.forEach((a, i) => {
+    if (usedA.has(i)) return;
+    count++;
+    // Kept in the "Other scope" text instead of a row: covered, not missing.
+    if (boxCovers(otherScope, a)) {
+      points += 1;
+      matched.push(`${rowLabel(a)} (in Other scope)`);
+    } else missingFromScope.push(rowLabel(a));
+  });
   const extraInScope: string[] = [];
   entered.forEach((e, i) => {
     if (usedE.has(i)) return;
     count++;
     // Not among the rows read, but the agreement's text names it: supported.
-    if (textSupports(agreement.text, e)) {
+    if (textSupports(agreement.text, e) || textSupports(otherScope, e)) {
       points += 0.9;
       matched.push(`${rowLabel(e)} (in the agreement text)`);
     } else extraInScope.push(rowLabel(e));
@@ -163,9 +192,11 @@ List:
 - "missingFromScope": deliverables in the agreement that the entered rows lack.
 - "extraInScope": entered rows the agreement doesn't support.
 - "changedQty": [{"unit","what","agreement":number,"entered":number}] for the same deliverable with a different count.
+You may also get "Other scope": scope text the person kept as text (not as rows). Whatever it covers is in scope:
+never list it as missing, and don't lower the score for it.
 Reply with JSON only: {"score":0-100,"matched":[],"missingFromScope":[],"extraInScope":[],"changedQty":[]}.`;
 
-async function scopeMatchAI(agreement: ScopeAgreement, entered: MatchRow[]): Promise<ScopeMatchResult> {
+async function scopeMatchAI(agreement: ScopeAgreement, entered: MatchRow[], otherScope: string): Promise<ScopeMatchResult> {
   const show = (rows: MatchRow[]) =>
     rows.length
       ? rows.map((r) => `- unit: ${r.unit}; what: ${r.what || "-"}; quantity: ${r.quantity}; languages: ${langs(r)}; sizes: ${r.sizes ?? 1}`).join("\n")
@@ -177,6 +208,7 @@ async function scopeMatchAI(agreement: ScopeAgreement, entered: MatchRow[]): Pro
     agreement.text.slice(0, TEXT_MAX) || "(no text)",
     "Entered rows:",
     show(entered),
+    ...(otherScope.trim() ? ["Other scope (kept as text, counts as covered):", otherScope.slice(0, TEXT_MAX)] : []),
   ].join("\n");
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
@@ -220,15 +252,24 @@ async function scopeMatchAI(agreement: ScopeAgreement, entered: MatchRow[]): Pro
 }
 
 /** AI judgement when OPENAI_API_KEY is set (falls back to the rules on any error / timeout), else the rules. */
-export async function computeScopeMatch(agreement: ScopeAgreement, entered: MatchRow[]): Promise<ScopeMatchResult> {
+export async function computeScopeMatch(agreement: ScopeAgreement, entered: MatchRow[], otherScope = ""): Promise<ScopeMatchResult> {
   if (briefCheckConfigured()) {
     try {
-      return await scopeMatchAI(agreement, entered);
+      const ai = await scopeMatchAI(agreement, entered, otherScope);
+      // The model can still name something the box covers as missing: drop those.
+      if (otherScope.trim()) ai.missingFromScope = ai.missingFromScope.filter((m) => !boxCoversLabel(otherScope, m));
+      return ai;
     } catch (err) {
       console.error("[scope-match] AI check failed, using rules:", err instanceof Error ? err.message : "error");
     }
   }
-  return scopeMatchByRules(agreement, entered);
+  return scopeMatchByRules(agreement, entered, otherScope);
+}
+
+/** A free-text label ("8 × Static (Engagement posts)") the "other scope" text names. */
+function boxCoversLabel(box: string, label: string): boolean {
+  const inner = label.match(/\(([^)]+)\)/)?.[1] ?? label;
+  return boxCovers(box, { unit: "", what: inner, quantity: 1 });
 }
 
 /** What is stored on the brand (`scopeMatch`). */

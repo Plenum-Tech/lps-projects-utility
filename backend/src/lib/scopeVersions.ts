@@ -28,13 +28,20 @@ function snapshot(brand: IBrand) {
     files: (brand.scopeFiles ?? []).map((f) => ({ filename: f.filename, gridFsId: f.gridFsId })),
     platforms: [...(brand.platforms ?? [])],
     notes: [...(brand.scopeNotes ?? [])],
+    scopeText: brand.scopeText ?? "",
   };
+}
+
+/** "Other scope" before / after, when it changed (whitespace-only differences don't count). */
+export function scopeTextDiff(from: string | undefined | null, to: string | undefined | null): { from: string; to: string } | null {
+  const norm = (s: string | undefined | null) => (s ?? "").replace(/\s+/g, " ").trim();
+  return norm(from) === norm(to) ? null : { from: (from ?? "").trim(), to: (to ?? "").trim() };
 }
 
 /** Version 1 for a brand that has a scope but no history yet (its scope as it is now). */
 export async function ensureBaseVersion(brand: IBrand): Promise<void> {
   try {
-    if (!(brand.scopeItems ?? []).length) return;
+    if (!(brand.scopeItems ?? []).length && !(brand.scopeText ?? "").trim()) return;
     const brandId = brand._id as mongoose.Types.ObjectId;
     if (await BrandScopeVersion.exists({ brand: brandId })) return;
     await BrandScopeVersion.create({
@@ -66,8 +73,8 @@ export async function recordScopeVersion(
     const brandId = brand._id as mongoose.Types.ObjectId;
     const latest = await BrandScopeVersion.findOne({ brand: brandId }).sort({ version: -1 });
     const snap = snapshot(brand);
-    if (latest && sameScope(latest.items, snap.items)) return null;
-    if (!latest && snap.items.length === 0) return null;
+    if (latest && sameScope(latest.items, snap.items) && !scopeTextDiff(latest.scopeText, snap.scopeText)) return null;
+    if (!latest && snap.items.length === 0 && !snap.scopeText.trim()) return null;
     for (let attempt = 0; attempt < 3; attempt++) {
       const top = attempt === 0 ? latest : await BrandScopeVersion.findOne({ brand: brandId }).sort({ version: -1 });
       try {
@@ -101,9 +108,13 @@ export interface ScopeVersionView {
   files: string[];
   platforms: string[];
   notes: string[];
+  /** The "other scope" text (not itemised as rows). */
+  scopeText: string;
   scopeMatch: { score: number } | null;
   /** Against the version before (version 1: everything added). */
   diff: ScopeDiff;
+  /** The "other scope" text before / after, when it changed against the version before. */
+  textDiff: { from: string; to: string } | null;
 }
 
 /** The brand's versions, newest first, each with its diff against the one before. */
@@ -126,8 +137,10 @@ export async function scopeVersionsOf(brand: IBrand): Promise<ScopeVersionView[]
       files: (v.files ?? []).map((f) => f.filename),
       platforms: v.platforms ?? [],
       notes: v.notes ?? [],
+      scopeText: v.scopeText ?? "",
       scopeMatch: (v.scopeMatch as { score: number } | null) ?? null,
       diff: diffScope(previous?.items ?? [], v.items ?? []),
+      textDiff: scopeTextDiff(previous?.scopeText, v.scopeText),
     });
     previous = v;
   }

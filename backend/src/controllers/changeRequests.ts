@@ -70,15 +70,18 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     const brand = request.brand ? await Brand.findById(request.brand) : null;
     if (!brand) return "The brand no longer exists";
     const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
-    const scopeChanged = Boolean((payload as Record<string, unknown>).scopeItems);
+    const rowsChanged = Boolean((payload as Record<string, unknown>).scopeItems);
+    const textChanged = typeof (payload as Record<string, unknown>).scopeText === "string";
+    const scopeChanged = rowsChanged || textChanged;
     // The scope as it was becomes version 1 when the brand has no history yet.
     if (scopeChanged) await ensureBaseVersion(brand);
     Object.assign(brand, payload);
     await brand.save();
     // A new brand scope reaches the brand's open projects (their scope is locked to it).
     if (scopeChanged) {
-      const { applyBrandScopeToProjects } = await import("../lib/brandFlow.js");
-      await applyBrandScopeToProjects(brand, previous);
+      const { applyBrandScopeToProjects, applyBrandScopeTextToProjects } = await import("../lib/brandFlow.js");
+      if (rowsChanged) await applyBrandScopeToProjects(brand, previous);
+      if (textChanged) await applyBrandScopeTextToProjects(brand);
       await recordScopeVersion(brand, "approval", request.requestedBy, decider._id as mongoose.Types.ObjectId);
     }
     return null;
@@ -249,6 +252,12 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
         context.scopeRows = { changed: true, current: brand.scopeItems ?? [], proposed: payload.scopeItems };
         context.scopeDiff = diffScope(currentRows, proposedRows);
         if (match && typeof match.score === "number") context.scopeMatch = match;
+      }
+      // "Other scope" (the scope kept as text): before / after in full.
+      if (typeof payload.scopeText === "string") {
+        context.scopeText = { changed: true, current: brand.scopeText ?? "", proposed: payload.scopeText };
+        const match = (payload.scopeMatch ?? null) as { score?: number } | null;
+        if (!context.scopeMatch && match && typeof match.score === "number") context.scopeMatch = match;
       }
     }
   } else if (request.kind === "manpower_plan" && request.month) {

@@ -35,6 +35,7 @@ import {
 } from "@/components/projects/project-fields";
 import { Button } from "@/components/ui/button";
 import { BrandNoScopePanel } from "@/components/brands/brand-no-scope-panel";
+import { OtherScopeText } from "@/components/brands/scope-compare";
 import {
   Combobox,
   ComboboxContent,
@@ -1433,6 +1434,7 @@ export function ProjectFormDialog({
                       {selectedBrand.scopeNotes.map((n) => <li key={n}>{n}</li>)}
                     </ul>
                   ) : null}
+                  {selectedBrand?.scopeText?.trim() ? <OtherScopeText text={selectedBrand.scopeText} /> : null}
                 </div>
               ) : (
                 <>

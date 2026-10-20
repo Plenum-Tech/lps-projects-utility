@@ -9,13 +9,13 @@ import { Project } from "../models/Project.js";
 import { isProjectApprover, projectApproverIds } from "../lib/projectApproval.js";
 import { isLeadershipActor, requestChange } from "../lib/changeRequests.js";
 import { notifyUsers } from "../lib/notifications.js";
-import { applyBrandScopeToProjects } from "../lib/brandFlow.js";
+import { applyBrandScopeTextToProjects, applyBrandScopeToProjects } from "../lib/brandFlow.js";
 import { parseScopeItems, scopeText } from "../lib/scopeUnits.js";
 import { User, type IUser } from "../models/User.js";
 import { canManageBrand } from "../lib/brandAccess.js";
 import { isSplitSetup, runBrandSplit } from "../lib/brandSplit.js";
-import { parseAgreement, storedScopeMatch } from "../lib/scopeMatch.js";
-import { ensureBaseVersion, recordScopeVersion } from "../lib/scopeVersions.js";
+import { parseAgreement, parseMatchRows, storedScopeMatch } from "../lib/scopeMatch.js";
+import { ensureBaseVersion, recordScopeVersion, scopeTextDiff } from "../lib/scopeVersions.js";
 import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
 import { brandScopeMatch, storedAgreementFrom } from "./brandScope.js";
 
@@ -63,6 +63,15 @@ export class FieldError extends Error {
   ) {
     super(message);
   }
+}
+
+/** "Other scope" (the scope kept as text, not rows): a string up to BRAND_LIMITS.scopeTextMax. */
+export function parseScopeText(raw: unknown): string {
+  if (raw === null || raw === undefined) return "";
+  if (typeof raw !== "string") throw new FieldError("scopeText", "Other scope must be text");
+  const text = raw.replace(/\r\n?/g, "\n").replace(/[ \t]+$/gm, "").replace(/\n{3,}/g, "\n\n").trim();
+  if (text.length > BRAND_LIMITS.scopeTextMax) throw new FieldError("scopeText", `Other scope must be ${BRAND_LIMITS.scopeTextMax} characters or fewer`);
+  return text;
 }
 
 export function parseName(raw: unknown): string {
@@ -249,7 +258,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   }
   // The requested values (validated), then: leadership applies them, anyone else
   // sends them to leadership for approval (one request per brand, emailed now).
-  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope> } = {};
+  const next: { name?: string; shortName?: string; color?: IBrand["color"]; active?: boolean; scopeItems?: ReturnType<typeof parseBrandScope>; scopeText?: string } = {};
   try {
     if ("name" in body) {
       const name = parseName(body.name);
@@ -271,6 +280,11 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
       const scopeItems = parseBrandScope(body.scopeItems);
       if (scopeText(scopeItems) !== scopeText(brand.scopeItems ?? [])) next.scopeItems = scopeItems;
     }
+    // "Other scope" (the scope kept as text): the same approval rules as the scope rows.
+    if ("scopeText" in body) {
+      const text = parseScopeText(body.scopeText);
+      if (scopeTextDiff(brand.scopeText, text)) next.scopeText = text;
+    }
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
@@ -279,17 +293,19 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
   // A new scope: compared with the agreement (one sent with it — a scope upload's read result —
   // else the brand's), stored with it. Advice only; it never blocks the change.
   const scopeExtra: { scopeMatch?: IBrand["scopeMatch"]; scopeAgreement?: IBrand["scopeAgreement"] } = {};
-  if (next.scopeItems) {
+  if (next.scopeItems || next.scopeText !== undefined) {
     const agreement = storedAgreementFrom(body.agreement);
     if (agreement) scopeExtra.scopeAgreement = agreement;
     const parsed = agreement ? parseAgreement(agreement) : null;
-    const match = await brandScopeMatch(brand, next.scopeItems, parsed);
+    const rows = next.scopeItems ?? parseMatchRows(brand.scopeItems ?? []);
+    const match = await brandScopeMatch(brand, rows, parsed, next.scopeText ?? brand.scopeText ?? "");
     if (match) scopeExtra.scopeMatch = storedScopeMatch(match);
   }
   const scopeSource = body.scopeSource === "upload" ? "upload" : "edit";
   let pendingApproval: string | undefined;
   if (changed.length > 0 && brand.status !== "pending" && !(await isLeadershipActor(req.user!))) {
-    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope" };
+    const label: Record<string, string> = { name: "Name", shortName: "Short name", color: "Colour", active: "Active", scopeItems: "Scope", scopeText: "Other scope" };
+    const clip = (s: string) => (s.length > 1500 ? `${s.slice(0, 1497)}…` : s);
     const colourName: Record<string, string> = { "chart-1": "Teal", "chart-2": "Sky", "chart-3": "Indigo", "chart-4": "Amber", "chart-5": "Coral" };
     const show = (key: string, value: unknown) =>
       key === "active"
@@ -298,7 +314,9 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
           ? (colourName[String(value)] ?? String(value))
           : key === "scopeItems"
             ? scopeText(value as never) || "—"
-            : String(value ?? "") || "—";
+            : key === "scopeText"
+              ? clip(String(value ?? "")) || "—"
+              : String(value ?? "") || "—";
     await requestChange({
       kind: "brand_edit",
       actor: req.user!,
@@ -317,13 +335,13 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     try {
       const previous = (brand.scopeItems ?? []).map((r) => ({ unit: r.unit, quantity: r.quantity, languages: r.languages, languageList: r.languageList ? [...r.languageList] : [], sizes: r.sizes }));
       // The scope as it was becomes version 1 when the brand has no history yet.
-      if (next.scopeItems) await ensureBaseVersion(brand);
+      const scopeChanged = Boolean(next.scopeItems) || next.scopeText !== undefined;
+      if (scopeChanged) await ensureBaseVersion(brand);
       Object.assign(brand, next, scopeExtra);
       await brand.save();
-      if (next.scopeItems) {
-        await applyBrandScopeToProjects(brand, previous);
-        await recordScopeVersion(brand, scopeSource, req.user!._id as mongoose.Types.ObjectId);
-      }
+      if (next.scopeItems) await applyBrandScopeToProjects(brand, previous);
+      if (next.scopeText !== undefined) await applyBrandScopeTextToProjects(brand);
+      if (scopeChanged) await recordScopeVersion(brand, scopeSource, req.user!._id as mongoose.Types.ObjectId);
     } catch (err) {
       if (!sendFieldError(res, err)) throw err;
       return;

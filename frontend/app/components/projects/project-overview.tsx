@@ -23,6 +23,7 @@ import { PROGRESS_MODE_META } from "@/lib/projects";
 import { STATUS_META, TASK_STATUSES, formatDateOnly } from "@/lib/tasks";
 import { formatMinutes, formatMoney } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { OtherScopeText } from "@/components/brands/scope-compare";
 import type { ProjectDetailResponse } from "@/types";
 
 const chartConfig = {
@@ -264,6 +265,8 @@ export function ProjectOverview({ detail }: { detail: ProjectDetailResponse }) {
               </table>
             </div>
           )}
+          {/* The brand's scope kept as text (not itemised as rows). */}
+          {project.scopeText?.trim() ? <OtherScopeText className="mb-4" text={project.scopeText} /> : null}
           <dl className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <Fact label="Start date">{formatDateOnly(project.startDate, true)}</Fact>
             <Fact label="Deadline">

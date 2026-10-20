@@ -12,7 +12,7 @@ import {
   LuX,
 } from "react-icons/lu";
 
-import { ScopeMatchBox } from "@/components/brands/scope-compare";
+import { OtherScopeField, ScopeMatchBox } from "@/components/brands/scope-compare";
 import { MultiSelect } from "@/components/globals/multi-select";
 import { FieldError, OptionSelect } from "@/components/projects/project-fields";
 import { Badge } from "@/components/ui/badge";
@@ -83,6 +83,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [rows, setRows] = useState<Row[]>([]);
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
+  // "Other scope": the agreement's scope text that isn't a row (editable, saved with the scope).
+  const [otherScope, setOtherScope] = useState("");
   const fileInput = useRef<HTMLInputElement>(null);
   // Review the uploaded files next to the extracted scope (inline, no pop-up).
   const [shown, setShown] = useState<number | null>(null);
@@ -108,7 +110,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (!open) return;
     setStep(1); setTried(0); setIsPitch(true); setName(""); setOrganisation(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
-    setPlatforms([]); setNotes([]); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
+    setPlatforms([]); setNotes([]); setOtherScope(""); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
     setStartDate(""); setEndDate(""); setShown(null); setLeadFound([]);
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -167,6 +169,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           setRows(data.scope.map((r) => ({ ...r })));
           setPlatforms(data.platforms);
           setNotes(data.notes);
+          setOtherScope(data.otherScope ?? "");
           if (!title.trim() && data.projectName) setTitle(data.projectName);
           if (!startDate && data.dates.startDate) setStartDate(data.dates.startDate);
           if (!endDate && data.dates.endDate) setEndDate(data.dates.endDate);
@@ -185,7 +188,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const hasAgreement = files.some(isAgreementFile);
   const agreementMissing = !isPitch && !hasAgreement;
   // How close the rows (as edited) are to what the agreement says — advice only.
-  const match = useScopeMatch({ rows, extraction: result, enabled: open && step === 2 && Boolean(result) });
+  const match = useScopeMatch({ rows, extraction: result, otherScope, enabled: open && step === 2 && Boolean(result) });
   const deliverables = rows.reduce((n, r) => n + rowTotal(r), 0);
 
   // --- Step 3 ---------------------------------------------------------------
@@ -301,6 +304,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       })),
       platforms,
       notes,
+      scopeText: otherScope.trim(),
       projectType: typeForName,
       month,
       title: cleanTitle,
@@ -629,6 +633,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                     <p className="text-sm"><span className="font-semibold tabular-nums">{pieces}</span> pieces · {deliverables} deliverables with languages and sizes</p>
                   </div>
                   {tried >= 2 && !rows.length && <FieldError>Add at least one scope row.</FieldError>}
+                  <OtherScopeField id="brand-flow-other-scope" value={otherScope} onChange={setOtherScope} />
                   <ScopeMatchBox
                     match={match.data?.match}
                     loading={match.isFetching}

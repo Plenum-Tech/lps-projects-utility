@@ -1911,6 +1911,8 @@ export interface Project {
   /** The brand's platforms and scope notes, copied onto the project. */
   platforms?: string[];
   scopeNotes?: string[];
+  /** The brand's "Other scope" text (not itemised as rows), copied onto the project. */
+  scopeText?: string;
   /** New projects (brand rules onwards): no tasks until the project has a scope. Absent on older projects. */
   requiresScope?: boolean;
   category: { _id: string; name: string } | null;
@@ -3174,6 +3176,8 @@ export interface Brand {
   scopeItems?: BrandScopeItem[];
   platforms?: string[];
   scopeNotes?: string[];
+  /** "Other scope": the agreement's scope text not itemised as rows. */
+  scopeText?: string;
   scopeFiles?: Array<{ filename: string; mimeType: string; size: number }>;
   leads?: string[];
   /** On the 1st of each month the brand gets that month's project automatically. */
@@ -3285,6 +3289,8 @@ export interface BrandDetail extends BrandSummary {
   revenueTbc: boolean;
   platforms: string[];
   scopeNotes: string[];
+  /** "Other scope": the agreement's scope text not itemised as rows. */
+  scopeText: string;
   setupWaiting: boolean;
   files: Array<{ _id: string; filename: string; mimeType: string; size: number }>;
   /** Open projects of the brand (for the split). */
@@ -3308,6 +3314,8 @@ export interface BrandInput {
   color?: BrandColor;
   active?: boolean;
   scopeItems?: BrandScopeItem[];
+  /** "Other scope" text (same approval rules as the rows). */
+  scopeText?: string;
 }
 
 /** POST /brands/scope-match — the scope rows against the agreement (advice only). */
@@ -3365,8 +3373,12 @@ export interface BrandScopeVersion {
   files: string[];
   platforms: string[];
   notes: string[];
+  /** "Other scope" text at this version. */
+  scopeText: string;
   scopeMatch: { score: number } | null;
   diff: ScopeDiff;
+  /** "Other scope" before / after, when it changed against the version before. */
+  textDiff: { from: string; to: string } | null;
 }
 
 /** A lead name read from the documents, matched to a user (or not). */
@@ -3392,6 +3404,8 @@ export interface ScopeExtraction {
   };
   scope: Array<{ unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string }>;
   notes: string[];
+  /** The rest of the scope text, not itemised as rows or notes (one tidied text). */
+  otherScope?: string;
   /** Lead names read from the documents ("Account Lead: …"), matched to users. */
   leadMatches?: LeadMatch[];
   usedAI: boolean;

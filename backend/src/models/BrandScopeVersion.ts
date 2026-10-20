@@ -17,6 +17,8 @@ export interface IBrandScopeVersion extends mongoose.Document {
   files: Array<{ filename: string; gridFsId?: mongoose.Types.ObjectId | null }>;
   platforms: string[];
   notes: string[];
+  /** The brand's "other scope" text at the time. */
+  scopeText: string;
   source: ScopeVersionSource;
   /** Who made the change (the requester for an approved change request). */
   by: mongoose.Types.ObjectId | null;
@@ -52,6 +54,7 @@ const scopeVersionSchema = new Schema<IBrandScopeVersion>({
   },
   platforms: { type: [String], default: [] },
   notes: { type: [String], default: [] },
+  scopeText: { type: String, default: "" },
   source: { type: String, enum: SCOPE_VERSION_SOURCES, required: true },
   by: { type: Schema.Types.ObjectId, ref: "User", default: null },
   approvedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },

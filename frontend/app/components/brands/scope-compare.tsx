@@ -1,5 +1,7 @@
 import { LuLoaderCircle, LuSparkles } from "react-icons/lu";
 
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { diffIsEmpty } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
 import type { DiffRow, ScopeDiff, ScopeDiffSide, ScopeMatchResult } from "@/types";
@@ -139,6 +141,69 @@ export function ScopeDiffView({ diff, title, emptyText, className }: { diff: Sco
         ))}
       </ul>
       {diff.same > 0 && <p className="text-xs text-muted-foreground">{diff.same} row{diff.same === 1 ? "" : "s"} unchanged.</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// "Other scope": the agreement's scope text that isn't itemised as rows
+// (paragraphs, exclusions, " * " items). Edited with the rows, saved on the brand.
+// ---------------------------------------------------------------------------
+
+export const OTHER_SCOPE_MAX = 10_000;
+
+/** The editable "Other scope (not itemised)" box under the scope rows. */
+export function OtherScopeField({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-2">
+        <Label htmlFor={id}>Other scope (not itemised)</Label>
+        <span className="text-xs text-muted-foreground tabular-nums">{value.length.toLocaleString()} / {OTHER_SCOPE_MAX.toLocaleString()}</span>
+      </div>
+      <Textarea
+        id={id}
+        rows={6}
+        className="max-h-80 font-normal"
+        value={value}
+        maxLength={OTHER_SCOPE_MAX}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Scope from the agreement that isn't a row: services, exclusions, conditions…"
+      />
+      <p className="text-xs text-muted-foreground">Kept with the scope as written. What it covers isn’t counted as missing from the rows.</p>
+    </div>
+  );
+}
+
+/** The saved "Other scope" text, read-only. */
+export function OtherScopeText({ text, className }: { text: string; className?: string }) {
+  if (!text.trim()) return null;
+  return (
+    <div className={cn("space-y-1", className)}>
+      <p className="text-sm font-medium">Other scope (not itemised)</p>
+      <div className="max-h-72 overflow-y-auto whitespace-pre-wrap rounded-lg border bg-muted/30 px-3 py-2 text-sm">{text}</div>
+    </div>
+  );
+}
+
+/** "Other scope changed": before / after. */
+export function OtherScopeChange({ from, to, className }: { from: string; to: string; className?: string }) {
+  return (
+    <div className={cn("space-y-1.5", className)}>
+      <p className="text-sm font-medium">Other scope changed</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="min-w-0">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">Before</p>
+          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200">
+            {from.trim() || "—"}
+          </div>
+        </div>
+        <div className="min-w-0">
+          <p className="mb-1 text-xs font-medium text-muted-foreground">After</p>
+          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
+            {to.trim() || "—"}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

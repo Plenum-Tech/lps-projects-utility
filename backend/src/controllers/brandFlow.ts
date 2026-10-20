@@ -11,7 +11,7 @@ import { extractScope, parseLooseDate } from "../lib/scopeExtract.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
 import type { IProject } from "../models/Project.js";
 import { User, type IUser } from "../models/User.js";
-import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, sendFieldError, serialize } from "./brands.js";
+import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, parseScopeText, sendFieldError, serialize } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 import { createTaskCore } from "./tasks.js";
 import { brandScopeMatch, matchLeadUsers, storedAgreementFrom } from "./brandScope.js";
@@ -291,7 +291,7 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
 /**
  * POST /api/brands/flow — brand creators (lib/brandAccess.ts). multipart: `files` (the brief / SOW the scope was
  * read from) + `data` (JSON: name, organisation, isPitch, revenue, revenueTbc, scopeItems,
- * platforms, notes, projectType, month, title, leads, team, tasks, summary).
+ * platforms, notes, scopeText ("Other scope"), projectType, month, title, leads, team, tasks, summary).
  */
 export async function createBrandFlow(req: Request, res: Response): Promise<void> {
   const user = req.user!;
@@ -308,12 +308,15 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   let setup: BrandSetup;
   let scopeItems: ReturnType<typeof parseBrandScope>;
   let organisation: string;
+  let scopeText: string;
   try {
     name = parseName(data.name);
     organisation = parseOrganisation(data.organisation);
     if (name.includes("_")) throw new FieldError("name", "Brand names can't contain “_”");
     scopeItems = parseBrandScope(Array.isArray(data.scopeItems) ? data.scopeItems : []);
     if (scopeItems.length === 0) throw new FieldError("scopeItems", "Add at least one scope row");
+    // "Other scope": the agreement's scope text not itemised as rows.
+    scopeText = parseScopeText(data.scopeText ?? data.otherScope);
     setup = parseSetup(data);
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
@@ -360,7 +363,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   // What the agreement says (the flow's read result) and how close the rows are to it — advice only.
   const agreement = storedAgreementFrom(data.agreement);
   const match = agreement
-    ? await brandScopeMatch({} as IBrand, scopeItems, { rows: parseMatchRows(agreement.rows), text: agreement.text })
+    ? await brandScopeMatch({} as IBrand, scopeItems, { rows: parseMatchRows(agreement.rows), text: agreement.text }, scopeText)
     : null;
   const stored: Array<{ gridFsId: mongoose.Types.ObjectId; filename: string; mimeType: string; size: number }> = [];
   let brand: IBrand;
@@ -386,6 +389,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
       scopeItems,
       platforms: list(data.platforms, BRAND_LIMITS.maxPlatforms, 40),
       scopeNotes: list(data.notes, BRAND_LIMITS.maxNotes, BRAND_LIMITS.noteMax),
+      scopeText,
       scopeFiles: stored,
       leads: setup.leads.map((id) => new mongoose.Types.ObjectId(id)),
       scopeAgreement: agreement,
