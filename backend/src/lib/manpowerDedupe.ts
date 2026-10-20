@@ -10,10 +10,14 @@ import { MANPOWER_ROLE_KEYS } from "./manpowerRoles.js";
 // instead of adding another when it is the same brand AND the same line name
 // (case / spaces ignored), or when the brand has exactly one line in the month.
 // A brand with several distinctly named lines and no name match gets a new line
-// as before (no guessing). Existing lines are never merged or dropped here.
+// as before (no guessing).
 //
-// The dedupe helpers below (keep a brand's latest line) are only used by the
-// dry-run script scripts/dedupeBrandLines.ts; nothing in the app calls them.
+// Clean-up on every plan save (dropDuplicateLinesOnSave): a brand's lines with the
+// SAME name are merged into one — the line edited in this save, else the one edited
+// most recently, is kept with its own people; the others are dropped and projects
+// pinned to them move to the kept line. Differently named lines of one brand
+// (ENOC - Tasjeel / ENOC - EPPCO) always stay. scripts/dedupeBrandLines.ts does the
+// same for a month on demand.
 // ---------------------------------------------------------------------------
 
 const brandOf = (r: { brand?: unknown }): string | null => {
@@ -74,12 +78,15 @@ export function latestLineIndex(rows: Array<{ key: string }>, indexes: number[],
   return best;
 }
 
-/** Brand id → line indexes, for brands with more than one line. */
-export function duplicateBrandLines(rows: Array<{ brand?: unknown }>): Map<string, number[]> {
+/** Brand id → line indexes, for a brand with several lines of the SAME name (differently named lines, e.g. ENOC - Tasjeel / ENOC - EPPCO, stay). */
+export function duplicateBrandLines(rows: Array<{ brand?: unknown; name: string }>): Map<string, number[]> {
   const byBrand = new Map<string, number[]>();
   rows.forEach((r, i) => {
     const b = brandOf(r);
-    if (b) byBrand.set(b, [...(byBrand.get(b) ?? []), i]);
+    if (b) {
+      const k = `${b}|${lineNameKey(r.name)}`;
+      byBrand.set(k, [...(byBrand.get(k) ?? []), i]);
+    }
   });
   for (const [b, list] of byBrand) if (list.length < 2) byBrand.delete(b);
   return byBrand;
@@ -95,7 +102,8 @@ export function dedupeBrandLines<R extends IManpowerRow>(
   const drop = new Set<number>();
   const rename = new Map<number, string>();
   const dropped: DroppedBrandLines[] = [];
-  for (const [brand, indexes] of dupes) {
+  for (const [group, indexes] of dupes) {
+    const brand = group.split("|")[0]!;
     const keep = latestLineIndex(rows, indexes, options.firstSeen);
     const brandName = options.brandNames?.get(brand);
     const keptName = brandName ? brandLineName(rows[keep]!.name, brandName) : rows[keep]!.name;
@@ -115,3 +123,41 @@ export async function firstSeenVersion(month: string): Promise<Map<string, numbe
   for (const v of versions) for (const r of v.rows ?? []) if (!seen.has(r.key)) seen.set(r.key, v.version);
   return seen;
 }
+
+/** Line key → the version of `month` in which the line (its name or people) last changed: the most recently edited line wins a dedupe. */
+export async function lastChangedVersion(month: string): Promise<Map<string, number>> {
+  const versions = await ManpowerPlan.find({ month }).sort({ version: 1 }).select("version rows.key rows.name rows.cells").lean();
+  const sig = new Map<string, string>();
+  const changed = new Map<string, number>();
+  for (const v of versions)
+    for (const r of v.rows ?? []) {
+      const s = JSON.stringify([r.name, (r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort()])]);
+      if (sig.get(r.key) !== s) {
+        sig.set(r.key, s);
+        changed.set(r.key, v.version);
+      }
+    }
+  return changed;
+}
+
+/**
+ * A plan save's rows without same-named duplicate lines of one brand. The line edited in
+ * this save (name or people differ from `previous`, or new) wins; else the one edited most
+ * recently in the month's history; a tie keeps the later line. `repin`: dropped key → kept key.
+ */
+export async function dropDuplicateLinesOnSave(
+  month: string,
+  previous: IManpowerRow[],
+  rows: IManpowerRow[]
+): Promise<{ rows: IManpowerRow[]; repin: Map<string, string> }> {
+  const repin = new Map<string, string>();
+  if (duplicateBrandLines(rows).size === 0) return { rows, repin };
+  const sig = (r: IManpowerRow) => JSON.stringify([r.name, (r.cells ?? []).map((c) => [c.role, (c.users ?? []).map(String).sort(), Boolean(c.notNeeded)])]);
+  const before = new Map(previous.map((r) => [r.key, sig(r)]));
+  const changed = await lastChangedVersion(month);
+  for (const r of rows) if (before.get(r.key) !== sig(r)) changed.set(r.key, Number.MAX_SAFE_INTEGER);
+  const out = dedupeBrandLines(rows, { firstSeen: changed });
+  for (const d of out.dropped) for (const k of d.droppedKeys) repin.set(k, d.keptKey);
+  return { rows: out.rows, repin };
+}
+

@@ -556,7 +556,10 @@ export async function writePlanVersion(params: {
   const needsApproval = !(await isLeadershipActor(actor));
   // Where the save lands: the pending version for a non-leader (changes add up), else the approved plan.
   const onto = needsApproval && pending ? { version: pending.version, rows: pending.rows as IManpowerRow[] } : { version: approvedVersion, rows: approvedRows };
-  const rows = baseVersion === onto.version ? saved : applyPlanDelta(onto.rows, planDelta(before, saved));
+  const merged = baseVersion === onto.version ? saved : applyPlanDelta(onto.rows, planDelta(before, saved));
+  // A brand's same-named lines become one (the line just edited, else the latest edited, is kept).
+  const { dropDuplicateLinesOnSave } = await import("../lib/manpowerDedupe.js");
+  const { rows, repin } = await dropDuplicateLinesOnSave(month, onto.rows, merged);
   const addsUp = needsApproval && Boolean(pending);
   const plan = await ManpowerPlan.create({
     month,
@@ -572,6 +575,8 @@ export async function writePlanVersion(params: {
   });
   let pendingApproval: string | undefined;
   if (!needsApproval) {
+    // Projects pinned to a dropped duplicate line follow the brand's kept line.
+    for (const [from, to] of repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
     await syncPlanToProjects(month, approvedRows, rows, actor, ip);
     // The work waiting for approval is carried onto the new approved version.
     if (pending) await rebasePendingPlan(month, { version: plan.version, rows }, actor, ip, approvedRows);
@@ -637,7 +642,8 @@ export async function rebasePendingPlan(
     }
     return null;
   }
-  const rows = applyPlanDelta(approvedRows, own);
+  const { dropDuplicateLinesOnSave } = await import("../lib/manpowerDedupe.js");
+  const { rows } = await dropDuplicateLinesOnSave(month, approvedRows, applyPlanDelta(approvedRows, own));
   const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
   const next = await ManpowerPlan.create({
     month,

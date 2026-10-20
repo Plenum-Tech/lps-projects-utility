@@ -181,6 +181,11 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       if (pinTo) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: pinTo } });
       return;
     }
+    // A brand's same-named lines become one (the line just edited is kept); pinned projects follow it.
+    const { dropDuplicateLinesOnSave } = await import("./manpowerDedupe.js");
+    const deduped = await dropDuplicateLinesOnSave(month, rows, nextRows);
+    nextRows = deduped.rows;
+    if (pinTo && deduped.repin.has(pinTo)) pinTo = deduped.repin.get(pinTo)!;
     const saved = await ManpowerPlan.create({
       month,
       version: (highest?.version ?? plan.version) + 1,
@@ -192,6 +197,7 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       createdBy: actor._id,
     });
     if (pinTo) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: pinTo } });
+    for (const [from, to] of deduped.repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
     // A version waiting for approval is carried onto this approved one (its changes aren't lost).
     const { rebasePendingPlan } = await import("../controllers/manpower.js");
     await rebasePendingPlan(month, { version: saved.version, rows: nextRows }, actor, undefined, rows);

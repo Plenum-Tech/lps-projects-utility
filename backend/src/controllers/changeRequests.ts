@@ -122,8 +122,13 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
     plan.set("rows", applyPlanDelta(liveRows, withoutConflicts(planDelta(base, plan.rows as IManpowerRow[]), planDelta(base, liveRows))));
     plan.baseVersion = live.version;
   }
+  // A brand's same-named lines become one (the latest edited is kept); pinned projects follow it.
+  const { dropDuplicateLinesOnSave } = await import("../lib/manpowerDedupe.js");
+  const deduped = await dropDuplicateLinesOnSave(plan.month, (live?.rows ?? []) as IManpowerRow[], plan.rows as IManpowerRow[]);
+  if (deduped.repin.size) plan.set("rows", deduped.rows);
   plan.status = "approved";
   await plan.save();
+  for (const [from, to] of deduped.repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
   // The approved lines' people become the linked projects' teams.
   await syncPlanToProjects(plan.month, (live?.rows ?? []) as IManpowerRow[], plan.rows as IManpowerRow[], decider, ip);
   return null;

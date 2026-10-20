@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 import { connectDB, disconnectDB } from "../db/index.js";
 import { rebasePendingPlan } from "../controllers/manpower.js";
 import { isLeadershipActor } from "../lib/changeRequests.js";
-import { dedupeBrandLines, firstSeenVersion } from "../lib/manpowerDedupe.js";
+import { dedupeBrandLines, lastChangedVersion } from "../lib/manpowerDedupe.js";
 import { cloneRow } from "../lib/manpowerMerge.js";
 import { MANPOWER_LIMITS, MANPOWER_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { projectMonth } from "../lib/projectExpiry.js";
@@ -13,13 +13,12 @@ import { Project } from "../models/Project.js";
 import { User, type IUser } from "../models/User.js";
 
 /**
- * NOT USED — kept for reference; nothing in the app or the deploy calls it, and it is
- * not to be run on prod (the user decided: existing lines stay as they are; only NEW
- * duplicates are prevented, lib/manpowerDedupe.ts reusableLine).
+ * Run by hand only (nothing in the app or the deploy calls it); dry run by default.
  *
- * Reports (and with --apply, fixes) months where a brand has several plan lines by
- * keeping only the brand's LATEST line — the line whose key first appeared in the most
- * recent plan version (a tie: the later line in row order) — with its own people.
+ * Reports (and with --apply, fixes) months where a brand has several plan lines of the
+ * SAME name (differently named lines, e.g. ENOC - Tasjeel / ENOC - EPPCO, stay) by keeping
+ * only the most recently EDITED one — the line whose name or people changed in the latest
+ * plan version (a tie: the later line in row order) — with its own people.
  *
  *   bun src/scripts/dedupeBrandLines.ts --month 2027-03                 # dry run (default)
  *   bun src/scripts/dedupeBrandLines.ts --all-months                    # dry run, every month
@@ -98,15 +97,15 @@ async function runMonth(month: string, args: Args, actor: IUser | null, ctx: Ctx
     return parts.length ? parts.join(", ") : "(nobody)";
   };
 
-  // The dedupe (the latest line of each brand is kept).
-  const firstSeen = await firstSeenVersion(month);
+  // The dedupe (of a brand's same-named lines, the one edited most recently is kept).
+  const firstSeen = await lastChangedVersion(month);
   const { rows, dropped } = dedupeBrandLines(approvedRows.map(cloneRow), { firstSeen, brandNames: brandName });
   const byKey = new Map(approvedRows.map((r) => [r.key, r]));
   for (const d of dropped) {
     console.log(`
   ${brandName.get(d.brand) ?? d.brand}: ${d.droppedKeys.length + 1} lines -> 1`);
-    console.log(`    KEEP  "${d.keptName}" [${d.keptKey}] first seen v${firstSeen.get(d.keptKey) ?? "new"} - ${people(byKey.get(d.keptKey)!)}`);
-    for (const k of d.droppedKeys) console.log(`    DROP  "${byKey.get(k)!.name}" [${k}] first seen v${firstSeen.get(k) ?? "new"} - ${people(byKey.get(k)!)}`);
+    console.log(`    KEEP  "${d.keptName}" [${d.keptKey}] last changed v${firstSeen.get(d.keptKey) ?? "new"} - ${people(byKey.get(d.keptKey)!)}`);
+    for (const k of d.droppedKeys) console.log(`    DROP  "${byKey.get(k)!.name}" [${k}] last changed v${firstSeen.get(k) ?? "new"} - ${people(byKey.get(k)!)}`);
   }
   if (!dropped.length) {
     console.log("  No brand has more than one line.");
@@ -125,7 +124,7 @@ async function runMonth(month: string, args: Args, actor: IUser | null, ctx: Ctx
   if (pending) console.log(`
   Pending v${pending.version} would be rebased on the new version (its own changes kept).`);
 
-  const note = `One line per brand (kept the latest line of ${dropped.length} brand${dropped.length === 1 ? "" : "s"})`.slice(0, MANPOWER_LIMITS.versionNoteMax);
+  const note = `No duplicate lines (kept the latest edited line of ${dropped.length} brand${dropped.length === 1 ? "" : "s"})`.slice(0, MANPOWER_LIMITS.versionNoteMax);
   const highest = await ManpowerPlan.findOne({ month }).sort({ version: -1 }).select("version").lean();
   console.log(`
   Would write v${(highest?.version ?? 0) + 1} (approved): ${rows.length} lines (${approvedRows.length} before) - "${note}"`);
