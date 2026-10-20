@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { brandLineName } from "@/lib/manpower";
+import { brandLineName, brandLineSuffix } from "@/lib/manpower";
 import type { ManpowerSection } from "@/types";
 import type { TableRow } from "./plan-table";
 
@@ -134,9 +134,10 @@ export function RowDialog({
     setSubmitted(false);
   }, [open, row, section]);
 
-  // A brand's line is named after the brand (a sub-project suffix already there is kept): locked here.
+  // A brand's line starts with the brand's name (fixed here); the rest tells its lines apart and is editable.
   const brandName = brand === NONE ? null : (brands.find((b) => b._id === brand)?.name ?? row?.brand?.name ?? null);
-  const shownName = brandName ? brandLineName(name, brandName) : name;
+  const suffix = brandName ? brandLineSuffix(name, brandName) : "";
+  const shownName = brandName ? (suffix.trim() ? brandLineName(`${brandName} ${suffix.trim()}`, brandName) : brandName) : name;
   const nameError = !shownName.trim() ? "A name is required." : shownName.trim().length > 120 ? "Max 120 characters." : null;
 
   function submit(event: FormEvent) {
@@ -165,20 +166,32 @@ export function RowDialog({
         <form onSubmit={submit} noValidate className="space-y-4">
           <div className="space-y-1.5">
             <Label htmlFor="mp-row-name">Name</Label>
-            <Input
-              id="mp-row-name"
-              value={shownName}
-              onChange={(e) => setName(e.target.value)}
-              readOnly={Boolean(brandName)}
-              aria-readonly={Boolean(brandName) || undefined}
-              aria-describedby={brandName ? "mp-row-name-hint" : undefined}
-              className={cn(brandName && "bg-muted/50 text-muted-foreground")}
-              placeholder="e.g. ENOC - Zoom TikTok"
-              aria-invalid={submitted && Boolean(nameError)}
-            />
+            {brandName ? (
+              <div className="flex items-center gap-2">
+                <span className="shrink-0 rounded-md border bg-muted/50 px-2.5 py-1.5 text-sm font-medium" title="The brand's name — rename the brand to change it">
+                  {brandName}
+                </span>
+                <Input
+                  id="mp-row-name"
+                  value={suffix}
+                  onChange={(e) => setName(e.target.value.trim() ? `${brandName} ${e.target.value}` : brandName)}
+                  aria-describedby="mp-row-name-hint"
+                  placeholder="optional, e.g. AA videos / GCC + Qatar"
+                  aria-invalid={submitted && Boolean(nameError)}
+                />
+              </div>
+            ) : (
+              <Input
+                id="mp-row-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. ENOC - Zoom TikTok"
+                aria-invalid={submitted && Boolean(nameError)}
+              />
+            )}
             {brandName && (
               <p id="mp-row-name-hint" className="text-xs text-muted-foreground">
-                Named after the brand — rename the brand to change it.
+                Starts with the brand&apos;s name (rename the brand to change it). Add what tells this line apart, if the brand has several.
               </p>
             )}
             {submitted && nameError && <p className="text-sm text-destructive">{nameError}</p>}

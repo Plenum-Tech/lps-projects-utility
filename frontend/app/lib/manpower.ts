@@ -60,16 +60,37 @@ export function newRowKey(): string {
 }
 
 /**
- * A brand-linked plan line is named after its brand: "Ajmal", or "Ajmal - Campaign" (a
- * sub-project suffix after the brand name is kept). Same rule as the server
- * (backend lib/manpowerLineNames.ts), which applies it on save.
+ * A brand-linked plan line starts with the brand's name; what follows tells the brand's
+ * lines apart and is kept ("Ajmal AA videos"). A name without the brand gets it in front
+ * ("HRU Safa Collection" → "Homes R Us - HRU Safa Collection"); another spelling of the
+ * brand becomes the brand. Same rule as the server (backend lib/manpowerLineNames.ts).
  */
 export function brandLineName(name: string, brandName: string): string {
-  const n = name.replace(/\s+/g, " ").trim();
   const b = brandName.replace(/\s+/g, " ").trim();
+  const n = name.replace(/\s+/g, " ").trim();
+  if (!n) return b;
+  const squash = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
   const lower = n.toLowerCase();
   const key = b.toLowerCase();
   if (lower === key) return b;
-  if (lower.startsWith(`${key} -`) || lower.startsWith(`${key}_`)) return `${b}${n.slice(b.length)}`;
-  return b;
+  if (lower.startsWith(key) && /^[\s\-–_:|(]/.test(n.slice(b.length))) return `${b}${n.slice(b.length)}`;
+  if (squash(n) === squash(b) || squash(b).startsWith(squash(n))) return b;
+  // Starts with the brand spelt differently: "Mom Store - Occasionwear" → "MomStore - Occasionwear".
+  const target = squash(b);
+  let got = "";
+  for (let i = 0; i < n.length; i++) {
+    const ch = n[i]!;
+    if (/[\p{L}\p{N}]/u.test(ch)) got += ch.toLowerCase();
+    if (got.length === target.length) {
+      if (got === target && !/[\p{L}\p{N}]/u.test(n[i + 1] ?? " ")) return `${b}${n.slice(i + 1)}`;
+      break;
+    }
+  }
+  return `${b} - ${n}`;
+}
+
+/** The part of a brand line's name after the brand ("Ajmal AA videos" → "AA videos"). */
+export function brandLineSuffix(name: string, brandName: string): string {
+  const full = brandLineName(name, brandName);
+  return full.slice(brandName.trim().length).replace(/^[\s\-–_:|]+/, "");
 }
