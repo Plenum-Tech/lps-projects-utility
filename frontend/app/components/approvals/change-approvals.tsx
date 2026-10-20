@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router";
 import { LuCircleCheck, LuCircleX, LuEye, LuLoaderCircle } from "react-icons/lu";
 
+import { ScopeSectionsList } from "@/components/brands/scope-compare";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -31,8 +32,12 @@ export function ChangeTable({ lines }: { lines: ChangeRequestItem["changes"] }) 
           {lines.map((line, index) => (
             <tr key={index}>
               <td className="py-1.5 pr-3 font-medium text-foreground">{line.label}</td>
-              <td className="py-1.5 pr-3 break-words text-muted-foreground line-through decoration-muted-foreground/40">{line.before}</td>
-              <td className="py-1.5 break-words text-foreground">{line.after}</td>
+              <td className="py-1.5 pr-3 break-words text-muted-foreground line-through decoration-muted-foreground/40">
+                {line.label === "Other scope" && line.before !== "—" ? <ScopeSectionsList text={line.before} /> : line.before}
+              </td>
+              <td className="py-1.5 break-words text-foreground">
+                {line.label === "Other scope" && line.after !== "—" ? <ScopeSectionsList text={line.after} /> : line.after}
+              </td>
             </tr>
           ))}
         </tbody>

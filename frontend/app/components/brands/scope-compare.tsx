@@ -297,6 +297,22 @@ function SectionBody({ body }: { body: string }) {
   );
 }
 
+/** A compact listing of the sections (bold heading, bulleted items) — e.g. inside a table cell. */
+export function ScopeSectionsList({ text }: { text: string }) {
+  const sections = parseScopeSections(text);
+  if (!sections.length) return <span className="text-muted-foreground">—</span>;
+  return (
+    <div className="space-y-2">
+      {sections.map((section, i) => (
+        <div key={i}>
+          {section.title && <p className="font-semibold">{section.title}</p>}
+          <SectionBody body={section.body} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The saved "Other scope", read-only: one box per section. */
 export function OtherScopeText({ text, className }: { text: string; className?: string }) {
   if (!text.trim()) return null;
@@ -316,23 +332,43 @@ export function OtherScopeText({ text, className }: { text: string; className?: 
   );
 }
 
-/** "Other scope changed": before / after. */
+/** The sections of one side of a change, as cards ("—" when empty). */
+function SectionCards({ text, tone }: { text: string; tone: "before" | "after" }) {
+  const sections = parseScopeSections(text);
+  if (!sections.length) return <p className="text-sm text-muted-foreground">—</p>;
+  return (
+    <div className="space-y-2">
+      {sections.map((section, i) => (
+        <div
+          key={i}
+          className={cn(
+            "rounded-lg border px-3 py-2 text-sm",
+            tone === "before"
+              ? "border-red-300 bg-red-50 text-red-950 dark:border-red-900 dark:bg-red-950/40 dark:text-red-100"
+              : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-100"
+          )}
+        >
+          {section.title && <p className="mb-1 font-semibold">{section.title}</p>}
+          <SectionBody body={section.body} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** "Other scope changed": before / after, each as its section cards. */
 export function OtherScopeChange({ from, to, className }: { from: string; to: string; className?: string }) {
   return (
     <div className={cn("space-y-1.5", className)}>
       <p className="text-sm font-medium">Other scope changed</p>
-      <div className="grid gap-2 sm:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-2">
         <div className="min-w-0">
           <p className="mb-1 text-xs font-medium text-muted-foreground">Before</p>
-          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-red-300 bg-red-50 px-2 py-1 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/50 dark:text-red-200">
-            {from.trim() || "—"}
-          </div>
+          <SectionCards text={from} tone="before" />
         </div>
         <div className="min-w-0">
           <p className="mb-1 text-xs font-medium text-muted-foreground">After</p>
-          <div className="max-h-60 overflow-y-auto whitespace-pre-wrap rounded-md border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200">
-            {to.trim() || "—"}
-          </div>
+          <SectionCards text={to} tone="after" />
         </div>
       </div>
     </div>
