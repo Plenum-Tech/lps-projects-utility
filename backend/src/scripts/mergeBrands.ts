@@ -39,7 +39,7 @@ if (!pairs.length) throw new Error('--pair "Duplicate=>Keep" is required');
 if (apply && !by) throw new Error("--apply needs --by <leadership email>");
 
 async function one(name: string) {
-  const list = await Brand.find({ name }).collation({ locale: "en", strength: 2 });
+  const list = await Brand.find({ name });
   if (list.length !== 1) throw new Error(`"${name}": ${list.length} brands with that name`);
   return list[0]!;
 }
