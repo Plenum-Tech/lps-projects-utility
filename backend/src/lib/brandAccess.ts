@@ -20,9 +20,12 @@ function creatorEmails(): Set<string> {
 
 const CREATORS = creatorEmails();
 
-/** True for the people who may create (and split) brands. */
+/**
+ * True for the people who may create (and split) brands: the brand creators (Nazeer) and
+ * leadership (Aasim, Rania, Bala — their new brands are approved at once).
+ */
 export function canCreateBrand(user: Pick<IUser, "email">): boolean {
-  return CREATORS.has(String(user.email ?? "").toLowerCase());
+  return CREATORS.has(String(user.email ?? "").toLowerCase()) || isLeadershipUser(user);
 }
 
 /** Brand creators and leadership (must run after requireAuth, which marks leadership). */
@@ -48,7 +51,7 @@ export function requireBrandRenamer(req: Request, res: Response, next: NextFunct
 
 export function requireBrandCreator(req: Request, res: Response, next: NextFunction): void {
   if (!req.user || !canCreateBrand(req.user)) {
-    res.status(403).json({ error: "Only Nazeer can create brands. Ask him to add it; leadership approves it." });
+    res.status(403).json({ error: "Only Nazeer or leadership can create brands." });
     return;
   }
   next();

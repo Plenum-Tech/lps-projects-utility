@@ -198,7 +198,7 @@ export async function runPitchImport(req: Request, res: Response): Promise<void>
     const end = dates.at(-1) && dates.at(-1)! > bounds.end ? dates.at(-1)! : bounds.end;
     if (!brand) {
       if (!creator) {
-        results.push({ ...label, status: "failed", message: `New brand “${row.client}”: only Nazeer can create brands — ask him to add it, then import this row again` });
+        results.push({ ...label, status: "failed", message: `New brand “${row.client}”: only Nazeer or leadership can create brands — ask them to add it, then import this row again` });
         continue;
       }
       // A creator who isn't leadership: the brand waits for approval, and the

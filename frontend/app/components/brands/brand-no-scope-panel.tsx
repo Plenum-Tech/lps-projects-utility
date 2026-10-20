@@ -77,7 +77,7 @@ export function BrandNoScopePanel({
               Create new brand
             </Button>
           ) : (
-            <span className="text-xs text-muted-foreground">Ask Nazeer to create the brand.</span>
+            <span className="text-xs text-muted-foreground">Ask Nazeer or leadership to create the brand.</span>
           ))}
         {!noScope && !brandCreator && noLead && <span className="text-xs text-muted-foreground">Or ask Nazeer to set the lead.</span>}
       </div>
