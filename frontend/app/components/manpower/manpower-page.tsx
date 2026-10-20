@@ -593,6 +593,7 @@ export function ManpowerPage() {
             section={rowEdit?.section ?? "active"}
             brands={brands.data ?? []}
             types={(types.data ?? []).map((t) => t.name)}
+            otherLines={draft.rows.filter((r) => r.key !== editingRow?.key).map((r) => ({ brand: r.brand?._id ?? null, name: r.name }))}
             onSave={(value) => {
               const brand = value.brand ? (brands.data ?? []).find((b) => b._id === value.brand) : null;
               const brandRef = brand ? { _id: brand._id, name: brand.name, color: brand.color } : null;

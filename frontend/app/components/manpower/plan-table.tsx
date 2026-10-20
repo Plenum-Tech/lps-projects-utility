@@ -67,6 +67,10 @@ export function PlanTable({
   renderCellEditor?: (row: TableRow, role: ManpowerRoleDef) => ReactNode;
 }) {
   const sections: ManpowerSection[] = ["active", "pitch"];
+  // True duplicates (same brand, same line name): flagged so they can be removed by hand.
+  const lineId = (r: TableRow) => `${r.brand?._id ?? ""}|${r.name.replace(/\s+/g, " ").trim().toLowerCase()}`;
+  const sameLines = new Map<string, number>();
+  for (const r of rows) if (r.brand) sameLines.set(lineId(r), (sameLines.get(lineId(r)) ?? 0) + 1);
   // Sideways scrolling is always visible: ‹ › buttons and a bar above the table
   // (kept in step with the table's own scrollbars).
   const box = useRef<HTMLDivElement>(null);
@@ -165,7 +169,7 @@ export function PlanTable({
                       changedRows?.has(row.key) ? "border-l-4 border-l-amber-500 bg-amber-50 dark:bg-amber-950" : "bg-card",
                     )}
                   >
-                    <RowHeader row={row} links={links?.[row.key]} editing={editing} onEdit={() => onEditRow?.(row.key)} />
+                    <RowHeader row={row} links={links?.[row.key]} duplicate={(sameLines.get(lineId(row)) ?? 0) > 1} editing={editing} onEdit={() => onEditRow?.(row.key)} />
                     {scope?.[row.key]?.length ? (
                       <p className="mt-0.5 text-xs text-muted-foreground" title="Scope of the linked projects">
                         Scope: {scope[row.key]!.map((t) => `${t.total} ${t.unit}`).join(" · ")}
@@ -225,11 +229,14 @@ export function PlanTable({
 function RowHeader({
   row,
   links,
+  duplicate = false,
   editing,
   onEdit,
 }: {
   row: TableRow;
   links?: Array<{ _id: string; code: string; name: string }>;
+  /** Another line has the same brand and name (a duplicate to remove by hand). */
+  duplicate?: boolean;
   editing: boolean;
   onEdit: () => void;
 }) {
@@ -248,6 +255,11 @@ function RowHeader({
             <span className="text-destructive">No brand</span>
           )}
           {row.type && <span>· {row.type}</span>}
+          {duplicate && (
+            <span className="rounded bg-amber-100 px-1.5 py-px text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" title="Another line has the same brand and name — keep one and remove the other (Edit plan → line → Remove line)">
+              duplicate line
+            </span>
+          )}
           {links && links.length > 0 && (
             <Popover>
               <PopoverTrigger

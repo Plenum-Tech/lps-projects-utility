@@ -5,6 +5,7 @@ import { Project } from "../models/Project.js";
 import type { IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { linkProjectsToRows } from "./manpower/match.js";
+import { reusableLine } from "./manpowerDedupe.js";
 import { renamedLineName } from "./manpowerLineNames.js";
 import { composeProjectName } from "./projectNaming.js";
 import { projectMonth } from "./projectExpiry.js";
@@ -99,9 +100,23 @@ export async function runBrandSplit(brand: IBrand, setup: BrandSplitSetup, actor
       }
       if (moveRows.size === 0) continue;
       // The moved lines take the new brand's name ("Ajmal - Campaign" → "Ajmal GCC - Campaign").
-      const nextRows = rows.map((r) =>
-        moveRows.has(r.key) ? { ...r, brand: toId, name: renamedLineName(r.name, from?.name ?? "", brand.name) } : r
-      );
+      // No duplicate lines: where the new brand already has that line (same name, or its only
+      // line), the moved projects are pinned to it and the old line stays where it is.
+      let nextRows = rows;
+      let changed = false;
+      for (const key of moveRows) {
+        const row = nextRows.find((r) => r.key === key)!;
+        const name = renamedLineName(row.name, from?.name ?? "", brand.name);
+        const existing = reusableLine(nextRows, toId, name);
+        if (existing) {
+          for (const [projectId, pin] of pinned) if (pin === key && links.get(projectId) === key) pinned.set(projectId, existing.key);
+          result.notes.push(`${brand.name} already has the line ${existing.name} in ${month}: the moved projects were linked to it.`);
+          continue;
+        }
+        nextRows = nextRows.map((r) => (r.key === key ? { ...r, brand: toId, name } : r));
+        changed = true;
+      }
+      if (!changed) continue;
       planWrites.push({ month, before: rows, latestVersion: plan.version, rows: nextRows, max: plan.maxProjectsPerPerson });
     }
   }

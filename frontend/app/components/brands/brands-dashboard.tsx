@@ -411,6 +411,11 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
                     <span className="inline-flex items-center gap-1.5">
                       <Link to={`/brands/${b._id}?month=${month}`} className="font-semibold hover:underline">{g.org ? shortName(b.name, g.org) : b.name}</Link>
                       <StatusDot ok={b.checks.scope} label={b.checks.scope ? "Has a scope" : "No scope"} />
+                      {new Set(b.planLines.map((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase())).size < b.planLines.length && (
+                        <span className="rounded bg-amber-100 px-1.5 py-px text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300" title="The brand has two plan lines with the same name — remove one on the Manpower plan page">
+                          duplicate line
+                        </span>
+                      )}
                     </span>
                   </td>
                   {roles.map((r) => {

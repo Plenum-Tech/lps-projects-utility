@@ -8,6 +8,7 @@ import { Project } from "../models/Project.js";
 import { logActivity } from "./activityLog.js";
 import { isLeadershipActor } from "./changeRequests.js";
 import { linkProjectsToRows } from "./manpower/match.js";
+import { cellsWithTeam, reusableLine } from "./manpowerDedupe.js";
 import { MANPOWER_ROLE_KEYS } from "./manpowerRoles.js";
 import { projectMonth } from "./projectExpiry.js";
 
@@ -128,6 +129,7 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
 
     const team = (project.team ?? []) as TeamEntry[];
     let created = false;
+    let pinTo: string | null = null;
     let nextRows: IManpowerRow[];
     if (key) {
       const row = rows.find((r) => r.key === key)!;
@@ -136,21 +138,30 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       nextRows = rows.map((r) => (r.key === key ? { ...r, cells } : r));
     } else {
       if (!team.some((t) => t.users.length && MANPOWER_ROLE_KEYS.includes(t.role))) return;
-      key = randomUUID();
-      created = true;
-      nextRows = [
-        ...rows,
-        {
-          key,
-          section: "active",
-          brand: brand as mongoose.Types.ObjectId | null,
-          type: project.naming?.type ?? null,
-          // A brand's line carries the brand's name (lib/manpowerLineNames.ts).
-          name: (brand ? ((await Brand.findById(brand).select("name").lean())?.name ?? project.naming?.title ?? project.name) : (project.naming?.title ?? project.name)).slice(0, 80),
-          cells: cellsFromTeam([], team),
-        },
-      ];
+      // A brand's line carries the brand's name (lib/manpowerLineNames.ts).
+      const name = (brand ? ((await Brand.findById(brand).select("name").lean())?.name ?? project.naming?.title ?? project.name) : (project.naming?.title ?? project.name)).slice(0, 80);
+      // No duplicate lines: the brand's line with the same name (or its only line) is reused —
+      // the project's people are added to it (nobody on it is taken off) and the project is pinned to it.
+      const existing = reusableLine(rows, brand, name);
+      if (existing) {
+        const cells = cellsWithTeam(existing.cells, team);
+        pinTo = existing.key;
+        if (rowPeopleKey(cells) === rowPeopleKey(existing.cells)) {
+          await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: existing.key } });
+          return;
+        }
+        key = existing.key;
+        nextRows = rows.map((r) => (r.key === existing.key ? { ...r, cells } : r));
+      } else {
+        key = randomUUID();
+        created = true;
+        nextRows = [
+          ...rows,
+          { key, section: "active", brand: brand as mongoose.Types.ObjectId | null, type: project.naming?.type ?? null, name, cells: cellsFromTeam([], team) },
+        ];
+      }
     }
+    if (created) pinTo = key;
 
     // Only leadership's changes go live on the plan; anyone else's become a pending
     // version for leadership to approve (the shared save path, with its email).
@@ -167,7 +178,7 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
         actor,
       });
       // A new line is pinned now (a key the plan doesn't have yet is ignored until approved).
-      if (created) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: key } });
+      if (pinTo) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: pinTo } });
       return;
     }
     const saved = await ManpowerPlan.create({
@@ -180,7 +191,7 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
       status: "approved",
       createdBy: actor._id,
     });
-    if (created) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: key } });
+    if (pinTo) await Project.updateOne({ _id: project._id }, { $set: { manpowerRow: pinTo } });
     // A version waiting for approval is carried onto this approved one (its changes aren't lost).
     const { rebasePendingPlan } = await import("../controllers/manpower.js");
     await rebasePendingPlan(month, { version: saved.version, rows: nextRows }, actor, undefined, rows);

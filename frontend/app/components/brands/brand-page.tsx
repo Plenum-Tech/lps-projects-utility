@@ -1119,6 +1119,12 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         actions={<CellLegend max={max} pending={Boolean(data.pendingPlan)} />}
       >
         {data.pendingPlan && <PendingPlanBanner className="mb-2" pending={data.pendingPlan} savesApproved={data.planSavesApproved} />}
+        {new Set(b.planLines.map((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase())).size < b.planLines.length && (
+          <p className="mb-2 text-xs">
+            <span className="rounded bg-amber-100 px-1.5 py-px text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">duplicate line</span>{" "}
+            <span className="text-muted-foreground">Two plan lines have the same name — remove one on the Manpower plan page.</span>
+          </p>
+        )}
         <p className="mb-2 text-xs text-muted-foreground">
           {b.planLines.length
             ? `Plan lines: ${b.planLines.map((l) => l.name).join(" · ")} — the same data as the Manpower plan.`

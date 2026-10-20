@@ -105,6 +105,7 @@ export function RowDialog({
   section,
   brands,
   types,
+  otherLines = [],
   onSave,
   onDelete,
 }: {
@@ -115,6 +116,8 @@ export function RowDialog({
   section: ManpowerSection;
   brands: Array<{ _id: string; name: string; color?: string; active?: boolean }>;
   types: string[];
+  /** The plan's other lines (brand id + name): a line can't be added twice (same brand, same name). */
+  otherLines?: Array<{ brand: string | null; name: string }>;
   onSave: (row: { name: string; brand: string | null; type: string | null; section: ManpowerSection }) => void;
   onDelete?: () => void;
 }) {
@@ -139,11 +142,15 @@ export function RowDialog({
   const suffix = brandName ? brandLineSuffix(name, brandName) : "";
   const shownName = brandName ? (suffix.trim() ? brandLineName(`${brandName} ${suffix.trim()}`, brandName) : brandName) : name;
   const nameError = !shownName.trim() ? "A name is required." : shownName.trim().length > 120 ? "Max 120 characters." : null;
+  // No duplicate lines: the same brand with the same name (case / spaces ignored) is edited, not added again.
+  const nameKey = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  const duplicate = brand !== NONE && otherLines.some((l) => l.brand === brand && nameKey(l.name) === nameKey(shownName));
+  const duplicateError = duplicate ? `${brandName ?? "This brand"} already has this line — edit it instead` : null;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (nameError) return;
+    if (nameError || duplicateError) return;
     onSave({ name: shownName.trim(), brand: brand === NONE ? null : brand, type: type === NONE ? null : type, section: sec });
     onOpenChange(false);
   }
@@ -195,6 +202,11 @@ export function RowDialog({
               </p>
             )}
             {submitted && nameError && <p className="text-sm text-destructive">{nameError}</p>}
+            {duplicateError && (
+              <p className="text-sm text-destructive" role="alert">
+                {duplicateError}
+              </p>
+            )}
           </div>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -265,7 +277,7 @@ export function RowDialog({
               <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
                 Cancel
               </Button>
-              <Button type="submit">{row ? "Apply" : "Add"}</Button>
+              <Button type="submit" disabled={Boolean(duplicateError)}>{row ? "Apply" : "Add"}</Button>
             </div>
           </DialogFooter>
         </form>
