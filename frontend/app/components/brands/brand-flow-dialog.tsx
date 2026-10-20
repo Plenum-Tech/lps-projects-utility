@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router";
+import { Link, useNavigate } from "react-router";
 import {
   LuArrowLeft,
   LuArrowRight,
@@ -433,7 +433,20 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <div className="space-y-1.5">
                 <Label htmlFor="brand-flow-name">Brand name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
                 <Input id="brand-flow-name" value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="e.g. Ajman Accountability Authority" aria-invalid={(tried >= 1 && Boolean(nameError)) || undefined} />
-                {tried >= 1 && nameError ? <FieldError>{nameError}</FieldError> : similar.length > 0 && <p className="text-xs text-amber-700 dark:text-amber-400">Similar brands: {similar.map((b) => b.name).join(", ")}</p>}
+                {tried >= 1 && nameError ? (
+                  <FieldError>
+                    {nameError}
+                    {sameBrand && (
+                      <>
+                        {" — "}
+                        <Link to={`/brands/${sameBrand._id}`} className="font-medium underline underline-offset-2" onClick={() => onOpenChange(false)}>
+                          Open {sameBrand.name}
+                        </Link>{" "}
+                        to add its scope or organisation instead.
+                      </>
+                    )}
+                  </FieldError>
+                ) : similar.length > 0 && <p className="text-xs text-amber-700 dark:text-amber-400">Similar brands: {similar.map((b) => b.name).join(", ")}</p>}
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="brand-flow-org">Organisation <span className="font-normal text-muted-foreground">(optional)</span></Label>

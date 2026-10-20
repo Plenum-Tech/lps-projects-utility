@@ -141,11 +141,12 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   }, [data, showAll]);
   const list = useMemo(() => {
     const term = q.trim().toLowerCase();
-    return base
+    // A search looks through every brand (also those without current projects, e.g. just created).
+    return (term ? (data?.brands ?? []) : base)
       .filter((b) => !term || b.name.toLowerCase().includes(term) || b.organisation.toLowerCase().includes(term))
       .filter((b) => filter === "all" || !b.checks[CHECK[filter]])
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
-  }, [base, q, filter]);
+  }, [base, data, q, filter]);
 
   const groups = useMemo(() => groupByOrg(list), [list]);
 
