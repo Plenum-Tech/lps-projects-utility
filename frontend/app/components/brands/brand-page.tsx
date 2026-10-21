@@ -24,6 +24,7 @@ import { useDismissChange, useWithdrawChange } from "@/hooks/use-project-approva
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
 import { neededRoles, UNIT_ROLE } from "@/lib/brand-roles";
+import { PlanLeads } from "@/components/brands/plan-leads";
 import { downloadFromApi } from "@/lib/download";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
@@ -993,6 +994,10 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
               <span key={k} className="inline-flex items-center gap-1.5"><StatusDot ok={b.checks[k]} /> {l}</span>
             ))}
           </div>
+          <p className="mt-2 flex flex-wrap items-center gap-x-2 text-xs">
+            <span className="font-medium">Leads in {monthLabel(month)}&apos;s plan:</span>
+            <PlanLeads roles={b.roles} />
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <MonthPicker month={month} onChange={onMonth} />

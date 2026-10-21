@@ -2,6 +2,8 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { touchApiKey, verifyApiKey } from "../lib/apiKeys.js";
+import { brandLeadsFor, emptyLeads, planRolesFor, type BrandLeads } from "../lib/brandLeads.js";
+import { currentMonth } from "../lib/brandReadiness.js";
 import {
   TAG_ID_REGEX,
   ensurePearityTag,
@@ -20,6 +22,9 @@ import type { PearityTagRefJson, TaskContext } from "../lib/pearity.js";
 import { canViewTaskAsync, param, recordTaskHistory } from "../lib/taskAccess.js";
 import { rateLimit } from "../middlewares/rateLimit.js";
 import { ApiAuditLog } from "../models/ApiKey.js";
+import { Brand } from "../models/Brand.js";
+import { Department } from "../models/Department.js";
+import { APPROVED_PLAN, ManpowerPlan } from "../models/ManpowerPlan.js";
 import type { ApiKeyScope, IApiKey } from "../models/ApiKey.js";
 import { PearityTag } from "../models/PearityTag.js";
 import type { IPearityTag } from "../models/PearityTag.js";
@@ -29,7 +34,7 @@ import { Task } from "../models/Task.js";
 import type { ITask } from "../models/Task.js";
 import { TaskComment } from "../models/TaskComment.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import type { IUser } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
@@ -37,7 +42,21 @@ import type { IUser } from "../models/User.js";
 //   Authorization: Bearer <api key>   (scopes pearity:read / pearity:tags / pearity:write)
 //   600 requests / minute per key, optional IP allowlist, every call audited.
 // Data is scoped to the `email` user's visible tasks (same rules as the UI) and
-// limited to codes, titles, status, dates, project / brand / category and the tag.
+// limited to codes, titles, status, dates, project / brand / category, the tag,
+// the task's assignees and its brand's leads.
+//
+// Directory (pearity:read, no `email` — for mapping users and brands Pearity <-> Utility):
+//   GET /brands?month=YYYY-MM  every approved, active brand with its three leads from the
+//                              month's latest approved manpower plan (default: this month):
+//                              { month, planVersion, brands: [{ id, name, organisation, isPitch,
+//                                leads: { programLead, creativeLead, productionLead } }] }
+//                              (each lead a list of { id, name, email }; [] = not set in the plan)
+//   GET /users                 staff only (no guests): { month, users: [{ id, name, email, role,
+//                              department, planRoles }] } — planRoles = plan role keys held in
+//                              this month's approved plan. A full list (no paging: ~60 people).
+// Task JSON also carries `leads` (the brand's leads in the project's month — this month when
+// that month has no approved plan; null without a brand), `leadsMonth` (the plan month used)
+// and `assignees` ([{ id, name, email, guest }] — guest: an outside person on the task).
 // ---------------------------------------------------------------------------
 
 const PEARITY_JOURNEY_ACTIONS = [
@@ -207,13 +226,65 @@ function iso(value: Date | null | undefined): string | null {
 type TaskRow = Pick<
   ITask,
   "title" | "status" | "dueDate" | "actualStartAt" | "actualEndAt" | "shortCode" | "number" | "project" | "category"
-> & { _id: mongoose.Types.ObjectId; updatedAt: Date };
+> & { _id: mongoose.Types.ObjectId; updatedAt: Date; assignees?: mongoose.Types.ObjectId[] };
+
+type AssigneeJson = { id: string; name: string; email: string; guest: boolean };
+
+/** People on a task: its assignees and its brand's leads (null without a brand) in `leadsMonth`. */
+interface TaskPeople {
+  leads: BrandLeads | null;
+  leadsMonth: string | null;
+  assignees: AssigneeJson[];
+}
+
+/** Assignees + brand leads for many tasks: one user query, one plan read per month. */
+async function taskPeople(tasks: TaskRow[], contexts: Map<string, TaskContext>): Promise<Map<string, TaskPeople>> {
+  // The project's month when it has an approved plan, else this month's plan.
+  const fallback = currentMonth();
+  const projectMonths = [...new Set(tasks.map((t) => contexts.get(t._id.toString())?.project?.month).filter((m): m is string => Boolean(m)))];
+  const planned = new Set<string>(
+    projectMonths.length ? await ManpowerPlan.distinct("month", { month: { $in: projectMonths }, ...APPROVED_PLAN }) : []
+  );
+  const monthOf = (id: string) => {
+    const m = contexts.get(id)?.project?.month;
+    return m && planned.has(m) ? m : fallback;
+  };
+  // month → brand ids of its tasks
+  const wanted = new Map<string, Set<string>>();
+  for (const t of tasks) {
+    const brand = contexts.get(t._id.toString())?.brand?.id;
+    if (!brand) continue;
+    const m = monthOf(t._id.toString());
+    wanted.set(m, (wanted.get(m) ?? new Set()).add(brand));
+  }
+  const userIds = [...new Set(tasks.flatMap((t) => (t.assignees ?? []).map(String)))];
+  const [leadMaps, users] = await Promise.all([
+    Promise.all([...wanted].map(async ([m, brands]) => [m, await brandLeadsFor(m, brands)] as const)),
+    userIds.length ? User.find({ _id: { $in: userIds } }).select("name email isGuest").lean() : Promise.resolve([]),
+  ]);
+  const leadsByMonth = new Map(leadMaps);
+  const userById = new Map(
+    users.map((u) => [String(u._id), { id: String(u._id), name: u.name, email: u.email, guest: u.isGuest === true }])
+  );
+  const out = new Map<string, TaskPeople>();
+  for (const t of tasks) {
+    const id = t._id.toString();
+    const brand = contexts.get(id)?.brand?.id;
+    out.set(id, {
+      leads: brand ? (leadsByMonth.get(monthOf(id))?.get(brand) ?? emptyLeads()) : null,
+      leadsMonth: brand ? monthOf(id) : null,
+      assignees: (t.assignees ?? []).map((a) => userById.get(String(a))).filter((a): a is AssigneeJson => Boolean(a)),
+    });
+  }
+  return out;
+}
 
 function taskJson(
   task: TaskRow,
   context: TaskContext,
   tag: PearityTagRefJson | null,
-  generateUrl: string | null
+  generateUrl: string | null,
+  people: TaskPeople
 ) {
   return {
     taskId: task._id.toString(),
@@ -240,7 +311,10 @@ function taskJson(
         }
       : null,
     brand: context.brand,
+    leads: people.leads,
+    leadsMonth: people.leadsMonth,
     category: context.category,
+    assignees: people.assignees,
     utilityUrl: utilityTaskUrl(task._id),
     pearityTag: tag,
     tagUrl: tag?.tagUrl ?? null,
@@ -256,13 +330,19 @@ async function tasksJson(tasks: TaskRow[]) {
     taskContexts(tasks),
     ids.length ? PearityTag.find({ task: { $in: ids } }).lean<IPearityTag[]>() : Promise.resolve([] as IPearityTag[]),
   ]);
-  const refs = await tagRefs(tagDocs, { contexts });
+  const [refs, people] = await Promise.all([tagRefs(tagDocs, { contexts }), taskPeople(tasks, contexts)]);
   const tagByTask = new Map(tagDocs.map((t) => [t.task.toString(), t]));
   return tasks.map((task) => {
     const id = task._id.toString();
     const context = contexts.get(id)!;
     const tag = tagByTask.get(id);
-    return taskJson(task, context, refs.get(id) ?? null, tag ? pearityGenerateUrl(settings, tag, task._id, context) : null);
+    return taskJson(
+      task,
+      context,
+      refs.get(id) ?? null,
+      tag ? pearityGenerateUrl(settings, tag, task._id, context) : null,
+      people.get(id)!
+    );
   });
 }
 
@@ -345,7 +425,7 @@ export async function apiListTasks(req: Request, res: Response): Promise<void> {
   }
 
   const rows = await Task.find({ $and: and })
-    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes")
+    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes assignees")
     .sort({ updatedAt: -1, _id: -1 })
     .limit(limit + 1)
     .lean<TaskRow[]>();
@@ -412,10 +492,11 @@ async function respondWithTag(req: Request, res: Response, user: IUser, task: IT
     return;
   }
   const row = task.toObject() as unknown as TaskRow;
+  const people = (await taskPeople([row], new Map([[taskId.toString(), context]]))).get(taskId.toString())!;
   res.status(created ? 201 : 200).json({
     created,
     tag: ref,
-    task: taskJson(row, context, ref, generateUrl),
+    task: taskJson(row, context, ref, generateUrl, people),
     tagUrl: ref.tagUrl,
     generateUrl,
   });
@@ -530,7 +611,7 @@ async function respondWithTagLookup(res: Response, tag: IPearityTag | null): Pro
     return;
   }
   const task = await Task.findById(tag.task)
-    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes")
+    .select("title status dueDate actualStartAt actualEndAt shortCode number project category updatedAt tag titleParts iteration priority startDate estimateMinutes assignees")
     .lean<TaskRow>();
   const ref = (await tagRefs([tag])).get(tag.task.toString())!;
   res.json({ tag: tagJson(tag, ref, task ? taskNoOf(task) : null), task: task ? (await tasksJson([task]))[0] : null });
@@ -768,6 +849,61 @@ export async function apiPostAssetByNo(req: Request, res: Response): Promise<voi
   const task = await resolveTaskNo(res, body.taskNo, user);
   if (!task) return;
   await postAssetForTask(req, res, user, task, body);
+}
+
+// --- Directory: brands + users (pearity:read) -----------------------------------------
+
+const MONTH_REGEX = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+/** GET /brands?month=YYYY-MM — approved, active brands with their plan leads (default: this month). */
+export async function apiListBrands(req: Request, res: Response): Promise<void> {
+  const raw = req.query.month;
+  const month = raw === undefined || raw === "" ? currentMonth() : typeof raw === "string" && MONTH_REGEX.test(raw) ? raw : null;
+  if (!month) {
+    fail(res, 400, "invalid_month", "month must be YYYY-MM");
+    return;
+  }
+  const brands = await Brand.find({ active: true, $or: [{ status: { $exists: false } }, { status: "approved" }] })
+    .select("name organisation isPitch")
+    .sort({ nameKey: 1, name: 1 })
+    .lean();
+  const [leads, plan] = await Promise.all([
+    brandLeadsFor(month, brands.map((b) => String(b._id))),
+    ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version").lean(),
+  ]);
+  res.json({
+    month,
+    planVersion: plan?.version ?? null,
+    brands: brands.map((b) => ({
+      id: String(b._id),
+      name: b.name,
+      organisation: b.organisation || null,
+      isPitch: Boolean(b.isPitch),
+      leads: leads.get(String(b._id)) ?? emptyLeads(),
+    })),
+  });
+}
+
+/** GET /users — every staff user (guests left out) with the plan roles they hold this month. */
+export async function apiListUsers(_req: Request, res: Response): Promise<void> {
+  const month = currentMonth();
+  const [users, departments, planRoles] = await Promise.all([
+    User.find(STAFF_FILTER).select("name email role department").sort({ name: 1 }).lean(),
+    Department.find({}).select("name").lean(),
+    planRolesFor(month),
+  ]);
+  const deptName = new Map(departments.map((d) => [String(d._id), d.name]));
+  res.json({
+    month,
+    users: users.map((u) => ({
+      id: String(u._id),
+      name: u.name,
+      email: u.email,
+      role: u.role,
+      department: u.department ? (deptName.get(String(u.department)) ?? null) : null,
+      planRoles: planRoles.get(String(u._id)) ?? [],
+    })),
+  });
 }
 
 /** JSON 404 inside the v1 API. */

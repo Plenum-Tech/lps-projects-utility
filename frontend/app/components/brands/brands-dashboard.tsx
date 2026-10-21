@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router";
 import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons/lu";
 
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
+import { PlanLeads } from "@/components/brands/plan-leads";
 import { MatchBadge } from "@/components/brands/scope-compare";
 import { AllocCell, CellLegend, cellTone, PendingPlanBanner, planVersionText, SaveBar, StatusDot, teamCell, useNameOf, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
@@ -230,7 +231,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
         <EmptyState icon={LuTags} title="No brands match" description={showAll ? "Try another filter or search." : `No active brand in ${monthLabel(month)} matches. Tick “All brands” to see the rest.`} />
       ) : (
         <div className="overflow-x-auto rounded-xl border bg-card">
-          <table className="w-full min-w-[56rem] text-sm">
+          <table className="w-full min-w-[66rem] text-sm">
             <thead className="text-xs text-muted-foreground uppercase">
               <tr className="border-b text-left">
                 <th className="px-3 py-2 font-medium">Brand</th>
@@ -239,6 +240,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                 <th className="px-3 py-2 font-medium">Manpower plan</th>
                 <th className="px-3 py-2 font-medium">Team</th>
                 <th className="px-3 py-2 font-medium">Lead(s)</th>
+                <th className="px-3 py-2 font-medium" title="Program · Creative · Production Lead, from the month's manpower plan">Plan leads</th>
                 <th className="px-3 py-2 font-medium">Current projects</th>
               </tr>
             </thead>
@@ -247,7 +249,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                 <Fragment key={g.org || g.brands[0]!._id}>
                 {g.org && (
                   <tr className="border-b bg-muted/50">
-                    <td colSpan={7} className="px-3 py-1.5 text-xs">
+                    <td colSpan={8} className="px-3 py-1.5 text-xs">
                       <span className="font-semibold text-foreground">{g.org}</span>
                       <span className="ml-1.5 text-muted-foreground">· organisation · {g.brands.length} brand{g.brands.length === 1 ? "" : "s"}</span>
                       {g.orgBrand && g.orgBrand.projectCount > 0 && (
@@ -314,6 +316,9 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                       {b.leads.length ? b.leads.map((l) => firstName(l.name)).join(", ") : "none"}
                     </span>
                   </td>
+                  <td className="px-3 py-2">
+                    <PlanLeads roles={b.roles} short className="max-w-[16rem]" />
+                  </td>
                   <td className="px-3 py-2 tabular-nums">{b.current.length}</td>
                 </tr>
                 ))}
@@ -321,7 +326,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
               ))}
             </tbody>
           </table>
-          <p className="border-t px-3 py-2 text-xs text-muted-foreground">{list.length} shown · red dot = missing (flag only — nothing is blocked)</p>
+          <p className="border-t px-3 py-2 text-xs text-muted-foreground">{list.length} shown · red dot / “not set” = missing (flag only — nothing is blocked)</p>
         </div>
       )}
     </div>

@@ -14,8 +14,10 @@ import {
   apiGetTagByNo,
   apiGetTask,
   apiGetTaskByNo,
+  apiListBrands,
   apiListTags,
   apiListTasks,
+  apiListUsers,
   apiNotFound,
   apiPostAsset,
   apiPostAssetByNo,
@@ -47,6 +49,9 @@ pearityApiRouter.post("/tasks/:taskId/assets", requireScope("pearity:write"), ap
 pearityApiRouter.get("/tags", requireScope("pearity:read"), apiListTags);
 pearityApiRouter.get("/tags/by-no/:tagNo", requireScope("pearity:read"), apiGetTagByNo);
 pearityApiRouter.get("/tags/:tagId", requireScope("pearity:read"), apiGetTag);
+// Directory for mapping users and brands Pearity <-> Utility (brand leads from the manpower plan).
+pearityApiRouter.get("/brands", requireScope("pearity:read"), apiListBrands);
+pearityApiRouter.get("/users", requireScope("pearity:read"), apiListUsers);
 pearityApiRouter.use(apiNotFound);
 
 // /api/integrations — session endpoints (status for everyone, settings + keys for admins).
