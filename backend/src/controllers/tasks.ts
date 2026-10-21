@@ -935,7 +935,6 @@ async function completionBlocker(task: ITask): Promise<string | null> {
   if (!log) missing.push("log the time spent");
   if (!task.finalFile?.fileId && !task.finalFile?.url) missing.push("add the final link or file / image");
   if (!task.submissionNotes?.trim()) missing.push("write an outcome note");
-  if (task.parity !== "on" && task.parity !== "off") missing.push("choose On Pearity or Off Pearity");
   if (missing.length === 0) return null;
   const list = missing.length === 1 ? missing[0]! : `${missing.slice(0, -1).join(", ")} and ${missing.at(-1)}`;
   return `To close this task, ${list}.`;

@@ -43,7 +43,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { api, getErrorMessage } from "@/lib/api";
-import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
 
@@ -76,14 +75,10 @@ export function SubmitTaskDialog({
   const [file, setFile] = useState<File | null>(null);
   const [link, setLink] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  // Mandatory: was the deliverable generated on Pearity (the production engine) or off it?
-  const [parity, setParity] = useState<"on" | "off" | "">("");
 
   useEffect(() => {
     if (open) {
       setNotes(task.submissionNotes ?? "");
-      // A task with a Pearity tag was most likely generated there: pre-pick On Pearity.
-      setParity(task.parity ?? (task.pearityTag ? "on" : ""));
       setLink(task.finalFile?.url ?? "");
       setMode(task.finalFile?.url ? "link" : "file");
       setFile(null);
@@ -95,7 +90,7 @@ export function SubmitTaskDialog({
       setActualEnd(both ? toDateTimeInput(task.actualEndAt!) : "");
       setSubmitted(false);
     }
-  }, [open, task.submissionNotes, task.parity, task.finalFile?.url, task.actualStartAt, task.actualEndAt]);
+  }, [open, task.submissionNotes, task.finalFile?.url, task.actualStartAt, task.actualEndAt]);
 
   const direct = task.project?.requireTaskApproval === false;
   // Logged time is optional for completion.
@@ -135,8 +130,7 @@ export function SubmitTaskDialog({
     !task.finalFile?.fileId &&
     !task.finalFile?.url;
   const notesMissing = !notes.trim();
-  const parityMissing = parity === "";
-  const outcomeMissing = deliverableMissing || notesMissing || parityMissing;
+  const outcomeMissing = deliverableMissing || notesMissing;
   const pending = submit.isPending || upload.isPending || logging;
 
   async function handleSubmit(event: FormEvent) {
@@ -183,7 +177,6 @@ export function SubmitTaskDialog({
         id: task._id,
         input: {
           submissionNotes: notes.trim() || undefined,
-          ...(parity ? { parity } : {}),
           ...(finalFileId ? { finalFileId } : {}),
           ...(mode === "link" && linkValue ? { finalUrl: linkValue } : {}),
         },
@@ -299,47 +292,6 @@ export function SubmitTaskDialog({
               <p className="text-xs text-destructive">Write what was delivered.</p>
             )}
           </div>
-
-          <fieldset className="space-y-1.5">
-            <legend className="mb-1.5 text-sm leading-none font-medium">
-              Pearity<span aria-hidden className="ml-0.5 text-destructive">*</span>
-            </legend>
-            <div role="radiogroup" aria-label="Pearity" aria-invalid={(submitted && parityMissing) || undefined} className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  ["on", "On Pearity", "Generated in Pearity (the production engine)"],
-                  ["off", "Off Pearity", "Made outside Pearity"],
-                ] as const
-              ).map(([value, label, hint]) => (
-                <label
-                  key={value}
-                  className={cn(
-                    "flex cursor-pointer items-start gap-2 rounded-lg border p-2.5 text-sm transition-colors",
-                    parity === value
-                      ? value === "on"
-                        ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40"
-                        : "border-amber-500 bg-amber-50 dark:bg-amber-950/40"
-                      : "hover:bg-muted/50",
-                    submitted && parityMissing && "border-destructive",
-                  )}
-                >
-                  <input
-                    type="radio"
-                    name={`parity-${task._id}`}
-                    value={value}
-                    checked={parity === value}
-                    onChange={() => setParity(value)}
-                    className="mt-0.5 size-4 accent-primary"
-                  />
-                  <span>
-                    <span className="block font-medium">{label}</span>
-                    <span className="block text-xs text-muted-foreground">{hint}</span>
-                  </span>
-                </label>
-              ))}
-            </div>
-            {submitted && parityMissing && <p className="text-xs text-destructive">Choose On Pearity or Off Pearity.</p>}
-          </fieldset>
 
           <OutcomeReadinessBox
             taskId={task._id}
