@@ -9,7 +9,7 @@ import { composeProjectName } from "../lib/projectNaming.js";
 import { parseLooseDate } from "../lib/scopeExtract.js";
 import { Brand, brandNameKey, type IBrand } from "../models/Brand.js";
 import { Project } from "../models/Project.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import { parsePitchWorkbook, type PitchSheetRow } from "./brandFlow.js";
 import { notifyBrandApprovalRequested } from "./brands.js";
 import { createProjectCore } from "./projects.js";
@@ -105,7 +105,7 @@ export async function previewPitchImport(req: Request, res: Response): Promise<v
     return;
   }
   const [users, brandDocs] = await Promise.all([
-    User.find({}).select("name").lean(),
+    User.find(STAFF_FILTER).select("name").lean(),
     Brand.find({}).select("name nameKey status").lean(),
   ]);
   const people = users.map((u) => ({ _id: String(u._id), name: u.name }));

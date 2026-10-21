@@ -5,7 +5,7 @@ import { isDuplicateKeyError } from "../lib/errors.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
 import { Announcement } from "../models/Announcement.js";
 import { Department } from "../models/Department.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 const MEMBER_SELECT = "name email role";
 
@@ -224,7 +224,7 @@ export async function setDepartmentEmployees(req: Request, res: Response): Promi
   }
 
   const idSet = [...new Set(userIds as string[])];
-  const users = await User.find({ _id: { $in: idSet } }).select("_id");
+  const users = await User.find({ _id: { $in: idSet }, ...STAFF_FILTER }).select("_id");
   if (users.length !== idSet.length) {
     res.status(400).json({ error: "One or more user ids are invalid" });
     return;

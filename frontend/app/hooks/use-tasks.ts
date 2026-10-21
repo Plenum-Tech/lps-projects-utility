@@ -714,6 +714,48 @@ export function useReviewTask() {
   });
 }
 
+/** Result of inviting someone to a task (`invite` on top of the task detail). */
+export interface TaskGuestInviteResponse extends TaskDetailResponse {
+  invite: {
+    user: { _id: string; name: string; email: string };
+    /** false: an existing employee, simply assigned. */
+    guest: boolean;
+    /** A new guest account was made. */
+    created: boolean;
+    /** Set-password link: "emailed" / "not_emailed" (email off), null when none was needed. */
+    invitation: "emailed" | "not_emailed" | null;
+    /** Admins only, when the link couldn't be emailed. */
+    setupUrl?: string;
+  };
+}
+
+/** Creator / project manager / admin: invite an outside person (or a colleague by email) to the task. */
+export function useInviteTaskGuest() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  return useMutation({
+    mutationFn: async ({ id, name, email }: { id: string; name: string; email: string }) => {
+      const { data } = await api.post<TaskGuestInviteResponse>(`/tasks/${id}/guests`, { name, email });
+      return data;
+    },
+    onSuccess: (data) => {
+      applyDetail(queryClient, data);
+      const { invite } = data;
+      toast.success(
+        !invite.guest
+          ? `${invite.user.name} is on the team — added as an assignee`
+          : invite.invitation === "emailed"
+            ? `Invitation emailed to ${invite.user.email}`
+            : invite.invitation === "not_emailed"
+              ? `${invite.user.name} was added, but email is off — send them the set-password link`
+              : `${invite.user.name} was added to the task`,
+      );
+    },
+    // The dialog shows the error next to the fields.
+  });
+}
+
 /** Creator/admin: nudge assignees (server rate-limits to once per hour). */
 export function useRemindTask() {
   const queryClient = useQueryClient();

@@ -86,7 +86,8 @@ import { PearityTag } from "../models/PearityTag.js";
 import { TaskLabel } from "../models/TaskLabel.js";
 import { TaskNote } from "../models/TaskNote.js";
 import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
+import { guestTaskFilter, isGuestUser, withoutPeopleEmails } from "../lib/guests.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -318,15 +319,16 @@ async function resolveMilestone(raw: unknown, project: IProject | null): Promise
 /**
  * Project tasks may only be assigned to project members. Non-members are
  * auto-added when the actor can manage the project or add tasks to it; otherwise 400.
- * Returns the users that were added as members.
+ * Returns the users that were added as members. Outside guests are never made
+ * members: they only ever see the tasks they are on.
  */
-async function ensureProjectMembers(
+export async function ensureProjectMembers(
   actor: IUser,
   project: IProject,
   assignees: IUser[],
   sendEmail = true
 ): Promise<IUser[] | Invalid> {
-  const outsiders = assignees.filter((u) => !isProjectMember(u, project));
+  const outsiders = assignees.filter((u) => !isProjectMember(u, project) && !isGuestUser(u));
   if (outsiders.length === 0) return [];
   // Anyone who may add tasks to the project may bring a colleague in as an assignee.
   if (!canManageProject(actor, project) && !canCreateProjectTasks(actor, project)) {
@@ -377,6 +379,7 @@ function milestoneWarnings(dueDate: Date | null | undefined, milestone: IMilesto
  * the caller names specific tasks (pins, export by ids).
  */
 async function extendedVisibilityFilter(user: IUser): Promise<Record<string, unknown>> {
+  if (isGuestUser(user)) return guestTaskFilter(user._id as mongoose.Types.ObjectId);
   if (user.role === "admin") return {};
   const projects = await Project.find(projectVisibilityFilter(user)).select("_id").lean();
   return {
@@ -408,6 +411,7 @@ async function approvalsFilter(user: IUser): Promise<Record<string, unknown>> {
 
 /** Whether the caller can review anything at all (drives the "Waiting approval" view). */
 async function isReviewer(user: IUser): Promise<boolean> {
+  if (isGuestUser(user)) return false;
   if (user.role !== "employee") return true;
   const [managed, created] = await Promise.all([
     Project.exists({ manager: user._id }),
@@ -494,6 +498,8 @@ async function buildListFilter(
   const user = req.user!;
   const and: Record<string, unknown>[] = [];
   const { scope, assignee, department, label, category, priority, due } = req.query;
+  // Guests: their tasks only, whatever else the query asks for (project, ?assignee=, approvals…).
+  if (isGuestUser(user)) and.push(guestTaskFilter(user._id as mongoose.Types.ObjectId));
 
   if (scope !== undefined && scope !== "" && !["assigned", "created", "all", "approvals"].includes(scope as string)) {
     return { status: 400, error: "scope must be one of: assigned, created, all, approvals" };
@@ -898,7 +904,7 @@ async function normalizeColumnIfNeeded(task: ITask): Promise<void> {
 
 /** Task fields every task email needs. */
 /** The task fields the notification emails show (code, project, dates, status). */
-function emailTask(task: ITask) {
+export function emailTask(task: ITask) {
   return {
     _id: task._id as mongoose.Types.ObjectId,
     title: task.title,
@@ -921,9 +927,12 @@ async function notifyDescriptionMentions(task: ITask, actor: IUser, previous?: s
   const before = new Set(richTextMentionIds(previous));
   const added = richTextMentionIds(task.description).filter((id) => !before.has(id) && id !== actor._id.toString());
   if (added.length === 0) return;
-  const users = await User.find({ _id: { $in: added } }).select("_id role department");
+  const found = await User.find({ _id: { $in: added } }).select("_id role department isGuest");
+  const foundAccess = await Promise.all(found.map((u) => canViewTaskAsync(u, task)));
+  // An outside guest not on this task isn't told it exists.
+  const users = found.filter((u, i) => foundAccess[i] || !isGuestUser(u));
   if (users.length === 0) return;
-  const access = await Promise.all(users.map((u) => canViewTaskAsync(u, task)));
+  const access = users.map((u) => foundAccess[found.indexOf(u)]!);
   const text = richTextToPlain(task.description);
   const quote = text.length > 600 ? `${text.slice(0, 599)}…` : text;
   const groups: Array<[mongoose.Types.ObjectId[], string]> = [
@@ -1787,7 +1796,11 @@ export async function getTask(req: Request, res: Response): Promise<void> {
 export async function listReworkTasks(req: Request, res: Response): Promise<void> {
   const task = await getReadableTaskOr404(req, res);
   if (!task) return;
-  const reworks = await Task.find({ reworkOf: task._id })
+  const user = req.user!;
+  const reworks = await Task.find({
+    reworkOf: task._id,
+    ...(isGuestUser(user) ? guestTaskFilter(user._id as mongoose.Types.ObjectId) : {}),
+  })
     .select("title shortCode number status priority assignees assignedBy dueDate completedAt createdAt reworkSource")
     .populate([
       { path: "assignees", select: "name email" },
@@ -2443,6 +2456,10 @@ export async function updateTask(req: Request, res: Response): Promise<void> {
   const body = (req.body ?? {}) as UpdateTaskBody;
   const keys = Object.keys(body);
   const actualOnly = keys.length > 0 && keys.every((key) => ACTUAL_DATE_KEYS.has(key));
+  if (isGuestUser(user) && !actualOnly) {
+    res.status(403).json({ error: "Guests can't change the task's details" });
+    return;
+  }
   const result = actualOnly
     ? await applyActualDatesUpdate(user, task, body, req.ip)
     : await applyTaskUpdate(user, task, body, req.ip);
@@ -2674,10 +2691,12 @@ export async function listHistory(req: Request, res: Response): Promise<void> {
   }
 
   const [history, total] = await Promise.all([query, TaskHistory.countDocuments(filter)]);
-  const rows: Record<string, unknown>[] = history.map((h) => ({ ...h.toJSON() }));
+  const guest = isGuestUser(req.user);
+  const json: Record<string, unknown>[] = history.map((h) => ({ ...h.toJSON() }));
+  const rows = guest ? withoutPeopleEmails(json) : json;
   // The source meeting may be private (as in loadTaskDetail): read-only viewers
-  // get "created the task from a meeting" without its id / title.
-  if (readOnly) {
+  // and guests get "created the task from a meeting" without its id / title.
+  if (readOnly || guest) {
     for (const row of rows) {
       if (row.action !== "created_from_meeting" || !row.details || typeof row.details !== "object") continue;
       const details = { ...(row.details as Record<string, unknown>) };
@@ -2700,8 +2719,9 @@ export async function assignableUsers(req: Request, res: Response): Promise<void
   const search = searchRegex(req.query.search);
 
   // Everyone can pick from the whole company (project tasks add the assignee to the project).
+  // Outside guests are not part of it (they are invited per task).
   void user;
-  const filter: Record<string, unknown> = {};
+  const filter: Record<string, unknown> = { ...STAFF_FILTER };
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }
@@ -2720,19 +2740,29 @@ export async function mentionableUsers(req: Request, res: Response): Promise<voi
   const task = await getViewableTaskOr404(req, res);
   if (!task) return;
 
-  const or: Record<string, unknown>[] = [
-    {
-      _id: {
-        $in: [
-          ...task.assignees,
-          task.assignedBy,
-          // Subtask assignees can view the task too.
-          ...task.subtasks.flatMap((sub) => (sub.assignee ? [sub.assignee] : [])),
-        ],
-      },
+  const onTask = {
+    _id: {
+      $in: [
+        ...task.assignees,
+        task.assignedBy,
+        // Subtask assignees can view the task too.
+        ...task.subtasks.flatMap((sub) => (sub.assignee ? [sub.assignee] : [])),
+      ],
     },
-    { role: "admin" },
-  ];
+  };
+  // Guests: the people on the task, names only.
+  if (isGuestUser(req.user)) {
+    const people = await User.find(onTask).select("name").sort({ name: 1 }).lean();
+    res.json({
+      users: people.map((u) => ({ _id: u._id, name: u.name })),
+      total: people.length,
+      limit: null,
+      offset: 0,
+    });
+    return;
+  }
+
+  const or: Record<string, unknown>[] = [onTask, { role: "admin" }];
   const departments = await taskDepartmentIds(task);
   if (departments.length > 0) or.push({ role: "head", department: { $in: departments } });
 

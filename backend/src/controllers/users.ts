@@ -8,7 +8,11 @@ import { clearLoginFailures } from "../lib/loginLock.js";
 import { applyHrFields, isEmployeeIdConflict, parseHrFields } from "../lib/hr.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
 import type { EmailPreferences, IUser } from "../models/User.js";
-import { EMAIL_PREFERENCE_KEYS, User } from "../models/User.js";
+import { EMAIL_PREFERENCE_KEYS, STAFF_FILTER, User } from "../models/User.js";
+import { PasswordSetupToken } from "../models/PasswordSetupToken.js";
+import { Task } from "../models/Task.js";
+import { isGuestUser } from "../lib/guests.js";
+import { stopTimersWhere } from "../lib/timeLogs.js";
 
 interface CreateUserBody {
   name?: string;
@@ -78,11 +82,12 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
   const { limit, offset } = parsePagination(req);
   const search = searchRegex(req.query.search);
 
-  const filter: Record<string, unknown> = {};
+  const { role, department, passwordSetup } = req.query;
+  // Outside task guests are listed only on request (`?role=guest`); everywhere else they aren't people of the company.
+  const filter: Record<string, unknown> = role === "guest" ? { isGuest: true } : { ...STAFF_FILTER };
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }
-  const { role, department, passwordSetup } = req.query;
   // "Needs password" filter (imported users who haven't set one yet).
   if (passwordSetup === "required") filter.passwordSetupRequired = true;
   else if (passwordSetup === "done") filter.passwordSetupRequired = { $ne: true };
@@ -208,6 +213,14 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
   }
   if (!hasAnyField) {
     res.status(400).json({ error: "At least one field to update is required" });
+    return;
+  }
+  // Guests stay plain guests: no role, department or rate (invite them as an employee instead).
+  if (
+    isGuestUser(user) &&
+    ((role !== undefined && role !== "employee") || (department !== undefined && department !== null) || rate !== undefined)
+  ) {
+    res.status(400).json({ error: "An outside guest can't get a role, department or rate — invite them as an employee instead" });
     return;
   }
 
@@ -342,6 +355,52 @@ export async function deleteUser(req: Request, res: Response): Promise<void> {
   });
 
   res.json({ message: "User deleted" });
+}
+
+/**
+ * Admin-only: POST /api/users/:id/guest-access/revoke — ends an outside guest's
+ * access: sign-in is refused and every session ends (tokenVersion), unused
+ * set-password links are revoked, a running timer is stopped, and they are
+ * taken off every task that has someone else on it (a task needs one assignee,
+ * so `soleAssigneeTasks` counts the ones to reassign). Inviting them to a task
+ * again restores access.
+ */
+export async function revokeGuestAccess(req: Request, res: Response): Promise<void> {
+  const user = await getUserOr404(req, res);
+  if (!user) return;
+  if (!isGuestUser(user)) {
+    res.status(400).json({ error: "Only outside guests can lose guest access — use delete for employees" });
+    return;
+  }
+  const now = new Date();
+  // tokenVersion must be read fresh (requireAuth's copy may be cached).
+  const stored = await User.findById(user._id).select("tokenVersion");
+  user.guestRevokedAt = now;
+  user.tokenVersion = (stored?.tokenVersion ?? user.tokenVersion ?? 0) + 1;
+  await user.save();
+  await PasswordSetupToken.updateMany({ user: user._id, usedAt: null, revokedAt: null }, { $set: { revokedAt: now } });
+  await stopTimersWhere({ user: user._id, endTime: null }, req.user ?? null);
+  const removed = await Task.updateMany(
+    { assignees: user._id, "assignees.1": { $exists: true } },
+    { $pull: { assignees: user._id } }
+  );
+  await Task.updateMany(
+    { "subtasks.assignee": user._id },
+    { $set: { "subtasks.$[sub].assignee": null } },
+    { arrayFilters: [{ "sub.assignee": user._id }] }
+  );
+  const soleAssigneeTasks = await Task.countDocuments({ assignees: user._id });
+
+  logActivity({
+    action: "user_updated",
+    actor: req.user,
+    targetType: "user",
+    targetId: user._id as mongoose.Types.ObjectId,
+    targetName: user.name,
+    details: { guestAccess: "revoked", tasksLeft: removed.modifiedCount, soleAssigneeTasks },
+    ip: req.ip,
+  });
+  res.json({ user: user.toJSON(), tasksLeft: removed.modifiedCount, soleAssigneeTasks });
 }
 
 /**

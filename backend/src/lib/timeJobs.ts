@@ -4,7 +4,7 @@ import { Leave } from "../models/Leave.js";
 import { Project } from "../models/Project.js";
 import { getProjectSettings, ProjectSettings } from "../models/ProjectSettings.js";
 import { TimeLog } from "../models/TimeLog.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import {
   addDays,
   appDateKey,
@@ -138,6 +138,7 @@ export async function runTimeTrackerReminder(now: Date = new Date()): Promise<Tr
   const exclude = [...onLeave, ...withLogs] as mongoose.Types.ObjectId[];
   const candidates = await User.find({
     role: { $in: ["employee", "head"] },
+    ...STAFF_FILTER,
     _id: { $nin: exclude },
     lastTrackerReminderOn: { $ne: todayKey },
   }).select("_id");
@@ -207,7 +208,7 @@ export async function runDailyTimeLogReport(now: Date = new Date()): Promise<Dai
   const byUser = new Map(rows.map((r) => [r._id.toString(), r]));
   const [departments, people, admins] = await Promise.all([
     Department.find().select("name").lean(),
-    User.find({ role: { $in: ["employee", "head"] } }).select("name department").sort({ name: 1 }).lean(),
+    User.find({ role: { $in: ["employee", "head"] }, ...STAFF_FILTER }).select("name department").sort({ name: 1 }).lean(),
     User.find({ role: "admin" }).select("name email emailPreferences").lean(),
   ]);
 

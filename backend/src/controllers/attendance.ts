@@ -4,7 +4,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { parsePagination } from "../lib/pagination.js";
 import { pushToUsers, createEvent } from "../lib/sse.js";
 import { Attendance, ATTENDANCE_STATUSES, type AttendanceStatus } from "../models/Attendance.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 interface MarkAttendanceBody {
   date?: unknown;
@@ -481,7 +481,7 @@ export async function attendanceStats(req: Request, res: Response): Promise<void
   }
 
   // Get employees in scope.
-  const employees = await User.find({ ...departmentFilter, role: { $ne: "admin" } })
+  const employees = await User.find({ ...departmentFilter, role: { $ne: "admin" }, ...STAFF_FILTER })
     .select("name email")
     .sort({ name: 1 });
 

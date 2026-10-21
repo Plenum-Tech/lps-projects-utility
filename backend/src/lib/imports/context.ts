@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { companySettings } from "../companySettings.js";
 import type { DateFormat } from "../../models/CompanySettings.js";
 import type { ImportType } from "../../models/ImportJob.js";
-import { User } from "../../models/User.js";
+import { STAFF_FILTER, User } from "../../models/User.js";
 import type { IUser } from "../../models/User.js";
 import { cellText, type CellValue, type ParsedRow } from "./parse.js";
 
@@ -65,7 +65,7 @@ export class PeopleIndex {
   }
 
   static async load(): Promise<PeopleIndex> {
-    const users = await User.find().select("name email role department").lean<LeanPerson[]>();
+    const users = await User.find(STAFF_FILTER).select("name email role department").lean<LeanPerson[]>();
     return new PeopleIndex(users);
   }
 

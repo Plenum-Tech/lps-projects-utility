@@ -25,13 +25,14 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import { useMeetingConfig } from "@/hooks/use-meetings";
 import { ProjectApprovalCard } from "@/components/projects/settings/project-approval-card";
 
-/** Settings → Profile: name, employment details (read-only) and department. */
+/** Settings → Profile: name, employment details (read-only) and department (staff only — guests have neither). */
 export function ProfileSection() {
+  const guest = Boolean(useCurrentUser().data?.isGuest);
   return (
     <div className="space-y-6">
       <PersonalInfoCard />
-      <EmploymentCard />
-      <DepartmentCard />
+      {!guest && <EmploymentCard />}
+      {!guest && <DepartmentCard />}
     </div>
   );
 }

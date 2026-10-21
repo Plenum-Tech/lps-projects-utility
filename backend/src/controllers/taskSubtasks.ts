@@ -27,7 +27,7 @@ import { TASK_LIMITS } from "../models/Task.js";
 import { TaskFile } from "../models/TaskFile.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -112,9 +112,10 @@ async function subtaskRole(user: IUser, task: ITask) {
  */
 async function subtaskCandidateFilter(
   _actor: IUser,
-  _task: ITask
+  task: ITask
 ): Promise<Record<string, unknown>> {
-  return {};
+  // Anyone on the staff, or an outside guest who is already on this task.
+  return { $or: [STAFF_FILTER, { _id: { $in: task.assignees } }] };
 }
 
 async function parseSubtaskAssignee(

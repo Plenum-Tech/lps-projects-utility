@@ -44,5 +44,18 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     return <Navigate to="/settings/security" replace />;
   }
 
+  // Outside guests: their tasks and their own settings only (the API refuses the rest).
+  if (user.isGuest && !isGuestPath(location.pathname)) {
+    return <Navigate to="/tasks" replace />;
+  }
+
   return children;
+}
+
+/** Pages an outside guest may open: the task list (`?task=` opens one) and own profile / notifications / password. */
+const GUEST_PATHS = ["/tasks", "/settings", "/settings/profile", "/settings/notifications", "/settings/security"];
+
+export function isGuestPath(pathname: string): boolean {
+  const path = pathname.length > 1 ? pathname.replace(/\/+$/, "") : pathname;
+  return GUEST_PATHS.includes(path);
 }

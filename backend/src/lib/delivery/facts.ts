@@ -279,7 +279,7 @@ async function queryFacts(
   const facts: TaskFact[] = [];
   const appDay = makeAppDay();
   for (const r of rows) {
-    const doers = [...new Set((r.assignees ?? []).map(String))].filter((id) => !trafficManagers.has(id));
+    const doers = [...new Set((r.assignees ?? []).map(String))].filter((id) => !trafficManagers.has(id) && !ref.guests.has(id));
     const departments = doers.map((d) => ref.users.get(d)?.department ?? null);
     if (scope.kind === "department" && !departments.includes(scope.department)) continue;
     const teams = [
@@ -324,6 +324,8 @@ async function queryFacts(
 
 export interface RefData {
   users: Map<string, { name: string; department: string | null; role: string; designation: string }>;
+  /** Outside task guests: left out of the doers (never listed as people). */
+  guests: Set<string>;
   brands: Map<string, { name: string; shortName: string; color: string; active: boolean }>;
   departments: Map<string, string>;
   projects: Map<string, { code: string; name: string; brand: string | null }>;
@@ -332,15 +334,18 @@ export interface RefData {
 export function loadRefData(): Promise<RefData> {
   return deliveryCached("ref", async () => {
     const [users, brands, departments, projects] = await Promise.all([
-      User.find().select("name department role designation").lean(),
+      User.find().select("name department role designation isGuest").lean(),
       Brand.find().select("name shortName color active").lean(),
       Department.find().select("name").lean(),
       Project.find().select("code name brand").lean(),
     ]);
     return {
       users: new Map(
-        users.map((u) => [String(u._id), { name: u.name, department: u.department ? String(u.department) : null, role: u.role, designation: u.designation ?? "" }])
+        users
+          .filter((u) => !u.isGuest)
+          .map((u) => [String(u._id), { name: u.name, department: u.department ? String(u.department) : null, role: u.role, designation: u.designation ?? "" }])
       ),
+      guests: new Set(users.filter((u) => u.isGuest).map((u) => String(u._id))),
       brands: new Map(
         brands.map((b) => [String(b._id), { name: b.name, shortName: b.shortName ?? "", color: b.color, active: b.active }])
       ),

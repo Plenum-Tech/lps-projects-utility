@@ -97,7 +97,7 @@ export function TimerWidget() {
       </span>
       {timer ? (
         <RunningTimer timer={timer} />
-      ) : (
+      ) : user.isGuest ? null : (
         <Button
           variant="outline"
           size="sm"
@@ -109,7 +109,8 @@ export function TimerWidget() {
           <span className="hidden sm:inline">Start timer</span>
         </Button>
       )}
-      <StartTimerDialog open={startOpen} onOpenChange={setStartOpen} />
+      {/* Guests start timers from their task (the dialog lists projects). */}
+      {!user.isGuest && <StartTimerDialog open={startOpen} onOpenChange={setStartOpen} />}
     </>
   );
 }

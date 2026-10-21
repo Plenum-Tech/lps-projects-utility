@@ -7,7 +7,7 @@ import { clearLoginFailures } from "../lib/loginLock.js";
 import type { IPasswordSetupToken } from "../models/PasswordSetupToken.js";
 import { PASSWORD_SETUP_LIMITS, PasswordSetupToken } from "../models/PasswordSetupToken.js";
 import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import { issueSessionCookie } from "./auth.js";
 
 // ---------------------------------------------------------------------------
@@ -35,8 +35,23 @@ interface IssuedLink {
   emailed: boolean;
 }
 
-/** Creates a fresh link for `user` (revoking older unused ones) and emails it when SMTP is configured. */
-async function issueLink(user: IUser, actor: IUser, sendMail: boolean): Promise<IssuedLink> {
+/** Wording of the set-password email (defaults: "Set your password" / "Your account is ready"). */
+export interface PasswordLinkEmail {
+  subject: string;
+  /** Plain text line shown above the button (escaped). */
+  intro: string;
+}
+
+/**
+ * Creates a fresh link for `user` (revoking older unused ones) and emails it
+ * when SMTP is configured. Also used for task guests (controllers/taskGuests.ts).
+ */
+export async function issueLink(
+  user: IUser,
+  actor: IUser,
+  sendMail: boolean,
+  wording?: PasswordLinkEmail
+): Promise<IssuedLink> {
   const now = new Date();
   await PasswordSetupToken.updateMany(
     { user: user._id, usedAt: null, revokedAt: null },
@@ -56,8 +71,13 @@ async function issueLink(user: IUser, actor: IUser, sendMail: boolean): Promise<
     // Fire-and-forget: a mail failure never fails the request (the admin still gets the link).
     void sendEmail({
       to: user.email,
-      subject: "Set your password",
-      html: passwordSetupTemplate({ firstName: user.name.split(" ")[0] || user.name, setupUrl, expiresAt }),
+      subject: wording?.subject ?? "Set your password",
+      html: passwordSetupTemplate({
+        firstName: user.name.split(" ")[0] || user.name,
+        setupUrl,
+        expiresAt,
+        intro: wording?.intro,
+      }),
     }).catch(() => undefined);
   }
   return { setupUrl, expiresAt, emailed };
@@ -110,7 +130,7 @@ export async function createPasswordLinks(req: Request, res: Response): Promise<
   const body = (req.body ?? {}) as { userIds?: unknown; allPending?: unknown };
   let ids: string[];
   if (body.allPending === true) {
-    const pending = await User.find({ passwordSetupRequired: true }).select("_id").limit(PASSWORD_SETUP_LIMITS.maxBulk).lean();
+    const pending = await User.find({ passwordSetupRequired: true, ...STAFF_FILTER }).select("_id").limit(PASSWORD_SETUP_LIMITS.maxBulk).lean();
     ids = pending.map((u) => String(u._id));
   } else {
     if (!Array.isArray(body.userIds) || body.userIds.length === 0) {
@@ -193,6 +213,8 @@ export async function setDefaultPassword(req: Request, res: Response): Promise<v
   } else {
     filter = scope === "pending" ? { passwordSetupRequired: true } : { _id: { $ne: actor._id } };
   }
+  // Never outside guests: they choose their own password from their invitation link.
+  Object.assign(filter, STAFF_FILTER);
   // tokenVersion must be loaded: incrementing an unloaded value would reset it to 1
   // (and could make an older session valid again). email: to clear sign-in locks.
   const users = await User.find(filter).select("_id tokenVersion email");

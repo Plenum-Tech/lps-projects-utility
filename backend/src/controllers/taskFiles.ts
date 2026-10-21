@@ -3,6 +3,7 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import multer from "multer";
 import { deleteFromGridFs, openGridFsDownload, uploadToGridFs } from "../lib/gridfs.js";
+import { isGuestUser, withoutPeopleEmails } from "../lib/guests.js";
 import { parsePagination } from "../lib/pagination.js";
 import {
   canManageTaskAsync,
@@ -131,7 +132,8 @@ export async function listFiles(req: Request, res: Response): Promise<void> {
   }
 
   const [files, total] = await Promise.all([query, TaskFile.countDocuments(filter)]);
-  res.json({ files: files.map((f) => f.toJSON()), total, limit, offset });
+  const rows = files.map((f) => f.toJSON());
+  res.json({ files: isGuestUser(req.user) ? withoutPeopleEmails(rows) : rows, total, limit, offset });
 }
 
 /** Anyone who can view the task: uploads files (multipart field `files`, max 20 per task). */

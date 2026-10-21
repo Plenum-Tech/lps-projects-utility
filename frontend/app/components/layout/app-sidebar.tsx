@@ -211,6 +211,14 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
+/** Outside guests (invited to specific tasks): their tasks, nothing else. */
+const GUEST_GROUPS: ResolvedNavGroup[] = [
+  {
+    key: "guest",
+    items: [{ title: "My tasks", to: "/tasks", icon: ClipboardList, match: ["/tasks/"] }],
+  },
+];
+
 function resolveGroups(
   role: Role,
   approver: { isApprover: boolean; pending: number },
@@ -256,13 +264,14 @@ export function AppSidebar() {
   const logout = useLogout();
   const navigate = useNavigate();
   const brand = useBrand();
-  const approvals = useApprovalQueue(Boolean(user));
+  const guest = Boolean(user?.isGuest);
+  const approvals = useApprovalQueue(Boolean(user) && !guest);
   // Admins approve tasks that go over a project's scope.
-  const overScope = useOverScopeTasks(user?.role === "admin");
+  const overScope = useOverScopeTasks(user?.role === "admin" && !guest);
 
   if (!user) return null;
 
-  const groups = resolveGroups(
+  const groups = guest ? GUEST_GROUPS : resolveGroups(
     user.role,
     {
       isApprover: Boolean(approvals.data?.isApprover) || user.role === "admin",
@@ -281,8 +290,8 @@ export function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <Link
-          to="/dashboard"
-          title={`${PRODUCT_NAME} — Dashboard`}
+          to={guest ? "/tasks" : "/dashboard"}
+          title={guest ? `${PRODUCT_NAME} — My tasks` : `${PRODUCT_NAME} — Dashboard`}
           className="flex flex-col items-start gap-2 rounded-lg px-1 py-1 outline-none ring-sidebar-ring focus-visible:ring-2 group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:px-0"
         >
           <BrandLogo src={brand.logo} className="h-9 group-data-[collapsible=icon]:hidden" />
@@ -334,7 +343,7 @@ export function AppSidebar() {
           <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{user.name}</span>
             <span className="truncate text-xs text-sidebar-foreground/60">
-              {user.leadership ? "Leadership" : ROLE_LABELS[user.role]}
+              {guest ? "Guest" : user.leadership ? "Leadership" : ROLE_LABELS[user.role]}
             </span>
           </span>
           <span className="sr-only">— open profile settings</span>

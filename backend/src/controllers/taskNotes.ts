@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isGuestUser, withoutPeopleEmails } from "../lib/guests.js";
 import { notifyTask } from "../lib/notifications.js";
 import {
   canManageTaskAsync,
@@ -175,7 +176,8 @@ export async function listNotes(req: Request, res: Response): Promise<void> {
     TaskNote.find(filter).populate(NOTE_POPULATE).sort({ pinned: -1, createdAt: -1 }).limit(200),
     canManageTaskAsync(user, task),
   ]);
-  res.json({ notes: notes.map((n) => serializeNote(n, user, manager)), total: notes.length });
+  const rows = notes.map((n) => serializeNote(n, user, manager));
+  res.json({ notes: isGuestUser(user) ? withoutPeopleEmails(rows) : rows, total: notes.length });
 }
 
 /** Anyone who can view the task: adds a note `{ title?, body, visibility }`. */

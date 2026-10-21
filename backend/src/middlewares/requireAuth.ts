@@ -2,9 +2,11 @@ import type { NextFunction, Request, Response } from "express";
 import mongoose from "mongoose";
 import type { AccessTokenPayload } from "../lib/jwt.js";
 import { verifyAccessToken } from "../lib/jwt.js";
+import { isGuestUser } from "../lib/guests.js";
 import { applyLeadership } from "../lib/leadership.js";
 import { cached, invalidate } from "../lib/refCache.js";
 import { User } from "../models/User.js";
+import { guestMayCall } from "./guestAccess.js";
 
 const { BSON } = mongoose.mongo;
 
@@ -47,7 +49,10 @@ async function sessionUser(payload: Pick<AccessTokenPayload, "sub" | "tv">) {
   if (user && payload.tv > (user.tokenVersion ?? 0)) user = await loadUser(payload.sub, true);
   // Sessions signed before the bump are rejected.
   // Users and tokens from before the field existed both count as version 0.
-  return user && payload.tv === (user.tokenVersion ?? 0) ? user : null;
+  if (!user || payload.tv !== (user.tokenVersion ?? 0)) return null;
+  // A guest whose access an admin removed is signed out everywhere.
+  if (isGuestUser(user) && user.guestRevokedAt) return null;
+  return user;
 }
 
 /**
@@ -82,6 +87,18 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
   const user = await sessionUser(payload);
   if (!user) {
     res.status(401).json({ error: "Not authenticated" });
+    return;
+  }
+
+  // Outside guests: only the endpoints in middlewares/guestAccess.ts (deny by default).
+  // They never get leadership powers, whatever lists they end up on.
+  if (isGuestUser(user)) {
+    if (!guestMayCall(req)) {
+      res.status(403).json({ error: "Guests can only open the tasks they were invited to" });
+      return;
+    }
+    req.user = user;
+    next();
     return;
   }
 

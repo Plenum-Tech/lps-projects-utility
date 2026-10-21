@@ -80,7 +80,7 @@ import { TaskFile } from "../models/TaskFile.js";
 import { TaskHistory } from "../models/TaskHistory.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import { internalMeetingLabelId, PITCH_STEPS } from "../lib/pitches.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import { listTasksForProject } from "./tasks.js";
@@ -2590,7 +2590,9 @@ export async function listAssignableMembers(req: Request, res: Response): Promis
   const project = await getViewableProjectOr404(req, res);
   if (!project) return;
   const memberIds = project.members.map((m) => m.user);
-  const filter = canManageProject(req.user!, project) ? { _id: { $nin: memberIds } } : { _id: { $in: memberIds } };
+  const filter = canManageProject(req.user!, project)
+    ? { _id: { $nin: memberIds }, ...STAFF_FILTER }
+    : { _id: { $in: memberIds } };
   const users = await User.find(filter)
     .select("name email role department")
     .sort({ name: 1 });

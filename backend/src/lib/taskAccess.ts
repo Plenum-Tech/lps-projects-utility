@@ -13,6 +13,7 @@ import { TimeLog } from "../models/TimeLog.js";
 import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
+import { guestTaskFilter, isGuestUser } from "./guests.js";
 import { canCreateProjectTasks, canManageProject, canViewProject, departmentUserIds } from "./projectAccess.js";
 import { pearitySettings, pearityTagsByTask, readOnlyTagRef } from "./pearity.js";
 import type { PearityTagRefJson, TaskLike } from "./pearity.js";
@@ -63,6 +64,8 @@ export async function getTaskOr404(req: Request, res: Response): Promise<ITask |
  * anyone who can view the project.
  */
 export async function canViewTaskAsync(user: AccessUser, task: AccessTask & { project?: mongoose.Types.ObjectId | null }): Promise<boolean> {
+  // Guests: only tasks they are on — never through a project or a department.
+  if (isGuestUser(user)) return canViewTask(user, task);
   if (canViewTask(user, task)) return true;
   if (
     user.role === "head" &&
@@ -97,7 +100,9 @@ export async function getViewableTaskOr404(
  * acting on the task (comments, files, notes, time, status …) still needs
  * `canViewTaskAsync`.
  */
-export async function canReadTaskAsync(user: AccessUser | undefined, _task: AccessTask): Promise<boolean> {
+export async function canReadTaskAsync(user: AccessUser | undefined, task: AccessTask): Promise<boolean> {
+  // Guests never open other people's tasks, not even view only.
+  if (user && isGuestUser(user)) return canViewTask(user, task);
   return Boolean(user);
 }
 
@@ -131,7 +136,7 @@ export function parseDateOnly(value: unknown): Date | null {
 
 /** Populate paths for a task in API responses (list, board and detail). */
 export const TASK_POPULATE = [
-  { path: "assignees", select: "name email role department" },
+  { path: "assignees", select: "name email role department isGuest" },
   { path: "assignedBy", select: "name email" },
   { path: "department", select: "name" },
   { path: "labels", select: "name color" },
@@ -147,7 +152,10 @@ export const TASK_POPULATE = [
 // Permission checks
 // ---------------------------------------------------------------------------
 
-type AccessUser = Pick<IUser, "_id" | "role" | "department">;
+type AccessUser = Pick<IUser, "_id" | "role" | "department"> & {
+  /** Outside guest (lib/guests.ts): only tasks they are on, never manages anything. */
+  isGuest?: boolean;
+};
 type AccessTask = Pick<ITask, "assignees" | "assignedBy" | "department"> & {
   /** Optional so lean/partial task shapes still type-check; subtask assignees can view the task. */
   subtasks?: ReadonlyArray<{ assignee?: mongoose.Types.ObjectId | null }>;
@@ -192,6 +200,7 @@ export function canManageTask(
   task: AccessTask,
   ctx: { projectManager?: boolean } = {}
 ): boolean {
+  if (isGuestUser(user)) return false;
   return user.role === "admin" || isCreator(user, task) || Boolean(ctx.projectManager);
 }
 
@@ -200,7 +209,7 @@ export async function managesTaskProject(
   user: AccessUser,
   task: { project?: mongoose.Types.ObjectId | null }
 ): Promise<boolean> {
-  if (!task.project) return false;
+  if (!task.project || isGuestUser(user)) return false;
   const project = await Project.findById(task.project).select("manager createdBy members departments isPublic archivedAt");
   return Boolean(project && canManageProject(user, project));
 }
@@ -227,6 +236,8 @@ export function canViewTask(
   task: AccessTask,
   departments?: ReadonlyArray<mongoose.Types.ObjectId>
 ): boolean {
+  // Guests: tasks they are assigned to (or a subtask of), whatever role the account has.
+  if (isGuestUser(user)) return isAssignee(user, task) || isSubtaskAssignee(user, task);
   if (user.role === "admin") return true;
   // Subtask assignees can open the parent task (detail, comments, files), but
   // it stays off their board / "Assigned to me" (taskVisibilityFilter below).
@@ -291,6 +302,7 @@ async function managedProjectIdsFor(user: AccessUser): Promise<mongoose.Types.Ob
  * assignee from it) and tasks of projects they manage.
  */
 export async function taskVisibilityFilter(user: AccessUser): Promise<Record<string, unknown>> {
+  if (isGuestUser(user)) return guestTaskFilter(user._id as mongoose.Types.ObjectId);
   if (user.role === "admin") return {};
   const or: Record<string, unknown>[] = [{ assignees: user._id }, { assignedBy: user._id }];
   const head = user.role === "head" && Boolean(user.department);
@@ -377,8 +389,10 @@ export async function taskProjectFlags(
   return {
     skipReview: project ? project.requireTaskApproval === false : false,
     archived: Boolean(project?.archivedAt),
-    projectManager: Boolean(project && user && canManageProject(user, project)),
-    canCreateTasks: Boolean(project && user && !project.archivedAt && canCreateProjectTasks(user, project)),
+    projectManager: Boolean(project && user && !isGuestUser(user) && canManageProject(user, project)),
+    canCreateTasks: Boolean(
+      project && user && !isGuestUser(user) && !project.archivedAt && canCreateProjectTasks(user, project)
+    ),
   };
 }
 
@@ -442,9 +456,25 @@ export function leanTaskJson(task: LeanTask): Record<string, unknown> {
   return json;
 }
 
+/** People on a task as a guest sees them: names only (no emails, roles or departments). */
+function scrubPeopleForGuest(json: Record<string, unknown>): void {
+  const nameOnly = (value: unknown): unknown => {
+    if (!value || typeof value !== "object" || !("name" in value)) return value;
+    const person = value as { _id?: unknown; name?: unknown; isGuest?: unknown };
+    return { _id: person._id, name: person.name, ...(person.isGuest ? { isGuest: true } : {}) };
+  };
+  if (Array.isArray(json.assignees)) json.assignees = json.assignees.map(nameOnly);
+  json.assignedBy = nameOnly(json.assignedBy);
+  json.reviewedBy = nameOnly(json.reviewedBy);
+  if (Array.isArray(json.subtasks)) {
+    json.subtasks = (json.subtasks as Array<Record<string, unknown>>).map((sub) => ({ ...sub, assignee: nameOnly(sub.assignee) }));
+  }
+  json.department = null;
+}
+
 export async function serializeTasks(
   tasks: Array<ITask | LeanTask>,
-  viewer?: { pinnedTasks?: mongoose.Types.ObjectId[] } | null
+  viewer?: { pinnedTasks?: mongoose.Types.ObjectId[]; isGuest?: boolean } | null
 ): Promise<Record<string, unknown>[]> {
   const ids = tasks.map((t) => t._id as mongoose.Types.ObjectId);
   const [comments, files, logged, pearityTags] = await Promise.all([
@@ -454,12 +484,14 @@ export async function serializeTasks(
     pearityTagsByTask(tasks as unknown as TaskLike[]),
   ]);
   const pinned = new Set((viewer?.pinnedTasks ?? []).map((id) => id.toString()));
+  const guest = isGuestUser(viewer);
   return tasks.map((t) => {
     const id = t._id.toString();
     const json =
       typeof (t as ITask).toJSON === "function"
         ? ((t as ITask).toJSON() as Record<string, unknown>)
         : leanTaskJson(t as LeanTask);
+    if (guest) scrubPeopleForGuest(json);
     return {
       ...json,
       number: json.number ?? null,
@@ -469,8 +501,8 @@ export async function serializeTasks(
       fileCount: files.get(id) ?? 0,
       loggedMinutes: logged.get(id) ?? 0,
       pinned: pinned.has(id),
-      /** Pearity tag `{ tagId, tagName, createdAt, createdBy }` or null (lib/pearity.ts). */
-      pearityTag: pearityTags.get(id) ?? null,
+      /** Pearity tag `{ tagId, tagName, createdAt, createdBy }` or null (lib/pearity.ts); never for guests. */
+      pearityTag: guest ? null : (pearityTags.get(id) ?? null),
     };
   });
 }
@@ -485,25 +517,29 @@ export function taskPermissions(
   const assignee = isAssignee(user, task) && !flags.archived;
   const manageSubtasks = canManageSubtasks(user, task, flags) && !flags.archived;
   const subtaskAssignee = isSubtaskAssignee(user, task) && !flags.archived;
+  // Guests work on the task (time, files, comments, submit) but never change its details or subtasks.
+  const guest = isGuestUser(user);
   return {
     // Its managers and assignees edit it (delete stays with its managers).
-    canEdit: manage || assignee,
+    canEdit: !guest && (manage || assignee),
     canDelete: manage,
     canReview: manage && task.status === "in_review",
     canRemind: manage,
     /** Add/edit/delete any subtask. */
     canManageSubtasks: manageSubtasks,
     /** Add subtasks (managers + task assignees); assignees edit/delete only their own. */
-    canAddSubtasks: manageSubtasks || assignee,
+    canAddSubtasks: !guest && (manageSubtasks || assignee),
     /** Toggle done — non-managers only on subtasks assigned to them or unassigned. */
-    canToggleSubtasks: manageSubtasks || assignee || subtaskAssignee,
+    canToggleSubtasks: !guest && (manageSubtasks || assignee || subtaskAssignee),
     canSubmit:
       (assignee || (manage && Boolean(flags.skipReview))) && ["todo", "in_progress", "rejected"].includes(task.status),
     allowedStatuses: flags.archived
       ? []
       : allowedTransitions(user, task, { skipReview: flags.skipReview, projectManager: flags.projectManager }),
     /** Copy the task: project tasks need create rights in the project; standalone ones heads/admins. */
-    canDuplicate: !flags.archived && (task.project ? Boolean(flags.canCreateTasks) : user.role !== "employee"),
+    canDuplicate: !guest && !flags.archived && (task.project ? Boolean(flags.canCreateTasks) : user.role !== "employee"),
+    /** Invite an outside person (guest) to the task: whoever manages it. */
+    canInviteGuests: manage,
     /** Start a timer / log time on this task (server re-checks project rules). */
     // Comments, files and time stay editable after completion.
     canLogTime: manage || assignee,
@@ -529,6 +565,7 @@ function readOnlyPermissions(flags: { skipReview?: boolean; archived?: boolean }
     canSubmit: false,
     allowedStatuses: [],
     canDuplicate: false,
+    canInviteGuests: false,
     canLogTime: false,
     canEditActualDates: false,
     skipsReview: Boolean(flags.skipReview),
@@ -560,7 +597,7 @@ export async function loadTaskDetail(
   if (!populated) return null;
   const [task] = await serializeTasks([populated], user);
   // The source meeting may be private: read-only viewers don't get its title / link.
-  task!.sourceMeeting = access === "full" ? await sourceMeetingDetail(raw) : null;
+  task!.sourceMeeting = access === "full" && !isGuestUser(user) ? await sourceMeetingDetail(raw) : null;
   // Nor the Pearity engine link (see readOnlyTagRef).
   if (access === "read" && task!.pearityTag) {
     task!.pearityTag = readOnlyTagRef(await pearitySettings(), task!.pearityTag as PearityTagRefJson);

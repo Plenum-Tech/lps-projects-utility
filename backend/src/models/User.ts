@@ -49,6 +49,12 @@ export const EMAIL_PREFERENCE_KEYS = [
   "leaveRequests",
 ] as const satisfies readonly (keyof EmailPreferences)[];
 
+/**
+ * Spread into every people query (lists, pickers, counts, reports, jobs):
+ * outside guests are never part of the company's people.
+ */
+export const STAFF_FILTER = { isGuest: { $ne: true } } as const;
+
 export interface IUser extends mongoose.Document {
   name: string;
   email: string;
@@ -90,6 +96,16 @@ export interface IUser extends mongoose.Document {
   noticePeriodEnd?: Date | null;
   /** Idempotency keys of the daily HR reminder job (last 20 kept). */
   lastHrReminderKeys: string[];
+  /**
+   * Outside person invited to specific tasks (lib/guests.ts): signs in like
+   * anyone else but can only reach the tasks they are on (middlewares/guestAccess.ts),
+   * and is left out of every people list (STAFF_FILTER). Their role stays "employee".
+   */
+  isGuest: boolean;
+  /** Guests: who first invited them. */
+  guestInvitedBy?: mongoose.Types.ObjectId | null;
+  /** Guests: set when an admin removed their access — sign-in and sessions are refused. */
+  guestRevokedAt?: Date | null;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidate: string): Promise<boolean>;
@@ -146,6 +162,9 @@ const userSchema = new Schema<IUser>(
     noticePeriodStart: { type: Date, default: null },
     noticePeriodEnd: { type: Date, default: null },
     lastHrReminderKeys: { type: [String], default: [] },
+    isGuest: { type: Boolean, default: false },
+    guestInvitedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    guestRevokedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
@@ -160,9 +179,9 @@ userSchema.index({ probationEndDate: 1 });
 userSchema.index({ noticePeriodEnd: 1 });
 userSchema.index({ internshipEndDate: 1 });
 
-// Every new user gets the next "EMP-xxxx" unless an ID was given.
+// Every new user gets the next "EMP-xxxx" unless an ID was given (guests are not employees).
 userSchema.pre("save", async function () {
-  if (!this.isNew || this.employeeId) return;
+  if (!this.isNew || this.employeeId || this.isGuest) return;
   this.employeeId = await nextEmployeeId();
 });
 

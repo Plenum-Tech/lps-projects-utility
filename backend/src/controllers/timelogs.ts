@@ -22,6 +22,7 @@ import {
 } from "../lib/projectAccess.js";
 import { scheduleProgressRecalc } from "../lib/projectProgress.js";
 import { canViewTaskAsync, isAssignee, isSubtaskAssignee, parseDateOnly } from "../lib/taskAccess.js";
+import { isGuestUser } from "../lib/guests.js";
 import {
   computeDurations,
   computeEarnings,
@@ -142,6 +143,8 @@ async function timerJson(actor: IUser, id: mongoose.Types.ObjectId | null): Prom
  * given (resolveTarget), so project rights never reach another project's task.
  */
 async function canLogOn(user: IUser, project: IProject | null, task: ITask | null): Promise<boolean> {
+  // Outside guests: only on a task they are on (never a project as such).
+  if (isGuestUser(user)) return Boolean(task && (isAssignee(user, task) || isSubtaskAssignee(user, task)));
   if (user.role === "admin") return true;
   if (project) {
     if (isProjectMember(user, project) || isProjectManager(user, project)) return true;
@@ -174,6 +177,10 @@ async function resolveTarget(
     if (typeof rawTask !== "string" || isInvalidObjectId(rawTask)) return { status: 400, error: "task must be a valid task ID" };
     task = await Task.findById(rawTask);
     if (!task) return { status: 404, error: "Task not found" };
+    // Guests: refused before anything else is checked, so other tasks reveal nothing.
+    if (isGuestUser(owner) && !isAssignee(owner, task) && !isSubtaskAssignee(owner, task)) {
+      return { status: 403, error: "Only project members or task assignees can log time here" };
+    }
   }
   if (rawProject !== undefined && rawProject !== null && rawProject !== "") {
     if (typeof rawProject !== "string" || isInvalidObjectId(rawProject)) {
@@ -328,7 +335,8 @@ export async function listTimeLogs(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
   const { limit, offset } = parsePagination(req);
   const and: Record<string, unknown>[] = [];
-  const scope = typeof req.query.scope === "string" && req.query.scope ? req.query.scope : "mine";
+  // Guests only ever list their own logs (the task's Time entries ask for "team").
+  const scope = isGuestUser(actor) ? "mine" : typeof req.query.scope === "string" && req.query.scope ? req.query.scope : "mine";
 
   if (scope === "mine") {
     and.push({ user: actor._id });

@@ -5,6 +5,7 @@ import {
   getEmailPreferences,
   getMe,
   listUsers,
+  revokeGuestAccess,
   updateEmailPreferences,
   updateMe,
   updateUser,
@@ -30,6 +31,8 @@ router.post("/password-links", requireAuth, requireRole("admin"), createPassword
 router.post("/default-password", requireAuth, requireRole("admin"), setDefaultPassword);
 router.post("/:id/password-link", requireAuth, requireRole("admin"), createPasswordLink);
 router.patch("/:id", requireAuth, requireRole("admin"), updateUser);
+// Outside task guests: end their access (sign-in, sessions, tasks shared with others).
+router.post("/:id/guest-access/revoke", requireAuth, requireRole("admin"), revokeGuestAccess);
 router.delete("/:id", requireAuth, requireRole("admin"), deleteUser);
 
 export default router;

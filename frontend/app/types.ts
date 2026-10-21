@@ -36,6 +36,10 @@ export interface User {
   passwordSetupRequired?: boolean;
   /** An admin set a default password: ask for a new one at sign-in. */
   mustChangePassword?: boolean;
+  /** Outside person invited to specific tasks: sees only those tasks (and their profile). */
+  isGuest?: boolean;
+  /** Guests: when an admin removed their access (sign-in refused). */
+  guestRevokedAt?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -885,10 +889,12 @@ export interface UserRef {
   email: string;
 }
 
-/** Populated assignee (department is an id, not populated). */
+/** Populated assignee (department is an id, not populated). Guests viewing a task get names only. */
 export interface AssigneeRef extends UserRef {
   role: Role;
   department: string | null;
+  /** Outside guest invited to the task. */
+  isGuest?: boolean;
 }
 
 export interface Subtask {
@@ -1175,6 +1181,8 @@ export interface TaskPermissions {
   allowedStatuses: TaskStatus[];
   /** May copy the task (project tasks: create rights in the project; standalone: heads/admins). */
   canDuplicate?: boolean;
+  /** May invite an outside person (guest) to the task: its creator, project manager or an admin. */
+  canInviteGuests?: boolean;
   /** May start a timer / log time on this task. */
   canLogTime?: boolean;
   /** Edit Actual start / end (managers, the department head and assignees). */

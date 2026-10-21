@@ -48,6 +48,7 @@ import {
 } from "../controllers/taskSubtasks.js";
 import { generateTaskPearity, getTaskPearity } from "../controllers/pearity.js";
 import { checkOutcomeReadiness } from "../controllers/outcomeReadiness.js";
+import { inviteTaskGuest } from "../controllers/taskGuests.js";
 import { outcomeReadinessRateLimit } from "../middlewares/rateLimit.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
@@ -120,6 +121,9 @@ router.post("/:id/outcome-readiness", outcomeReadinessRateLimit, checkOutcomeRea
 
 // Creator/admin: review a submission.
 router.post("/:id/review", reviewTask);
+
+// Creator / project manager / admin: invite an outside person (guest) or a colleague by email.
+router.post("/:id/guests", inviteTaskGuest);
 
 // Creator/admin: manual reminder to assignees (once per hour).
 router.post("/:id/remind", remindTask);

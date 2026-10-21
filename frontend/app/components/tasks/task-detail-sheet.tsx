@@ -20,6 +20,7 @@ import {
   LuRepeat,
   LuSend,
   LuTrash2,
+  LuUserPlus,
   LuMessageSquare,
   LuPaperclip,
 } from "react-icons/lu";
@@ -54,6 +55,7 @@ import { PearityJourney } from "@/components/tasks/task-history";
 import { TaskTimerAction } from "@/components/tasks/task-timer-button";
 import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { TaskComments } from "@/components/tasks/task-comments";
+import { GuestBadge, InviteGuestDialog } from "@/components/tasks/invite-guest-dialog";
 import { TaskFiles } from "@/components/tasks/task-files";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -73,6 +75,7 @@ import {
 } from "@/components/ui/sheet";
 import { PageDrawerContent } from "@/components/globals/page-drawer";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { useRemindTask, useTask, useUpdateTaskStatus } from "@/hooks/use-tasks";
 import { getErrorMessage } from "@/lib/api";
 import { formatTimestamp } from "@/lib/meetings";
@@ -189,14 +192,19 @@ function TaskDetail({
   initialTab: TabValue;
 }) {
   const [dialog, setDialog] = useState<
-    "edit" | "update" | "submit" | "review" | "delete" | "rework" | null
+    "edit" | "update" | "submit" | "review" | "delete" | "rework" | "invite" | null
   >(null);
+  // Outside guests work from this sheet (time, files, comments, submit) — no edit form, project or Pearity.
+  const guest = Boolean(useCurrentUser().data?.isGuest);
   // Comments, files and time live in Edit (editors) / Update (others).
   const workTab: WorkTab | undefined =
     initialTab === "comments" || initialTab === "files" || initialTab === "time" ? initialTab : undefined;
   const isWorker = task.assignees.some((a) => a._id === me._id);
   const canWork =
-    !permissions.readOnly && !viewOnly && (permissions.canEdit || Boolean(permissions.canLogTime) || isWorker);
+    !guest &&
+    !permissions.readOnly &&
+    !viewOnly &&
+    (permissions.canEdit || Boolean(permissions.canLogTime) || isWorker);
   useEffect(() => {
     // Links to ?tab=comments|files|time open the form on that section.
     if (workTab && canWork) setDialog(permissions.canEdit ? "edit" : "update");
@@ -334,7 +342,7 @@ function TaskDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {!viewOnly && <PearityGenerateButton task={task} />}
+            {!viewOnly && !guest && <PearityGenerateButton task={task} />}
             {canAddRework && (
               <Button variant="outline" size="sm" onClick={() => setDialog("rework")}>
                 <LuRefreshCw aria-hidden />
@@ -357,6 +365,12 @@ function TaskDetail({
                   Update
                 </Button>
               )
+            )}
+            {permissions.canInviteGuests && !viewOnly && (
+              <Button variant="outline" size="sm" onClick={() => setDialog("invite")}>
+                <LuUserPlus aria-hidden />
+                Invite outside person
+              </Button>
             )}
             {permissions.canRemind && (
               <Button
@@ -427,14 +441,15 @@ function TaskDetail({
                         {user.name}
                         {user._id === me._id && " (you)"}
                       </span>
+                      {user.isGuest && <GuestBadge />}
                     </li>
                   ))}
                 </ul>
               </Fact>
               {task.project && (
                 <Fact label="Project">
-                  {viewOnly ? (
-                    // View only: the caller can't open the project itself.
+                  {viewOnly || guest ? (
+                    // View only / guests: the caller can't open the project itself.
                     <span className="inline-flex items-center gap-1.5 font-medium">
                       <LuFolderKanban
                         aria-hidden
@@ -622,9 +637,10 @@ function TaskDetail({
               <TaskFiles
                 taskId={task._id}
                 me={{ _id: me._id, role: me.role }}
-                canManageAll={permissions.canDelete || me.role === "admin"}
+                canManageAll={permissions.canDelete || (me.role === "admin" && !guest)}
                 subtasks={task.subtasks}
                 readOnly={viewOnly}
+                canDeleteOwn={!guest}
               />
             </section>
             <section aria-labelledby="task-comments-heading" className="space-y-2 rounded-lg border bg-muted/20 p-3 sm:p-4">
@@ -681,15 +697,18 @@ function TaskDetail({
         </section>
       </div>
 
-      <TaskFormDialog
-        open={dialog === "edit" || dialog === "update"}
-        onOpenChange={(open) => setDialog(open ? (permissions.canEdit ? "edit" : "update") : null)}
-        task={task}
-        permissions={permissions}
-        workOnly={dialog === "update"}
-        initialWorkTab={workTab}
-      />
-      {task.project && (
+      {/* Not mounted for guests: the form loads people, projects, labels (all refused to them). */}
+      {!guest && (
+        <TaskFormDialog
+          open={dialog === "edit" || dialog === "update"}
+          onOpenChange={(open) => setDialog(open ? (permissions.canEdit ? "edit" : "update") : null)}
+          task={task}
+          permissions={permissions}
+          workOnly={dialog === "update"}
+          initialWorkTab={workTab}
+        />
+      )}
+      {task.project && !guest && (
         <TaskFormDialog
           open={dialog === "rework"}
           onOpenChange={(open) => setDialog(open ? "rework" : null)}
@@ -708,6 +727,13 @@ function TaskDetail({
         open={dialog === "review"}
         onOpenChange={(open) => setDialog(open ? "review" : null)}
       />
+      {permissions.canInviteGuests && (
+        <InviteGuestDialog
+          task={task}
+          open={dialog === "invite"}
+          onOpenChange={(open) => setDialog(open ? "invite" : null)}
+        />
+      )}
       <DeleteTaskDialog
         task={task}
         open={dialog === "delete"}

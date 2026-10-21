@@ -81,6 +81,7 @@ export function TaskFiles({
   canManageAll,
   subtasks = [],
   readOnly = false,
+  canDeleteOwn = true,
 }: {
   taskId: string;
   me: { _id: string; role: Role };
@@ -90,6 +91,8 @@ export function TaskFiles({
   subtasks?: Subtask[];
   /** View-only task: no upload zone and no deletes (the server refuses them). */
   readOnly?: boolean;
+  /** Delete files you uploaded (off for outside guests: they add files but never delete). */
+  canDeleteOwn?: boolean;
 }) {
   const files = useTaskFiles(taskId);
   const upload = useUploadTaskFiles(taskId);
@@ -232,7 +235,7 @@ export function TaskFiles({
                     key={file._id}
                     taskId={taskId}
                     file={file}
-                    canDelete={!readOnly && (canManageAll || file.uploadedBy?._id === me._id)}
+                    canDelete={!readOnly && (canManageAll || (canDeleteOwn && file.uploadedBy?._id === me._id))}
                   />
                 ))}
               </ul>

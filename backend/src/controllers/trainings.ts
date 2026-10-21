@@ -20,7 +20,7 @@ import { Department } from "../models/Department.js";
 import type { ITraining } from "../models/Training.js";
 import { Training, TrainingProgress } from "../models/Training.js";
 import type { IUser } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
 // HR trainings: admins upload a deck and assign it; assignees read every slide
@@ -113,8 +113,9 @@ function isAssigned(training: ITraining, user: IUser): boolean {
 /** Users a training is assigned to (current members of its departments). */
 async function assigneesOf(training: ITraining) {
   const filter = training.assignAll
-    ? {}
+    ? { ...STAFF_FILTER }
     : {
+        ...STAFF_FILTER,
         $or: [
           { _id: { $in: training.users } },
           { department: { $in: training.departments } },
@@ -679,7 +680,7 @@ export async function listTrainings(
   const trainings = await Training.find(
     includeArchived ? {} : { archived: false },
   ).sort({ createdAt: -1 });
-  const totalUsers = await User.countDocuments();
+  const totalUsers = await User.countDocuments(STAFF_FILTER);
   const rows = await Promise.all(
     trainings.map(async (training) => {
       const assignees = training.assignAll ? null : await assigneesOf(training);

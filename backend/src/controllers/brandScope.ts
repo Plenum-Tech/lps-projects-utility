@@ -6,7 +6,7 @@ import { extractScope, type ExtractedLead, type ScopeExtraction } from "../lib/s
 import { computeScopeMatch, parseAgreement, parseMatchRows, type MatchRow, type ScopeAgreement } from "../lib/scopeMatch.js";
 import { scopeVersionsOf } from "../lib/scopeVersions.js";
 import { Brand, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 // ---------------------------------------------------------------------------
 // Brand scope vs its agreement: the similarity score (POST /api/brands/scope-match),
@@ -138,7 +138,7 @@ export interface LeadMatch {
  */
 export async function matchLeadUsers(leads: ExtractedLead[]): Promise<LeadMatch[]> {
   if (!leads.length) return [];
-  const users = await User.find({}).select("name email").lean();
+  const users = await User.find(STAFF_FILTER).select("name email").lean();
   const out: LeadMatch[] = [];
   for (const lead of leads) {
     const n = lead.name.trim().toLowerCase().replace(/\s+/g, " ");

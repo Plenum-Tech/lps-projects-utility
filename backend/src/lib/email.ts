@@ -890,7 +890,13 @@ export function passwordChangedTemplate(params: { firstName: string; when: strin
   return wrapTemplate("Your password was changed", body);
 }
 
-export function passwordSetupTemplate(params: { firstName: string; setupUrl: string; expiresAt: Date }): string {
+export function passwordSetupTemplate(params: {
+  firstName: string;
+  setupUrl: string;
+  expiresAt: Date;
+  /** Replaces "Your <company> account is ready…" (e.g. a task guest invitation). */
+  intro?: string;
+}): string {
   const expires = params.expiresAt.toLocaleDateString("en-US", {
     weekday: "short",
     year: "numeric",
@@ -899,7 +905,7 @@ export function passwordSetupTemplate(params: { firstName: string; setupUrl: str
   });
   const body = `
     <p>Hi ${escapeHtml(params.firstName)},</p>
-    <p>Your ${escapeHtml(companyName())} account is ready. Choose a password to sign in.</p>
+    <p>${escapeHtml(params.intro ?? `Your ${companyName()} account is ready.`)} Choose a password to sign in.</p>
     <a href="${escapeHtml(params.setupUrl)}" style="${BUTTON_STYLE}">Set your password</a>
     <p style="color: #6b7280; font-size: 13px;">This link expires on <strong>${escapeHtml(expires)}</strong> and can be used once.</p>
     <p style="color: #6b7280; font-size: 13px;">If you weren't expecting this, ignore this email or contact your administrator.</p>

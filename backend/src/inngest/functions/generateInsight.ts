@@ -231,14 +231,14 @@ export const generateInsightFunction = inngest.createFunction(
     // Step 2: Collect attendance data.
     const attendance = await step.run("collect-attendance", async () => {
       const { Attendance } = await import("../../models/Attendance.js");
-      const { User } = await import("../../models/User.js");
+      const { STAFF_FILTER, User } = await import("../../models/User.js");
 
       // Last 30 days
       const thirtyDaysAgo = new Date();
       thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
 
       const deptId = insightData.departmentId ?? null;
-      const userFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+      const userFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
       if (insightData.scope === "department" && deptId) {
         userFilter.department = deptId;
       }
@@ -333,10 +333,10 @@ export const generateInsightFunction = inngest.createFunction(
     // Step 3: Collect leave data.
     const leaves = await step.run("collect-leaves", async () => {
       const { Leave } = await import("../../models/Leave.js");
-      const { User } = await import("../../models/User.js");
+      const { STAFF_FILTER, User } = await import("../../models/User.js");
 
       const deptId = insightData.departmentId ?? null;
-      const userFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+      const userFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
       if (insightData.scope === "department" && deptId) {
         userFilter.department = deptId;
       }
@@ -409,10 +409,10 @@ export const generateInsightFunction = inngest.createFunction(
     // Step 4: Collect task data.
     const tasks = await step.run("collect-tasks", async () => {
       const { Task } = await import("../../models/Task.js");
-      const { User } = await import("../../models/User.js");
+      const { STAFF_FILTER, User } = await import("../../models/User.js");
 
       const deptId = insightData.departmentId ?? null;
-      const userFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+      const userFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
       if (insightData.scope === "department" && deptId) {
         userFilter.department = deptId;
       }
@@ -498,10 +498,10 @@ export const generateInsightFunction = inngest.createFunction(
       const { PerformanceReview } = await import(
         "../../models/PerformanceReview.js"
       );
-      const { User } = await import("../../models/User.js");
+      const { STAFF_FILTER, User } = await import("../../models/User.js");
 
       const deptId = insightData.departmentId ?? null;
-      const userFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+      const userFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
       if (insightData.scope === "department" && deptId) {
         userFilter.department = deptId;
       }
@@ -549,10 +549,10 @@ export const generateInsightFunction = inngest.createFunction(
     // Step 6: Collect feedback data.
     const feedback = await step.run("collect-feedback", async () => {
       const { Feedback } = await import("../../models/Feedback.js");
-      const { User } = await import("../../models/User.js");
+      const { STAFF_FILTER, User } = await import("../../models/User.js");
 
       const deptId = insightData.departmentId ?? null;
-      const userFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+      const userFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
       if (insightData.scope === "department" && deptId) {
         userFilter.department = deptId;
       }

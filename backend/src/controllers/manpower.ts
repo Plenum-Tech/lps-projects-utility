@@ -25,7 +25,7 @@ import {
   APPROVED_PLAN,
 } from "../models/ManpowerPlan.js";
 import { Project } from "../models/Project.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 // /api/manpower — the manpower plan (replaces the planning Excel). Heads and
 // admins read it; leadership and Nazeer save (lib/manpowerAccess.ts), and
@@ -222,7 +222,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
   const [{ links, unlinked, scope }, leaveDays, allUsers] = await Promise.all([
     rowLinks(plan),
     leaveDaysByUser(month),
-    User.find({}).select("name designation role").sort({ name: 1 }).lean(),
+    User.find(STAFF_FILTER).select("name designation role").sort({ name: 1 }).lean(),
   ]);
 
   // Per-person allocation.

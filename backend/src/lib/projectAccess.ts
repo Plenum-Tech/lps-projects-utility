@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isGuestUser } from "./guests.js";
 import { isProjectApproved } from "./projectApproval.js";
 import { isProjectExpired, projectClosesOn } from "./projectExpiry.js";
 import { cached } from "./refCache.js";
@@ -29,7 +30,10 @@ export function param(req: Request, name: string): string | undefined {
 // Types
 // ---------------------------------------------------------------------------
 
-export type AccessUser = Pick<IUser, "_id" | "role" | "department">;
+export type AccessUser = Pick<IUser, "_id" | "role" | "department"> & {
+  /** Outside guests (lib/guests.ts) never see or manage projects. */
+  isGuest?: boolean;
+};
 
 type AccessProject = Pick<
   IProject,
@@ -70,6 +74,7 @@ export function isDepartmentHeadOf(user: AccessUser, project: AccessProject): bo
 
 /** admin: all; head: their department(s) + member/manager/creator; others: member/manager or public. */
 export function canViewProject(user: AccessUser, project: AccessProject): boolean {
+  if (isGuestUser(user)) return false;
   if (user.role === "admin") return true;
   if (isProjectManager(user, project) || isProjectMember(user, project)) return true;
   if (sameId(project.createdBy, user._id)) return true;
@@ -79,6 +84,7 @@ export function canViewProject(user: AccessUser, project: AccessProject): boolea
 
 /** Edit, status, members, milestones, archive: admin, the manager, or whoever created it. */
 export function canManageProject(user: AccessUser, project: AccessProject): boolean {
+  if (isGuestUser(user)) return false;
   if (user.role === "admin") return true;
   if (isProjectManager(user, project)) return true;
   return sameId(project.createdBy, user._id);
@@ -91,6 +97,7 @@ export function canCreateProject(_user: AccessUser): boolean {
 
 /** Create tasks in the project: admin, managers, members, and heads who can view it. */
 export function canCreateProjectTasks(user: AccessUser, project: AccessProject): boolean {
+  if (isGuestUser(user)) return false;
   if (canManageProject(user, project) || isProjectMember(user, project)) return true;
   return user.role === "head" && canViewProject(user, project);
 }
@@ -114,6 +121,8 @@ export function canApproveProjectTime(user: AccessUser, project: AccessProject):
 
 /** Mongo filter for every project `user` may view (mirrors `canViewProject`). */
 export function projectVisibilityFilter(user: AccessUser): Record<string, unknown> {
+  // Guests: no project at all (matches nothing).
+  if (isGuestUser(user)) return { _id: { $in: [] } };
   if (user.role === "admin") return {};
   const or: Record<string, unknown>[] = [
     { "members.user": user._id },

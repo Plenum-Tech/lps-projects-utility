@@ -17,7 +17,7 @@ import {
   type LeaveType,
 } from "../models/LeaveType.js";
 import type { IUser, LeaveBalance } from "../models/User.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -595,7 +595,7 @@ export async function listBalances(req: Request, res: Response): Promise<void> {
   const { limit, offset } = parsePagination(req);
   const search = searchRegex(req.query.search);
 
-  const filter: Record<string, unknown> = {};
+  const filter: Record<string, unknown> = { ...STAFF_FILTER };
   if (search) {
     filter.$or = [{ name: search }, { email: search }];
   }

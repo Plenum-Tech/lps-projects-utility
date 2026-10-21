@@ -76,8 +76,10 @@ export async function login(req: Request, res: Response): Promise<void> {
   const account = await User.findOne({ email: emailLower }).select("+password");
 
   // Imported accounts have no usable password until the user sets one (set-password
-  // link or Forgot password): they fail exactly like a wrong password.
-  const user = account && !account.passwordSetupRequired ? account : null;
+  // link or Forgot password): they fail exactly like a wrong password. So do
+  // guests whose access an admin removed.
+  const revokedGuest = Boolean(account?.isGuest && account.guestRevokedAt);
+  const user = account && !account.passwordSetupRequired && !revokedGuest ? account : null;
   const passwordOk = user
     ? await user.comparePassword(password)
     : await bcrypt.compare(password, await dummyHash);
@@ -88,7 +90,13 @@ export async function login(req: Request, res: Response): Promise<void> {
     logActivity({
       action: "login_failed",
       actorEmail: emailLower,
-      details: { reason: account?.passwordSetupRequired ? "password_setup_required" : "invalid_credentials" },
+      details: {
+        reason: revokedGuest
+          ? "guest_access_removed"
+          : account?.passwordSetupRequired
+            ? "password_setup_required"
+            : "invalid_credentials",
+      },
       ip: req.ip,
     });
     const nowLockedMs = await loginAttemptFailed(emailLower, attempt);

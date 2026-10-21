@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useCurrentUser } from "@/hooks/use-auth";
 import { SettingsFieldError } from "@/hooks/use-settings";
 import { useToast } from "@/hooks/use-toast";
 import { taskKeys } from "@/hooks/use-tasks";
@@ -21,8 +22,9 @@ export const pearityKeys = {
   task: (id: string) => ["pearity", "task", id] as const,
 };
 
-/** Is the Pearity integration on (Generate button / tag column shown)? */
+/** Is the Pearity integration on (Generate button / tag column shown)? Never asked for outside guests. */
 export function usePearityStatus(enabled = true) {
+  const { data: me } = useCurrentUser();
   return useQuery({
     queryKey: pearityKeys.status,
     queryFn: async () => {
@@ -30,7 +32,7 @@ export function usePearityStatus(enabled = true) {
       return data.enabled;
     },
     staleTime: 60_000,
-    enabled,
+    enabled: enabled && Boolean(me) && !me?.isGuest,
   });
 }
 

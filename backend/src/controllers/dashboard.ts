@@ -8,7 +8,7 @@ import { LEAVE_TYPES } from "../models/LeaveType.js";
 import { LeavePolicy } from "../models/LeavePolicy.js";
 import { PerformanceReview } from "../models/PerformanceReview.js";
 import { Task } from "../models/Task.js";
-import { User } from "../models/User.js";
+import { STAFF_FILTER, User } from "../models/User.js";
 import { EmployeeDocument } from "../models/EmployeeDocument.js";
 import { archivedProjectIds, Project } from "../models/Project.js";
 import { completedWithin, projectCompletionDates } from "../lib/projectCompletion.js";
@@ -73,8 +73,8 @@ export async function getDashboardAnalytics(req: Request, res: Response): Promis
   const taskFilter: Record<string, unknown> =
     !isAdmin && user.department ? await headDepartmentTaskFilter(user.department) : {};
 
-  // Employee filter (exclude admins).
-  const employeeFilter: Record<string, unknown> = { role: { $ne: "admin" } };
+  // Employee filter (exclude admins and outside guests).
+  const employeeFilter: Record<string, unknown> = { role: { $ne: "admin" }, ...STAFF_FILTER };
   if (!isAdmin && user.department) {
     employeeFilter.department = user.department;
   }
@@ -688,6 +688,7 @@ export async function getMyDashboard(req: Request, res: Response): Promise<void>
     // Everyone's HR dates (birthdays, anniversaries, probation…): identical for every
     // caller, so cached for a minute (dropped on any user write, see lib/refCache.ts).
     cached("user:hr-people", 60_000, () => User.find({
+      ...STAFF_FILTER,
       $or: [
         { dateOfBirth: { $ne: null } },
         { joiningDate: { $ne: null } },

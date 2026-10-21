@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { isGuestUser, withoutPeopleEmails } from "../lib/guests.js";
 import { notifyTask } from "../lib/notifications.js";
 import { parsePagination } from "../lib/pagination.js";
 import {
@@ -44,7 +45,7 @@ export async function resolveMentions(body: string, task: ITask): Promise<mongoo
   if (ids.size === 0) return [];
 
   const [users, departments] = await Promise.all([
-    User.find({ _id: { $in: [...ids] } }).select("_id role department"),
+    User.find({ _id: { $in: [...ids] } }).select("_id role department isGuest"),
     taskDepartmentIds(task),
   ]);
   return users.filter((u) => canViewTask(u, task, departments)).map((u) => u._id);
@@ -158,7 +159,8 @@ export async function listComments(req: Request, res: Response): Promise<void> {
   }
 
   const [comments, total] = await Promise.all([query, TaskComment.countDocuments(filter)]);
-  res.json({ comments: comments.map((c) => c.toJSON()), total, limit, offset });
+  const rows = comments.map((c) => c.toJSON());
+  res.json({ comments: isGuestUser(req.user) ? withoutPeopleEmails(rows) : rows, total, limit, offset });
 }
 
 /** Anyone who can view the task: adds a comment `{ body }` (with @mentions). */

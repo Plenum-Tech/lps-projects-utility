@@ -14,6 +14,7 @@ import {
   RefreshCw,
   Trash2,
   UserRound,
+  UserX,
   Users,
 } from "lucide-react";
 import { LuMailPlus, LuMails, LuUsers } from "react-icons/lu";
@@ -94,9 +95,12 @@ import { usePagination } from "@/hooks/use-pagination";
 import {
   useCreateUser,
   useDeleteUser,
+  useRevokeGuestAccess,
   useUpdateUser,
   useUsers,
 } from "@/hooks/use-users";
+import { ConfirmDialog } from "@/components/globals/confirm-dialog";
+import { GuestBadge } from "@/components/tasks/invite-guest-dialog";
 import { getErrorMessage } from "@/lib/api";
 import type { CreateUserInput, Role, UpdateUserInput, User } from "@/types";
 
@@ -126,6 +130,8 @@ const ROLE_FILTER_OPTIONS = [
   { value: "employee", label: "Employee" },
   { value: "head", label: "Head of Dept" },
   { value: "admin", label: "Admin" },
+  // Outside people invited to tasks — listed only with this filter.
+  { value: "guest", label: "Outside guests" },
 ];
 
 /**
@@ -279,6 +285,8 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
 
   const pageSomeSelected = pageSelectedCount > 0 && !pageAllSelected;
   const [deleting, setDeleting] = useState<User | null>(null);
+  const [revoking, setRevoking] = useState<User | null>(null);
+  const revokeGuest = useRevokeGuestAccess();
 
   const departmentName = (id?: string | null) =>
     departmentsData?.departments.find((department) => department._id === id)
@@ -471,6 +479,16 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                   </div>
                                 </TableCell>
                                 <TableCell>
+                                  {user.isGuest ? (
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <GuestBadge className="shrink-0" />
+                                      {user.guestRevokedAt && (
+                                        <Badge variant="destructive" className="shrink-0">
+                                          Access removed
+                                        </Badge>
+                                      )}
+                                    </span>
+                                  ) : (
                                   <Badge
                                     variant={
                                       user.role === "admin"
@@ -485,6 +503,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                       ? "Head of Dept"
                                       : user.role}
                                   </Badge>
+                                  )}
                                 </TableCell>
                                 <TableCell>
                                   <span className="inline-flex items-center gap-1.5 text-sm text-muted-foreground">
@@ -498,9 +517,22 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex justify-end gap-1">
-                                    {!isSelf && (
+                                    {!isSelf && !user.isGuest && (
                                       <PasswordLinkRowActions user={user} />
                                     )}
+                                    {user.isGuest ? (
+                                      !user.guestRevokedAt && (
+                                        <Button
+                                          variant="ghost"
+                                          size="icon-sm"
+                                          onClick={() => setRevoking(user)}
+                                          aria-label={`Remove guest access for ${user.name}`}
+                                          title="Remove guest access"
+                                        >
+                                          <UserX />
+                                        </Button>
+                                      )
+                                    ) : (
                                     <Button
                                       variant="ghost"
                                       size="icon-sm"
@@ -509,6 +541,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                     >
                                       <Pencil />
                                     </Button>
+                                    )}
                                     <Button
                                       variant="ghost"
                                       size="icon-sm"
@@ -588,6 +621,22 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
         user={deleting}
         onOpenChange={(open) => {
           if (!open) setDeleting(null);
+        }}
+      />
+      <ConfirmDialog
+        open={revoking !== null}
+        onOpenChange={(open) => {
+          if (!open) setRevoking(null);
+        }}
+        pending={revokeGuest.isPending}
+        destructive
+        title={`Remove ${revoking?.name ?? "this guest"}'s access?`}
+        description="They can no longer sign in, their sessions end and they are taken off tasks shared with others. Inviting them to a task again restores access."
+        confirmLabel="Remove access"
+        icon={<UserX />}
+        onConfirm={() => {
+          if (!revoking) return;
+          revokeGuest.mutate(revoking._id, { onSuccess: () => setRevoking(null) });
         }}
       />
     </div>

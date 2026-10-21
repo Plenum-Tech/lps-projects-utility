@@ -8,6 +8,7 @@ import type {
   MyProfile,
   UpdateProfileInput,
   UpdateUserInput,
+  User,
   UserResponse,
   UsersListResponse,
 } from "@/types";
@@ -125,6 +126,35 @@ export function useDeleteUser() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: usersKeys.all });
       toast.success("User deleted successfully");
+    },
+    onError: (error: unknown) => {
+      toast.error(getErrorMessage(error));
+    },
+  });
+}
+
+/**
+ * Admin: ends an outside guest's access (sign-in refused, sessions ended, taken
+ * off tasks shared with others). Inviting them to a task again restores it.
+ */
+export function useRevokeGuestAccess() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { data } = await api.post<{ user: User; tasksLeft: number; soleAssigneeTasks: number }>(
+        `/users/${id}/guest-access/revoke`
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: usersKeys.all });
+      toast.success(
+        data.soleAssigneeTasks > 0
+          ? `${data.user.name} can no longer sign in. ${data.soleAssigneeTasks} task${data.soleAssigneeTasks === 1 ? " still has" : "s still have"} them as the only assignee — reassign ${data.soleAssigneeTasks === 1 ? "it" : "them"}.`
+          : `${data.user.name} can no longer sign in`
+      );
     },
     onError: (error: unknown) => {
       toast.error(getErrorMessage(error));
