@@ -1,5 +1,4 @@
 import { richTextMentionIds, richTextToPlain, sanitizeRichText } from "../lib/richText.js";
-import { viewersAmong } from "./taskComments.js";
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
@@ -902,31 +901,45 @@ function emailTask(task: ITask) {
 }
 
 /**
- * People @mentioned in the description (and not in `previous`) who can view the
- * task get task_mention (in-app + email). The actor is never told.
+ * Anyone @mentioned in the description (and not in `previous`) gets task_mention
+ * (in-app + email), whether or not they're on the task; unknown ids and the actor
+ * are skipped. People who can't work on the task are told to ask the actor.
  */
 async function notifyDescriptionMentions(task: ITask, actor: IUser, previous?: string | null): Promise<void> {
   const before = new Set(richTextMentionIds(previous));
   const added = richTextMentionIds(task.description).filter((id) => !before.has(id) && id !== actor._id.toString());
-  const recipients = await viewersAmong(added, task);
-  if (recipients.length === 0) return;
+  if (added.length === 0) return;
+  const users = await User.find({ _id: { $in: added } }).select("_id role department");
+  if (users.length === 0) return;
+  const access = await Promise.all(users.map((u) => canViewTaskAsync(u, task)));
   const text = richTextToPlain(task.description);
-  notifyTask({
-    recipients,
-    actor,
-    type: "task_mention",
-    task: emailTask(task),
-    title: "You were mentioned",
-    message: `${actor.name} mentioned you in the description of "${task.title}"`,
-    email: {
-      subject: `💬 ${actor.name} mentioned you on: ${task.title}`,
-      heading: "You Were Mentioned",
-      intro: `${actor.name} mentioned you in the task description.`,
-      quote: text.length > 600 ? `${text.slice(0, 599)}…` : text,
-      quoteAuthor: actor.name,
-      buttonLabel: "Open task",
-    },
-  });
+  const quote = text.length > 600 ? `${text.slice(0, 599)}…` : text;
+  const groups: Array<[mongoose.Types.ObjectId[], string]> = [
+    [users.filter((_u, i) => access[i]).map((u) => u._id), `${actor.name} mentioned you in the task description.`],
+    [
+      users.filter((_u, i) => !access[i]).map((u) => u._id),
+      `${actor.name} mentioned you in the task description. You may not have access to open this task — ask ${actor.name}.`,
+    ],
+  ];
+  for (const [recipients, intro] of groups) {
+    if (recipients.length === 0) continue;
+    notifyTask({
+      recipients,
+      actor,
+      type: "task_mention",
+      task: emailTask(task),
+      title: "You were mentioned",
+      message: `${actor.name} mentioned you in the description of "${task.title}"`,
+      email: {
+        subject: `💬 ${actor.name} mentioned you on: ${task.title}`,
+        heading: "You Were Mentioned",
+        intro,
+        quote,
+        quoteAuthor: actor.name,
+        buttonLabel: "Open task",
+      },
+    });
+  }
 }
 
 const STATUS_LABELS: Record<TaskStatus, string> = {

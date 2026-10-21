@@ -96,7 +96,6 @@ import {
   uploadTaskFilesNow,
   taskKeys,
   useCreateTask,
-  useMentionableUsers,
   useTask,
   useTaskFiles,
   useUpdateTask,
@@ -337,29 +336,15 @@ export function TaskFormDialog({
     return [...people.values()];
   }, [me, projectDetail.data, assignable.data, form.assignees, isHeadOrAdmin]);
 
-  // People the description can @mention — those who will see the task: its
-  // assignees, admins and the heads of the assignees' departments (plus, when
-  // editing, everyone the server lists for it). The server re-checks.
-  const taskMentionable = useMentionableUsers(open && task ? task._id : null);
-  const mentionUsers = useMemo<MentionableUser[]>(() => {
-    const people = new Map<string, MentionableUser>();
-    const pool = assignable.data ?? [];
-    const chosen = new Set(form.assignees);
-    const departments = new Set(
-      pool.flatMap((user) => (chosen.has(user._id) && user.department ? [user.department._id] : [])),
-    );
-    for (const user of pool) {
-      if (
-        chosen.has(user._id) ||
-        user.role === "admin" ||
-        (user.role === "head" && user.department && departments.has(user.department._id))
-      )
-        people.set(user._id, { _id: user._id, name: user.name, email: user.email, role: user.role });
-    }
-    for (const user of taskMentionable.data ?? []) people.set(user._id, user);
-    if (me) people.delete(me._id);
-    return [...people.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [assignable.data, form.assignees, taskMentionable.data, me]);
+  // Anyone in the app can be @mentioned in the description (searchable by
+  // name or email); the server emails them, even when they aren't on the task.
+  const mentionUsers = useMemo<MentionableUser[]>(
+    () =>
+      (assignable.data ?? [])
+        .filter((user) => user._id !== me?._id)
+        .map((user) => ({ _id: user._id, name: user.name, email: user.email, role: user.role })),
+    [assignable.data, me],
+  );
 
   // A disabled query stays `isPending` forever (non-heads never fetch the
   // assignable list) — only report loading for queries actually fetching.
