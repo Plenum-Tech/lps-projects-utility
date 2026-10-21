@@ -2,7 +2,7 @@ import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { addDaysKey, fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import { useNavigate } from "react-router";
 import {
   LuCalendar,
@@ -59,6 +59,7 @@ import {
   recurrenceError,
 } from "@/components/tasks/recurrence-field";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   PageDrawerCard,
   PageDrawerContent,
@@ -292,6 +293,10 @@ export function TaskFormDialog({
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
   const [savingSubtasks, setSavingSubtasks] = useState(false);
+  // Outside people (vendors) to invite as guests once the new task exists.
+  const [guests, setGuests] = useState<Array<{ name: string; email: string }>>([]);
+  // Set-password links to pass on by hand (email off) after the task was created.
+  const [guestLinks, setGuestLinks] = useState<Array<{ name: string; url: string }> | null>(null);
   // Files picked in the form; uploaded after the task is saved.
   const [attachments, setAttachments] = useState<File[]>([]);
   const [savingFiles, setSavingFiles] = useState(false);
@@ -306,6 +311,8 @@ export function TaskFormDialog({
       setForm(initialState(task, defaultProjectId, defaultIteration, defaultReworkOf));
       setAttachments([]);
       setSubmitted(false);
+      setGuests([]);
+      setGuestLinks(null);
     }
     // Reset only when the dialog opens or switches task.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -530,6 +537,9 @@ export function TaskFormDialog({
   const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
   const assigneesInvalid = submitted && form.assignees.length === 0 && !reworkCreate;
+  const guestRowInvalid = (g: { name: string; email: string }) =>
+    (g.name.trim() || g.email.trim()) && (!g.name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(g.email.trim()));
+  const guestsInvalid = guests.some(guestRowInvalid);
   const datesInvalid =
     submitted &&
     form.startDate !== "" &&
@@ -566,6 +576,7 @@ export function TaskFormDialog({
       ((!task || Boolean(task.project)) && !projectId && !reworkCreate) ||
       estimateMissing ||
       (form.assignees.length === 0 && !reworkCreate) ||
+      (!isEdit && guestsInvalid) ||
       descriptionTooLong ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
       recurrenceInvalid ||
@@ -631,8 +642,23 @@ export function TaskFormDialog({
             }
           }
           await uploadAttachments(taskId);
+          // Outside people: invited now the task exists (they get a set-password email).
+          const links: Array<{ name: string; url: string }> = [];
+          for (const guest of guests.filter((g) => g.name.trim() && g.email.trim())) {
+            try {
+              const { data: res } = await api.post<{ invite: { setupUrl?: string | null } }>(`/tasks/${taskId}/guests`, {
+                name: guest.name.trim(),
+                email: guest.email.trim(),
+              });
+              if (res.invite.setupUrl) links.push({ name: guest.name.trim(), url: res.invite.setupUrl });
+            } catch (error) {
+              toast.error(`Couldn't invite ${guest.email.trim()}: ${getErrorMessage(error)}`);
+            }
+          }
+          void queryClient.invalidateQueries({ queryKey: taskKeys.all });
           onOpenChange(false);
           onCreated?.(taskId);
+          if (links.length) setGuestLinks(links);
         },
       });
       return;
@@ -861,6 +887,7 @@ export function TaskFormDialog({
     ) : null;
 
   return (
+    <>
     <Sheet open={open} onOpenChange={(next) => !pending && onOpenChange(next)}>
       <PageDrawerContent>
         <div className="show-scrollbar flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4 pt-12 sm:p-6 lg:pt-6">
@@ -1160,6 +1187,46 @@ export function TaskFormDialog({
                 )}
               </div>
 
+              {!isEdit && (
+                <div className="space-y-1.5">
+                  <Label>Outside people (vendors)</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Not in the company? Add their name and email: they get a login to open only this task — comment, add
+                    files, log time and complete it.
+                  </p>
+                  {guests.map((guest, i) => (
+                    <div key={i} className="flex flex-wrap items-start gap-2">
+                      <Input
+                        aria-label="Outside person's name"
+                        placeholder="Name"
+                        value={guest.name}
+                        onChange={(e) => setGuests(guests.map((g, j) => (j === i ? { ...g, name: e.target.value } : g)))}
+                        className="min-w-36 flex-1"
+                        aria-invalid={(submitted && Boolean(guestRowInvalid(guest)) && !guest.name.trim()) || undefined}
+                      />
+                      <Input
+                        type="email"
+                        aria-label="Outside person's email"
+                        placeholder="name@vendor.com"
+                        value={guest.email}
+                        onChange={(e) => setGuests(guests.map((g, j) => (j === i ? { ...g, email: e.target.value } : g)))}
+                        className="min-w-48 flex-[2]"
+                        aria-invalid={(submitted && Boolean(guestRowInvalid(guest)) && Boolean(guest.name.trim())) || undefined}
+                      />
+                      <Button type="button" variant="ghost" size="icon" aria-label="Remove" onClick={() => setGuests(guests.filter((_, j) => j !== i))}>
+                        <LuX aria-hidden />
+                      </Button>
+                    </div>
+                  ))}
+                  {submitted && guestsInvalid && (
+                    <p className="text-xs text-destructive">Each outside person needs a name and a valid email.</p>
+                  )}
+                  <Button type="button" variant="outline" size="sm" onClick={() => setGuests([...guests, { name: "", email: "" }])} disabled={guests.length >= 10}>
+                    <LuPlus aria-hidden /> Add outside person
+                  </Button>
+                </div>
+              )}
+
               <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="task-priority">Priority</Label>
@@ -1412,6 +1479,29 @@ export function TaskFormDialog({
         </div>
       </PageDrawerContent>
     </Sheet>
+    {/* Outside people invited while email is off: their set-password links to pass on. */}
+    <Dialog open={Boolean(guestLinks)} onOpenChange={(next) => !next && setGuestLinks(null)}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Send these invite links</DialogTitle>
+          <DialogDescription>
+            Email is off, so nothing was sent. Give each outside person their one-time set-password link (valid 7 days).
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          {(guestLinks ?? []).map((link) => (
+            <div key={link.url} className="space-y-1">
+              <p className="text-sm font-medium">{link.name}</p>
+              <Input readOnly value={link.url} aria-label={`${link.name}'s set-password link`} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <Button onClick={() => setGuestLinks(null)}>Done</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
