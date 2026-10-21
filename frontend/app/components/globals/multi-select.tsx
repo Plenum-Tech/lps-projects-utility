@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
 import {
   Combobox,
@@ -50,6 +50,8 @@ export function MultiSelect({
   "aria-describedby"?: string;
 }) {
   const anchor = useComboboxAnchor();
+  // The list closes once something is picked (click the box again to add more).
+  const [open, setOpen] = useState(false);
   const selected = value
     .map((id) => options.find((option) => option.value === id))
     .filter((option): option is MultiSelectOption => Boolean(option));
@@ -60,10 +62,13 @@ export function MultiSelect({
       autoHighlight
       // Clicking the box lists everyone (typing narrows it).
       openOnInputClick
+      open={open}
+      onOpenChange={setOpen}
       items={options}
       value={selected}
       onValueChange={(next: MultiSelectOption[]) => {
         const ids = next.map((option) => option.value);
+        if (ids.length > value.length) setOpen(false);
         onValueChange(max ? ids.slice(0, max) : ids);
       }}
       isItemEqualToValue={(item: MultiSelectOption, current: MultiSelectOption) =>

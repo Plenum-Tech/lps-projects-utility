@@ -1206,6 +1206,8 @@ export interface TaskDetailResponse {
   access?: TaskAccess;
   /** Non-blocking warnings on create/update (e.g. due date after milestone end). */
   warnings?: string[];
+  /** Create: outside people invited with the task (`setupUrl` only for admins when not emailed). */
+  guestInvites?: Array<{ name: string; email: string; setupUrl?: string }>;
   /** Subtask mutations: the subtask that was added/updated. */
   subtaskId?: string;
 }
@@ -1232,6 +1234,8 @@ export interface RecurrenceInput {
 
 /** POST /api/tasks body. Dates are "YYYY-MM-DD". */
 export interface TaskInput {
+  /** Outside people (vendors) to invite and assign with a new task. */
+  guests?: Array<{ name: string; email: string }>;
   /** Controlled name; the server composes the title from it. */
   titleParts?: TaskTitleParts;
   iteration?: TaskIteration;

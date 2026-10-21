@@ -1690,8 +1690,23 @@ export async function createTaskCore(
  */
 export async function createTask(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
-  const result = await createTaskCore(actor, (req.body ?? {}) as CreateTaskBody, req.ip, {}, { enforceRules: true });
+  const body = { ...((req.body ?? {}) as CreateTaskBody & { guests?: unknown }) };
+  // Outside people typed in the form are assigned too (a guest account is made for new ones).
+  const { prepareFormGuests, inviteFormGuests } = await import("./taskGuests.js");
+  const guests = await prepareFormGuests(body.guests, actor);
+  if ("error" in guests) {
+    res.status(guests.status).json({ error: guests.error, field: guests.field });
+    return;
+  }
+  delete body.guests;
+  if (guests.ids.length) {
+    const staff = Array.isArray(body.assignees) ? (body.assignees as unknown[]).map(String) : [];
+    body.assignees = [...new Set([...staff, ...guests.ids])];
+  }
+  const result = await createTaskCore(actor, body, req.ip, {}, { enforceRules: true });
   if (isInvalid(result)) {
+    // Nothing half-made: guest accounts made for this form go again.
+    if (guests.created.length) await User.deleteMany({ _id: { $in: guests.created.map((u) => u._id) } });
     res.status(result.status).json(invalidJson(result));
     return;
   }
@@ -1700,8 +1715,9 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   if (created) {
     void notifyDescriptionMentions(created, actor).catch((err) => console.error("[tasks] mention notify failed", err));
   }
+  const guestInvites = guests.invite.length && created ? await inviteFormGuests(guests.invite, created, actor) : [];
   const detail = await loadTaskDetail(result.taskId, actor);
-  res.status(201).json({ ...detail, warnings: result.warnings });
+  res.status(201).json({ ...detail, warnings: result.warnings, ...(guestInvites.length ? { guestInvites } : {}) });
 }
 
 /**

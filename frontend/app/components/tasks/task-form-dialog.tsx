@@ -2,7 +2,7 @@ import { RichTextEditor, richTextPlain } from "@/components/globals/rich-text";
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { addDaysKey, fromDateTimeInput, toDateTimeInput } from "@/lib/time";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, getErrorMessage } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useNavigate } from "react-router";
 import {
   LuCalendar,
@@ -536,10 +536,13 @@ export function TaskFormDialog({
   const briefMissing = briefTextMissing;
   const dueMissing = false;
   const briefInvalid = submitted && briefMissing;
-  const assigneesInvalid = submitted && form.assignees.length === 0 && !reworkCreate;
   const guestRowInvalid = (g: { name: string; email: string }) =>
     (g.name.trim() || g.email.trim()) && (!g.name.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(g.email.trim()));
   const guestsInvalid = guests.some(guestRowInvalid);
+  const filledGuests = isEdit ? [] : guests.filter((g) => g.name.trim() && g.email.trim());
+  // Someone must do the task: company people, outside people (new task), or both.
+  const nobodyAssigned = form.assignees.length === 0 && filledGuests.length === 0 && !reworkCreate;
+  const assigneesInvalid = submitted && nobodyAssigned;
   const datesInvalid =
     submitted &&
     form.startDate !== "" &&
@@ -575,7 +578,7 @@ export function TaskFormDialog({
       briefMissing ||
       ((!task || Boolean(task.project)) && !projectId && !reworkCreate) ||
       estimateMissing ||
-      (form.assignees.length === 0 && !reworkCreate) ||
+      nobodyAssigned ||
       (!isEdit && guestsInvalid) ||
       descriptionTooLong ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
@@ -608,6 +611,7 @@ export function TaskFormDialog({
         hasAttachments: attachments.length > 0,
         description: form.description.trim() || undefined,
         assignees: form.assignees,
+        ...(filledGuests.length ? { guests: filledGuests.map((g) => ({ name: g.name.trim(), email: g.email.trim() })) } : {}),
         priority: form.priority,
         startDate: form.startDate || null,
         dueDate: form.dueDate || null,
@@ -642,22 +646,10 @@ export function TaskFormDialog({
             }
           }
           await uploadAttachments(taskId);
-          // Outside people: invited now the task exists (they get a set-password email).
-          const links: Array<{ name: string; url: string }> = [];
-          for (const guest of guests.filter((g) => g.name.trim() && g.email.trim())) {
-            try {
-              const { data: res } = await api.post<{ invite: { setupUrl?: string | null } }>(`/tasks/${taskId}/guests`, {
-                name: guest.name.trim(),
-                email: guest.email.trim(),
-              });
-              if (res.invite.setupUrl) links.push({ name: guest.name.trim(), url: res.invite.setupUrl });
-            } catch (error) {
-              toast.error(`Couldn't invite ${guest.email.trim()}: ${getErrorMessage(error)}`);
-            }
-          }
-          void queryClient.invalidateQueries({ queryKey: taskKeys.all });
           onOpenChange(false);
           onCreated?.(taskId);
+          // Outside people were invited with the task; links that couldn't be emailed are shown to pass on.
+          const links = (data.guestInvites ?? []).filter((g) => g.setupUrl).map((g) => ({ name: g.name, url: g.setupUrl! }));
           if (links.length) setGuestLinks(links);
         },
       });
@@ -1182,7 +1174,7 @@ export function TaskFormDialog({
                     id="task-assignees-error"
                     className="text-xs text-destructive"
                   >
-                    Assign at least one person.
+                    Assign at least one person — from the company, an outside person below, or both.
                   </p>
                 )}
               </div>

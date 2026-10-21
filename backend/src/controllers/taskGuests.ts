@@ -175,3 +175,77 @@ export async function inviteTaskGuest(req: Request, res: Response): Promise<void
     },
   });
 }
+
+/**
+ * Add task form: outside people typed with a new task (`guests: [{ name, email }]`).
+ * Before the task exists: checks every row, finds each person (an employee stays an
+ * employee) or creates a guest account (no password yet). Returns their ids to assign,
+ * the guest accounts created (removed again if the task can't be created) and the guests
+ * to invite once it exists — or a 400.
+ */
+export async function prepareFormGuests(
+  raw: unknown,
+  actor: IUser
+): Promise<
+  | { ids: string[]; created: IUser[]; invite: IUser[] }
+  | { status: number; error: string; field?: string }
+> {
+  if (raw === undefined || raw === null) return { ids: [], created: [], invite: [] };
+  if (!Array.isArray(raw) || raw.length > 10) return { status: 400, error: "guests must be a list of at most 10 { name, email }", field: "guests" };
+  const rows: Array<{ name: string; email: string }> = [];
+  for (const entry of raw as Array<Record<string, unknown>>) {
+    const name = typeof entry?.name === "string" ? entry.name.trim().replace(/\s+/g, " ") : "";
+    const email = typeof entry?.email === "string" ? entry.email.trim().toLowerCase() : "";
+    if (!name || name.length > NAME_MAX) return { status: 400, error: `Enter each outside person's name (up to ${NAME_MAX} characters)`, field: "guests" };
+    if (!email || email.length > EMAIL_MAX || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: 400, error: `"${email || name}" isn't a valid email address`, field: "guests" };
+    if (!rows.some((r) => r.email === email)) rows.push({ name, email });
+  }
+  const existing = await User.find({ email: { $in: rows.map((r) => r.email) } });
+  for (const r of rows) {
+    if (!existing.some((u) => u.email === r.email) && isCompanyEmail(r.email)) {
+      return { status: 400, error: `${r.email} is a company email — add them as an employee`, field: "guests" };
+    }
+  }
+  const ids: string[] = [];
+  const created: IUser[] = [];
+  const invite: IUser[] = [];
+  for (const r of rows) {
+    let user = existing.find((u) => u.email === r.email) ?? null;
+    if (!user) {
+      user = await User.create({
+        name: r.name,
+        email: r.email,
+        password: crypto.randomBytes(32).toString("base64url"),
+        role: "employee",
+        department: null,
+        isGuest: true,
+        passwordSetupRequired: true,
+        guestInvitedBy: actor._id,
+      });
+      created.push(user);
+    } else if (isGuestUser(user) && user.guestRevokedAt) {
+      user.guestRevokedAt = null;
+      await user.save();
+    }
+    ids.push(String(user._id));
+    if (isGuestUser(user) && user.passwordSetupRequired) invite.push(user);
+  }
+  return { ids, created, invite };
+}
+
+/** After the task exists: each new guest gets the set-password link as the invitation. Admins get links that couldn't be emailed. */
+export async function inviteFormGuests(
+  guests: IUser[],
+  task: { title: string },
+  actor: IUser
+): Promise<Array<{ name: string; email: string; setupUrl?: string }>> {
+  const out: Array<{ name: string; email: string; setupUrl?: string }> = [];
+  for (const user of guests) {
+    const link = await issueLink(user, actor, true, {
+      subject: `${actor.name} invited you to a task on ${PRODUCT_NAME}`,
+      intro: `${actor.name} invited you to the task “${task.title}” on ${PRODUCT_NAME}.`,
+    });
+    out.push({ name: user.name, email: user.email, ...(link && !link.emailed && actor.role === "admin" ? { setupUrl: link.setupUrl } : {}) });
+  }
+  return out;
+}
