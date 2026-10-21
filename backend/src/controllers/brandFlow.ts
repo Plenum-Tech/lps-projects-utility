@@ -14,6 +14,11 @@ import { User, type IUser } from "../models/User.js";
 import { FieldError, notifyBrandApprovalRequested, parseBrandScope, parseName, parseOrganisation, parseScopeText, parseScopeTotal, sendFieldError, serialize } from "./brands.js";
 import { createProjectCore } from "./projects.js";
 import { createTaskCore } from "./tasks.js";
+import { randomUUID } from "node:crypto";
+import { currentMonth, monthName } from "../lib/brandReadiness.js";
+import { cellsWithTeam, reusableLine } from "../lib/manpowerDedupe.js";
+import { cellsFromTeam, rowPeopleKey } from "../lib/manpowerSync.js";
+import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { brandScopeMatch, matchLeadUsers, storedAgreementFrom } from "./brandScope.js";
 import { parseMatchRows, storedScopeMatch } from "../lib/scopeMatch.js";
 import { recordScopeVersion } from "../lib/scopeVersions.js";
@@ -22,9 +27,11 @@ import { BrandScopeVersion } from "../models/BrandScopeVersion.js";
 // ---------------------------------------------------------------------------
 // Brand flow (Brands → New brand): 1. brand (+ revenue for a pitch),
 // 2. scope read from images / PDFs / text, 3. lead + team, then create: the
-// brand, its project (scope locked to the brand), the lead's presentation /
-// milestone tasks and the team (→ manpower plan line). Admins (leadership
-// included); a non-leadership admin's brand and its setup wait for approval.
+// brand and the team as the brand's line in the month's manpower plan. No
+// project is created for a brand (projects come later, from the Projects page);
+// a pitch still gets its Pitch project with the Milestone 1 / Milestone 2 /
+// Client presentation tasks. Admins (leadership included); a non-leadership
+// admin's brand and its setup wait for approval.
 // ---------------------------------------------------------------------------
 
 const MONTH = /^\d{4}-(0[1-9]|1[0-2])$/;
@@ -172,8 +179,78 @@ export async function readPitchSheet(req: Request, res: Response): Promise<void>
 
 const bad = (error: string) => ({ error });
 
-/** Creates the brand flow's project, the lead's tasks and (through the team) the plan line. */
-export async function runBrandSetup(
+/** "2026-10" → "October 2026". */
+export function planMonthLabel(month: string): string {
+  return `${monthName(month)} ${month.slice(0, 4)}`;
+}
+
+type PlanLineResult = { planLine: { month: string; name: string; pendingApproval?: string } | null; warnings: string[] };
+
+export type BrandSetupResult = { error: string } | { project: IProject; tasks: number; warnings: string[] } | PlanLineResult;
+
+/**
+ * Runs the brand flow's setup: a pitch gets its Pitch project (+ tasks, team → plan line);
+ * a brand gets no project — only its team, as its line in the month's manpower plan.
+ */
+export async function runBrandSetup(brand: IBrand, setup: BrandSetup, actor: IUser, ip: string | undefined): Promise<BrandSetupResult> {
+  return brand.isPitch ? runPitchSetup(brand, setup, actor, ip) : addBrandPlanLine(brand, setup, actor, ip);
+}
+
+/**
+ * A (non-pitch) brand's team → the brand's line in `setup.month`'s plan, named exactly the
+ * brand's name: the brand's existing line is reused (people added, nobody taken off), else
+ * a new line. Saved as a new version through writePlanVersion (leadership → approved,
+ * anyone else → pending). No approved plan for the month = no line (a warning).
+ */
+export async function addBrandPlanLine(
+  brand: IBrand,
+  setup: Pick<BrandSetup, "month" | "team">,
+  actor: IUser,
+  ip: string | undefined
+): Promise<PlanLineResult> {
+  const month = MONTH.test(setup.month ?? "") ? setup.month : currentMonth();
+  const label = planMonthLabel(month);
+  const plan = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).lean();
+  if (!plan) {
+    return { planLine: null, warnings: [`There's no approved ${label} manpower plan yet, so ${brand.name} wasn't added to it — add its line once the plan exists.`] };
+  }
+  const rows = plan.rows as IManpowerRow[];
+  const team = setup.team ?? [];
+  const name = brand.name;
+  const existing = reusableLine(rows, brand._id, name);
+  let nextRows: IManpowerRow[];
+  if (existing) {
+    const cells = cellsWithTeam(existing.cells, team);
+    if (rowPeopleKey(cells) === rowPeopleKey(existing.cells)) return { planLine: { month, name: existing.name }, warnings: [] };
+    nextRows = rows.map((r) => (r.key === existing.key ? { ...r, cells } : r));
+  } else {
+    nextRows = [
+      ...rows,
+      { key: randomUUID(), section: "active", brand: brand._id as mongoose.Types.ObjectId, type: null, name, cells: cellsFromTeam([], team) },
+    ];
+  }
+  try {
+    const { writePlanVersion } = await import("./manpower.js");
+    const saved = await writePlanVersion({
+      month,
+      before: rows,
+      latestVersion: plan.version,
+      rows: nextRows,
+      note: `${brand.name} ${existing ? "team updated" : "added"} from the brand flow`,
+      maxProjectsPerPerson: plan.maxProjectsPerPerson,
+      source: "edit",
+      actor,
+      ...(ip ? { ip } : {}),
+    });
+    return { planLine: { month, name, ...(saved.pendingApproval ? { pendingApproval: saved.pendingApproval } : {}) }, warnings: [] };
+  } catch (err) {
+    console.error("[brand-flow] couldn't add the plan line", String(brand._id), err);
+    return { planLine: null, warnings: [`${brand.name} couldn't be added to the ${label} manpower plan — add its line there.`] };
+  }
+}
+
+/** A pitch's setup: the Pitch project, its lead tasks and (through the team) the plan line. */
+async function runPitchSetup(
   brand: IBrand,
   setup: BrandSetup,
   actor: IUser,
@@ -223,15 +300,15 @@ export async function runBrandSetup(
   return { project, tasks, warnings };
 }
 
-function parseSetup(raw: Record<string, unknown>): BrandSetup {
+/** The flow's setup. A brand (not a pitch) only uses month, leads and team: no project is created for it. */
+function parseSetup(raw: Record<string, unknown>, isPitch: boolean): BrandSetup {
   const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
-  const projectType = str(raw.projectType);
-  if (!projectType) throw new FieldError("projectType", "Choose the project type");
-  const month = str(raw.month);
+  const month = str(raw.month) || currentMonth();
   if (!MONTH.test(month)) throw new FieldError("month", "month must be YYYY-MM");
-  const title = str(raw.title).replace(/\s+/g, " ");
-  if (!title) throw new FieldError("title", "Enter the project name");
-  if (title.length > 80) throw new FieldError("title", "The project name must be 80 characters or fewer");
+  const projectType = isPitch ? "Pitch" : "";
+  const title = isPitch ? str(raw.title).replace(/\s+/g, " ") : "";
+  if (isPitch && !title) throw new FieldError("title", "Enter the campaign name");
+  if (title.length > 80) throw new FieldError("title", "The campaign name must be 80 characters or fewer");
   const ids = (v: unknown, field: string) => {
     if (!Array.isArray(v)) throw new FieldError(field, `${field} must be a list of user IDs`);
     const out = [...new Set(v.map(String))];
@@ -248,6 +325,7 @@ function parseSetup(raw: Record<string, unknown>): BrandSetup {
     const users = ids(entry.users, "team");
     if (users.length && !team.some((t) => t.role === role)) team.push({ role, users });
   }
+  if (!isPitch) return { projectType, month, title, leads, team, tasks: [] };
   const tasks: BrandSetup["tasks"] = [];
   for (const t of Array.isArray(raw.tasks) ? (raw.tasks as Array<Record<string, unknown>>) : []) {
     const taskTitle = str(t?.title).slice(0, 120);
@@ -304,6 +382,7 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   }
   const files = ((req.files as Express.Multer.File[] | undefined) ?? []).slice(0, BRAND_LIMITS.maxScopeFiles);
 
+  const isPitch = data.isPitch === true;
   let name: string;
   let setup: BrandSetup;
   let scopeItems: ReturnType<typeof parseBrandScope>;
@@ -320,12 +399,11 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     scopeText = parseScopeText(data.scopeText ?? data.otherScope);
     // The agreement's stated total ("96 content pieces per month"): a check for the rows.
     scopeTotal = parseScopeTotal(data.scopeTotal ?? data.statedTotal);
-    setup = parseSetup(data);
+    setup = parseSetup(data, isPitch);
   } catch (err) {
     if (!sendFieldError(res, err)) throw err;
     return;
   }
-  const isPitch = data.isPitch === true;
   // The scope comes from the agreement: a brand (not a pitch — it has no agreement yet) needs the
   // uploaded agreement itself. Typed text alone isn't enough.
   if (!isPitch && !files.some(isAgreementFile)) {
@@ -340,13 +418,12 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
     return;
   }
   if (isPitch) {
-    setup.projectType = "Pitch";
     if (!setup.pitchDates) {
       res.status(400).json({ error: "A pitch needs the Client presentation, Milestone 1 and Milestone 2 dates", field: "pitchDates" });
       return;
     }
     setup.tasks = [];
-  } else delete setup.pitchDates;
+  }
   const list = (v: unknown, max: number, len: number) =>
     (Array.isArray(v) ? v : []).map((x) => String(x).trim().slice(0, len)).filter(Boolean).slice(0, max);
 
@@ -420,16 +497,31 @@ export async function createBrandFlow(req: Request, res: Response): Promise<void
   });
   await recordScopeVersion(brand, "create", user._id as mongoose.Types.ObjectId);
 
+  const planLabel = planMonthLabel(setup.month);
   if (!leader) {
-    await notifyBrandApprovalRequested(brand, user, `It comes with the project "${setup.title}", lead tasks and a team, created when you approve.`);
+    await notifyBrandApprovalRequested(
+      brand,
+      user,
+      isPitch
+        ? `It comes with the project "${setup.title}", lead tasks and a team, created when you approve.`
+        : `The team is added to the ${planLabel} manpower plan when you approve.`
+    );
     res.status(201).json({
       brand: serialize(brand, 0),
-      pendingApproval: `${brand.name} was sent to leadership for approval. The project, lead tasks and team are created when it's approved.`,
+      pendingApproval: isPitch
+        ? `${brand.name} was sent to leadership for approval. The project, lead tasks and team are created when it's approved.`
+        : `${brand.name} was sent to leadership for approval. Its team is added to the ${planLabel} manpower plan when it's approved.`,
     });
     return;
   }
 
-  const result = await runBrandSetup(brand, setup, user, req.ip);
+  if (!isPitch) {
+    // No project: only the team, as the brand's line in the month's plan.
+    const line = await addBrandPlanLine(brand, setup, user, req.ip);
+    res.status(201).json({ brand: serialize(brand, 0), planLine: line.planLine, warnings: line.warnings });
+    return;
+  }
+  const result = await runPitchSetup(brand, setup, user, req.ip);
   if ("error" in result) {
     // Nothing half-made: the brand and its files go again, so the flow can be retried.
     await Brand.deleteOne({ _id: brand._id });

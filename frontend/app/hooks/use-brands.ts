@@ -158,13 +158,16 @@ export function useReadPitchSheet() {
 
 export interface BrandFlowResult {
   brand: Brand;
+  /** Pitches only: the Pitch project (a brand gets no project). */
   project?: { _id: string; name: string; code: string };
+  /** Brands (not pitches): the brand's line in the month's manpower plan; null when it couldn't be added (see warnings). */
+  planLine?: { month: string; name: string; pendingApproval?: string } | null;
   tasks?: number;
   warnings?: string[];
   pendingApproval?: string;
 }
 
-/** Creates the brand with its project, lead tasks and team (or sends it for approval). */
+/** Creates the brand and its team's plan line — a pitch also its project and lead tasks (or sends it for approval). */
 export function useCreateBrandFlow() {
   const invalidate = useInvalidateBrands();
   const queryClient = useQueryClient();

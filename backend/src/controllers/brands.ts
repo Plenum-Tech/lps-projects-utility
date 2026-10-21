@@ -650,11 +650,25 @@ export async function decideBrand(req: Request, res: Response): Promise<void> {
     // The approver runs the move (plan lines follow as an approved version).
     const split = await runBrandSplit(brand, setup, user, req.ip);
     setupNote = ` ${split.moved} project${split.moved === 1 ? " was" : "s were"} moved to it.`;
+  } else if (setup && brand.status === "approved" && !brand.isPitch) {
+    // A brand gets no project: its team becomes its line in the month's plan, written as
+    // the approver (so it lands approved, not as another pending version).
+    const { addBrandPlanLine, planMonthLabel } = await import("./brandFlow.js");
+    const result = await addBrandPlanLine(brand, setup as never, user, req.ip);
+    setupNote = result.planLine
+      ? ` Its team was added to the ${planMonthLabel(result.planLine.month)} manpower plan.`
+      : ` ${result.warnings[0] ?? "Its team couldn't be added to the manpower plan."}`;
   } else if (setup && brand.status === "approved") {
+    // A pitch: its Pitch project and tasks, created as the requester.
     const { runBrandSetup } = await import("./brandFlow.js");
     const requester = brand.requestedBy ? await User.findById(brand.requestedBy) : null;
     const result = await runBrandSetup(brand, setup as never, requester ?? user, req.ip);
-    setupNote = "error" in result ? ` The project couldn't be created: ${result.error}` : ` Project ${result.project.name} was created.`;
+    setupNote =
+      "error" in result
+        ? ` The project couldn't be created: ${result.error}`
+        : "project" in result
+          ? ` Project ${result.project.name} was created.`
+          : "";
   }
   logActivity({
     action: "settings_updated",

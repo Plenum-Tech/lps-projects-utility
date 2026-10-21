@@ -38,7 +38,9 @@ import type { LeadMatch, PitchSheetRow, ScopeExtraction, StatedTotal } from "@/t
 // ---------------------------------------------------------------------------
 // Brands → New brand: 1. brand (+ potential revenue for a pitch), 2. scope read
 // from images / PDFs / text, 3. lead (+ presentation / milestone tasks) and the
-// team picked from the manpower plan by the scope, then Create.
+// team picked from the manpower plan by the scope, then Create. A brand gets no
+// project (projects come later, from the Projects page): its team becomes its
+// line in the month's manpower plan. A pitch still gets its Pitch project.
 // ---------------------------------------------------------------------------
 
 type Row = { unit: string; what: string; quantity: number; languageList: string[]; sizes: number; source: string };
@@ -93,12 +95,13 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const fileUrls = useMemo(() => files.map((f) => URL.createObjectURL(f)), [files]);
   useEffect(() => () => fileUrls.forEach((u) => URL.revokeObjectURL(u)), [fileUrls]);
   // Step 3
-  // Project period (optional): read from the files or typed. The project's month follows the start.
+  // Pitch project period (optional): read from the files or typed. The project's month follows the start.
+  // A brand (no project) uses this month's plan.
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const month = startDate ? startDate.slice(0, 7) : thisMonth();
+  const month = isPitch && startDate ? startDate.slice(0, 7) : thisMonth();
   const monthEnd = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-  const periodError = startDate && endDate && endDate < startDate ? "The end date must be on or after the start date." : null;
+  const periodError = isPitch && startDate && endDate && endDate < startDate ? "The end date must be on or after the start date." : null;
   const [leads, setLeads] = useState<string[]>([]);
   // Lead names read from the documents (matched to users or not) — shown in step 3.
   const [leadFound, setLeadFound] = useState<LeadMatch[]>([]);
@@ -270,7 +273,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       setTried(0);
       setStep(2);
     } else if (step === 2) {
-      if (agreementMissing || !rows.length || !title.trim() || periodError) return;
+      if (agreementMissing || !rows.length || (isPitch && !title.trim()) || periodError) return;
       setTried(0);
       goStep3();
     }
@@ -309,9 +312,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       notes,
       scopeText: otherScope.trim(),
       scopeTotal,
-      projectType: typeForName,
       month,
-      title: cleanTitle,
+      ...(isPitch ? { projectType: typeForName, title: cleanTitle } : {}),
       leads,
       team: allRoles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
       tasks: [],
@@ -324,8 +326,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
             },
           }
         : {}),
-      ...(startDate ? { startDate } : {}),
-      ...(endDate ? { endDate } : {}),
+      ...(isPitch && startDate ? { startDate } : {}),
+      ...(isPitch && endDate ? { endDate } : {}),
       // What the agreement says: stored on the brand and compared with the rows above.
       ...(result ? { agreement: { scope: result.scope, texts: result.texts.map((t) => ({ source: t.source, text: t.text })) } } : {}),
     };
@@ -334,8 +336,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       {
         onSuccess: (res) => {
           if (res.pendingApproval) toast.success(res.pendingApproval);
-          else toast.success(`${res.brand.name} created${res.project ? ` with ${res.project.name}` : ""}.`);
-          if (res.warnings?.length) toast.error(`Some lead tasks weren't created: ${res.warnings.join("; ")}`);
+          else if (res.project) toast.success(`${res.brand.name} created with ${res.project.name}.`);
+          else toast.success(`${res.brand.name} created${res.planLine ? ` and added to the ${monthLabel} manpower plan` : ""}. Create its projects from the Projects page.`);
+          if (res.warnings?.length) toast.error(res.project ? `Some lead tasks weren't created: ${res.warnings.join("; ")}` : res.warnings.join(" "));
           onOpenChange(false);
           if (res.project) void navigate(`/projects/${res.project._id}`);
         },
@@ -568,12 +571,14 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 </details>
 
                 <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="brand-flow-title">Project name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
-                    <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && !title.trim()) || undefined} />
-                    <p className="break-all text-xs text-muted-foreground">Project: {projectName}</p>
-                    {tried >= 2 && !title.trim() && <FieldError>Enter the project name (the tracker's Campaign/Idea).</FieldError>}
-                  </div>
+                  {isPitch && (
+                    <div className="space-y-1.5">
+                      <Label htmlFor="brand-flow-title">Project name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
+                      <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && !title.trim()) || undefined} />
+                      <p className="break-all text-xs text-muted-foreground">Project: {projectName}</p>
+                      {tried >= 2 && !title.trim() && <FieldError>Enter the project name (the tracker's Campaign/Idea).</FieldError>}
+                    </div>
+                  )}
                   <div className="space-y-1.5">
                     <p className="text-sm font-medium">Platforms</p>
                     <div className="flex flex-wrap gap-1.5">
@@ -582,25 +587,27 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                   </div>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="brand-flow-start">
-                      Start date <span className="font-normal text-muted-foreground">(optional)</span>
-                      {result.dates.startDate && startDate === result.dates.startDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
-                    </Label>
-                    <Input id="brand-flow-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
-                    <p className="text-xs text-muted-foreground">Empty = the 1st of the month. The project's month follows the start date.</p>
+                {isPitch && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="brand-flow-start">
+                        Start date <span className="font-normal text-muted-foreground">(optional)</span>
+                        {result.dates.startDate && startDate === result.dates.startDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
+                      </Label>
+                      <Input id="brand-flow-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                      <p className="text-xs text-muted-foreground">Empty = the 1st of the month. The project's month follows the start date.</p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="brand-flow-end">
+                        End date <span className="font-normal text-muted-foreground">(optional)</span>
+                        {result.dates.endDate && endDate === result.dates.endDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
+                      </Label>
+                      <Input id="brand-flow-end" type="date" value={endDate} min={startDate || undefined} onChange={(e) => setEndDate(e.target.value)} aria-invalid={Boolean(periodError) || undefined} />
+                      <p className="text-xs text-muted-foreground">The project's deadline. Empty = {fmtDate(monthEnd)} (end of the month).</p>
+                      {periodError && <FieldError>{periodError}</FieldError>}
+                    </div>
                   </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="brand-flow-end">
-                      End date <span className="font-normal text-muted-foreground">(optional)</span>
-                      {result.dates.endDate && endDate === result.dates.endDate && <Badge variant="secondary" className="ml-1.5">from your files</Badge>}
-                    </Label>
-                    <Input id="brand-flow-end" type="date" value={endDate} min={startDate || undefined} onChange={(e) => setEndDate(e.target.value)} aria-invalid={Boolean(periodError) || undefined} />
-                    <p className="text-xs text-muted-foreground">The project's deadline. Empty = {fmtDate(monthEnd)} (end of the month).</p>
-                    {periodError && <FieldError>{periodError}</FieldError>}
-                  </div>
-                </div>
+                )}
 
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Scope</p>
@@ -794,9 +801,19 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               <p className="font-medium">When you click Create brand</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
                 <li>The brand <span className="text-foreground">{name.trim()}</span> is created{isPitch ? ` (potential revenue ${tbc ? "TBC" : `AED ${Number(revenue).toLocaleString("en-US")}`})` : ""}. If you aren't leadership, it waits for Aasim, Rania or Bala — and so does everything below.</li>
-                <li>The project <span className="break-all text-foreground">{projectName}</span> with the scope above ({pieces} pieces), running {fmtDate(startDate || `${month}-01`)} – {fmtDate(endDate || monthEnd)}; its scope is locked to the brand. Your files are attached.</li>
-                {isPitch && <li>{activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} for the lead: {activeTasks.map((t) => `${t.title} (${fmtDate(t.dueDate)})`).join(", ") || "none"}.</li>}
-                <li>{teamPeople.length} people on the team, written to the {monthLabel} manpower plan.</li>
+                {isPitch ? (
+                  <>
+                    <li>The project <span className="break-all text-foreground">{projectName}</span> with the scope above ({pieces} pieces), running {fmtDate(startDate || `${month}-01`)} – {fmtDate(endDate || monthEnd)}; its scope is locked to the brand. Your files are attached.</li>
+                    <li>{activeTasks.length} task{activeTasks.length === 1 ? "" : "s"} for the lead: {activeTasks.map((t) => `${t.title} (${fmtDate(t.dueDate)})`).join(", ") || "none"}.</li>
+                    <li>{teamPeople.length} people on the team, written to the {monthLabel} manpower plan.</li>
+                  </>
+                ) : (
+                  <>
+                    <li>The brand keeps the scope above ({pieces} pieces) and your files.</li>
+                    <li>{teamPeople.length} people on the team go onto the {monthLabel} manpower plan as the line <span className="text-foreground">{name.trim()}</span>.</li>
+                    <li>No project is created — create the brand&apos;s projects later from the Projects page.</li>
+                  </>
+                )}
               </ul>
             </div>
             {create.isError && <FieldError>{getErrorMessage(create.error)}</FieldError>}

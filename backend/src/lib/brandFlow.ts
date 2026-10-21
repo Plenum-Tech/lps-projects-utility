@@ -10,14 +10,18 @@ import { copyGridFsFile } from "./gridfs.js";
 // ---------------------------------------------------------------------------
 // Brand flow (Brands → New brand): a brand carries the scope read from its
 // files. Its projects get that scope locked and its files attached; the setup
-// picked in the flow (project, lead tasks, team → manpower plan line) runs at
-// once for leadership, or when leadership approves the brand.
+// picked in the flow (the team → the brand's manpower plan line; a pitch also
+// gets its Pitch project and tasks) runs at once for leadership, or when
+// leadership approves the brand.
 // ---------------------------------------------------------------------------
 
 /** Setup stored on a pending brand and run on approval. */
 export interface BrandSetup {
+  /** Pitch only ("Pitch"; "" for a brand: no project is created). */
   projectType: string;
+  /** The month whose manpower plan gets the team (and the pitch project's month). */
   month: string;
+  /** Pitch only: the campaign (project) name; "" for a brand. */
   title: string;
   leads: string[];
   team: Array<{ role: string; users: string[] }>;
