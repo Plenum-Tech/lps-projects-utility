@@ -53,6 +53,7 @@ import {
   useTaskBoard,
   useTaskList,
   useTaskRealtime,
+  type IterationFilter,
   type TaskFilters,
   type TaskSortField,
 } from "@/hooks/use-tasks";
@@ -292,7 +293,7 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
     to: filters.to || undefined,
     overdue: filters.overdue === "on",
     pearityTag: pearityOn && (filters.pearityTag === "has" || filters.pearityTag === "none") ? filters.pearityTag : "",
-    iteration: filters.iteration === "new" || filters.iteration === "rework" ? filters.iteration : "",
+    iteration: ["new", "rework", "rework-internal", "rework-external"].includes(filters.iteration) ? (filters.iteration as IterationFilter) : "",
     pinned: view === "pinned",
     recurringParent: filters.recurringParent || undefined,
     statusIn: filters.statusIn || undefined,
@@ -613,6 +614,8 @@ export function TaskWorkspace({ project }: { project?: WorkspaceProject } = {}) 
             options={[
               { value: "new", label: "New work" },
               { value: "rework", label: "Rework" },
+              { value: "rework-internal", label: "Rework · Internal review" },
+              { value: "rework-external", label: "Rework · External review" },
             ]}
           />
           <FilterSelect

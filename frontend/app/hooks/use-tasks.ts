@@ -52,6 +52,9 @@ import type {
 // ---------------------------------------------------------------------------
 
 /** Filters shared by the list and board views of GET /api/tasks. */
+/** The Work filter: new work, rework, or rework from an internal / external review. */
+export type IterationFilter = "new" | "rework" | "rework-internal" | "rework-external" | "";
+
 export interface TaskFilters {
   scope: TaskScope;
   search: string;
@@ -88,7 +91,7 @@ export interface TaskFilters {
   /** Pearity tag: "has" / "none". */
   pearityTag?: "has" | "none" | "";
   /** New work / rework. */
-  iteration?: "new" | "rework" | "";
+  iteration?: IterationFilter;
 }
 
 /** Server-side sort fields of GET /api/tasks. */

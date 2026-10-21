@@ -574,12 +574,15 @@ async function buildListFilter(
     and.push({ _id: pearityTag === "has" ? { $in: tagged } : { $nin: tagged } });
   }
 
-  // `?iteration=new|rework` — new work (incl. older tasks without the marker) or rework.
+  // `?iteration=new|rework|rework-internal|rework-external` — new work (incl. older tasks
+  // without the marker), rework, or rework from an internal / external review.
   const iterationFilter = req.query.iteration;
   if (iterationFilter !== undefined && iterationFilter !== "") {
     if (iterationFilter === "rework") and.push({ iteration: "rework" });
+    else if (iterationFilter === "rework-internal") and.push({ iteration: "rework", reworkSource: "internal" });
+    else if (iterationFilter === "rework-external") and.push({ iteration: "rework", reworkSource: "external" });
     else if (iterationFilter === "new") and.push({ iteration: { $ne: "rework" } });
-    else return { status: 400, error: "iteration must be one of: new, rework" };
+    else return { status: 400, error: "iteration must be one of: new, rework, rework-internal, rework-external" };
   }
 
   if (priority !== undefined && priority !== "") {
