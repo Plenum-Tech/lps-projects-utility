@@ -1,4 +1,5 @@
-import { richTextToPlain, sanitizeRichText } from "../lib/richText.js";
+import { richTextMentionIds, richTextToPlain, sanitizeRichText } from "../lib/richText.js";
+import { viewersAmong } from "./taskComments.js";
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
@@ -900,6 +901,34 @@ function emailTask(task: ITask) {
   };
 }
 
+/**
+ * People @mentioned in the description (and not in `previous`) who can view the
+ * task get task_mention (in-app + email). The actor is never told.
+ */
+async function notifyDescriptionMentions(task: ITask, actor: IUser, previous?: string | null): Promise<void> {
+  const before = new Set(richTextMentionIds(previous));
+  const added = richTextMentionIds(task.description).filter((id) => !before.has(id) && id !== actor._id.toString());
+  const recipients = await viewersAmong(added, task);
+  if (recipients.length === 0) return;
+  const text = richTextToPlain(task.description);
+  notifyTask({
+    recipients,
+    actor,
+    type: "task_mention",
+    task: emailTask(task),
+    title: "You were mentioned",
+    message: `${actor.name} mentioned you in the description of "${task.title}"`,
+    email: {
+      subject: `💬 ${actor.name} mentioned you on: ${task.title}`,
+      heading: "You Were Mentioned",
+      intro: `${actor.name} mentioned you in the task description.`,
+      quote: text.length > 600 ? `${text.slice(0, 599)}…` : text,
+      quoteAuthor: actor.name,
+      buttonLabel: "Open task",
+    },
+  });
+}
+
 const STATUS_LABELS: Record<TaskStatus, string> = {
   todo: "To do",
   in_progress: "In progress",
@@ -1609,6 +1638,11 @@ export async function createTask(req: Request, res: Response): Promise<void> {
     res.status(result.status).json({ error: result.error });
     return;
   }
+  // Only the task form tells description @mentions (not copies, recurrences or imports).
+  const created = await Task.findById(result.taskId);
+  if (created) {
+    void notifyDescriptionMentions(created, actor).catch((err) => console.error("[tasks] mention notify failed", err));
+  }
   const detail = await loadTaskDetail(result.taskId, actor);
   res.status(201).json({ ...detail, warnings: result.warnings });
 }
@@ -1983,6 +2017,8 @@ async function applyTaskUpdate(
   }
 
   const { description, priority } = body;
+  /** The description before this edit (set when it changes): only new @mentions are told. */
+  let previousDescription: string | null | undefined;
   /** Fields that trigger `task_updated` for the assignees. */
   const notable: string[] = [];
   const changed: string[] = [];
@@ -2028,6 +2064,7 @@ async function applyTaskUpdate(
     }
     const next = typeof description === "string" ? sanitizeRichText(description.trim()) || undefined : undefined;
     if ((task.description ?? undefined) !== next) {
+      previousDescription = task.description ?? null;
       task.description = next;
       notable.push("description");
     }
@@ -2285,6 +2322,10 @@ async function applyTaskUpdate(
         intro: `${user.name} updated this task: ${notable.join(", ")}.`,
       },
     });
+  }
+
+  if (previousDescription !== undefined) {
+    void notifyDescriptionMentions(task, user, previousDescription).catch((err) => console.error("[tasks] mention notify failed", err));
   }
 
   // Removed assignees also get the SSE event so their lists drop the task

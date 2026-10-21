@@ -41,10 +41,15 @@ export async function resolveMentions(body: string, task: ITask): Promise<mongoo
   for (const match of body.matchAll(MENTION_TOKEN)) {
     if (match[2]) ids.add(match[2].toLowerCase());
   }
-  if (ids.size === 0) return [];
+  return viewersAmong([...ids], task);
+}
+
+/** The given user ids narrowed to users who can view the task (mentions in comments and descriptions). */
+export async function viewersAmong(ids: string[], task: ITask): Promise<mongoose.Types.ObjectId[]> {
+  if (ids.length === 0) return [];
 
   const [users, departments] = await Promise.all([
-    User.find({ _id: { $in: [...ids] } }).select("_id role department"),
+    User.find({ _id: { $in: ids } }).select("_id role department"),
     taskDepartmentIds(task),
   ]);
   return users.filter((u) => canViewTask(u, task, departments)).map((u) => u._id);
