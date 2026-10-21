@@ -108,6 +108,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const [tasks, setTasks] = useState<LeadTask[]>([]);
   const [team, setTeam] = useState<Record<string, string[]>>({});
   const [teamTouched, setTeamTouched] = useState(false);
+  // A brand's plan line decides every position: people, or "Not needed" ("—" in the plan).
+  const [notNeeded, setNotNeeded] = useState<string[]>([]);
   const plan = useManpowerPlan(month, null, open && step === 3);
   const load = useTeamLoad(month, open && step === 3);
 
@@ -115,7 +117,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
     if (!open) return;
     setStep(1); setTried(0); setIsPitch(true); setName(""); setOrganisation(""); setRevenue(""); setTbc(false);
     setSheetRows(null); setSheetRow(null); setFiles([]); setTyped(""); setResult(null); setTitle(""); setRows([]);
-    setPlatforms([]); setNotes([]); setOtherScope(""); setScopeTotal(null); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false);
+    setPlatforms([]); setNotes([]); setOtherScope(""); setScopeTotal(null); setLeads([]); setTasks([]); setTeam({}); setTeamTouched(false); setNotNeeded([]);
     setStartDate(""); setEndDate(""); setShown(null); setLeadFound([]);
     extract.reset(); create.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -260,6 +262,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   function toggle(role: string, id: string) {
     setTeamTouched(true);
+    setNotNeeded((list) => list.filter((r) => r !== role));
     setTeam((t) => {
       const list = t[role] ?? [];
       return { ...t, [role]: list.includes(id) ? list.filter((x) => x !== id) : [...list, id] };
@@ -285,6 +288,15 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   // A pitch needs all three dates: Milestone 1 meeting, Milestone 2 meeting, Client presentation.
   const pitchDatesMissing = isPitch ? tasks.filter((t) => !t.dueDate).map((t) => t.title) : [];
   const teamPeople = [...new Set(allRoles.flatMap((r) => team[r.key] ?? []))];
+  // Brand (not a pitch): positions with nobody picked and not marked "Not needed".
+  const undecided = isPitch ? [] : allRoles.filter((r) => !(team[r.key] ?? []).length && !notNeeded.includes(r.key));
+  const notNeededRoles = allRoles.filter((r) => notNeeded.includes(r.key) && !(team[r.key] ?? []).length).map((r) => r.key);
+
+  function setRoleNotNeeded(role: string, on: boolean) {
+    setTeamTouched(true);
+    setNotNeeded((list) => (on ? [...new Set([...list, role])] : list.filter((r) => r !== role)));
+    if (on) setTeam((t) => ({ ...t, [role]: [] }));
+  }
   // A pitch's project is a Pitch; anything else starts as a Project (no choice to make here).
   const typeForName = isPitch ? "Pitch" : "Project";
   // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
@@ -292,7 +304,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   function submit() {
     setTried(3);
-    if (!leads.length || pitchDatesMissing.length) return;
+    if (!leads.length || pitchDatesMissing.length || undecided.length) return;
     const data = {
       name: name.trim(),
       organisation: organisation.trim(),
@@ -316,6 +328,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       ...(isPitch ? { projectType: typeForName, title: cleanTitle } : {}),
       leads,
       team: allRoles.map((r) => ({ role: r.key, users: team[r.key] ?? [] })).filter((t) => t.users.length),
+      ...(isPitch ? {} : { notNeeded: notNeededRoles }),
       tasks: [],
       ...(isPitch
         ? {
@@ -734,7 +747,30 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
             )}
 
             <div className="space-y-2">
-              <p className="text-sm font-medium">Team — all manpower positions</p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">
+                  Team — all manpower positions
+                  {!isPitch && <span aria-hidden className="ml-0.5 text-destructive">*</span>}
+                </p>
+                {!isPitch && undecided.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setTeamTouched(true);
+                      setNotNeeded((list) => [...new Set([...list, ...undecided.map((r) => r.key)])]);
+                    }}
+                  >
+                    Mark the {undecided.length} empty as not needed
+                  </Button>
+                )}
+              </div>
+              {!isPitch && (
+                <p className="text-xs text-muted-foreground">
+                  Every position goes onto the {monthLabel} plan line <span className="text-foreground">{name.trim()}</span>: pick the people, or mark it “Not needed” (shown as “—” in the plan).
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 Positions the SOW asks for are filled in for you ({roles.length}); fill any other position you need. Chips are the people who hold the role in the {monthLabel} manpower plan, least busy first (projects / max {max}) — or add anyone.
               </p>
@@ -750,18 +786,31 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                   const list = [...(holders.get(r.key) ?? [])];
                   for (const id of picked) if (!list.some((p) => p.id === id)) list.push({ id, name: nameOf(id) });
                   const others = peopleOptions.filter((o) => !list.some((p) => p.id === o.value));
+                  const off = !picked.length && notNeeded.includes(r.key);
+                  const missing = tried >= 3 && undecided.some((u) => u.key === r.key);
                   return (
-                    <div key={r.key} className={cn("rounded-lg border p-3", r.why ? "border-primary/40" : "", !r.why && !picked.length && "bg-muted/20")}>
+                    <div
+                      key={r.key}
+                      className={cn("rounded-lg border p-3", r.why ? "border-primary/40" : "", !r.why && !picked.length && "bg-muted/20", missing && "border-destructive/60")}
+                    >
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <p className="text-sm font-medium">
                           {r.label}
                           {picked.length > 0 && <span className="ml-1.5 text-xs font-normal text-muted-foreground">({picked.length})</span>}
                         </p>
-                        {r.why ? (
-                          <Badge variant="secondary" className="text-xs font-normal">From the SOW: {r.why}</Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">Not in the SOW — fill if needed</span>
-                        )}
+                        <span className="flex flex-wrap items-center gap-2">
+                          {r.why ? (
+                            <Badge variant="secondary" className="text-xs font-normal">From the SOW: {r.why}</Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Not in the SOW — fill if needed</span>
+                          )}
+                          {!isPitch && (
+                            <label className="flex items-center gap-1 text-xs">
+                              <input type="checkbox" className="size-3.5 accent-primary" checked={off} onChange={(e) => setRoleNotNeeded(r.key, e.target.checked)} />
+                              Not needed
+                            </label>
+                          )}
+                        </span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-1.5">
                         {list.map((p) => {
@@ -797,6 +846,12 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
               </div>
             </div>
 
+            {tried >= 3 && undecided.length > 0 && (
+              <FieldError>
+                Pick people or mark “Not needed” for every manpower position — still open: {undecided.map((r) => r.label).join(", ")}.
+              </FieldError>
+            )}
+
             <div className="rounded-lg bg-muted/40 p-3 text-sm">
               <p className="font-medium">When you click Create brand</p>
               <ul className="mt-1 list-disc space-y-0.5 pl-5 text-muted-foreground">
@@ -810,7 +865,10 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                 ) : (
                   <>
                     <li>The brand keeps the scope above ({pieces} pieces) and your files.</li>
-                    <li>{teamPeople.length} people on the team go onto the {monthLabel} manpower plan as the line <span className="text-foreground">{name.trim()}</span>.</li>
+                    <li>
+                      {teamPeople.length} people on the team go onto the {monthLabel} manpower plan as the line <span className="text-foreground">{name.trim()}</span>
+                      {notNeededRoles.length > 0 ? `; ${notNeededRoles.length} position${notNeededRoles.length === 1 ? "" : "s"} not needed (“—”)` : ""}. If the brand already has a line that month, it is updated instead.
+                    </li>
                     <li>No project is created — create the brand&apos;s projects later from the Projects page.</li>
                   </>
                 )}

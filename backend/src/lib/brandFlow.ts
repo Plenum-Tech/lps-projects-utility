@@ -25,6 +25,8 @@ export interface BrandSetup {
   title: string;
   leads: string[];
   team: Array<{ role: string; users: string[] }>;
+  /** Plan roles marked "Not needed" (a brand decides every plan role: people or not needed). */
+  notNeeded?: string[];
   tasks: Array<{ title: string; dueDate: string }>;
   /** Pitches (required): YYYY-MM-DD dates; the project creates the three lead tasks. */
   pitchDates?: { clientPresentation: string; milestone1: string; milestone2: string };

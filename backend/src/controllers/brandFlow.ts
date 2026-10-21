@@ -5,7 +5,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { deleteFromGridFs, uploadToGridFs } from "../lib/gridfs.js";
 import type { BrandSetup } from "../lib/brandFlow.js";
-import { TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
+import { MANPOWER_ROLE_KEYS, MANPOWER_ROLES, TEAM_ROLE_KEYS } from "../lib/manpowerRoles.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
 import { extractScope, parseLooseDate } from "../lib/scopeExtract.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
@@ -18,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { currentMonth, monthName } from "../lib/brandReadiness.js";
 import { cellsWithTeam, reusableLine } from "../lib/manpowerDedupe.js";
 import { cellsFromTeam, rowPeopleKey } from "../lib/manpowerSync.js";
-import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
+import { APPROVED_PLAN, ManpowerPlan, type IManpowerCell, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { brandScopeMatch, matchLeadUsers, storedAgreementFrom } from "./brandScope.js";
 import { parseMatchRows, storedScopeMatch } from "../lib/scopeMatch.js";
 import { recordScopeVersion } from "../lib/scopeVersions.js";
@@ -198,13 +198,13 @@ export async function runBrandSetup(brand: IBrand, setup: BrandSetup, actor: IUs
 
 /**
  * A (non-pitch) brand's team → the brand's line in `setup.month`'s plan, named exactly the
- * brand's name: the brand's existing line is reused (people added, nobody taken off), else
- * a new line. Saved as a new version through writePlanVersion (leadership → approved,
+ * brand's name: the brand's existing line is reused (its cells replaced by the flow's
+ * decision — no second line), else a new line. Saved as a new version through writePlanVersion (leadership → approved,
  * anyone else → pending). No approved plan for the month = no line (a warning).
  */
 export async function addBrandPlanLine(
   brand: IBrand,
-  setup: Pick<BrandSetup, "month" | "team">,
+  setup: Pick<BrandSetup, "month" | "team" | "notNeeded">,
   actor: IUser,
   ip: string | undefined
 ): Promise<PlanLineResult> {
@@ -218,15 +218,31 @@ export async function addBrandPlanLine(
   const team = setup.team ?? [];
   const name = brand.name;
   const existing = reusableLine(rows, brand._id, name);
+  // The flow decides every plan role (people, or "Not needed"): the line's cells become exactly
+  // that decision (an existing line is replaced, notes kept). A setup stored before "Not needed"
+  // existed (no `notNeeded`) only adds its people to an existing line.
+  const decided = Array.isArray(setup.notNeeded);
+  const notNeeded = new Set(setup.notNeeded ?? []);
+  const decide = (current: IManpowerCell[]): IManpowerCell[] => {
+    const cells = cellsFromTeam(current, team).map((c) =>
+      notNeeded.has(c.role) ? { ...c, users: [], placeholders: [], notNeeded: true } : { ...c, placeholders: [], notNeeded: false }
+    );
+    for (const role of notNeeded) {
+      if (!cells.some((c) => c.role === role)) cells.push({ role, users: [], placeholders: [], notNeeded: true, note: "" });
+    }
+    return cells;
+  };
+  const cellsKey = (cells: IManpowerCell[]) =>
+    `${rowPeopleKey(cells)}#${cells.filter((c) => c.notNeeded).map((c) => c.role).sort().join(",")}`;
   let nextRows: IManpowerRow[];
   if (existing) {
-    const cells = cellsWithTeam(existing.cells, team);
-    if (rowPeopleKey(cells) === rowPeopleKey(existing.cells)) return { planLine: { month, name: existing.name }, warnings: [] };
+    const cells = decided ? decide(existing.cells) : cellsWithTeam(existing.cells, team);
+    if (cellsKey(cells) === cellsKey(existing.cells)) return { planLine: { month, name: existing.name }, warnings: [] };
     nextRows = rows.map((r) => (r.key === existing.key ? { ...r, cells } : r));
   } else {
     nextRows = [
       ...rows,
-      { key: randomUUID(), section: "active", brand: brand._id as mongoose.Types.ObjectId, type: null, name, cells: cellsFromTeam([], team) },
+      { key: randomUUID(), section: "active", brand: brand._id as mongoose.Types.ObjectId, type: null, name, cells: decide([]) },
     ];
   }
   try {
@@ -325,7 +341,17 @@ function parseSetup(raw: Record<string, unknown>, isPitch: boolean): BrandSetup 
     const users = ids(entry.users, "team");
     if (users.length && !team.some((t) => t.role === role)) team.push({ role, users });
   }
-  if (!isPitch) return { projectType, month, title, leads, team, tasks: [] };
+  if (!isPitch) {
+    // A brand's line in the plan: every plan role is decided — people picked, or "Not needed".
+    const rawNotNeeded = Array.isArray(raw.notNeeded) ? raw.notNeeded.map(String) : [];
+    if (rawNotNeeded.some((r) => !MANPOWER_ROLE_KEYS.includes(r))) throw new FieldError("notNeeded", "notNeeded has an unknown role");
+    const notNeeded = [...new Set(rawNotNeeded)].filter((r) => !team.some((t) => t.role === r));
+    const undecided = MANPOWER_ROLES.filter((r) => !notNeeded.includes(r.key) && !team.some((t) => t.role === r.key && t.users.length));
+    if (undecided.length) {
+      throw new FieldError("team", `Pick people or mark "Not needed" for every manpower position: ${undecided.map((r) => r.label).join(", ")}`);
+    }
+    return { projectType, month, title, leads, team, notNeeded, tasks: [] };
+  }
   const tasks: BrandSetup["tasks"] = [];
   for (const t of Array.isArray(raw.tasks) ? (raw.tasks as Array<Record<string, unknown>>) : []) {
     const taskTitle = str(t?.title).slice(0, 120);
