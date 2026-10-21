@@ -69,6 +69,8 @@ export interface TaskFact {
   actualStartDay: number | null;
   actualEndDay: number | null;
   rework: boolean;
+  /** Rework tasks: whose review asked for it (null = not set: older reworks, keyword/category/items rule). */
+  reworkSource: "internal" | "external" | null;
 }
 
 export interface FactsResult {
@@ -114,6 +116,7 @@ interface RawFact {
   actualStartAt?: Date | null;
   actualEndAt?: Date | null;
   rework: boolean;
+  reworkSource?: "internal" | "external" | null;
   subtaskIds?: unknown[];
 }
 
@@ -256,6 +259,7 @@ async function queryFacts(
         actualEndAt: 1,
         // Rework items (subtasks) — those added since rework moved inside tasks count as rework.
         subtaskIds: "$subtasks._id",
+        reworkSource: 1,
         // Rules-era tasks carry an explicit iteration marker; older ones use the keyword/category rule.
         rework: {
           $cond: [
@@ -310,6 +314,7 @@ async function queryFacts(
       actualStartDay: appDay(r.actualStartAt),
       actualEndDay: appDay(r.actualEndAt),
       rework: Boolean(r.rework) || hasReworkItems(r.subtaskIds),
+      reworkSource: r.reworkSource === "internal" || r.reworkSource === "external" ? r.reworkSource : null,
     });
   }
   return { facts, minCreatedDay };

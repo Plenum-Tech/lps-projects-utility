@@ -16,7 +16,8 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import { formatDateOnly } from "@/lib/tasks";
-import type { TaskListResponse, TaskStatus } from "@/types";
+import { cn } from "@/lib/utils";
+import type { ReworkSource, TaskListResponse, TaskStatus } from "@/types";
 
 export interface ReworkTaskOption {
   value: string;
@@ -26,6 +27,36 @@ export interface ReworkTaskOption {
   projectLabel?: string;
   /** The original task's assignees (pre-filled on the rework). */
   assigneeIds?: string[];
+}
+
+/** The rework form's review choice: whose review asked for the changes. */
+export const REWORK_SOURCE_OPTIONS: Array<{ value: ReworkSource; label: string; hint: string }> = [
+  { value: "internal", label: "Internal review", hint: "Our own team's review asked for changes." },
+  { value: "external", label: "External review", hint: "The client's review asked for changes." },
+];
+
+export const REWORK_SOURCE_LABELS: Record<ReworkSource, string> = {
+  internal: "Internal review",
+  external: "External review",
+};
+
+/** "Internal review" / "External review" on a rework; "Review: not set" on older reworks. */
+export function ReworkSourceBadge({ source, className }: { source?: ReworkSource | null; className?: string }) {
+  return (
+    <span
+      className={cn(
+        "rounded-full border px-2 py-0.5 text-xs whitespace-nowrap",
+        source === "external"
+          ? "border-primary/40 bg-primary/10 font-medium text-primary"
+          : source === "internal"
+            ? "bg-muted/60 font-medium text-foreground"
+            : "border-dashed text-muted-foreground",
+        className,
+      )}
+    >
+      {source ? REWORK_SOURCE_LABELS[source] : "Review: not set"}
+    </span>
+  );
 }
 
 /** "RWT-3 · Post 1 – Teaser" (code, else #number). */
@@ -155,6 +186,7 @@ interface ReworkTaskRow {
   dueDate?: string | null;
   completedAt?: string | null;
   createdAt: string;
+  reworkSource?: ReworkSource | null;
 }
 
 /**
@@ -200,6 +232,7 @@ export function ReworkHistory({ taskId, onAdd }: { taskId: string; onAdd?: () =>
                   Round {row.round}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-sm">{reworkTaskLabel(row)}</span>
+                <ReworkSourceBadge source={row.reworkSource} />
                 <StatusBadge status={row.status} />
                 <span className="flex -space-x-1">
                   {row.assignees.slice(0, 3).map((a) => (

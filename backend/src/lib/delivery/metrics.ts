@@ -61,6 +61,9 @@ export function overdueAt(f: TaskFact, day: number): boolean {
 export interface Acc {
   created: number;
   rework: number;
+  /** Rework split by whose review asked for it (the rest are "not set"). */
+  reworkInternal: number;
+  reworkExternal: number;
   completed: number;
   completedWithDue: number;
   onTime: number;
@@ -79,6 +82,8 @@ export function emptyAcc(): Acc {
   return {
     created: 0,
     rework: 0,
+    reworkInternal: 0,
+    reworkExternal: 0,
     completed: 0,
     completedWithDue: 0,
     onTime: 0,
@@ -98,7 +103,11 @@ const inRange = (day: number | null, r: Range) => day !== null && day >= r.start
 export function addFact(acc: Acc, f: TaskFact, range: Range, asOf: number): void {
   if (inRange(f.createdDay, range)) {
     acc.created += 1;
-    if (f.rework) acc.rework += 1;
+    if (f.rework) {
+      acc.rework += 1;
+      if (f.reworkSource === "internal") acc.reworkInternal += 1;
+      else if (f.reworkSource === "external") acc.reworkExternal += 1;
+    }
   }
   if (f.completedDay !== null && inRange(f.completedDay, range)) {
     acc.completed += 1;
@@ -132,6 +141,10 @@ export interface Stats {
   /** Rework tasks created in the range. */
   rework: number;
   reworkPct: number | null;
+  /** Rework by review: internal (our team), external (the client), not set (older reworks). */
+  reworkInternal: number;
+  reworkExternal: number;
+  reworkNotSet: number;
   completed: number;
   /** Completed in range with a due date (on-time denominator). */
   completedWithDue: number;
@@ -158,6 +171,9 @@ export function finalize(acc: Acc): Stats {
     created: acc.created,
     rework: acc.rework,
     reworkPct: pct(acc.rework, acc.created),
+    reworkInternal: acc.reworkInternal,
+    reworkExternal: acc.reworkExternal,
+    reworkNotSet: acc.rework - acc.reworkInternal - acc.reworkExternal,
     completed: acc.completed,
     completedWithDue: acc.completedWithDue,
     onTime: acc.onTime,
@@ -292,6 +308,9 @@ export interface WeekRow {
   overduePct: number | null;
   rework: number;
   reworkPct: number | null;
+  reworkInternal: number;
+  reworkExternal: number;
+  reworkNotSet: number;
 }
 
 /** Monday-start weeks covering the period, capped at the most recent MAX_WEEKS. */
@@ -324,6 +343,9 @@ export function weeklySeries(facts: TaskFact[], weeks: Range[]): WeekRow[] {
       overduePct: pct(s.overdue, s.open),
       rework: s.rework,
       reworkPct: s.reworkPct,
+      reworkInternal: s.reworkInternal,
+      reworkExternal: s.reworkExternal,
+      reworkNotSet: s.reworkNotSet,
     };
   });
 }

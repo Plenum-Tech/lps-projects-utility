@@ -1,4 +1,4 @@
-import type { DeliveryDelta, DeliveryPeriod, DeliveryUserRef } from "@/types";
+import type { DeliveryDelta, DeliveryPeriod, DeliveryStats, DeliveryUserRef } from "@/types";
 
 export const PERIODS: { value: DeliveryPeriod; label: string; title: string }[] = [
   { value: "7d", label: "7d", title: "Last 7 days" },
@@ -88,6 +88,17 @@ export const TONE_BAR: Record<Tone, string> = {
 export function rateTone(pct: number | null, good = 85, warn = 65): Tone {
   if (pct === null) return "neutral";
   return pct >= good ? "good" : pct >= warn ? "warn" : "critical";
+}
+
+/** Rework by review: "2 internal · 1 external · 3 not set" (zeros left out; — without rework). */
+export function fmtReworkSplit(stats: Pick<DeliveryStats, "rework" | "reworkInternal" | "reworkExternal" | "reworkNotSet">): string {
+  if (!stats.rework) return DASH;
+  const parts = [
+    stats.reworkInternal ? `${fmtNum(stats.reworkInternal)} internal` : null,
+    stats.reworkExternal ? `${fmtNum(stats.reworkExternal)} external` : null,
+    stats.reworkNotSet ? `${fmtNum(stats.reworkNotSet)} not set` : null,
+  ];
+  return parts.filter(Boolean).join(" · ");
 }
 
 /** Lower-is-better rate (rework %, overdue %). */

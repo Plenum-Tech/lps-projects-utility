@@ -26,6 +26,7 @@ import { ActualDateCell } from "@/components/tasks/actual-dates";
 import { ApprovalActions } from "@/components/tasks/approval-actions";
 import { LabelChip } from "@/components/tasks/label-chip";
 import { PearityTagCell, usePearityGenerateAction } from "@/components/tasks/pearity";
+import { ReworkSourceBadge } from "@/components/tasks/rework-panel";
 import { PriorityIndicator } from "@/components/tasks/task-badges";
 import { TaskTimerButton } from "@/components/tasks/task-timer-button";
 import { usePearityStatus } from "@/hooks/use-pearity";
@@ -412,11 +413,14 @@ export function TasksTable({
       header: "Work",
       cell: (task) =>
         task.iteration === "rework" ? (
-          <span
-            className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warn"
-            title={task.reworkOf ? `Rework of ${task.reworkOf.shortCode ?? ""} ${task.reworkOf.title}`.trim() : "Rework"}
-          >
-            Rework
+          <span className="inline-flex items-center gap-1">
+            <span
+              className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warn"
+              title={task.reworkOf ? `Rework of ${task.reworkOf.shortCode ?? ""} ${task.reworkOf.title}`.trim() : "Rework"}
+            >
+              Rework
+            </span>
+            <ReworkSourceBadge source={task.reworkSource} />
           </span>
         ) : (
           <span className="rounded-full border bg-muted/40 px-2 py-0.5 text-xs whitespace-nowrap text-muted-foreground">

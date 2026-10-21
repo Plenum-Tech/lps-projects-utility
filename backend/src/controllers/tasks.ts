@@ -72,8 +72,8 @@ import type { IProject } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { TimeLog } from "../models/TimeLog.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
-import { Task, TASK_ITERATIONS, TASK_TITLE_LIMITS, composeTaskTitle } from "../models/Task.js";
-import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus, ITaskTitleParts, TaskIteration } from "../models/Task.js";
+import { Task, TASK_ITERATIONS, REWORK_SOURCES, TASK_TITLE_LIMITS, composeTaskTitle } from "../models/Task.js";
+import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus, ITaskTitleParts, TaskIteration, ReworkSource } from "../models/Task.js";
 import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
 import { TaskComment } from "../models/TaskComment.js";
@@ -103,6 +103,15 @@ const MIN_POSITION_GAP = 1e-6;
 export interface Invalid {
   status: number;
   error: string;
+}
+
+/** An `Invalid` tied to a form field (sent as `field` next to `error`). */
+type FieldInvalid = Invalid & { field: string };
+
+/** `{ error }`, plus `field` when the failure names one. */
+function invalidJson(result: Invalid): { error: string; field?: string } {
+  const field = (result as Partial<FieldInvalid>).field;
+  return field ? { error: result.error, field } : { error: result.error };
 }
 
 export function isInvalid(value: unknown): value is Invalid {
@@ -1147,6 +1156,8 @@ export interface CreateTaskBody {
   iteration?: unknown;
   /** Rework: the original task (same project). */
   reworkOf?: unknown;
+  /** Rework: "internal" (our review) | "external" (the client's review). */
+  reworkSource?: unknown;
   /** The form uploads attachments right after creation (they count as the brief). */
   hasAttachments?: unknown;
   milestone?: unknown;
@@ -1253,6 +1264,21 @@ function parseTitleParts(raw: unknown): ITaskTitleParts | undefined | Invalid {
   return { unit, quantity, shortName };
 }
 
+/** `reworkSource` -> "internal" | "external", undefined when absent. */
+function parseReworkSource(raw: unknown): ReworkSource | undefined | FieldInvalid {
+  if (raw === undefined || raw === null || raw === "") return undefined;
+  if (typeof raw !== "string" || !(REWORK_SOURCES as readonly string[]).includes(raw)) {
+    return { status: 400, error: 'reworkSource must be "internal" or "external"', field: "reworkSource" };
+  }
+  return raw as ReworkSource;
+}
+
+const REWORK_SOURCE_REQUIRED: FieldInvalid = {
+  status: 400,
+  error: "Choose whose review asked for this rework: internal or external",
+  field: "reworkSource",
+};
+
 /** `iteration` -> "new" | "rework", undefined when absent. */
 function parseIteration(raw: unknown): TaskIteration | undefined | Invalid {
   if (raw === undefined || raw === null || raw === "") return undefined;
@@ -1292,6 +1318,11 @@ export async function createTaskCore(
   if (isInvalid(titleParts)) return titleParts;
   const iteration = parseIteration(body.iteration);
   if (isInvalid(iteration)) return iteration;
+  // A rework records whose review asked for it; anything else never carries it.
+  const isRework = iteration === "rework" || (body.reworkOf !== undefined && body.reworkOf !== null && body.reworkOf !== "");
+  const reworkSource = parseReworkSource(body.reworkSource);
+  if (isInvalid(reworkSource)) return reworkSource;
+  if (isRework && !reworkSource) return REWORK_SOURCE_REQUIRED;
   let title: unknown = titleParts ? composeTaskTitle(titleParts) : body.title;
 
   // Project tasks: admins, heads, the project manager and members. Standalone tasks: heads/admins.
@@ -1517,6 +1548,7 @@ export async function createTaskCore(
     estimateMinutes: estimateMinutes ?? null,
     iteration: iteration ?? null,
     reworkOf: iteration === "rework" && reworkOf ? reworkOf._id : null,
+    reworkSource: iteration === "rework" ? reworkSource ?? null : null,
     ...(titleParts ? { titleParts } : {}),
     category,
     labels,
@@ -1648,7 +1680,7 @@ export async function createTask(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
   const result = await createTaskCore(actor, (req.body ?? {}) as CreateTaskBody, req.ip, {}, { enforceRules: true });
   if (isInvalid(result)) {
-    res.status(result.status).json({ error: result.error });
+    res.status(result.status).json(invalidJson(result));
     return;
   }
   // Only the task form tells description @mentions (not copies, recurrences or imports).
@@ -1753,7 +1785,7 @@ export async function listReworkTasks(req: Request, res: Response): Promise<void
   const task = await getReadableTaskOr404(req, res);
   if (!task) return;
   const reworks = await Task.find({ reworkOf: task._id })
-    .select("title shortCode number status priority assignees assignedBy dueDate completedAt createdAt")
+    .select("title shortCode number status priority assignees assignedBy dueDate completedAt createdAt reworkSource")
     .populate([
       { path: "assignees", select: "name email" },
       { path: "assignedBy", select: "name" },
@@ -2056,6 +2088,24 @@ async function applyTaskUpdate(
       task.iteration = iteration;
       notable.push("iteration");
     }
+  }
+  // Rework review source: editable on a rework; a task that isn't a rework drops it.
+  if (task.iteration === "rework") {
+    if (body.reworkSource !== undefined) {
+      const reworkSource = parseReworkSource(body.reworkSource);
+      if (isInvalid(reworkSource)) return reworkSource;
+      if (!reworkSource && task.reworkSource) return REWORK_SOURCE_REQUIRED;
+      if (reworkSource && reworkSource !== task.reworkSource) {
+        task.reworkSource = reworkSource;
+        changed.push("reworkSource");
+      }
+    } else if (notable.includes("iteration") && !task.reworkSource) {
+      // Turned into a rework by this edit: the source is required as on create.
+      return REWORK_SOURCE_REQUIRED;
+    }
+  } else if (task.reworkSource) {
+    task.reworkSource = null;
+    changed.push("reworkSource");
   }
 
   if (title !== undefined) {
@@ -2394,7 +2444,7 @@ export async function updateTask(req: Request, res: Response): Promise<void> {
     ? await applyActualDatesUpdate(user, task, body, req.ip)
     : await applyTaskUpdate(user, task, body, req.ip);
   if (isInvalid(result)) {
-    res.status(result.status).json({ error: result.error });
+    res.status(result.status).json(invalidJson(result));
     return;
   }
   const detail = await loadTaskDetail(task._id as mongoose.Types.ObjectId, user);
@@ -2866,6 +2916,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
     "Milestone",
     "Status",
     "Priority",
+    "Review",
     "Assigned to",
     "Labels",
     "Category",
@@ -2892,6 +2943,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
         t.milestone?.title ?? "",
         STATUS_LABELS[t.status],
         t.priority,
+        t.reworkSource === "internal" ? "Internal" : t.reworkSource === "external" ? "External" : "",
         t.assignees.map((a) => a.name ?? "").filter(Boolean).join("; "),
         t.labels.map((l) => l.name ?? "").filter(Boolean).join("; "),
         t.category?.name ?? "",

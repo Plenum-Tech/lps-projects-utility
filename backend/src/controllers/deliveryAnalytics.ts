@@ -235,6 +235,9 @@ function statsRow(s: Stats) {
     startsWithPlan: s.startsWithPlan,
     rework: s.rework,
     reworkPct: s.reworkPct,
+    reworkInternal: s.reworkInternal,
+    reworkExternal: s.reworkExternal,
+    reworkNotSet: s.reworkNotSet,
     open: s.open,
     overdue: s.overdue,
   };
@@ -404,12 +407,13 @@ export async function getTeams(req: Request, res: Response): Promise<void> {
       csv: (d) => ({
         name: "delivery-teams",
         headers: [
-          "Team", "People", "Completed", "On time %", "Mean days", "Mean days · 30d", "Mean start → done", "Rework %", "Overdue now", "Open", "Created",
+          "Team", "People", "Completed", "On time %", "Mean days", "Mean days · 30d", "Mean start → done", "Rework %",
+          "Rework (internal)", "Rework (external)", "Rework (not set)", "Overdue now", "Open", "Created",
           "Best performer", "Bottom performer",
         ],
         rows: d.rows.map((r) => [
           r.team.name, r.people, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.meanDays30), pctText(r.startToDoneDays),
-          pctText(r.reworkPct), r.overdue, r.open, r.created,
+          pctText(r.reworkPct), r.reworkInternal, r.reworkExternal, r.reworkNotSet, r.overdue, r.open, r.created,
           r.best ? `${r.best.person.name} (${r.best.why})` : "", r.bottom ? `${r.bottom.person.name} (${r.bottom.why})` : "",
         ]),
       }),
@@ -522,11 +526,13 @@ export async function getBrands(req: Request, res: Response): Promise<void> {
       csv: (d) => ({
         name: "delivery-brands",
         headers: [
-          "Brand", "Created", "Completed", "On time %", "Mean days", "Rework %", "Overdue now", "Brief score",
+          "Brand", "Created", "Completed", "On time %", "Mean days", "Rework %",
+          "Rework (internal)", "Rework (external)", "Rework (not set)", "Overdue now", "Brief score",
           "Created (prev)", "Completed (prev)", "On time % (prev)", "Mean days (prev)", "Rework % (prev)", "Overdue (prev)", "Warning signs",
         ],
         rows: d.rows.map((r) => [
-          r.brand.name, r.created, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.reworkPct), r.overdue, pctText(r.briefScore),
+          r.brand.name, r.created, r.completed, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.reworkPct),
+          r.reworkInternal, r.reworkExternal, r.reworkNotSet, r.overdue, pctText(r.briefScore),
           r.previous?.created ?? "", r.previous?.completed ?? "", pctText(r.previous?.onTimePct ?? null),
           pctText(r.previous?.meanDays ?? null), pctText(r.previous?.reworkPct ?? null), r.previous?.overdue ?? "", r.warnings?.count ?? "",
         ]),
@@ -752,10 +758,10 @@ export async function getPeople(req: Request, res: Response): Promise<void> {
     {
       csv: (d) => ({
         name: "delivery-people",
-        headers: ["Person", "Designation", "Team", "Completed", "This week", "30 days", "On time %", "Mean days", "Mean start → done", "Rework %", "Overdue now", "Open now", "Brands", "Ranked"],
+        headers: ["Person", "Designation", "Team", "Completed", "This week", "30 days", "On time %", "Mean days", "Mean start → done", "Rework %", "Rework (internal)", "Rework (external)", "Rework (not set)", "Overdue now", "Open now", "Brands", "Ranked"],
         rows: d.rows.map((r) => [
           r.person.name, r.person.designation, r.person.team.name, r.completed, r.completedThisWeek, r.completed30d, pctText(r.onTimePct), pctText(r.meanDays), pctText(r.startToDoneDays), pctText(r.reworkPct),
-          r.overdue, r.open, r.brandCount, r.ranked ? "Yes" : "No",
+          r.reworkInternal, r.reworkExternal, r.reworkNotSet, r.overdue, r.open, r.brandCount, r.ranked ? "Yes" : "No",
         ]),
       }),
     }

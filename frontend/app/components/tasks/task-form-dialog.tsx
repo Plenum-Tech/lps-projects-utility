@@ -24,7 +24,7 @@ import {
   type MultiSelectOption,
 } from "@/components/globals/multi-select";
 import { AttachmentsField } from "@/components/tasks/attachments-field";
-import { ReworkTaskPicker, type ReworkTaskOption } from "@/components/tasks/rework-panel";
+import { REWORK_SOURCE_OPTIONS, ReworkTaskPicker, type ReworkTaskOption } from "@/components/tasks/rework-panel";
 import {
   Combobox,
   ComboboxContent,
@@ -113,6 +113,7 @@ import {
 } from "@/lib/tasks";
 import type {
   MentionableUser,
+  ReworkSource,
   TaskIteration,
   RecurrenceInput,
   Task,
@@ -139,6 +140,8 @@ interface FormState {
   iteration: "" | TaskIteration;
   /** Rework: the original task's id. */
   reworkOf: string;
+  /** Rework: whose review asked for it. */
+  reworkSource: "" | ReworkSource;
   description: string;
   assignees: string[];
   priority: TaskPriority;
@@ -179,6 +182,7 @@ function initialState(
     shortName: task?.titleParts?.shortName ?? "",
     iteration: task?.iteration ?? defaultIteration ?? "",
     reworkOf: task ? (task.reworkOf?._id ?? "") : (defaultReworkOf?.value ?? ""),
+    reworkSource: task?.reworkSource ?? "",
     description: task?.description ?? "",
     assignees: task?.assignees.map((user) => user._id) ?? [],
     priority: task?.priority ?? "medium",
@@ -510,6 +514,10 @@ export function TaskFormDialog({
   const rulesApply = !task || Boolean(task.iteration);
   const iterationInvalid = submitted && rulesApply && !form.iteration;
   const reworkMissing = !task && form.iteration === "rework" && !form.reworkOf;
+  // Every new rework says whose review asked for it (older reworks may stay unset).
+  const reworkSourceRequired =
+    form.iteration === "rework" && !(task && task.iteration === "rework" && !task.reworkSource);
+  const reworkSourceMissing = reworkSourceRequired && !form.reworkSource;
   // New work and rework: a written brief or an attached file.
   // The brief may be formatted (HTML): count its text.
   const descriptionText = richTextPlain(form.description);
@@ -553,6 +561,7 @@ export function TaskFormDialog({
       dueMissing ||
       (rulesApply && !form.iteration) ||
       reworkMissing ||
+      reworkSourceMissing ||
       briefMissing ||
       ((!task || Boolean(task.project)) && !projectId && !reworkCreate) ||
       estimateMissing ||
@@ -584,6 +593,7 @@ export function TaskFormDialog({
             }),
         ...(form.iteration ? { iteration: form.iteration } : {}),
         ...(form.iteration === "rework" && form.reworkOf ? { reworkOf: form.reworkOf } : {}),
+        ...(form.iteration === "rework" && form.reworkSource ? { reworkSource: form.reworkSource } : {}),
         hasAttachments: attachments.length > 0,
         description: form.description.trim() || undefined,
         assignees: form.assignees,
@@ -648,6 +658,8 @@ export function TaskFormDialog({
     }
     if (form.iteration && form.iteration !== original.iteration)
       input.iteration = form.iteration;
+    if (form.iteration === "rework" && form.reworkSource && form.reworkSource !== original.reworkSource)
+      input.reworkSource = form.reworkSource;
     if (form.description.trim() !== original.description.trim()) {
       input.description = form.description.trim();
     }
@@ -735,6 +747,38 @@ export function TaskFormDialog({
                   )}
                 </fieldset>
   ) : null;
+  // Rework: whose review asked for the changes (required; editable later).
+  const reworkSourceField =
+    form.iteration === "rework" ? (
+      <fieldset className="space-y-1.5">
+        <legend className="text-sm font-medium">
+          Review{reworkSourceRequired && <span aria-hidden className="ml-0.5 text-destructive">*</span>}
+        </legend>
+        <RadioGroup
+          value={form.reworkSource}
+          onValueChange={(value) => set("reworkSource", value as ReworkSource)}
+          className="grid gap-2 sm:grid-cols-2"
+          aria-invalid={(submitted && reworkSourceMissing) || undefined}
+        >
+          {REWORK_SOURCE_OPTIONS.map((option) => (
+            <Label
+              key={option.value}
+              htmlFor={`task-rework-source-${option.value}`}
+              className="flex cursor-pointer items-start gap-3 rounded-lg border p-3 font-normal transition-colors duration-150 has-data-checked:border-ring/60 has-data-checked:bg-primary/5"
+            >
+              <RadioGroupItem id={`task-rework-source-${option.value}`} value={option.value} className="mt-0.5" />
+              <span>
+                <span className="block text-sm font-medium text-foreground">{option.label}</span>
+                <span className="block text-xs text-muted-foreground">{option.hint}</span>
+              </span>
+            </Label>
+          ))}
+        </RadioGroup>
+        {submitted && reworkSourceMissing && (
+          <p className="text-xs text-destructive">Choose internal or external review.</p>
+        )}
+      </fieldset>
+    ) : null;
   const projectOptions: ProjectOption[] = Object.entries(projectItems).map(([value, label]) => {
     const code = projects.data?.find((p) => p._id === value)?.code ?? task?.project?.code ?? "";
     return { value, label, search: `${label} ${code}`.toLowerCase().replace(/[_·]/g, " ") };
@@ -838,6 +882,7 @@ export function TaskFormDialog({
             <form onSubmit={handleSubmit} noValidate className="space-y-4">
               {iterationField}
               {reworkField}
+              {reworkSourceField}
               {reworkCreate ? null : controlledName ? (
                 <div className="space-y-1.5">
                   <Label htmlFor="task-unit">Task name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>

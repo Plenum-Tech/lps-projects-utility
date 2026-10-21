@@ -19,6 +19,10 @@ export const TASK_PRIORITIES = ["low", "medium", "high", "urgent"] as const;
 export const TASK_ITERATIONS = ["new", "rework"] as const;
 export type TaskIteration = (typeof TASK_ITERATIONS)[number];
 
+/** Whose review asked for a rework: our own team's (internal) or the client's (external). */
+export const REWORK_SOURCES = ["internal", "external"] as const;
+export type ReworkSource = (typeof REWORK_SOURCES)[number];
+
 /** Controlled task name: "<unit> <quantity> – <short name>" (brand + month come from the project). */
 export interface ITaskTitleParts {
   unit: string;
@@ -147,6 +151,8 @@ export interface ITask extends mongoose.Document {
   iteration?: TaskIteration | null;
   /** Rework tasks: the original task this reworks (shown in its Rework tab as history). */
   reworkOf?: mongoose.Types.ObjectId | null;
+  /** Rework tasks: whose review asked for the changes (null on older reworks and on new work). */
+  reworkSource?: ReworkSource | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: ITaskTitleParts | null;
   /** <project tag>-<UNIT><QTY>, unique (lib/tags.ts); frozen once Pearity uses it. */
@@ -313,6 +319,7 @@ const taskSchema = new Schema<ITask>(
     parity: { type: String, enum: ["on", "off"] },
     iteration: { type: String, enum: [...TASK_ITERATIONS, null], default: null },
     reworkOf: { type: Schema.Types.ObjectId, ref: "Task", default: null, index: true },
+    reworkSource: { type: String, enum: [...REWORK_SOURCES, null], default: null },
     tag: { type: String, default: undefined, trim: true, maxlength: 120 },
     trafficVia: { type: Schema.Types.ObjectId, ref: "User", default: null },
     assignedAt: { type: Date, default: null },

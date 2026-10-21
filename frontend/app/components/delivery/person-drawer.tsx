@@ -2,7 +2,7 @@ import { LuCircleCheck, LuUserRound } from "react-icons/lu";
 
 import { TaskBrandCell, TaskCell } from "@/components/delivery/actions-section";
 import { BrandName } from "@/components/delivery/brand-dot";
-import { DASH, fmtDays, fmtNum, fmtPct, lowRateTone, overdueTone, rateTone, TONE_TEXT, type Tone } from "@/components/delivery/delivery-format";
+import { DASH, fmtDays, fmtNum, fmtPct, fmtReworkSplit, lowRateTone, overdueTone, rateTone, TONE_TEXT, type Tone } from "@/components/delivery/delivery-format";
 import { PanelState } from "@/components/delivery/delivery-ui";
 import { WeeklyBars, WeeklyTable } from "@/components/delivery/weekly-charts";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +65,7 @@ export function PersonDrawer({
                     <Stat label="On time" value={fmtPct(data.stats.onTimePct)} tone={rateTone(data.stats.onTimePct)} />
                     <Stat label="Mean days" value={fmtDays(data.stats.meanDays)} />
                     <Stat label="Rework share" value={fmtPct(data.stats.reworkPct)} tone={lowRateTone(data.stats.reworkPct)} />
+                    <Stat label="Rework by review" value={fmtReworkSplit(data.stats)} />
                     <Stat label="Open now" value={fmtNum(data.stats.open)} />
                     <Stat label="Overdue now" value={fmtNum(data.stats.overdue)} tone={overdueTone(data.stats.overdue, data.stats.open)} />
                   </dl>

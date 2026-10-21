@@ -173,8 +173,8 @@ function Kpis({ data, dimmed }: { data: DeliverySummaryResponse; dimmed: boolean
         tone={lowRateTone(kpis.reworkPct)}
         delta={deltas.reworkPct}
         unit="pct"
-        explanation={`${fmtNum(kpis.rework)} amends / revisions ÷ ${fmtNum(kpis.created)} tasks created.`}
-        tip="A task is rework when its title contains a rework keyword (whole word) or its category is a rework category — see Settings → Delivery."
+        explanation={`${fmtNum(kpis.rework)} amends / revisions ÷ ${fmtNum(kpis.created)} tasks created.${kpis.rework ? ` By review: ${fmtNum(kpis.reworkInternal)} internal · ${fmtNum(kpis.reworkExternal)} external · ${fmtNum(kpis.reworkNotSet)} not set.` : ""}`}
+        tip="A task is rework when it was created as a rework, or (older tasks) its title contains a rework keyword (whole word) or its category is a rework category — see Settings → Delivery. Internal = our own review asked for changes; external = the client's review; not set = older reworks."
       />
       <KpiTile
         label="Tasks created"

@@ -939,6 +939,9 @@ export type ActualDateSource = "auto" | "manual" | "import";
 /** Mirrors the backend Task model as returned by the API (populated refs). */
 export type TaskIteration = "new" | "rework";
 
+/** Rework tasks: whose review asked for the changes — our team's (internal) or the client's (external). */
+export type ReworkSource = "internal" | "external";
+
 export interface TaskTitleParts {
   unit: string;
   quantity: number;
@@ -976,6 +979,8 @@ export interface Task {
   briefCheck?: { verdict: "ok" | "weak" | "flagged"; score?: number | null; reason?: string; checkedAt?: string } | null;
   /** Rework tasks: the original task (populated). */
   reworkOf?: { _id: string; title: string; shortCode?: string | null; number?: number | null; status: TaskStatus } | null;
+  /** Rework tasks: whose review asked for it (null on older reworks). */
+  reworkSource?: ReworkSource | null;
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: TaskTitleParts | null;
   /** Final deliverable recorded at completion. */
@@ -1224,6 +1229,8 @@ export interface TaskInput {
   iteration?: TaskIteration;
   /** Rework: the original task's id (same project). */
   reworkOf?: string;
+  /** Rework: whose review asked for it (required for a rework). */
+  reworkSource?: ReworkSource;
   /** The form will upload attachments right after creation (they count as the brief). */
   hasAttachments?: boolean;
   title: string;
@@ -3618,6 +3625,10 @@ export interface DeliveryStats {
   startsWithPlan: number;
   rework: number;
   reworkPct: number | null;
+  /** Rework by review: internal (our team), external (the client), not set (older reworks). */
+  reworkInternal: number;
+  reworkExternal: number;
+  reworkNotSet: number;
   open: number;
   overdue: number;
 }
@@ -3696,6 +3707,9 @@ export interface DeliveryWeekRow {
   overduePct: number | null;
   rework: number;
   reworkPct: number | null;
+  reworkInternal: number;
+  reworkExternal: number;
+  reworkNotSet: number;
 }
 
 export interface DeliveryWeeklyResponse {

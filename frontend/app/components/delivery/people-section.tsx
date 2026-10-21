@@ -10,6 +10,7 @@ import {
   fmtDays,
   fmtNum,
   fmtPct,
+  fmtReworkSplit,
   lowRateTone,
   rateTone,
   TONE_TEXT,
@@ -374,6 +375,14 @@ function PeopleTable({
         </span>
       ),
       sortValue: (row) => row.reworkPct,
+    },
+    {
+      id: "reworkSplit",
+      header: "Rework by review",
+      hint: "Rework tasks created in the period: internal (our review), external (the client's), not set (older reworks)",
+      align: "right",
+      cell: (row) => <span className="whitespace-nowrap text-muted-foreground">{fmtReworkSplit(row)}</span>,
+      sortValue: (row) => row.reworkExternal,
     },
     {
       id: "overdue",

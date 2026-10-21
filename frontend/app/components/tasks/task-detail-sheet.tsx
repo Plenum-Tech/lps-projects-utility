@@ -49,7 +49,7 @@ import {
 } from "@/components/tasks/task-badges";
 import { TaskFormDialog } from "@/components/tasks/task-form-dialog";
 import { TaskSubtasks } from "@/components/tasks/task-subtasks";
-import { ReworkHistory, reworkTaskLabel } from "@/components/tasks/rework-panel";
+import { ReworkHistory, ReworkSourceBadge, reworkTaskLabel } from "@/components/tasks/rework-panel";
 import { PearityJourney } from "@/components/tasks/task-history";
 import { TaskTimerAction } from "@/components/tasks/task-timer-button";
 import type { WorkTab } from "@/components/tasks/task-work-sections";
@@ -247,6 +247,7 @@ function TaskDetail({
                 {task.iteration === "rework" ? "Rework" : "New work"}
               </span>
             )}
+            {task.iteration === "rework" && <ReworkSourceBadge source={task.reworkSource} />}
             {task.recurrence && (
               <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                 <LuRepeat aria-hidden className="size-3.5" />

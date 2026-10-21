@@ -5,6 +5,7 @@ import {
   fmtDays,
   fmtNum,
   fmtPct,
+  fmtReworkSplit,
   lowRateTone,
   rateTone,
   TONE_TEXT,
@@ -182,6 +183,7 @@ function TeamsTable({ rows, minCompleted }: { rows: DeliveryTeamRow[]; minComple
     { id: "meanDays30", header: "Mean days · 30d", hint: "Brief → done for tasks completed in the last 30 days, whatever the period", align: "right", cell: (row) => fmtDays(row.meanDays30), sortValue: (row) => row.meanDays30 },
     { id: "startToDone", header: "Mean start → done", hint: "Days from the actual start to done, for tasks completed in the period that have an actual start", align: "right", cell: (row) => fmtDays(row.startToDoneDays), sortValue: (row) => row.startToDoneDays },
     { id: "rework", header: "Rework share", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => pctCell(row.reworkPct, (v) => lowRateTone(v)), sortValue: (row) => row.reworkPct },
+    { id: "reworkSplit", header: "Rework by review", hint: "Rework tasks created in the period: internal (our review), external (the client's), not set (older reworks)", align: "right", cell: (row) => <span className="whitespace-nowrap text-muted-foreground">{fmtReworkSplit(row)}</span>, sortValue: (row) => row.reworkExternal },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
     { id: "open", header: "Open", align: "right", cell: (row) => fmtNum(row.open), sortValue: (row) => row.open },
     {
@@ -230,6 +232,7 @@ function BrandsTable({ rows }: { rows: DeliveryBrandRow[] }) {
     { id: "onTime", header: "On time", align: "right", cell: (row) => pctCell(row.onTimePct, (v) => rateTone(v)), sortValue: (row) => row.onTimePct },
     { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
     { id: "rework", header: "Rework", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => pctCell(row.reworkPct, (v) => lowRateTone(v)), sortValue: (row) => row.reworkPct },
+    { id: "reworkSplit", header: "Rework by review", hint: "Rework tasks created in the period: internal (our review), external (the client's), not set (older reworks)", align: "right", cell: (row) => <span className="whitespace-nowrap text-muted-foreground">{fmtReworkSplit(row)}</span>, sortValue: (row) => row.reworkExternal },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
     {
       id: "briefScore",
