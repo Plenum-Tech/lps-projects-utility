@@ -15,7 +15,7 @@ export const MANPOWER_ROLE_FALLBACK = [
   { key: "artDirector", label: "Art Director" },
   { key: "designer", label: "Designer" },
   { key: "animator", label: "Animator" },
-  { key: "producer", label: "Producer" },
+  { key: "producer", label: "Production Lead" },
   { key: "cmLead", label: "CM Lead" },
   { key: "communityManager", label: "Community Manager" },
 ];

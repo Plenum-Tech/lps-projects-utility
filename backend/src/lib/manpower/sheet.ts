@@ -26,6 +26,7 @@ const HEADER_ROLES: Array<[RegExp, string]> = [
   [/^design(er)?$/i, "designer"],
   [/^animator/i, "animator"],
   [/^producer/i, "producer"],
+  [/^production lead/i, "producer"],
   [/^cm\s*lead/i, "cmLead"],
   [/^community\s*manager/i, "communityManager"],
 ];
