@@ -553,6 +553,8 @@ export function TaskFormDialog({
   const recurrenceInvalid = Boolean(recurrenceError(form.recurrence));
   const projectInvalid =
     submitted && (!task || Boolean(task.project)) && !projectId && !reworkCreate;
+  // A new task picks its project first: the scope units and the title come from it.
+  const needProjectFirst = !isEdit && !reworkCreate && !projectId;
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
   // Estimated time is optional.
   const estimateMissing = false;
@@ -902,9 +904,102 @@ export function TaskFormDialog({
               {iterationField}
               {reworkField}
               {reworkSourceField}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-project">Project{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}</Label>
+                  {/* Searchable: type part of the code or name. */}
+                  <Combobox
+                    items={projectOptions}
+                    filter={matchesProject}
+                    value={projectOptions.find((o) => o.value === form.project) ?? null}
+                    onValueChange={(option: ProjectOption | null) =>
+                      setForm((current) => ({
+                        ...current,
+                        project: option?.value ?? NO_PROJECT,
+                        milestone: NO_MILESTONE,
+                        reworkOf: "",
+                      }))
+                    }
+                    isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}
+                    disabled={(Boolean(defaultProjectId) && !isEdit) || reworkCreate}
+                  >
+                    <ComboboxInput
+                      id="task-project"
+                      className="w-full"
+                      placeholder={projects.isPending ? "Loading…" : "Search projects by code or name…"}
+                      aria-invalid={projectInvalid || undefined}
+                    />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No projects found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(option: ProjectOption) => (
+                          <ComboboxItem key={option.value} value={option}>
+                            {option.label}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                  {projectInvalid && (
+                    <p className="text-xs text-destructive">
+                      Every task belongs to a project — choose one.
+                    </p>
+                  )}
+                  {!isEdit && !projects.isPending && projectChoices.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      You aren&apos;t on any open project yet. Create a project (Projects → Add project), or ask a
+                      project&apos;s manager to add you to its team.
+                    </p>
+                  )}
+                  {isEdit &&
+                    task?.project &&
+                    form.project !== task.project._id && (
+                      <p className="text-xs text-muted-foreground">
+                        Moving the task gives it a new short code.
+                      </p>
+                    )}
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="task-milestone">Milestone</Label>
+                  <Select
+                    value={form.milestone}
+                    onValueChange={(value) =>
+                      set("milestone", String(value ?? NO_MILESTONE))
+                    }
+                    items={milestoneItems}
+                    disabled={!projectId}
+                  >
+                    <SelectTrigger id="task-milestone" className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(milestoneItems).map(([value, label]) => (
+                        <SelectItem key={value} value={value}>
+                          {label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {!projectId && (
+                    <p className="text-xs text-muted-foreground">
+                      Milestones belong to a project.
+                    </p>
+                  )}
+                  {projectId && isHeadOrAdmin && (
+                    <ManageLink to={`/projects/${projectId}?tab=milestones`}>
+                      Manage milestones
+                    </ManageLink>
+                  )}
+                </div>
+              </div>
+
               {reworkCreate ? null : controlledName ? (
                 <div className="space-y-1.5">
                   <Label htmlFor="task-unit">Task name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
+                  {needProjectFirst && (
+                    <p className="text-xs text-muted-foreground">Choose the project first — the scope units and the title come from it.</p>
+                  )}
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
                     {scopeUnits.length > 0 ? (
                       <Select value={form.unit || null} onValueChange={(value) => set("unit", (value as string) ?? "")}>
@@ -928,7 +1023,7 @@ export function TaskFormDialog({
                       placeholder="Scope unit (e.g. Video)"
                       aria-label="Scope unit"
                       aria-invalid={titleInvalid || undefined}
-                      autoFocus
+                      disabled={needProjectFirst}
                     />
                     )}
                     <Input
@@ -939,6 +1034,7 @@ export function TaskFormDialog({
                       onChange={(event) => set("quantity", event.target.value)}
                       aria-label="Quantity"
                       aria-invalid={titleInvalid || undefined}
+                      disabled={needProjectFirst}
                     />
                     <Input
                       value={form.shortName}
@@ -947,6 +1043,7 @@ export function TaskFormDialog({
                       placeholder="Short name (e.g. Launch teaser)"
                       aria-label="Short name"
                       aria-invalid={titleInvalid || undefined}
+                      disabled={needProjectFirst}
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -1059,96 +1156,6 @@ export function TaskFormDialog({
                 </div>
               )}
 
-
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="task-project">Project{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}</Label>
-                  {/* Searchable: type part of the code or name. */}
-                  <Combobox
-                    items={projectOptions}
-                    filter={matchesProject}
-                    value={projectOptions.find((o) => o.value === form.project) ?? null}
-                    onValueChange={(option: ProjectOption | null) =>
-                      setForm((current) => ({
-                        ...current,
-                        project: option?.value ?? NO_PROJECT,
-                        milestone: NO_MILESTONE,
-                        reworkOf: "",
-                      }))
-                    }
-                    isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}
-                    disabled={(Boolean(defaultProjectId) && !isEdit) || reworkCreate}
-                  >
-                    <ComboboxInput
-                      id="task-project"
-                      className="w-full"
-                      placeholder={projects.isPending ? "Loading…" : "Search projects by code or name…"}
-                      aria-invalid={projectInvalid || undefined}
-                    />
-                    <ComboboxContent>
-                      <ComboboxEmpty>No projects found.</ComboboxEmpty>
-                      <ComboboxList>
-                        {(option: ProjectOption) => (
-                          <ComboboxItem key={option.value} value={option}>
-                            {option.label}
-                          </ComboboxItem>
-                        )}
-                      </ComboboxList>
-                    </ComboboxContent>
-                  </Combobox>
-                  {projectInvalid && (
-                    <p className="text-xs text-destructive">
-                      Every task belongs to a project — choose one.
-                    </p>
-                  )}
-                  {!isEdit && !projects.isPending && projectChoices.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      You aren&apos;t on any open project yet. Create a project (Projects → Add project), or ask a
-                      project&apos;s manager to add you to its team.
-                    </p>
-                  )}
-                  {isEdit &&
-                    task?.project &&
-                    form.project !== task.project._id && (
-                      <p className="text-xs text-muted-foreground">
-                        Moving the task gives it a new short code.
-                      </p>
-                    )}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label htmlFor="task-milestone">Milestone</Label>
-                  <Select
-                    value={form.milestone}
-                    onValueChange={(value) =>
-                      set("milestone", String(value ?? NO_MILESTONE))
-                    }
-                    items={milestoneItems}
-                    disabled={!projectId}
-                  >
-                    <SelectTrigger id="task-milestone" className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {Object.entries(milestoneItems).map(([value, label]) => (
-                        <SelectItem key={value} value={value}>
-                          {label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {!projectId && (
-                    <p className="text-xs text-muted-foreground">
-                      Milestones belong to a project.
-                    </p>
-                  )}
-                  {projectId && isHeadOrAdmin && (
-                    <ManageLink to={`/projects/${projectId}?tab=milestones`}>
-                      Manage milestones
-                    </ManageLink>
-                  )}
-                </div>
-              </div>
 
               <div className="space-y-1.5">
                 <Label htmlFor="task-assignees">Assignees{!reworkCreate && <span aria-hidden className="ml-0.5 text-destructive">*</span>}</Label>
