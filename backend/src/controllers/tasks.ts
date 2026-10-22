@@ -1311,7 +1311,7 @@ export async function createTaskCore(
   // date come from it when not given; its files are copied after the task is created.
   let reworkSourceFiles = 0;
   if (body.iteration === "rework" && typeof body.reworkOf === "string" && mongoose.isValidObjectId(body.reworkOf)) {
-    const source = await Task.findById(body.reworkOf).select("project assignees description dueDate");
+    const source = await Task.findById(body.reworkOf).select("project assignees assignedBy department subtasks.assignee description dueDate");
     if (source && (await canViewTaskAsync(actor, source))) {
       reworkSourceFiles = await TaskFile.countDocuments({ task: source._id, subtask: null });
       const blank = (v: unknown) => v === undefined || v === null || v === "" || (Array.isArray(v) && v.length === 0);

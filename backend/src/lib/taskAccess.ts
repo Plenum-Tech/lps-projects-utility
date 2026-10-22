@@ -186,7 +186,7 @@ export function canManageSubtasks(
 }
 
 export function isCreator(user: AccessUser, task: AccessTask): boolean {
-  return task.assignedBy.equals(user._id);
+  return Boolean(task.assignedBy?.equals(user._id));
 }
 
 /**
