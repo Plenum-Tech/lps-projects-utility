@@ -32,7 +32,7 @@ import { formatFileSize } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Role, Subtask, TaskFile } from "@/types";
 
-export const MAX_FILE_SIZE = 10 * 1024 * 1024;
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;
 export const MAX_FILES_PER_TASK = 20;
 export const MAX_PER_REQUEST = 10;
 const ALLOWED_EXTENSIONS = [
@@ -54,7 +54,7 @@ export function validateUploads(picked: File[]): { accepted: File[]; rejected: s
       return false;
     }
     if (file.size > MAX_FILE_SIZE) {
-      rejected.push(`${file.name}: larger than 10 MB`);
+      rejected.push(`${file.name}: larger than 50 MB`);
       return false;
     }
     return true;
@@ -178,7 +178,7 @@ export function TaskFiles({
                 )}
               </p>
               <p className="text-xs text-muted-foreground">
-                Images, PDF, Office docs, TXT, CSV or ZIP · up to 10 MB each
+                Images, PDF, Office docs, TXT, CSV or ZIP · up to 50 MB each
               </p>
             </>
           )}

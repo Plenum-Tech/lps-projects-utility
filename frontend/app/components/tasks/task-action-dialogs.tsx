@@ -35,7 +35,7 @@ import {
   useSubmitTask,
   useUploadTaskFiles,
 } from "@/hooks/use-tasks";
-import { ACCEPT } from "@/components/tasks/task-files";
+import { ACCEPT, MAX_FILE_SIZE } from "@/components/tasks/task-files";
 import { ReworkTaskPicker } from "@/components/tasks/rework-panel";
 import { OutcomeReadinessBox } from "@/components/tasks/outcome-readiness";
 import { formatEffort } from "@/lib/tasks";
@@ -130,15 +130,24 @@ export function SubmitTaskDialog({
     !task.finalFile?.fileId &&
     !task.finalFile?.url;
   const notesMissing = !notes.trim();
+  const fileTooBig = mode === "file" && Boolean(file && file.size > MAX_FILE_SIZE);
   const outcomeMissing = deliverableMissing || notesMissing;
   const pending = submit.isPending || upload.isPending || logging;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setSubmitted(true);
-    if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing || rangeError) return;
-    // The time is logged on the task first — the actual start → end when given,
-    // else the time spent ending now — then the task is completed.
+    if (noTime || linkInvalid || timeInvalid || timeMissing || outcomeMissing || rangeError || fileTooBig) return;
+    // The final file is uploaded first (a failed upload logs no time), then the time —
+    // the actual start → end when given, else the time spent ending now — then the task is completed.
+    let finalFileId: string | undefined;
+    if (mode === "file" && file) {
+      const uploaded = await upload
+        .mutateAsync({ files: [file] })
+        .catch(() => null);
+      if (!uploaded?.[0]) return;
+      finalFileId = uploaded[0]._id;
+    }
     if (logRange || spent > 0) {
       setLogging(true);
       try {
@@ -163,14 +172,6 @@ export function SubmitTaskDialog({
       } finally {
         setLogging(false);
       }
-    }
-    let finalFileId: string | undefined;
-    if (mode === "file" && file) {
-      const uploaded = await upload
-        .mutateAsync({ files: [file] })
-        .catch(() => null);
-      if (!uploaded?.[0]) return;
-      finalFileId = uploaded[0]._id;
     }
     submit.mutate(
       {
@@ -267,6 +268,11 @@ export function SubmitTaskDialog({
             {submitted && linkInvalid && (
               <p className="text-xs text-destructive">
                 The link must start with http:// or https://.
+              </p>
+            )}
+            {fileTooBig && (
+              <p className="text-xs text-destructive">
+                This file is {(file!.size / (1024 * 1024)).toFixed(1)} MB — files can be up to {MAX_FILE_SIZE / (1024 * 1024)} MB. Paste a link (Drive, SharePoint…) instead.
               </p>
             )}
             {submitted && deliverableMissing && !linkInvalid && (

@@ -609,7 +609,7 @@ export function SubtaskFormDialog({
                   <LuPaperclip aria-hidden className="size-4" />
                   Upload file
                 </button>
-                <span className="text-xs text-muted-foreground">or drop files here · up to 10 MB each</span>
+                <span className="text-xs text-muted-foreground">or drop files here · up to 50 MB each</span>
               </div>
               {pending.length > 0 && (
                 <ul className="space-y-1" aria-label="Files to upload">

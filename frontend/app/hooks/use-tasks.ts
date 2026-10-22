@@ -1069,7 +1069,7 @@ export function useUploadSubtaskFiles(taskId: string) {
         form,
         {
           headers: { "Content-Type": "multipart/form-data" },
-          timeout: 120_000,
+          timeout: 300_000,
         },
       );
       return data.files;
@@ -1142,7 +1142,7 @@ export async function createSubtasksFromDrafts(
       try {
         await api.post(`/tasks/${taskId}/subtasks/${subId}/files`, form, {
           headers: { "Content-Type": "multipart/form-data" },
-          timeout: 120_000,
+          timeout: 300_000,
         });
       } catch {
         failedFiles.push(`${draft.title}: ${file.name}`);
@@ -1314,7 +1314,7 @@ export async function uploadTaskFilesNow(
     try {
       await api.post(`/tasks/${taskId}/files`, form, {
         headers: { "Content-Type": "multipart/form-data" },
-        timeout: 120_000,
+        timeout: 300_000,
       });
     } catch {
       failed.push(file.name);
@@ -1344,7 +1344,7 @@ export function useUploadTaskFiles(taskId: string) {
         form,
         {
           headers: { "Content-Type": "multipart/form-data" },
-          timeout: 120_000,
+          timeout: 300_000,
           onUploadProgress: (event) => {
             if (event.total)
               onProgress?.(Math.round((event.loaded / event.total) * 100));
@@ -1389,7 +1389,7 @@ export async function viewTaskFile(taskId: string, file: TaskFile): Promise<void
   try {
     const response = await api.get<Blob>(`/tasks/${taskId}/files/${file._id}`, {
       responseType: "blob",
-      timeout: 120_000,
+      timeout: 300_000,
     });
     const type = file.mimeType || response.data.type || "application/octet-stream";
     const url = URL.createObjectURL(new Blob([response.data], { type }));
@@ -1409,7 +1409,7 @@ export async function downloadTaskFile(
 ): Promise<void> {
   const response = await api.get<Blob>(`/tasks/${taskId}/files/${file._id}`, {
     responseType: "blob",
-    timeout: 120_000,
+    timeout: 300_000,
   });
   const url = URL.createObjectURL(response.data);
   const anchor = document.createElement("a");

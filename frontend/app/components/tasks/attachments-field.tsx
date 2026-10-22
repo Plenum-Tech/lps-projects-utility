@@ -91,7 +91,7 @@ export function AttachmentsField({
           )}
         </p>
         <p className="text-xs text-muted-foreground">
-          Images, PDF, Office docs, TXT, CSV or ZIP · up to 10 MB each ·
+          Images, PDF, Office docs, TXT, CSV or ZIP · up to 50 MB each ·
           uploaded when you save
         </p>
         <input

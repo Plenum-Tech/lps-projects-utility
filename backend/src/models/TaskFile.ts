@@ -4,7 +4,7 @@ import { addLegacyRef } from "./legacy.js";
 
 /** Upload limits for task attachments. */
 export const TASK_FILE_LIMITS = {
-  maxBytes: 10 * 1024 * 1024,
+  maxBytes: 50 * 1024 * 1024,
   maxFilesPerTask: 20,
 } as const;
 
