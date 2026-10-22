@@ -346,7 +346,9 @@ export function SubmitTaskDialog({
             {submitted && timeInvalid && (
               <p className="text-xs text-destructive">Enter whole hours (0–23) and minutes (0–59).</p>
             )}
-            <p className="pt-2 text-xs text-muted-foreground">Or enter when the work actually started and ended:</p>
+            <p className="pt-2 text-xs text-muted-foreground">
+              Or enter when the work actually started and ended (if you fill in both, the actual start and end are used):
+            </p>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="space-y-1">
                 <Label htmlFor="complete-actual-start" className="text-xs text-muted-foreground">
@@ -383,6 +385,7 @@ export function SubmitTaskDialog({
               <p className="text-xs text-muted-foreground">
                 Logged from the actual start to the actual end (several dates: 8 h per working day, Saturday and Sunday
                 skipped). The task&apos;s actual dates follow.
+                {spent > 0 && " The time spent above is not added — the actual start and end are used instead."}
               </p>
             )}
             {submitted && rangeError && <p className="text-xs text-destructive">{rangeError}</p>}
