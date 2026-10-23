@@ -1,7 +1,7 @@
 // Checks the voice assistant's rules-based fallback parser (lib/voiceParse.ts)
 // with sample phrases. No database. Run: bun src/scripts/voiceParseCheck.ts
 import assert from "node:assert/strict";
-import { briefHtml, fixDayWords, normalizeNumbers, parseDuration, parseRange, parseVoiceText, resolveDay, resolveLooseDay, tidyBriefRules } from "../lib/voiceParse.js";
+import { briefHtml, fixDayWords, normalizeNumbers, soundKey, parseDuration, parseRange, parseVoiceText, resolveDay, resolveLooseDay, tidyBriefRules } from "../lib/voiceParse.js";
 import type { ParseOptions } from "../lib/voiceParse.js";
 
 const base: ParseOptions = {
@@ -194,6 +194,39 @@ check("update a task", () => {
   assert.equal(parseVoiceText("Move my 4 hours from EO26-7 to EO26-8", base).intent, "out_of_scope");
   assert.equal(parseVoiceText("change due to friday", opts({ action: "create" })).intent, undefined);
   assert.equal(parseVoiceText("Close it", u).intent, "close");
+});
+
+check("the voice conversation that broke (fallback)", () => {
+  const people = [...base.people, { id: "u-nazeer", name: "Nazeer Aboobacker" }];
+  const first = parseVoiceText("Create a task for the home service, the video edit task. Start date is today and due date is Monday.", { ...base, people });
+  assert.equal(first.brief, undefined, "no brief was given");
+  assert.equal(first.startDate, "2026-10-23");
+  assert.equal(first.dueDate, "2026-10-26");
+  // Misheard names are offered, not added.
+  const who = opts({ action: "create", asking: "assignees", people });
+  for (const said of ["Nasir was doing that task.", "Naasir was doing the task."]) {
+    const r = parseVoiceText(said, who);
+    assert.equal(r.addPeople, undefined, said);
+    assert.deepEqual(r.soundPeople?.[0]?.ids, ["u-nazeer"], said);
+  }
+  assert.deepEqual(parseVoiceText("Nazeer", who).addPeople, ["u-nazeer"]);
+  assert.equal(soundKey("Nazeer"), soundKey("Naasir"));
+  // A project chip starts with its code: "EO26 · ENOC | October 2026" is EO26, not ENOC.
+  const eo = { id: "p-eo", code: "EO26", name: "ENOC | October 2026| Social", brand: "ENOC", units: [] };
+  assert.deepEqual(parseVoiceText("EO26 · ENOC | October 2026| Social", opts({ action: "create", asking: "project", projects: [...base.projects, eo] })).projectIds, ["p-eo"]);
+  // The brief update edits the draft being created (no switch to another task).
+  const upd = parseVoiceText(
+    "Update the brief based on my voice, whatever I give it. The brief is the Home Service logo should be present in the video in the first 8 seconds",
+    opts({ action: "create", people })
+  );
+  assert.equal(upd.brief, "The Home Service logo should be present in the video in the first 8 seconds");
+  assert.equal(upd.intent, undefined);
+  const keep = parseVoiceText(
+    "It's an existing task. Whatever I am going to create a new task on that brief, you have to update it, not on the existing brief.",
+    opts({ action: "create", people })
+  );
+  assert.notEqual(keep.intent, "update");
+  assert.equal(keep.taskCode, undefined);
 });
 
 check("scope item chips", () => {

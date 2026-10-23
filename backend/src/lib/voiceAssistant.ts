@@ -26,6 +26,8 @@ import {
   briefHtml,
   briefPreview,
   COMMON_WORDS,
+  fieldEdit,
+  normalizeNumbers,
   editDistance,
   findTaskCodes,
   matchPeople,
@@ -676,6 +678,7 @@ function draftForModel(d: VoiceDraft): Record<string, unknown> {
     shortName: d.shortName,
     brief: d.brief,
     assignees: d.assignees.map((a) => a.name),
+    startDate: d.startDate,
     dueDate: d.dueDate,
     reworkOf: d.reworkOf?.code ?? null,
     reworkSource: d.reworkSource,
@@ -709,6 +712,7 @@ async function aiExtract(
     "task = the task code (like ENOC-13), number, or title words; minutes = time spent; start / end = \"YYYY-MM-DDTHH:mm\" app time when a time range is said;",
     "update: task = the task's code; assigneesAdd / assigneesRemove for people; brief replaces the brief, briefAppend adds to it; priority low|medium|high|urgent; status todo|in_progress (never completed — that is close);",
     "note = the outcome note (close) or memo (log time) — what was done, without the code or the time; finalUrl = an http(s) link.",
+    "The pending draft below is the default target of EVERY edit: \"update / change / add to the brief / due / start / people / name / priority\" changes THIS draft. Use intent update / close / log_time only when the latest message names a task code (like EO26-5); keep intent null for edits of the draft. Never invent a brief: only fill brief when the person gives one.",
     `Current draft: ${JSON.stringify(draftForModel(draft))}`,
     `Projects (code — name — brand — units):\n${projectLines.join("\n") || "(none)"}`,
     `People: ${ctx.people.map((p) => p.name).join(", ").slice(0, 6000)}`,
@@ -753,6 +757,7 @@ async function aiExtract(
   const people = (names: string[]) => {
     const ids: string[] = [];
     const ambiguous: Array<{ said: string; ids: string[] }> = [];
+    const sounds: Array<{ said: string; ids: string[] }> = [];
     for (const name of names) {
       if (/^(?:me|myself|I)$/i.test(name.trim())) {
         ids.push(String(ctx.user._id));
@@ -761,13 +766,15 @@ async function aiExtract(
       const m = matchPeople(name, ctx.people, { me: String(ctx.user._id), anyCase: true });
       ids.push(...m.ids);
       ambiguous.push(...m.ambiguous);
+      sounds.push(...m.sounds);
     }
-    return { ids: [...new Set(ids)], ambiguous };
+    return { ids: [...new Set(ids)], ambiguous, sounds };
   };
   if (reply.assigneesAdd?.length) {
     const m = people(reply.assigneesAdd);
     if (m.ids.length) out.addPeople = m.ids;
     if (m.ambiguous.length) out.ambiguousPeople = m.ambiguous;
+    if (m.sounds.length) out.soundPeople = m.sounds;
   }
   if (reply.assigneesRemove?.length) out.removePeople = people(reply.assigneesRemove).ids;
   if (reply.dueDate && /^\d{4}-\d{2}-\d{2}$/.test(reply.dueDate)) out.dueDate = reply.dueDate;
@@ -812,11 +819,13 @@ interface Turn {
   notes: string[];
   /** A question that must come first (which project / which person / which task). */
   override?: { ask: VoiceField; reply: string; chips: string[] };
+  /** Another action was asked for while a draft is pending: ask before leaving it. */
+  switching?: boolean;
   /** Reply on its own (cancel, out of scope). */
   final?: string;
 }
 
-async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracted, contextTaskId: string | null): Promise<Turn> {
+async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracted, contextTaskId: string | null, said = ""): Promise<Turn> {
   let draft = input;
   const notes: string[] = [];
   let override: Turn["override"];
@@ -829,9 +838,15 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
     };
   }
 
-  // A different action starts a new draft; a rework is a create.
-  const family: VoiceAction | null = ex.intent === "rework" ? "create" : (ex.intent as VoiceAction | undefined) ?? null;
-  if (family && draft.action && family !== draft.action) draft = emptyDraft();
+  // The pending draft is the target of every edit. Another action only when a task is named
+  // ("update EO26-5 …") or a new task is asked for — and even then the person confirms first.
+  let family: VoiceAction | null = ex.intent === "rework" ? "create" : (ex.intent as VoiceAction | undefined) ?? null;
+  if (family && draft.action && family !== draft.action) {
+    const explicit =
+      Boolean(ex.taskCode || ex.taskNumber) || (family === "create" && /\b(?:new|another)\s+task\b/i.test(said) && !/\bnot\b|\bthis\b/i.test(said));
+    if (!explicit) family = null;
+    else return { draft, notes, switching: true };
+  }
   if (family) draft.action = family;
   if (!draft.action) {
     if (ex.taskCode || ex.taskNumber) draft.action = ex.minutes || ex.start ? "log_time" : null;
@@ -905,6 +920,7 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
       if (person && !draft.assignees.some((a) => a.id === id)) draft.assignees.push({ id, name: person.name });
     }
     if (ex.removePeople?.length) draft.assignees = draft.assignees.filter((a) => !ex.removePeople!.includes(a.id));
+    if (ex.soundPeople?.length && !override) override = confirmPerson(ctx, draft, ex.soundPeople[0]!, "assignees");
     if (ex.ambiguousPeople?.length && !override) {
       const first = ex.ambiguousPeople[0]!;
       // On the project team first.
@@ -1276,6 +1292,7 @@ async function applyUpdate(
     const first = ex.ambiguousPeople[0]!;
     override = { ask: "changes", reply: `Which ${first.said}?`, chips: first.ids.slice(0, 6).map((id) => `add ${byId.get(id)?.name ?? ""}`) };
   }
+  if (ex.soundPeople?.length && !override) override = confirmPerson(ctx, draft, ex.soundPeople[0]!, "changes");
 
   // Name: only tasks with the controlled name (unit + number + short name).
   if (ex.shortName || ex.unit || ex.quantity) {
@@ -1414,9 +1431,14 @@ async function question(
     case "shortName":
       return { reply: 'What\'s the short name? For example "Launch teaser".', chips: [] };
     case "brief":
-      return { reply: "What's the brief? Say what needs to be done.", chips: [] };
-    case "assignees":
-      return { reply: "Who's doing it?", chips: ["Me"] };
+      return { reply: `What's the brief? Say what the ${d.unit ? d.unit.toLowerCase() : "task"} needs.`, chips: [] };
+    case "assignees": {
+      // The project team as chips, so a misheard name is one tap away.
+      const project = ctx.projects.find((p) => p.id === d.project?.id);
+      const byId = new Map(ctx.people.map((p) => [p.id, p.name]));
+      const team = (project?.memberIds ?? []).map((id) => byId.get(id)).filter((n): n is string => Boolean(n)).slice(0, 7);
+      return { reply: team.length ? "Who's doing it? Say a name or tap one." : "Who's doing it?", chips: ["Me", ...team] };
+    }
     case "changes": {
       const moves = d.baseline?.moves ?? [];
       return {
@@ -1597,10 +1619,72 @@ export interface VoiceUnderstandResult {
 }
 
 const KEEP_AS_IT_WAS = "Keep it as it was";
+const KEEP_WORKING = "Keep working on it";
+const START_NEW = "Start a new one";
+const SOMEONE_ELSE = "Someone else";
+
+/** "the new task Reel 1 – Video Edit Task", "closing EO26-5" … */
+function draftLabel(d: VoiceDraft): string {
+  if (d.action === "create") {
+    const name = d.unit && d.shortName ? composeTaskTitle({ unit: d.unit, quantity: d.quantity ?? 1, shortName: d.shortName }) : null;
+    return name ? `the new task ${name}` : d.project ? `the new task in ${d.project.code}` : "the new task";
+  }
+  const code = d.task?.code ?? "the task";
+  return d.action === "close" ? `closing ${code}` : d.action === "log_time" ? `logging time on ${code}` : `updating ${code}`;
+}
+
+/** "Nasir" sounds like Nazeer: ask, with up to 3 people (project team first) and "Someone else". */
+function confirmPerson(ctx: VoiceContext, d: VoiceDraft, heard: { said: string; ids: string[] }, ask: VoiceField): NonNullable<Turn["override"]> {
+  const project = ctx.projects.find((p) => p.id === (d.project?.id ?? d.task?.projectId));
+  const byId = new Map(ctx.people.map((p) => [p.id, p.name]));
+  const ids = [...heard.ids].sort((a, b) => Number(project?.memberIds.includes(b) ?? false) - Number(project?.memberIds.includes(a) ?? false)).slice(0, 3);
+  const names = ids.map((id) => byId.get(id)).filter((n): n is string => Boolean(n));
+  const prefix = ask === "changes" ? "add " : "";
+  return {
+    ask,
+    reply: names.length === 1 ? `Did you mean ${names[0]}?` : `"${heard.said}" — did you mean one of these?`,
+    chips: [...names.map((n) => prefix + n), SOMEONE_ELSE],
+  };
+}
+
+/** Projects whose name or brand shares a word with the text ("home service" → the Homes R Us projects). */
+function projectCandidates(ctx: VoiceContext, text: string): string[] {
+  const stop = new Set(["create", "task", "tasks", "start", "date", "today", "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "with", "that", "this", "from", "doing", "brief", "video", "edit", "post", "reel", "static", "story"]);
+  const words = text.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4 && !stop.has(w) && !COMMON_WORDS.has(w));
+  const scored = ctx.projects
+    .map((p) => {
+      const pw = `${p.name} ${p.brand}`.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4);
+      const hits = words.filter((w) => pw.some((x) => x.slice(0, 4) === w.slice(0, 4))).length;
+      return { id: p.id, hits };
+    })
+    .filter((x) => x.hits > 0)
+    .sort((a, b) => b.hits - a.hits);
+  const top = scored[0]?.hits ?? 0;
+  return scored.filter((x) => x.hits === top).slice(0, 6).map((x) => x.id);
+}
+
+/**
+ * A tidied brief keeps only what the person said: every number, link, date or
+ * duration in a bullet must be in their words, and most of its words too.
+ */
+function verifyTidy(tidy: TidyBrief, source: string): TidyBrief | null {
+  const said = normalizeNumbers(source).toLowerCase();
+  const facts = (s: string) => [
+    ...normalizeNumbers(s).toLowerCase().matchAll(/https?:\/\/\S+|www\.\S+|\b[a-z0-9-]+\.(?:com|net|org|ae|io|co)\b|\d+(?:[.:x×]\d+)*|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|\b(?:seconds?|minutes?|hours?|days?|weeks?|months?)\b/g),
+  ].map((m) => m[0].replace(/[.,;)]+$/, ""));
+  // A label ("Size / duration: …") isn't a fact: only what follows it is checked.
+  const ok = (line: string) => {
+    const body = line.replace(/^[^:]{1,30}:\s*/, "");
+    return facts(body).every((f) => said.includes(f.replace(/s$/, ""))) && grounded(body, source);
+  };
+  const bullets = tidy.bullets.filter(ok);
+  const objective = ok(tidy.objective) ? tidy.objective : (source.split(/(?<=[.!?])\s+/)[0] ?? source).trim();
+  return bullets.length ? { objective, bullets } : null;
+}
 
 /** The chips and other short fixed replies — read by the rules, never sent to the model. */
 const QUICK_REPLY =
-  /^(?:new task|close a task|log time|close it|update it|new work|rework|internal review|external review|me|keep it as it was|none — new name|\d+ (?:minutes?|hours?)|due tomorrow|priority (?:low|medium|high|urgent)|move to in progress|move back to to do|(?:due|start|add|remove) [\p{L} ]{2,30}|[^→]{2,40}→[^→]{2,40})$/iu;
+  /^(?:new task|close a task|log time|close it|update it|keep working on it|start a new one|someone else|new work|rework|internal review|external review|me|keep it as it was|none — new name|\d+ (?:minutes?|hours?)|due tomorrow|priority (?:low|medium|high|urgent)|move to in progress|move back to to do|(?:due|start|add|remove) [\p{L} ]{2,30}|[^→]{2,40}→[^→]{2,40})$/iu;
 
 /** Whether most of a value's words (4+ letters) were in the person's message (guards against invented text). */
 function grounded(value: string, said: string): boolean {
@@ -1808,6 +1892,23 @@ export async function understand(
   let notes: string[] = [];
   let next: VoiceDraft;
   let override: Turn["override"];
+  // "Keep working on it" / "Start a new one" after another action was asked for mid-draft.
+  if (last.trim() === KEEP_WORKING && draft.action) {
+    const missing = missingFields(draft);
+    if (missing.length) {
+      const q = await question(ctx, draft, missing[0]!, "");
+      draft.asking = missing[0]!;
+      return done(draft, { reply: `OK, back to ${draftLabel(draft)}. ${q.reply}`, chips: q.chips, action: actionOf(draft), missing, ready: false, ask: draft.asking, card: null, ai: false });
+    }
+    draft.asking = null;
+    return done(draft, { reply: `OK, back to ${draftLabel(draft)}. Check and confirm.`, chips: [], action: actionOf(draft), missing, ready: true, ask: null, card: await summaryCard(ctx, draft), ai: false });
+  }
+  if (last.trim() === START_NEW) {
+    // The request that was waiting is read again on a fresh draft.
+    const users = messages.filter((m) => m.role === "user");
+    const previous = users[users.length - 2]?.text ?? "";
+    return understand(user, [...messages.slice(0, -1).filter((m) => m.text !== START_NEW), { role: "user", text: previous }], null, contextTaskId);
+  }
   // "Use as brief" / "Add to brief" / "Use as note|memo" after an unclear change.
   const usedAs = wasReady ? useAsField(draft, last, messages) : null;
   const choice = usedAs
@@ -1868,13 +1969,53 @@ export async function understand(
         const value = ex[field];
         if (value && !grounded(value, last)) delete ex[field];
       }
+      // A brief only when one was asked for or said as one ("the brief is …") — "the video edit
+      // task" is a name hint, not a brief.
+      const briefSaid = /\bbrief\b|\binstructions?\b/i.test(last) || draft.asking === "brief" || draft.asking === "briefReview" || draft.asking === "changes";
+      if (!briefSaid) {
+        delete ex.brief;
+        delete ex.briefAppend;
+      }
+      // "update / change the brief … the brief is X" replaces it, "add to the brief …" adds — the words decide, not the model.
+      const edit = fieldEdit(last);
+      if (edit?.field === "brief" && (draft.action === "create" || draft.action === "update")) {
+        ex.brief = edit.value.charAt(0).toUpperCase() + edit.value.slice(1);
+        delete ex.briefAppend;
+      } else if (edit?.field === "briefAppend") {
+        ex.briefAppend = edit.value;
+        delete ex.brief;
+      }
+      // Several projects fit the words and no code was said: ask, never pick one silently.
+      if (ex.projectIds?.length === 1) {
+        const picked = ctx.projects.find((p) => p.id === ex.projectIds![0]);
+        const named = picked && (new RegExp(`(?:^|[^a-z0-9])${escapeRe(picked.code.toLowerCase())}(?![a-z0-9])`).test(last.toLowerCase()) || last.toLowerCase().includes(picked.name.toLowerCase()));
+        if (draft.project && !named) delete ex.projectIds;
+        else if (!named) {
+          const candidates = projectCandidates(ctx, last);
+          if (candidates.length > 1) ex.projectIds = [...new Set([ex.projectIds[0]!, ...candidates])].slice(0, 6);
+        }
+      }
     }
+    // A project already chosen isn't changed by a repeat of the same words.
+    if (draft.project && ex.projectIds && ex.projectIds.length > 1 && ex.projectIds.includes(draft.project.id)) delete ex.projectIds;
     // The model sometimes repeats values already in the draft: those aren't changes.
     if (ex.brief && draft.brief && ex.brief.trim() === draft.brief.trim()) delete ex.brief;
     if (ex.shortName && draft.shortName && ex.shortName.trim() === draft.shortName.trim()) delete ex.shortName;
     // "Work on this task" → "close it" / "log time" use that task.
     const taskContext = draft.focusTaskId ?? (contextTaskId && mongoose.isValidObjectId(contextTaskId) ? contextTaskId : null);
-    const turn = await applyExtracted(ctx, draft, ex, taskContext);
+    const turn = await applyExtracted(ctx, draft, ex, taskContext, last);
+    if (turn.switching) {
+      return done(draft, {
+        reply: `Keep working on ${draftLabel(draft)}, or start something else?`,
+        chips: [KEEP_WORKING, START_NEW],
+        action: actionOf(draft),
+        missing: missingFields(draft),
+        ready: false,
+        ask: draft.asking,
+        card: null,
+        ai,
+      });
+    }
     if (turn.final) {
       const cleared = turn.draft;
       cleared.asking = null;
@@ -1902,6 +2043,9 @@ export async function understand(
         notes.unshift(`Changed: ${changes.join(" · ")}.${fixes.length ? ` (I read ${fixes.join(", ")}.)` : ""}`);
       } else if (/^keep it as it was$/i.test(last.trim())) {
         notes.unshift("No changes.");
+      } else if (/\b(?:existing|new task|this task|the one we(?:'re| are) creating)\b/i.test(last)) {
+        // "not the existing task" — the draft stays as it is.
+        notes.unshift(`OK — this stays ${draftLabel(next)}; nothing else changed. Say what to change, or tap ${next.action === "create" ? "Create task" : "the button"}.`);
       } else if (alreadySet(before, ex).length) {
         // Understood, but it was already so ("add Vishal" when Vishal is on it).
         notes.unshift(`${alreadySet(before, ex).join(" · ")} — nothing to change.`);
@@ -1943,8 +2087,9 @@ export async function understand(
 
   // A new brief is offered tidied (AI rewrite, or the rules); nothing to tidy → kept as said.
   if ((next.action === "update" || (next.action === "create" && next.iteration !== "rework")) && next.brief && !next.briefChoice && !next.briefTidy) {
-    const tidy = await tidyBrief(ctx, next.brief, next.project?.name ?? null);
-    if (tidy.bullets.length === 0) next.briefChoice = "plain";
+    // Only facts from the person's own words survive; nothing left → no tidy offer.
+    const tidy = verifyTidy(await tidyBrief(ctx, next.brief, next.project?.name ?? null), next.brief);
+    if (!tidy) next.briefChoice = "plain";
     else next.briefTidy = tidy;
   }
   // Say so before a duplicate is made (when the name becomes complete or changes).
@@ -2025,7 +2170,8 @@ export async function speechPrompt(user: IUser): Promise<string> {
     add(p.code);
   }
   for (const u of allUnits(ctx)) add(u);
-  for (const p of mine) for (const id of p.memberIds) add((byId.get(id) ?? "").split(" ")[0] ?? "");
+  // Full names, so speech-to-text spells them as the app does ("Nazeer", not "Nasir").
+  for (const p of mine) for (const id of p.memberIds) add(byId.get(id) ?? "");
   let prompt = "";
   for (const w of words) {
     if (prompt.length + w.length + 2 > 800) break;

@@ -68,6 +68,8 @@ export interface Extracted {
   brief?: string;
   addPeople?: string[];
   removePeople?: string[];
+  /** A name that only sounds like someone ("Nasir" ~ Nazeer): ask to confirm. */
+  soundPeople?: Array<{ said: string; ids: string[] }>;
   /** A name that fits several people: ask which. */
   ambiguousPeople?: Array<{ said: string; ids: string[] }>;
   /** "YYYY-MM-DD". */
@@ -380,7 +382,10 @@ export function matchProjects(text: string, projects: VocabProject[], loose = fa
     let score = 0;
     const code = p.code.toLowerCase();
     // The code on its own (not a task code like "MO-6").
-    if (code && new RegExp(`(?:^|[^a-z0-9])${escapeRe(code)}(?![a-z0-9]|\\s?[-–]\\s?\\d|\\s\\d)`).test(lower)) score = 100;
+    if (code && new RegExp(`(?:^|[^a-z0-9])${escapeRe(code)}(?![a-z0-9]|\\s?[-–]\\s?\\d|\\s\\d)`).test(lower)) {
+      // A code at the start wins (the chip "EO26 · ENOC | October 2026" is EO26, not ENOC).
+      score = new RegExp(`^\\s*${escapeRe(code)}(?![a-z0-9])`).test(lower) ? 110 : 100;
+    }
     const name = norm(p.name);
     if (!score && name && t.includes(` ${name} `)) score = 90;
     const brand = norm(p.brand);
@@ -426,9 +431,11 @@ export function matchPeople(
   text: string,
   people: VocabPerson[],
   opts: { me: string; skip?: string[]; anyCase?: boolean } = { me: "" }
-): { ids: string[]; ambiguous: Array<{ said: string; ids: string[] }> } {
+): { ids: string[]; ambiguous: Array<{ said: string; ids: string[] }>; sounds: Array<{ said: string; ids: string[] }> } {
   const ids: string[] = [];
   const ambiguous: Array<{ said: string; ids: string[] }> = [];
+  /** Names that only SOUND like someone ("Nasir" → Nazeer): to be confirmed, not added. */
+  const sounds: Array<{ said: string; ids: string[] }> = [];
   const t = ` ${norm(text)} `;
   const skip = new Set((opts.skip ?? []).flatMap((s) => norm(s).split(" ")));
   if (opts.me && /\s(?:me|myself)\s/.test(t)) ids.push(opts.me);
@@ -470,12 +477,48 @@ export function matchPeople(
       }
       if (best <= max && near.length) found = near;
     }
+    // Misheard in a voice note: the same sound ("Nasir", "Naasir" ~ Nazeer) — confirmed by the person.
+    if (!found && opts.anyCase && w.length >= 4 && !COMMON_WORDS.has(w)) {
+      const key = soundKey(w);
+      const near: VocabPerson[] = [];
+      for (const [first, list] of byFirst) {
+        const k = soundKey(first);
+        if (k === key || (key.length >= 4 && Math.abs(k.length - key.length) <= 1 && editDistance(k, key) <= 1)) near.push(...list);
+      }
+      if (near.length) sounds.push({ said: capFirst(w), ids: near.map((p) => p.id) });
+      continue;
+    }
     if (!found) continue;
     if (found.length === 1) {
       if (!ids.includes(found[0]!.id)) ids.push(found[0]!.id);
     } else ambiguous.push({ said: capFirst(w), ids: found.map((p) => p.id) });
   }
-  return { ids, ambiguous };
+  return { ids, ambiguous, sounds };
+}
+
+/**
+ * A rough sound of a name, tolerant of how speech-to-text spells Arabic and
+ * South-Asian names: "Nazeer", "Nasir", "Naasir" → "nasir"; "Mohammed" / "Muhammad" close.
+ */
+export function soundKey(name: string): string {
+  let s = name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+  s = s.replace(/^(?:al|el)[-\s]+/, "").replace(/[^a-z]/g, "");
+  s = s
+    .replace(/ph/g, "f")
+    .replace(/kh/g, "k")
+    .replace(/gh/g, "g")
+    .replace(/sh/g, "s")
+    .replace(/th/g, "s")
+    .replace(/ck|q|c/g, "k")
+    .replace(/z/g, "s")
+    .replace(/x/g, "ks")
+    .replace(/ee|ea|ie|ey|y/g, "i")
+    .replace(/oo|ou|o/g, "u")
+    .replace(/aa/g, "a")
+    .replace(/e/g, "i")
+    .replace(/(.)\1+/g, "$1")
+    .replace(/h$/, "");
+  return s;
 }
 
 /** Edit distance where swapping two neighbouring letters counts as one ("firday" → "friday" = 1). */
@@ -575,7 +618,7 @@ const URL_RE = /\bhttps?:\/\/[^\s,<>"]+/i;
 const FREE_TEXT: ReadonlySet<VoiceField | null> = new Set<VoiceField | null>(["brief", "shortName", "note"]);
 /** A new command said while a free-text answer was expected (it is not taken as the answer). */
 const COMMAND_START =
-  /^\s*(?:new task\b|create (?:a )?(?:new )?task\b|close\s+(?:task\b|this\b|[a-z][a-z0-9]*[-\s]?\d)|log\s+(?:time\b|\d)|rework of\b|cancel\b|start over\b|never ?mind\b)/i;
+  /^\s*(?:new task\b|create (?:a )?(?:new )?task\b|close\s+(?:task\b|this\b|[a-z][a-z0-9]*[-\s]?\d)|log\s+(?:time\b|\d)|(?:update|change|edit|move|reschedule)\s+(?:task\s+)?[a-z][a-z0-9]*\s?-\s?\d|rework of\b|cancel\b|start over\b|never ?mind\b)/i;
 
 function detectIntent(t: string): VoiceIntent | undefined {
   if (/^\s*(?:cancel|stop|start over|reset|never ?mind|forget it)\b/i.test(t)) return "cancel";
@@ -627,7 +670,9 @@ export function fieldEdit(text: string): { field: "brief" | "briefAppend" | "nam
     const m = re.exec(text);
     if (!m) continue;
     const quoted = /["“'‘]([^"”’]{2,})["”'’]/.exec(m[1]!);
-    const value = (quoted ? quoted[1]! : m[1]!).replace(/^["“'‘]|["”'’]$/g, "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
+    // "update the brief based on my voice … The brief is X": X.
+    const inner = field.startsWith("brief") ? /\b(?:the\s+)?(?:new\s+)?brief\s*(?:is|should be|:)\s*[:\-–]?\s*([\s\S]{2,})$/i.exec(m[1]!) : null;
+    const value = (quoted ? quoted[1]! : inner ? inner[1]! : m[1]!).replace(/^["“'‘]|["”'’]$/g, "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
     if (value.length >= 2) return { field, value };
   }
   return null;
@@ -692,9 +737,11 @@ function readPeople(raw: string, opts: ParseOptions, spans: string[], out: Extra
     const extra = matchPeople(nameWords.join(" "), opts.people, { me: opts.me, skip: spans, anyCase: true });
     for (const id of extra.ids) if (!matched.ids.includes(id)) matched.ids.push(id);
     for (const a of extra.ambiguous) if (!matched.ambiguous.some((x) => x.said.toLowerCase() === a.said.toLowerCase())) matched.ambiguous.push(a);
+    for (const a of extra.sounds) if (!matched.sounds.some((x) => x.said.toLowerCase() === a.said.toLowerCase())) matched.sounds.push(a);
   }
   if (matched.ids.length) out.addPeople = matched.ids;
   if (matched.ambiguous.length) out.ambiguousPeople = matched.ambiguous;
+  if (matched.sounds.length) out.soundPeople = matched.sounds.filter((x) => !x.ids.some((id) => matched.ids.includes(id)));
   if (remove) {
     const gone = matchPeople(remove[1]!, opts.people, { me: opts.me, anyCase: true });
     if (gone.ids.length) out.removePeople = gone.ids;
