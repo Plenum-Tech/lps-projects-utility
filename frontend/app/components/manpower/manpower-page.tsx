@@ -381,7 +381,7 @@ export function ManpowerPage() {
             </Button>
             <Button size="sm" onClick={saveDraft} disabled={save.isPending}>
               {save.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSave aria-hidden />}
-              Save version
+              Save
             </Button>
           </div>
         </div>
@@ -634,7 +634,7 @@ export function ManpowerPage() {
             open={confirmDiscard}
             onOpenChange={setConfirmDiscard}
             title="Discard your changes?"
-            description="Nothing is saved until you press Save version."
+            description="Nothing is saved until you press Save. Saving sends no email — use Send for approval when you are ready."
             confirmLabel="Discard"
             destructive
             onConfirm={() => {
