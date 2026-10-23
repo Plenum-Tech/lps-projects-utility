@@ -555,6 +555,8 @@ export function TaskFormDialog({
     submitted && (!task || Boolean(task.project)) && !projectId && !reworkCreate;
   // A new task picks its project first: the scope units and the title come from it.
   const needProjectFirst = !isEdit && !reworkCreate && !projectId;
+  // A project with a scope: the task names one of its scope items before anything else.
+  const needScopeItemFirst = !isEdit && !reworkCreate && Boolean(projectId) && scopeUnits.length > 0 && !form.unit.trim();
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
   // Estimated time is optional.
   const estimateMissing = false;
@@ -1002,14 +1004,26 @@ export function TaskFormDialog({
                   )}
                   <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
                     {scopeUnits.length > 0 ? (
-                      <Select value={form.unit || null} onValueChange={(value) => set("unit", (value as string) ?? "")}>
-                        <SelectTrigger id="task-unit" className="w-full" aria-label="Scope unit" aria-invalid={titleInvalid || undefined}>
-                          <SelectValue placeholder="Scope unit" />
+                      <Select
+                        value={form.unit || null}
+                        items={Object.fromEntries(scopeUnits.map((u) => [u.unit, u.unit]))}
+                        onValueChange={(value) => {
+                          const unit = scopeUnits.find((u) => u.unit === value);
+                          // The next number of that scope item (e.g. Reel 4 after 3 used).
+                          setForm((current) => ({
+                            ...current,
+                            unit: (value as string) ?? "",
+                            ...(!task && unit ? { quantity: String(Math.min(unit.used + 1, Math.max(unit.total, 1))) } : {}),
+                          }));
+                        }}
+                      >
+                        <SelectTrigger id="task-unit" className="w-full" aria-label="Scope item" aria-invalid={titleInvalid || undefined}>
+                          <SelectValue placeholder="Choose a scope item" />
                         </SelectTrigger>
                         <SelectContent>
                           {scopeUnits.map((u) => (
                             <SelectItem key={u.unit} value={u.unit}>
-                              {u.unit} · {u.used}/{u.total} used
+                              {u.unit} · {Math.max(u.total - u.used, 0)} of {u.total} left
                             </SelectItem>
                           ))}
                         </SelectContent>
@@ -1034,7 +1048,7 @@ export function TaskFormDialog({
                       onChange={(event) => set("quantity", event.target.value)}
                       aria-label="Quantity"
                       aria-invalid={titleInvalid || undefined}
-                      disabled={needProjectFirst}
+                      disabled={needProjectFirst || needScopeItemFirst}
                     />
                     <Input
                       value={form.shortName}
@@ -1043,13 +1057,18 @@ export function TaskFormDialog({
                       placeholder="Short name (e.g. Launch teaser)"
                       aria-label="Short name"
                       aria-invalid={titleInvalid || undefined}
-                      disabled={needProjectFirst}
+                      disabled={needProjectFirst || needScopeItemFirst}
                     />
                   </div>
+                  {needScopeItemFirst && (
+                    <p className="text-xs text-muted-foreground">
+                      Choose what this task delivers from the project&apos;s scope, then give it a short name.
+                    </p>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     Title:{" "}
                     <span className="font-medium text-foreground">
-                      {composedTitle}
+                      {form.unit.trim() ? composedTitle : "—"}
                     </span>{" "}
                     — brand and month come from the project.
                   </p>
