@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useSearchParams } from "react-router";
 import { LuCamera, LuCircleCheck, LuLoaderCircle, LuMic, LuPaperclip, LuRotateCcw, LuSend, LuSquare } from "react-icons/lu";
 
+import { ShortCode } from "@/components/projects/project-badges";
 import { ACCEPT, MAX_FILE_SIZE } from "@/components/tasks/task-files";
 import { useRecorder, type RecorderError } from "@/components/voice/use-recorder";
 import { Button } from "@/components/ui/button";
@@ -25,9 +26,11 @@ import {
   type VoiceCard,
   type VoiceDraft,
   type VoiceExistingTask,
+  type VoiceTaskInfo,
   type VoiceField,
 } from "@/hooks/use-voice";
 import { api, getErrorCode, getErrorMessage } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
@@ -47,8 +50,10 @@ type ChatItem =
   | { id: number; kind: "bot"; text: string; error?: boolean }
   | { id: number; kind: "user"; text: string; voice?: boolean; apiText?: string }
   | { id: number; kind: "card"; card: VoiceCard; draft: VoiceDraft; file: File | null; state: "open" | "closed" }
-  | { id: number; kind: "done"; text: string; link?: string }
-  | { id: number; kind: "existing"; tasks: VoiceExistingTask[]; state: "open" | "closed" };
+  | { id: number; kind: "done"; text: string; link?: string; task?: VoiceTaskInfo }
+  | { id: number; kind: "existing"; tasks: Array<VoiceExistingTask & { info?: VoiceTaskInfo }>; state: "open" | "closed" }
+  /** Tasks to pick from (choice) or tasks named / understood (link). */
+  | { id: number; kind: "tasks"; tasks: VoiceTaskInfo[]; choice: boolean; state: "open" | "closed"; understood?: boolean };
 
 /** A chat item before it gets its id. */
 type NewItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, "id"> : never) : never;
@@ -167,9 +172,15 @@ export function VoiceAssistant() {
       setAsk(res.ask);
       if (!res.draft.finalFile) setFile(null);
       // An older list can't be picked from any more.
-      setItems((current) => current.map((item) => (item.kind === "existing" ? { ...item, state: "closed" } : item)));
+      setItems((current) =>
+        current.map((item) => (item.kind === "existing" || (item.kind === "tasks" && item.choice) ? { ...item, state: "closed" } : item)),
+      );
+      // What the message was understood to mean, right under it.
+      if (res.resolved) push({ kind: "tasks", tasks: [res.resolved], choice: false, state: "open", understood: true });
       push({ kind: "bot", text: res.reply });
+      if (res.related?.length) push({ kind: "tasks", tasks: res.related, choice: false, state: "open" });
       if (res.existing?.length) push({ kind: "existing", tasks: res.existing, state: "open" });
+      if (res.tasks?.length) push({ kind: "tasks", tasks: res.tasks, choice: true, state: "open" });
       if (res.card) {
         // An older card can't be confirmed any more.
         setItems((current) => current.map((item) => (item.kind === "card" ? { ...item, state: "closed" } : item)));
@@ -269,9 +280,9 @@ export function VoiceAssistant() {
     setChips(START_CHIPS);
   }
 
-  function finished(id: number, line: { text: string; link?: string; taskId?: string; followUp?: boolean }) {
+  function finished(id: number, line: { text: string; link?: string; taskId?: string; followUp?: boolean; task?: VoiceTaskInfo }) {
     setItems((current) => current.map((item) => (item.id === id && item.kind === "card" ? { ...item, state: "closed" } : item)));
-    push({ kind: "done", text: line.text, link: line.link });
+    push({ kind: "done", text: line.text, link: line.link, task: line.task });
     if (line.taskId) setRecentTaskIds((current) => [line.taskId!, ...current.filter((t) => t !== line.taskId)].slice(0, 10));
     setAsk(null);
     setFile(null);
@@ -361,6 +372,22 @@ export function VoiceAssistant() {
                   </div>
                 );
               }
+              if (item.kind === "tasks") {
+                return (
+                  <div key={item.id} className={cn("grid gap-1.5", item.understood && "self-end w-[86%]")}>
+                    {item.understood && <span className="text-right text-[11px] text-muted-foreground">Understood as</span>}
+                    {item.tasks.map((task) => (
+                      <TaskChip
+                        key={task._id}
+                        task={task}
+                        disabled={busy || recorder.recording || item.state === "closed"}
+                        onPick={item.choice ? () => void send(task.pick ?? `${task.shortCode} · ${task.title}`) : undefined}
+                        onOpen={() => setOpen(false)}
+                      />
+                    ))}
+                  </div>
+                );
+              }
               if (item.kind === "existing") {
                 return (
                   <ExistingTasks
@@ -375,13 +402,16 @@ export function VoiceAssistant() {
                 return (
                   <div key={item.id} className="flex items-start gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-200">
                     <LuCircleCheck aria-hidden className="mt-0.5 size-4 shrink-0" />
-                    <span className="min-w-0">
-                      {item.text}{" "}
-                      {item.link && (
-                        <Link to={item.link} onClick={() => setOpen(false)} className="font-medium underline underline-offset-2">
-                          Open task
-                        </Link>
-                      )}
+                    <span className="grid min-w-0 flex-1 gap-1.5">
+                      <span>
+                        {item.text}{" "}
+                        {item.link && !item.task && (
+                          <Link to={item.link} onClick={() => setOpen(false)} className="font-medium underline underline-offset-2">
+                            Open task
+                          </Link>
+                        )}
+                      </span>
+                      {item.task && <TaskChip task={item.task} onOpen={() => setOpen(false)} />}
                     </span>
                   </div>
                 );
@@ -511,7 +541,7 @@ function SummaryCard({
   onError,
 }: {
   item: Extract<ChatItem, { kind: "card" }>;
-  onDone: (line: { text: string; link?: string; taskId?: string; followUp?: boolean }) => void;
+  onDone: (line: { text: string; link?: string; taskId?: string; followUp?: boolean; task?: VoiceTaskInfo }) => void;
   onChange: () => void;
   onError: (message: string) => void;
 }) {
@@ -576,6 +606,15 @@ function SummaryCard({
           link: `/tasks?task=${data.task._id}`,
           taskId: data.task._id,
           followUp: true,
+          task: {
+            _id: data.task._id,
+            shortCode: data.task.shortCode ?? `#${data.task.number ?? ""}`,
+            title: data.task.title,
+            projectName: data.task.project?.name ?? null,
+            status: "To do",
+            dueDate: data.task.dueDate ? data.task.dueDate.slice(0, 10) : null,
+            assignees: data.task.assignees.map((a) => a.name.split(" ")[0] ?? a.name),
+          },
         });
         return;
       }
@@ -657,6 +696,18 @@ function SummaryCard({
     <div className={cn("rounded-2xl border bg-card p-3 text-sm", closed && "opacity-60")}>
       <p className="mb-2 text-xs font-medium tracking-wide text-muted-foreground uppercase">{card.title} · check and confirm</p>
       <dl className="mb-3 grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1">
+        {card.task && (
+          <div className="contents">
+            <dt className="text-muted-foreground">Task</dt>
+            <dd className="min-w-0">
+              <span className="flex items-start gap-1.5">
+                <ShortCode code={card.task.shortCode} className="mt-px" />
+                <span className="font-medium [overflow-wrap:anywhere]">{card.task.title}</span>
+              </span>
+              <span className="block text-xs text-muted-foreground">{taskDetails(card.task)}</span>
+            </dd>
+          </div>
+        )}
         {card.rows.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-muted-foreground">{label}</dt>
@@ -712,9 +763,13 @@ function ExistingTasks({
             aria-expanded={picked === task.id}
             className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
           >
-            <span className="shrink-0 font-medium">{task.code}</span>
-            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{task.title}</span>
-            <span className="shrink-0 text-xs text-muted-foreground">{task.status}</span>
+            <span className="grid min-w-0 flex-1 gap-0.5">
+              <span className="flex items-start gap-1.5">
+                <ShortCode code={task.code} className="mt-px" />
+                <span className="font-medium [overflow-wrap:anywhere]">{task.title}</span>
+              </span>
+              <span className="text-xs text-muted-foreground">{task.info ? taskDetails(task.info) : task.status}</span>
+            </span>
           </button>
           {picked === task.id && !closed && (
             <div className="flex gap-2 px-3 pb-2">
@@ -729,5 +784,56 @@ function ExistingTasks({
         </li>
       ))}
     </ul>
+  );
+}
+
+/** "Homes R Us - Hosting & Safa Campaign · To do · due 26 Oct 2026 · Farhan, Vivek" */
+function taskDetails(task: VoiceTaskInfo): string {
+  return [
+    task.projectName,
+    task.status,
+    task.dueDate ? `due ${formatDate(task.dueDate)}` : null,
+    task.assignees.length ? task.assignees.join(", ") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * A task in the chat: short-code badge + the full title (wrapped), details below.
+ * A choice selects it; otherwise it opens the task.
+ */
+function TaskChip({
+  task,
+  onPick,
+  onOpen,
+  disabled,
+}: {
+  task: VoiceTaskInfo;
+  onPick?: () => void;
+  onOpen?: () => void;
+  disabled?: boolean;
+}) {
+  const body = (
+    <>
+      <span className="flex items-start gap-1.5">
+        <ShortCode code={task.shortCode} className="mt-px" />
+        <span className="font-medium [overflow-wrap:anywhere]">{task.title}</span>
+      </span>
+      <span className="block text-xs text-muted-foreground [overflow-wrap:anywhere]">{taskDetails(task)}</span>
+    </>
+  );
+  const className = "grid w-full gap-0.5 rounded-xl border bg-card px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60 disabled:hover:bg-card";
+  if (onPick) {
+    return (
+      <button type="button" className={className} onClick={onPick} disabled={disabled}>
+        {body}
+      </button>
+    );
+  }
+  return (
+    <Link to={`/tasks?task=${task._id}`} onClick={onOpen} className={className}>
+      {body}
+    </Link>
   );
 }

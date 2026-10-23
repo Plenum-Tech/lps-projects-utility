@@ -95,6 +95,21 @@ export interface VoiceCard {
   title: string;
   rows: Array<[string, string]>;
   confirm: string;
+  /** The task the card acts on (code badge + title). */
+  task?: VoiceTaskInfo;
+}
+
+/** A task as the chat shows it: code badge + full title, then project · status · due · people. */
+export interface VoiceTaskInfo {
+  _id: string;
+  shortCode: string;
+  title: string;
+  projectName: string | null;
+  status: string;
+  dueDate: string | null;
+  assignees: string[];
+  /** For a choice: the text sent when it's tapped. */
+  pick?: string;
 }
 
 export interface VoiceReply {
@@ -107,7 +122,13 @@ export interface VoiceReply {
   ask: VoiceField | null;
   card: VoiceCard | null;
   /** ask = "existing": the project's tasks to pick from. */
-  existing?: VoiceExistingTask[];
+  existing?: Array<VoiceExistingTask & { info?: VoiceTaskInfo }>;
+  /** Tasks offered as choices (tap sends `pick`). */
+  tasks?: VoiceTaskInfo[];
+  /** The task the person's message was understood to mean. */
+  resolved?: VoiceTaskInfo;
+  /** Other tasks named in the reply (an existing task with the same name). */
+  related?: VoiceTaskInfo[];
   ai: boolean;
 }
 

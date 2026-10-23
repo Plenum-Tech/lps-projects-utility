@@ -1739,7 +1739,65 @@ export interface VoiceCard {
   title: string;
   rows: Array<[string, string]>;
   confirm: string;
+  /** The task the card acts on (shown as code badge + title instead of the "Task" text row). */
+  task?: VoiceTaskInfo;
 }
+
+/** A task as the chat shows it: code badge + full title, then project · status · due · people. */
+export interface VoiceTaskInfo {
+  _id: string;
+  shortCode: string;
+  title: string;
+  projectName: string | null;
+  status: string;
+  /** "YYYY-MM-DD". */
+  dueDate: string | null;
+  /** First names. */
+  assignees: string[];
+  /** For a choice: the text sent when it's tapped. */
+  pick?: string;
+}
+
+/** Loads tasks for the chat by id or short code (one query). */
+async function taskInfos(ref: { ids?: string[]; codes?: string[] }): Promise<VoiceTaskInfo[]> {
+  const ids = (ref.ids ?? []).filter((id) => mongoose.isValidObjectId(id)).map((id) => new mongoose.Types.ObjectId(id));
+  const codes = (ref.codes ?? []).filter((c) => !c.startsWith("#"));
+  const numbers = (ref.codes ?? []).filter((c) => c.startsWith("#")).map((c) => Number(c.slice(1))).filter(Number.isFinite);
+  const or: Record<string, unknown>[] = [
+    ...(ids.length ? [{ _id: { $in: ids } }] : []),
+    ...(codes.length ? [{ shortCode: { $in: codes } }] : []),
+    ...(numbers.length ? [{ number: { $in: numbers } }] : []),
+  ];
+  if (!or.length) return [];
+  const rows = await Task.find({ $or: or })
+    .select("shortCode number title status dueDate project assignees")
+    .populate("project", "name")
+    .populate("assignees", "name")
+    .lean<
+      Array<{
+        _id: mongoose.Types.ObjectId;
+        shortCode?: string | null;
+        number?: number;
+        title: string;
+        status: string;
+        dueDate?: Date | null;
+        project?: { name?: string } | null;
+        assignees: Array<{ name?: string }>;
+      }>
+    >();
+  return rows.map((t) => ({
+    _id: String(t._id),
+    shortCode: t.shortCode || (t.number ? `#${t.number}` : "Task"),
+    title: t.title,
+    projectName: t.project?.name ?? null,
+    status: capWord(STATUS_LABEL[t.status] ?? t.status),
+    dueDate: t.dueDate ? new Date(t.dueDate).toISOString().slice(0, 10) : null,
+    assignees: t.assignees.map((a) => (a.name ?? "").split(" ")[0] ?? "").filter(Boolean),
+  }));
+}
+
+/** A task choice chip: "HRUHSC-23 · Reel 1 – …" (as findTask / taskChips write them). */
+const TASK_CHIP = /^([A-Za-z][A-Za-z0-9]*-\d+|#\d+) · /;
 
 async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard | null> {
   if (d.action === "create") {
@@ -1836,7 +1894,13 @@ export interface VoiceUnderstandResult {
   ask: VoiceField | null;
   card: VoiceCard | null;
   /** ask = "existing": the project's tasks to pick from. */
-  existing?: VoiceExistingTask[];
+  existing?: Array<VoiceExistingTask & { info?: VoiceTaskInfo }>;
+  /** Tasks offered as choices (tapping sends `pick`); task chips aren't in `chips`. */
+  tasks?: VoiceTaskInfo[];
+  /** The task this message was understood to mean (shown under the person's bubble). */
+  resolved?: VoiceTaskInfo;
+  /** Other tasks named in the reply (an existing task with the same name). */
+  related?: VoiceTaskInfo[];
   /** True when the AI read the message (false = the rules-based fallback). */
   ai: boolean;
 }
@@ -2119,13 +2183,40 @@ export async function understand(
   // applyExtracted changes the draft in place: keep a copy to compare with.
   const before = JSON.parse(JSON.stringify(draft)) as VoiceDraft;
   const nameBefore = [draft.unit, draft.quantity, draft.shortName].join("|");
-  const done = (next: VoiceDraft, result: Omit<VoiceUnderstandResult, "draft">): VoiceUnderstandResult => {
+  const related: string[] = [];
+  const done = async (next: VoiceDraft, result: Omit<VoiceUnderstandResult, "draft">): Promise<VoiceUnderstandResult> => {
     next.briefHtml = draftBriefHtml(next);
     const update = next.action === "update" ? updateChanges(next) : null;
     next.updatePatch = update && Object.keys(update.patch).length ? update.patch : null;
     next.updateStatus = update?.status ?? null;
     next.commentBody = next.action === "comment" && next.comment ? commentBodyOf(next) : null;
-    return { ...result, draft: next };
+    // Tasks are sent as objects so the app shows code badge + title (never parsing strings).
+    const taskChipTexts = result.chips.filter((c) => TASK_CHIP.test(c));
+    const chosenId = next.task?.id ?? next.reworkOf?.id ?? next.focusTaskId ?? null;
+    const beforeId = before.task?.id ?? before.reworkOf?.id ?? before.focusTaskId ?? null;
+    const resolvedId = chosenId && chosenId !== beforeId ? chosenId : null;
+    const existingIds = (result.existing ?? []).map((e) => e.id);
+    const infos = await taskInfos({
+      ids: [...existingIds, ...(resolvedId ? [resolvedId] : []), ...(next.task ? [next.task.id] : [])],
+      codes: [...taskChipTexts.map((c) => TASK_CHIP.exec(c)![1]!), ...related],
+    });
+    const byId = new Map(infos.map((i) => [i._id, i]));
+    const byCode = new Map(infos.map((i) => [i.shortCode, i]));
+    const out: VoiceUnderstandResult = { ...result, draft: next };
+    if (taskChipTexts.length) {
+      out.chips = result.chips.filter((c) => !TASK_CHIP.test(c));
+      out.tasks = taskChipTexts.flatMap((c) => {
+        const info = byCode.get(TASK_CHIP.exec(c)![1]!);
+        return info ? [{ ...info, pick: `${info.shortCode} · ${info.title}` }] : [];
+      });
+    }
+    if (result.existing?.length) out.existing = result.existing.map((e) => ({ ...e, info: byId.get(e.id) }));
+    if (resolvedId && byId.get(resolvedId)) out.resolved = byId.get(resolvedId);
+    if (related.length) out.related = related.map((c) => byCode.get(c)).filter((i): i is VoiceTaskInfo => Boolean(i));
+    if (out.card && next.task && byId.get(next.task.id) && next.action !== "create") {
+      out.card = { ...out.card, task: byId.get(next.task.id), rows: out.card.rows.filter(([label]) => label !== "Task") };
+    }
+    return out;
   };
   const actionOf = (d: VoiceDraft): VoiceUnderstandResult["action"] =>
     d.action === "create" ? (d.iteration === "rework" ? "rework" : "create") : (d.action ?? "none");
@@ -2366,7 +2457,10 @@ export async function understand(
   const nameAfter = [next.unit, next.quantity, next.shortName].join("|");
   if (nameAfter !== nameBefore) {
     const duplicate = await duplicateOf(next);
-    if (duplicate) notes.push(`${duplicate.code} ${duplicate.title} already exists — say another number or name, or "work on ${duplicate.code}".`);
+    if (duplicate) {
+      notes.push(`${duplicate.code} ${duplicate.title} already exists — say another number or name, or "work on ${duplicate.code}".`);
+      related.push(duplicate.code);
+    }
   }
 
   const action = actionOf(next);
