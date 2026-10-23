@@ -24,6 +24,8 @@ export type VoiceField =
   | "existing"
   | "briefReview"
   | "changes"
+  | "comment"
+  | "mentions"
   | "task"
   | "final"
   | "note"
@@ -42,7 +44,7 @@ export interface VoiceTaskRef {
 }
 
 export interface VoiceDraft {
-  action: "create" | "close" | "log_time" | "update" | null;
+  action: "create" | "close" | "log_time" | "update" | "comment" | null;
   asking: VoiceField | null;
   project: { id: string; name: string; code: string } | null;
   iteration: "new" | "rework" | null;
@@ -76,6 +78,10 @@ export interface VoiceDraft {
   /** Update: the PATCH /api/tasks/:id body and the status move to send after "Update task". */
   updatePatch: TaskUpdateInput | null;
   updateStatus: "todo" | "in_progress" | null;
+  /** Comment: the text, who to @mention, and the body to post (mention tokens + text; set by the server). */
+  comment: string | null;
+  mentions: Array<{ id: string; name: string }>;
+  commentBody: string | null;
 }
 
 export interface VoiceExistingTask {
@@ -95,7 +101,7 @@ export interface VoiceReply {
   reply: string;
   chips: string[];
   draft: VoiceDraft;
-  action: "create" | "rework" | "close" | "log_time" | "update" | "none";
+  action: "create" | "rework" | "close" | "log_time" | "update" | "comment" | "none";
   missing: VoiceField[];
   ready: boolean;
   ask: VoiceField | null;

@@ -9,7 +9,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useCreateTask, useSubmitTask, useTask, useUpdateTask, useUpdateTaskStatus, useUploadTaskFiles } from "@/hooks/use-tasks";
+import {
+  useAddComment,
+  useCreateTask,
+  useSubmitTask,
+  useTask,
+  useUpdateTask,
+  useUpdateTaskStatus,
+  useUploadTaskFiles,
+} from "@/hooks/use-tasks";
 import { useCreateTimeLog } from "@/hooks/use-timelogs";
 import {
   useVoiceTranscribe,
@@ -33,7 +41,7 @@ import { cn } from "@/lib/utils";
 const MAX_RECORD_SECONDS = 60;
 const START_CHIPS = ["New task", "Close a task", "Log time"];
 const FILE_CHIPS = ["📷 Take photo", "Pick a file", "Say a link"];
-const FOLLOW_UP_CHIPS = ["Close it", "Log time", "Update it"];
+const FOLLOW_UP_CHIPS = ["Close it", "Log time", "Update it", "Comment"];
 
 type ChatItem =
   | { id: number; kind: "bot"; text: string; error?: boolean }
@@ -515,6 +523,7 @@ function SummaryCard({
   const createLog = useCreateTimeLog();
   const updateTask = useUpdateTask();
   const updateStatus = useUpdateTaskStatus();
+  const addComment = useAddComment(taskId);
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const closed = item.state === "closed";
@@ -571,6 +580,13 @@ function SummaryCard({
         return;
       }
       const task = draft.task!;
+      if (draft.action === "comment") {
+        // The existing comment endpoint; mention tokens notify the people mentioned.
+        if (!draft.commentBody) return;
+        await addComment.mutateAsync(draft.commentBody);
+        onDone({ text: `Comment posted on ${task.code}.`, link: `/tasks?task=${task.id}`, taskId: task.id });
+        return;
+      }
       if (draft.action === "update") {
         // The edit form's PATCH body (only what changed), then the status move.
         if (draft.updatePatch && Object.keys(draft.updatePatch).length) {

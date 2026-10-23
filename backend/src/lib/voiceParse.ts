@@ -9,7 +9,7 @@
 // without a database: `bun src/scripts/voiceParseCheck.ts`.
 // ---------------------------------------------------------------------------
 
-export const VOICE_ACTIONS = ["create", "close", "log_time", "update"] as const;
+export const VOICE_ACTIONS = ["create", "close", "log_time", "update", "comment"] as const;
 export type VoiceAction = (typeof VOICE_ACTIONS)[number];
 
 /** What a message asks for: an action, a rework (= create + iteration rework), or none. */
@@ -33,6 +33,9 @@ export const VOICE_FIELDS = [
   "existing",
   /** A tidied brief was offered: use it, keep the words as said, or say it again. */
   "briefReview",
+  /** Comment: the text, and who to @mention (confirmed when a name only sounds like someone). */
+  "comment",
+  "mentions",
   /** Update: what should change on the task. */
   "changes",
   "task",
@@ -80,6 +83,8 @@ export interface Extracted {
   status?: "todo" | "in_progress";
   /** "add to the brief …": text added on to the brief. */
   briefAppend?: string;
+  /** Comment: its text, in the person's words (mentions come in addPeople / soundPeople). */
+  comment?: string;
   /** Typos read as day words: [said, read as]. */
   fixes?: Array<[string, string]>;
   /** A day said on its own in answer to "when?" (the assistant decides start or due). */
@@ -615,7 +620,7 @@ const URL_RE = /\bhttps?:\/\/[^\s,<>"]+/i;
 // The fallback parser
 // ---------------------------------------------------------------------------
 
-const FREE_TEXT: ReadonlySet<VoiceField | null> = new Set<VoiceField | null>(["brief", "shortName", "note"]);
+const FREE_TEXT: ReadonlySet<VoiceField | null> = new Set<VoiceField | null>(["brief", "shortName", "note", "comment"]);
 /** A new command said while a free-text answer was expected (it is not taken as the answer). */
 const COMMAND_START =
   /^\s*(?:new task\b|create (?:a )?(?:new )?task\b|close\s+(?:task\b|this\b|[a-z][a-z0-9]*[-\s]?\d)|log\s+(?:time\b|\d)|(?:update|change|edit|move|reschedule)\s+(?:task\s+)?[a-z][a-z0-9]*\s?-\s?\d|rework of\b|cancel\b|start over\b|never ?mind\b)/i;
@@ -784,6 +789,42 @@ function readUpdate(raw: string, t: string, opts: ParseOptions, codes: string[],
   return out;
 }
 
+const COMMENT_START = /^\s*(?:please\s+)?(?:(?:add|leave|post|write|put)\s+(?:a\s+)?comment|comment|note for (?:the\s+)?team)\b/i;
+const TELL_ON = /^\s*(?:please\s+)?(?:tell|ask|cc|mention|let|remind|ping)\s+[\p{L}'-]+(?:\s+[\p{L}'-]+)?\s+(?:on|in|about|know)\b/iu;
+
+/**
+ * COMMENT: the task (a code; a description is matched by the assistant), the text — quoted,
+ * after ":", after "that / saying", or the whole answer when asked — and the people to @mention
+ * ("tell / ask / cc / mention <name>", "@Name", or the answer when asked who).
+ */
+function readComment(raw: string, t: string, opts: ParseOptions, out: Extracted): Extracted {
+  const codes = findTaskCodes(t, opts.codes);
+  if (codes[0]) out.taskCode = codes[0];
+  // Who to mention.
+  const who: string[] = [];
+  for (const m of raw.matchAll(/\b(?:tell|ask|cc|mention|let|remind|ping)\s+([\p{L}'-]+(?:\s+(?!on\b|in\b|about\b|know\b|that\b)[\p{L}'-]+)?)/giu)) who.push(m[1]!);
+  for (const m of raw.matchAll(/@([\p{L}'-]+(?:\s+[\p{L}'-]+)?)/gu)) who.push(m[1]!);
+  if (opts.asking === "mentions") who.push(raw);
+  if (who.length) {
+    const people = matchPeople(who.join(" , "), opts.people, { me: "", anyCase: true });
+    if (people.ids.length) out.addPeople = people.ids;
+    if (people.ambiguous.length) out.ambiguousPeople = people.ambiguous;
+    if (people.sounds.length) out.soundPeople = people.sounds;
+  }
+  if (opts.asking === "mentions") return out;
+  // The text.
+  const quoted = /["“]([^"”]{2,})["”]/.exec(raw);
+  const colon = /:\s*([\s\S]{2,})$/.exec(raw);
+  const that = /\b(?:that|saying|says|say|to say)\s+([\s\S]{2,})$/i.exec(raw);
+  let text = quoted?.[1] ?? colon?.[1] ?? that?.[1] ?? "";
+  if (!text && opts.asking === "comment") text = raw;
+  // An answer to "which task?" describes the task, not the comment.
+  if (!text && !COMMENT_START.test(raw) && !TELL_ON.test(raw) && opts.action === "comment" && opts.asking !== "task") text = raw;
+  text = text.replace(/\s+/g, " ").trim();
+  if (text.length >= 2) out.comment = capFirst(clip(text, 5000));
+  return out;
+}
+
 /** Reads one message into a draft change. `text` is the latest user message. */
 export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   const raw = text.trim();
@@ -799,6 +840,16 @@ export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   if (scopeChip) {
     const unit = matchUnit(scopeChip[1]!, opts.units);
     return unit ? { unit: unit.unit } : out;
+  }
+
+  // A comment: "comment on EO26-5: …", "add a comment to the reel task …", "tell Vishal on HRUHSC-23 that …",
+  // "note for the team …", or any message while commenting.
+  if (!freeAnswer || opts.asking === "comment") {
+    const commentCmd = COMMENT_START.test(raw) || TELL_ON.test(raw) || /^\s*comment\s*$/i.test(raw);
+    if (commentCmd || (opts.action === "comment" && !/^\s*(?:close|log|update|cancel|start over|new task)\b/i.test(raw))) {
+      if (commentCmd) out.intent = "comment";
+      return readComment(raw, t, opts, out);
+    }
   }
 
   // Update a task: a change verb with a task code ("move EO26-14 due date to Friday", "add Vishal to

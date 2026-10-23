@@ -247,6 +247,30 @@ check("closing a task described in words (fallback)", () => {
   assert.ok(b.taskText && /reel one video edit/i.test(b.taskText));
 });
 
+check("comments", () => {
+  const people = [...base.people, { id: "u-nazeer", name: "Nazeer Aboobacker" }];
+  const a = parseVoiceText("comment on EO26-5: the logo needs to be bigger", { ...base, people });
+  assert.equal(a.intent, "comment");
+  assert.equal(a.taskCode, "EO26-5");
+  assert.equal(a.comment, "The logo needs to be bigger");
+  const b = parseVoiceText("tell Vishal on HRUHSC-23 that the client approved the cut", { ...base, people, codes: [...base.codes, "HRUHSC"] });
+  assert.equal(b.intent, "comment");
+  assert.equal(b.taskCode, "HRUHSC-23");
+  assert.deepEqual(b.addPeople, ["u-vishal"]);
+  assert.equal(b.comment, "The client approved the cut");
+  const c = parseVoiceText("add a comment to the reel task from home service", { ...base, people });
+  assert.equal(c.intent, "comment");
+  assert.equal(c.comment, undefined);
+  const d = parseVoiceText("Please use the new music track", opts({ action: "comment", asking: "comment", people }));
+  assert.equal(d.comment, "Please use the new music track");
+  // A misheard name is confirmed, not mentioned straight away.
+  const e = parseVoiceText("ask Nasir on EO26-5 to check the colours", { ...base, people });
+  assert.equal(e.addPeople, undefined);
+  assert.deepEqual(e.soundPeople?.[0]?.ids, ["u-nazeer"]);
+  assert.equal(parseVoiceText("Comment", opts({ action: null })).intent, "comment");
+  assert.equal(parseVoiceText("note for the team: shoot moved to 3pm", base).comment, "Shoot moved to 3pm");
+});
+
 check("scope item chips", () => {
   // The chip "Video · 6 of 6 left" names the unit only (no number, no short name).
   const c = parseVoiceText("Video · 6 of 6 left", opts({ action: "create", asking: "unit" }));

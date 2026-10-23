@@ -22,6 +22,7 @@ import {
   taskProjectFlags,
   taskVisibilityFilter,
 } from "./taskAccess.js";
+import { resolveMentions } from "../controllers/taskComments.js";
 import { richTextToPlain } from "./richText.js";
 import {
   briefHtml,
@@ -140,6 +141,11 @@ export interface VoiceDraft {
   /** Update: the PATCH /api/tasks/:id body and the status move the app sends after "Update task" (set by the server). */
   updatePatch: Record<string, unknown> | null;
   updateStatus: "todo" | "in_progress" | null;
+  /** Comment: its text (the person's words) and who to @mention. */
+  comment: string | null;
+  mentions: Array<{ id: string; name: string }>;
+  /** Comment: the body the app posts (text with `@[Name](id)` mention tokens; set by the server). */
+  commentBody: string | null;
 }
 
 /** An existing task's editable fields, before the update. */
@@ -189,6 +195,9 @@ export function emptyDraft(): VoiceDraft {
     baseFor: null,
     updatePatch: null,
     updateStatus: null,
+    comment: null,
+    mentions: [],
+    commentBody: null,
     briefHtml: null,
   };
 }
@@ -296,7 +305,7 @@ function allUnits(ctx: VoiceContext): string[] {
 // Tasks
 // ---------------------------------------------------------------------------
 
-type TaskPurpose = "close" | "log_time" | "rework" | "update";
+type TaskPurpose = "close" | "log_time" | "rework" | "update" | "comment";
 
 /** A quick-reply label: cut at a word, at most `max` characters. */
 function chip(text: string, max = 48): string {
@@ -462,7 +471,12 @@ async function searchTasks(ctx: VoiceContext, text: string, purpose: TaskPurpose
   ];
   if (!or.length) return [];
   const rows = await Task.find({
-    $and: [await taskVisibilityFilter(ctx.user), { status: { $in: purpose === "close" ? CLOSABLE : OPEN_STATUSES } }, { $or: or }],
+    $and: [
+      await taskVisibilityFilter(ctx.user),
+      // Comments can go on completed tasks too.
+      { status: { $in: purpose === "close" ? CLOSABLE : purpose === "comment" ? [...OPEN_STATUSES, "completed"] : OPEN_STATUSES } },
+      { $or: or },
+    ],
   })
     .sort({ updatedAt: -1 })
     .limit(300);
@@ -499,7 +513,7 @@ export async function sanitizeDraft(ctx: VoiceContext, raw: unknown): Promise<Vo
   const d = emptyDraft();
   if (typeof raw !== "object" || raw === null) return d;
   const r = raw as Record<string, unknown>;
-  d.action = (["create", "close", "log_time", "update"] as const).find((a) => a === r.action) ?? null;
+  d.action = (["create", "close", "log_time", "update", "comment"] as const).find((a) => a === r.action) ?? null;
   d.asking = VOICE_FIELDS.find((f) => f === r.asking) ?? null;
   if (d.action === "create") {
     const projectId = typeof r.project === "object" && r.project ? (r.project as { id?: unknown }).id : null;
@@ -547,6 +561,26 @@ export async function sanitizeDraft(ctx: VoiceContext, raw: unknown): Promise<Vo
     if (file && typeof file.name === "string" && Number.isFinite(Number(file.size))) {
       d.finalFile = { name: file.name.slice(0, 200), size: Number(file.size) };
     }
+  }
+  if (d.action === "comment") {
+    d.task = await reloadTask(ctx, r.task, "comment");
+    d.comment = str(r.comment, 5000);
+    if (Array.isArray(r.mentions)) {
+      const byId = new Map(ctx.people.map((p) => [p.id, p.name]));
+      for (const m of r.mentions as Array<{ id?: unknown }>) {
+        const name = typeof m?.id === "string" ? byId.get(m.id) : undefined;
+        if (name && !d.mentions.some((x) => x.id === m.id)) d.mentions.push({ id: m.id as string, name });
+      }
+    }
+    const tidy = r.briefTidy as { objective?: unknown; bullets?: unknown } | null | undefined;
+    if (d.comment && tidy && typeof tidy.objective === "string" && Array.isArray(tidy.bullets)) {
+      d.briefTidy = {
+        objective: tidy.objective.slice(0, 500),
+        bullets: (tidy.bullets as unknown[]).filter((b): b is string => typeof b === "string").slice(0, 12).map((b) => b.slice(0, 300)),
+      };
+    }
+    d.briefChoice = d.comment && (r.briefChoice === "tidy" || r.briefChoice === "plain") ? r.briefChoice : null;
+    if (d.briefChoice === "tidy" && !d.briefTidy) d.briefChoice = null;
   }
   if (d.action === "update") {
     d.task = await reloadTask(ctx, r.task, "update");
@@ -679,10 +713,12 @@ const NLU_SCHEMA = {
   required: [
     "intent", "project", "iteration", "unit", "quantity", "shortName", "brief", "assigneesAdd", "assigneesRemove",
     "dueDate", "startDate", "reworkOf", "reworkSource", "task", "minutes", "start", "end", "note", "finalUrl",
-    "priority", "status", "briefAppend",
+    "priority", "status", "briefAppend", "comment", "mentions",
   ],
   properties: {
-    intent: { type: ["string", "null"], enum: ["create", "rework", "close", "log_time", "update", "out_of_scope", "cancel", null] },
+    intent: { type: ["string", "null"], enum: ["create", "rework", "close", "log_time", "update", "comment", "out_of_scope", "cancel", null] },
+    comment: nullableString,
+    mentions: { type: "array", items: { type: "string" } },
     priority: { type: ["string", "null"], enum: ["low", "medium", "high", "urgent", null] },
     status: { type: ["string", "null"], enum: ["todo", "in_progress", null] },
     briefAppend: nullableString,
@@ -730,6 +766,8 @@ interface NluReply {
   priority: "low" | "medium" | "high" | "urgent" | null;
   status: "todo" | "in_progress" | null;
   briefAppend: string | null;
+  comment: string | null;
+  mentions: string[];
 }
 
 function draftForModel(d: VoiceDraft): Record<string, unknown> {
@@ -775,6 +813,7 @@ async function aiExtract(
     "\"A → B\" or \"from A to B\" days are startDate → dueDate; a single day answering \"when does it start\" is startDate, answering \"when is it due\" is dueDate;",
     "iteration = new or rework (only when said); reworkOf = the original task's code (like MO-6); reworkSource = external when the client asked for it, internal for our own review;",
     "task = the task code (like ENOC-13), number, or title words; minutes = time spent; start / end = \"YYYY-MM-DDTHH:mm\" app time when a time range is said;",
+    "comment: task = the task's code or words describing it; comment = the comment text exactly as said (never invented); mentions = names to @mention (tell / ask / cc / mention <name>);",
     "update: task = the task's code; assigneesAdd / assigneesRemove for people; brief replaces the brief, briefAppend adds to it; priority low|medium|high|urgent; status todo|in_progress (never completed — that is close);",
     "note = the outcome note (close) or memo (log time) — what was done, without the code or the time; finalUrl = an http(s) link.",
     "The pending draft below is the default target of EVERY edit: \"update / change / add to the brief / due / start / people / name / priority\" changes THIS draft. Use intent update / close / log_time only when the latest message names a task code (like EO26-5); keep intent null for edits of the draft. Never invent a brief: only fill brief when the person gives one.",
@@ -864,6 +903,13 @@ async function aiExtract(
   if (reply.priority) out.priority = reply.priority;
   if (reply.status) out.status = reply.status;
   if (reply.briefAppend) out.briefAppend = reply.briefAppend;
+  if (reply.comment) out.comment = reply.comment;
+  if (reply.mentions?.length) {
+    const m = people(reply.mentions);
+    if (m.ids.length) out.addPeople = [...new Set([...(out.addPeople ?? []), ...m.ids])];
+    if (m.ambiguous.length) out.ambiguousPeople = m.ambiguous;
+    if (m.sounds.length) out.soundPeople = m.sounds;
+  }
   return out;
 }
 
@@ -1018,6 +1064,12 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
     }
     // A rework is due in two days unless said (the same default the server uses).
     if (draft.iteration === "rework" && !draft.dueDate) draft.dueDate = addDays(appToday(), 2).toISOString().slice(0, 10);
+  }
+
+  if (draft.action === "comment") {
+    const result = await applyComment(ctx, draft, ex, contextTaskId);
+    notes.push(...result.notes);
+    if (result.override) override = result.override;
   }
 
   if (draft.action === "update") {
@@ -1387,6 +1439,83 @@ async function applyUpdate(
   return { notes, override };
 }
 
+// ---------------------------------------------------------------------------
+// Comment on a task
+// ---------------------------------------------------------------------------
+
+/**
+ * Applies a message to a COMMENT draft: the task (any task the user can view — the
+ * comment endpoint's rule), the text, and the people to @mention. Only people the
+ * server would notify (resolveMentions: they can view the task) are kept; the others
+ * are named in a note.
+ */
+async function applyComment(
+  ctx: VoiceContext,
+  draft: VoiceDraft,
+  ex: Extracted,
+  contextTaskId: string | null
+): Promise<{ notes: string[]; override?: Turn["override"] }> {
+  const notes: string[] = [];
+  let override: Turn["override"];
+  if (ex.taskCode || ex.taskNumber || ex.taskText) {
+    const found = await findTask(ctx, { code: ex.taskCode, number: ex.taskNumber, text: ex.taskText }, "comment");
+    if ("task" in found) {
+      if (found.note) notes.push(found.note.replace(/^Using/, "Commenting on"));
+      draft.task = found.task;
+    } else if (found.choices?.length) override = { ask: "task", reply: found.error, chips: found.choices };
+    else notes.push(found.error);
+  } else if (!draft.task && contextTaskId) {
+    draft.task = await reloadTask(ctx, { id: contextTaskId }, "comment");
+  }
+  const text = ex.comment ?? (draft.asking === "comment" ? ex.note ?? ex.brief : undefined);
+  if (text) {
+    draft.comment = text.slice(0, 5000);
+    draft.briefTidy = null;
+    draft.briefChoice = null;
+  }
+  const byId = new Map(ctx.people.map((p) => [p.id, p]));
+  for (const id of ex.addPeople ?? []) {
+    const person = byId.get(id);
+    if (person && !draft.mentions.some((m) => m.id === id) && id !== String(ctx.user._id)) draft.mentions.push({ id, name: person.name });
+  }
+  if (ex.soundPeople?.length && !override) {
+    const asked = confirmPerson(ctx, draft, ex.soundPeople[0]!, "mentions");
+    override = { ...asked, reply: asked.reply.replace("Did you mean", "Mention") };
+  }
+  if (ex.ambiguousPeople?.length && !override) {
+    const first = ex.ambiguousPeople[0]!;
+    override = { ask: "mentions", reply: `Which ${first.said}?`, chips: first.ids.slice(0, 6).map((id) => byId.get(id)?.name ?? "").filter(Boolean) };
+  }
+  // Only people the server will notify (they can view the task).
+  if (draft.task && draft.mentions.length) {
+    const task = await Task.findById(draft.task.id);
+    if (task) {
+      const allowed = new Set((await resolveMentions(mentionTokens(draft.mentions), task)).map(String));
+      const left = draft.mentions.filter((m) => !allowed.has(m.id));
+      if (left.length) {
+        notes.push(`${left.map((m) => m.name).join(" and ")} can't see ${draft.task.code}, so ${left.length === 1 ? "they" : "they"} won't be mentioned.`);
+        draft.mentions = draft.mentions.filter((m) => allowed.has(m.id));
+      }
+    }
+  }
+  return { notes, override };
+}
+
+const mentionTokens = (mentions: Array<{ id: string; name: string }>) =>
+  mentions.map((m) => `@[${m.name.replace(/[\[\]]/g, "")}](${m.id})`).join(" ");
+
+/** The comment as shown on the card: the chosen text, with "@Name" for each mention. */
+function commentText(d: VoiceDraft): string {
+  const text = d.briefChoice === "tidy" && d.briefTidy ? briefPreview(d.briefTidy) : (d.comment ?? "");
+  return `${d.mentions.map((m) => `@${m.name}`).join(" ")}${d.mentions.length ? " " : ""}${text}`;
+}
+
+/** The body the app posts: mention tokens (the server's `@[Name](id)` format) + the text. */
+function commentBodyOf(d: VoiceDraft): string {
+  const text = d.briefChoice === "tidy" && d.briefTidy ? briefPreview(d.briefTidy) : (d.comment ?? "");
+  return `${d.mentions.length ? `${mentionTokens(d.mentions)} ` : ""}${text}`.slice(0, 5000);
+}
+
 /** Required fields still empty, in the order they are asked. Mirrors the task form and the close dialog. */
 export function missingFields(d: VoiceDraft): VoiceField[] {
   const out: VoiceField[] = [];
@@ -1414,6 +1543,11 @@ export function missingFields(d: VoiceDraft): VoiceField[] {
     return out;
   }
   if (!d.task) return ["task"];
+  if (d.action === "comment") {
+    if (!d.comment) return ["comment"];
+    if (d.briefTidy && !d.briefChoice) return ["briefReview"];
+    return [];
+  }
   if (d.action === "update") {
     if (d.brief && !d.briefChoice) return ["briefReview"];
     return updateChanges(d).rows.length || updateChanges(d).status ? [] : ["changes"];
@@ -1447,7 +1581,9 @@ async function question(
     }
     case "briefReview":
       return {
-        reply: d.briefTidy ? `Here's the brief tidied up:\n${briefPreview(d.briefTidy)}` : "Use the brief as you said it?",
+        reply: d.briefTidy
+          ? `Here's the ${d.action === "comment" ? "comment" : "brief"} tidied up:\n${briefPreview(d.briefTidy)}`
+          : "Use the brief as you said it?",
         chips: [...(d.briefTidy ? [BRIEF_USE] : []), BRIEF_KEEP, BRIEF_EDIT],
       };
     case "dates": {
@@ -1506,6 +1642,13 @@ async function question(
       const team = (project?.memberIds ?? []).map((id) => byId.get(id)).filter((n): n is string => Boolean(n)).slice(0, 7);
       return { reply: team.length ? "Who's doing it? Say a name or tap one." : "Who's doing it?", chips: ["Me", ...team] };
     }
+    case "comment":
+      return {
+        reply: `What should the comment on ${d.task?.code ?? "the task"} say?${d.mentions.length ? ` (I'll mention ${d.mentions.map((m) => m.name.split(" ")[0]).join(" and ")}.)` : ""}`,
+        chips: [],
+      };
+    case "mentions":
+      return { reply: "Who should be mentioned?", chips: [] };
     case "changes": {
       const moves = d.baseline?.moves ?? [];
       return {
@@ -1516,7 +1659,9 @@ async function question(
     case "task":
       return {
         reply:
-          d.action === "update"
+          d.action === "comment"
+            ? "Which task is the comment for? Say its code, like MO-6, or describe it."
+            : d.action === "update"
             ? "Which task should change? Say its code, like MO-6."
             : d.action === "close"
             ? "Which task are you closing? Say the task code, like MO-6."
@@ -1644,6 +1789,17 @@ async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard 
   }
   if (!d.task) return null;
   const taskRow = `${d.task.code} · ${d.task.title}`;
+  if (d.action === "comment") {
+    return {
+      title: "Comment",
+      rows: [
+        ["Task", taskRow],
+        ["Comment", commentText(d)],
+        ["Mentions", d.mentions.length ? d.mentions.map((m) => m.name).join(", ") : "—"],
+      ],
+      confirm: "Post comment",
+    };
+  }
   if (d.action === "update") {
     return { title: "Update task", rows: [["Task", taskRow], ...updateChanges(d).rows], confirm: "Update task" };
   }
@@ -1673,7 +1829,7 @@ export interface VoiceUnderstandResult {
   reply: string;
   chips: string[];
   draft: VoiceDraft;
-  action: "create" | "rework" | "close" | "log_time" | "update" | "none";
+  action: "create" | "rework" | "close" | "log_time" | "update" | "comment" | "none";
   missing: VoiceField[];
   ready: boolean;
   /** The field being asked for ("final" = show the photo / file / link choices). */
@@ -1697,7 +1853,13 @@ function draftLabel(d: VoiceDraft): string {
     return name ? `the new task ${name}` : d.project ? `the new task in ${d.project.code}` : "the new task";
   }
   const code = d.task?.code ?? "the task";
-  return d.action === "close" ? `closing ${code}` : d.action === "log_time" ? `logging time on ${code}` : `updating ${code}`;
+  return d.action === "close"
+    ? `closing ${code}`
+    : d.action === "log_time"
+      ? `logging time on ${code}`
+      : d.action === "comment"
+        ? `the comment on ${code}`
+        : `updating ${code}`;
 }
 
 /** "Nasir" sounds like Nazeer: ask, with up to 3 people (project team first) and "Someone else". */
@@ -1751,7 +1913,7 @@ function verifyTidy(tidy: TidyBrief, source: string): TidyBrief | null {
 
 /** The chips and other short fixed replies — read by the rules, never sent to the model. */
 const QUICK_REPLY =
-  /^(?:new task|close a task|log time|close it|update it|keep working on it|start a new one|someone else|new work|rework|internal review|external review|me|keep it as it was|none — new name|\d+ (?:minutes?|hours?)|due tomorrow|priority (?:low|medium|high|urgent)|move to in progress|move back to to do|(?:due|start|add|remove) [\p{L} ]{2,30}|[^→]{2,40}→[^→]{2,40})$/iu;
+  /^(?:new task|close a task|log time|close it|update it|keep working on it|start a new one|someone else|comment|new work|rework|internal review|external review|me|keep it as it was|none — new name|\d+ (?:minutes?|hours?)|due tomorrow|priority (?:low|medium|high|urgent)|move to in progress|move back to to do|(?:due|start|add|remove) [\p{L} ]{2,30}|[^→]{2,40}→[^→]{2,40})$/iu;
 
 /** Whether most of a value's words (4+ letters) were in the person's message (guards against invented text). */
 function grounded(value: string, said: string): boolean {
@@ -1790,6 +1952,9 @@ function changesBetween(a: VoiceDraft, b: VoiceDraft): string[] {
   if (b.finalFile && a.finalFile?.name !== b.finalFile.name) out.push(`file ${b.finalFile.name}`);
   if (b.priority && a.priority !== b.priority && b.action === "update") out.push(`priority ${b.priority}`);
   if (b.status && a.status !== b.status) out.push(`status ${STATUS_LABEL[b.status]}`);
+  if (b.comment && a.comment !== b.comment) out.push("comment updated");
+  const mentioned = b.mentions.filter((m) => !a.mentions.some((x) => x.id === m.id));
+  if (mentioned.length) out.push(`mention ${mentioned.map((m) => m.name.split(" ")[0]).join(" and ")}`);
   return out;
 }
 
@@ -1907,7 +2072,7 @@ async function choiceTurn(
         draft: next,
         notes: [],
         reply: `OK — ${task.shortCode ?? `#${task.number}`} · ${task.title} (${STATUS_LABEL[task.status] ?? task.status}). Close it, log time or update it?`,
-        chips: ["Close it", "Log time", "Update it"],
+        chips: ["Close it", "Log time", "Update it", "Comment"],
       };
     }
     if (draft.asking === "existing" && draft.project && (t === EXISTING_NONE || /^none\b/i.test(t))) {
@@ -1917,6 +2082,14 @@ async function choiceTurn(
   if (draft.asking === "briefReview") {
     if (t === BRIEF_USE || /^use (?:the )?tid/i.test(t)) return { draft: { ...draft, briefChoice: draft.briefTidy ? "tidy" : "plain" }, notes: [] };
     if (t === BRIEF_KEEP || /^keep\b/i.test(t)) return { draft: { ...draft, briefChoice: "plain" }, notes: [] };
+    if ((t === BRIEF_EDIT || /^edit\b/i.test(t)) && draft.action === "comment") {
+      return {
+        draft: { ...draft, comment: null, briefTidy: null, briefChoice: null, asking: "comment" },
+        notes: [],
+        reply: "Say the comment again.",
+        chips: [],
+      };
+    }
     if (t === BRIEF_EDIT || /^edit\b/i.test(t)) {
       return {
         draft: { ...draft, brief: null, briefTidy: null, briefChoice: null, asking: "brief" },
@@ -1951,6 +2124,7 @@ export async function understand(
     const update = next.action === "update" ? updateChanges(next) : null;
     next.updatePatch = update && Object.keys(update.patch).length ? update.patch : null;
     next.updateStatus = update?.status ?? null;
+    next.commentBody = next.action === "comment" && next.comment ? commentBodyOf(next) : null;
     return { ...result, draft: next };
   };
   const actionOf = (d: VoiceDraft): VoiceUnderstandResult["action"] =>
@@ -2044,7 +2218,11 @@ export async function understand(
     // Free text from the model must come from what the person said: a value whose words mostly
     // aren't in the latest message (a repeated brief, or an invented one) is dropped.
     if (ai) {
-      for (const field of ["brief", "briefAppend", "note", "shortName"] as const) {
+      // A task code the model gives must be in the person's words (it sometimes repeats the draft's task).
+      if (ex.taskCode && !findTaskCodes(last, ctx.codes).includes(ex.taskCode)) delete ex.taskCode;
+      // An answer to "which task?" describes the task: a comment needs ":", quotes or "that / say".
+      if (draft.asking === "task" && ex.comment && !/[:"“]|\b(?:that|saying|say)\b/i.test(last)) delete ex.comment;
+      for (const field of ["brief", "briefAppend", "note", "shortName", "comment"] as const) {
         const value = ex[field];
         if (value && !grounded(value, last)) delete ex[field];
       }
@@ -2082,8 +2260,8 @@ export async function understand(
     if (ex.shortName && draft.shortName && ex.shortName.trim() === draft.shortName.trim()) delete ex.shortName;
     // A task described in words ("close my reel one video edit task from the home service …"): the
     // whole message is matched against the tasks the user can act on (the model's guess may be a project code).
-    const nextAction = ex.intent === "close" || ex.intent === "log_time" || ex.intent === "update" ? ex.intent : draft.action;
-    if ((nextAction === "close" || nextAction === "log_time" || nextAction === "update") && !draft.task && !ex.taskCode && !ex.taskNumber) {
+    const nextAction = ex.intent === "close" || ex.intent === "log_time" || ex.intent === "update" || ex.intent === "comment" ? ex.intent : draft.action;
+    if ((nextAction === "close" || nextAction === "log_time" || nextAction === "update" || nextAction === "comment") && !draft.task && !ex.taskCode && !ex.taskNumber) {
       const mentions = draft.asking === "task" || Boolean(ex.taskText) || /\b(?:task|reel|video|post|static|story|carousel)\b/i.test(last);
       if (mentions && !/^\s*(?:close|log time|update) (?:it|this)\s*$/i.test(last) && !/^\s*(?:close a task|log time)\s*$/i.test(last)) {
         ex.taskText = [last, ex.taskText && !last.includes(ex.taskText) ? ex.taskText : null].filter(Boolean).join(" ").slice(0, 400);
@@ -2174,6 +2352,10 @@ export async function understand(
   }
 
   // A new brief is offered tidied (AI rewrite, or the rules); nothing to tidy → kept as said.
+  // A long comment (30+ words) is offered tidied too; "Keep as I said" is the default.
+  if (next.action === "comment" && next.comment && !next.briefChoice && !next.briefTidy && next.comment.split(/\s+/).length >= 30) {
+    next.briefTidy = verifyTidy(await tidyBrief(ctx, next.comment, null), next.comment);
+  }
   if ((next.action === "update" || (next.action === "create" && next.iteration !== "rework")) && next.brief && !next.briefChoice && !next.briefTidy) {
     // Only facts from the person's own words survive; nothing left → no tidy offer.
     const tidy = verifyTidy(await tidyBrief(ctx, next.brief, next.project?.name ?? null), next.brief);
