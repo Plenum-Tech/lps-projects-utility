@@ -9,7 +9,7 @@
 // without a database: `bun src/scripts/voiceParseCheck.ts`.
 // ---------------------------------------------------------------------------
 
-export const VOICE_ACTIONS = ["create", "close", "log_time"] as const;
+export const VOICE_ACTIONS = ["create", "close", "log_time", "update"] as const;
 export type VoiceAction = (typeof VOICE_ACTIONS)[number];
 
 /** What a message asks for: an action, a rework (= create + iteration rework), or none. */
@@ -33,6 +33,8 @@ export const VOICE_FIELDS = [
   "existing",
   /** A tidied brief was offered: use it, keep the words as said, or say it again. */
   "briefReview",
+  /** Update: what should change on the task. */
+  "changes",
   "task",
   "final",
   "note",
@@ -71,6 +73,9 @@ export interface Extracted {
   /** "YYYY-MM-DD". */
   dueDate?: string;
   startDate?: string;
+  /** Update: new priority / status (To do ↔ In progress only; closing is its own action). */
+  priority?: "low" | "medium" | "high" | "urgent";
+  status?: "todo" | "in_progress";
   /** "add to the brief …": text added on to the brief. */
   briefAppend?: string;
   /** Typos read as day words: [said, read as]. */
@@ -574,7 +579,7 @@ const COMMAND_START =
 
 function detectIntent(t: string): VoiceIntent | undefined {
   if (/^\s*(?:cancel|stop|start over|reset|never ?mind|forget it)\b/i.test(t)) return "cancel";
-  if (/\bwhat(?:'s| is| are)?\b.*\bdue\b|\bmove\b.*\b(?:time|hours?|minutes?|entr(?:y|ies))\b|\bdelete\b|\breassign\b|\bwhat (?:are|is) my\b/i.test(t)) {
+  if (/\bwhat(?:'s| is| are)?\b.*\bdue\b|\bmove\b.*\b(?:time|hours?|minutes?|entr(?:y|ies))\b|\bdelete\b|\bwhat (?:are|is) my\b/i.test(t)) {
     return "out_of_scope";
   }
   // The command the message starts with wins ("new task … close-up shots").
@@ -615,7 +620,7 @@ export function fieldEdit(text: string): { field: "brief" | "briefAppend" | "nam
   const forms: Array<[RegExp, "brief" | "briefAppend" | "name" | "note"]> = [
     [/^\s*(?:please\s+)?(?:add|append)\s+(?:this\s+|that\s+)?(?:to|in|into)\s+(?:the\s+)?brief\b\s*(?:that\s+)?[:\-–]?\s*([\s\S]+)$/i, "briefAppend"],
     [/^\s*(?:please\s+)?(?:(?:update|change|replace|set|edit|rewrite)\s+(?:the\s+)?brief|new\s+brief|brief)\b\s*(?:to|as|with|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "brief"],
-    [/^\s*(?:please\s+)?(?:(?:update|change|rename|set|edit)\s+(?:the\s+)?(?:short\s+name|task\s+name|name|title)|call\s+it|rename\s+it|short\s+name)\b\s*(?:to|as|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "name"],
+    [/^\s*(?:please\s+)?(?:(?:update|change|rename|set|edit)\s+(?:the\s+)?(?:short\s+name|task\s+name|name|title)|call\s+it|rename(?:\s+it)?|short\s+name)\b\s*(?:to|as|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "name"],
     [/^\s*(?:please\s+)?(?:(?:update|change|replace|set|edit)\s+(?:the\s+)?(?:outcome\s+)?(?:note|memo)|(?:outcome\s+)?note|memo)\b\s*(?:to|as|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "note"],
   ];
   for (const [re, field] of forms) {
@@ -628,6 +633,110 @@ export function fieldEdit(text: string): { field: "brief" | "briefAppend" | "nam
   return null;
 }
 
+/** Start / due dates: "due Friday", "due date to 30 Oct", "push it to Monday", "start tomorrow", "from A to B", "A → B". */
+function readDates(t: string, opts: ParseOptions, out: Extracted): void {
+  const due = new RegExp(
+    `\\b(?:due(?:\\s+date)?|end(?:\\s+date)?|deadline|by|deliver(?:y|ed)?(?:\\s+(?:on|by))?|postpone(?:d)?(?:\\s+it)?|push(?:ed)?(?:\\s+it)?(?:\\s+back)?|extend(?:ed)?(?:\\s+it)?)\\s+(?:to\\s+|till\\s+|until\\s+|on\\s+|is\\s+|as\\s+)?(${DATE_WORD})`,
+    "i"
+  ).exec(t);
+  const dueDay = due ? resolveLooseDay(due[1]!, opts.today) : null;
+  if (dueDay) out.dueDate = dueDay;
+  const start = new RegExp(
+    `\\b(?:start(?:s|ing)?(?:\\s+date)?|begin(?:s|ning)?)\\s+(?:to\\s+|on\\s+|from\\s+|is\\s+|as\\s+)?(${DATE_WORD})`,
+    "i"
+  ).exec(t);
+  const startDay = start ? resolveLooseDay(start[1]!, opts.today) : null;
+  if (startDay) out.startDate = startDay;
+  // "from tomorrow to 30 Oct", "Today 23 Oct → Sat 24 Oct" (the date chips).
+  const span = /→/.test(t)
+    ? t.split("→")
+    : new RegExp(`\\bfrom\\s+(${DATE_WORD})\\s+(?:to|till|until|-|–)\\s+(${DATE_WORD})`, "i").exec(t)?.slice(1, 3);
+  if (span && span.length >= 2) {
+    const a = resolveLooseDay(span[0]!, opts.today);
+    const b = resolveLooseDay(span[1]!, opts.today);
+    if (a && b) {
+      out.startDate = a;
+      out.dueDate = b;
+    }
+  }
+  if (opts.asking === "dates" && !out.startDate && !out.dueDate) {
+    const day = resolveLooseDay(t, opts.today);
+    if (day) out.anyDate = day;
+  }
+}
+
+/** People: "for Rahaf and Izzat", "add Vishal", "remove Izzat" (names after add / and / plus …, typos allowed there). */
+function readPeople(raw: string, opts: ParseOptions, spans: string[], out: Extracted): void {
+  const remove = /\b(?:remove|without|drop|take off|unassign)\s+([\p{L}' -]+)/iu.exec(raw);
+  // Quoted text is never read for names.
+  const peopleText = (remove ? raw.slice(0, remove.index) : raw).replace(/["“][^"”]*["”]/g, " ");
+  const matched = matchPeople(peopleText.replace(URL_RE, " "), opts.people, {
+    me: opts.me,
+    skip: spans,
+    anyCase: opts.asking === "assignees",
+  });
+  // Names after "add / and / plus / with / for / assign to", or before "also / too", in any case
+  // and with a typo ("add vishl also").
+  // Word by word, so "and add Vishal" reads both triggers.
+  const tokens = peopleText.split(/[^\p{L}'-]+/u).filter(Boolean);
+  const triggers = new Set(["add", "and", "plus", "with", "for", "include", "also", "assign", "assigned", "reassign"]);
+  const nameWords = tokens.filter((word, i) => {
+    const w = word.toLowerCase();
+    if (triggers.has(w) || w === "to") return false;
+    const prev = tokens[i - 1]?.toLowerCase() ?? "";
+    const prev2 = tokens[i - 2]?.toLowerCase() ?? "";
+    const next = tokens[i + 1]?.toLowerCase() ?? "";
+    return triggers.has(prev) || (prev === "to" && /^(?:re)?assign(?:ed)?$/.test(prev2)) || next === "also" || next === "too";
+  });
+  if (nameWords.length) {
+    const extra = matchPeople(nameWords.join(" "), opts.people, { me: opts.me, skip: spans, anyCase: true });
+    for (const id of extra.ids) if (!matched.ids.includes(id)) matched.ids.push(id);
+    for (const a of extra.ambiguous) if (!matched.ambiguous.some((x) => x.said.toLowerCase() === a.said.toLowerCase())) matched.ambiguous.push(a);
+  }
+  if (matched.ids.length) out.addPeople = matched.ids;
+  if (matched.ambiguous.length) out.ambiguousPeople = matched.ambiguous;
+  if (remove) {
+    const gone = matchPeople(remove[1]!, opts.people, { me: opts.me, anyCase: true });
+    if (gone.ids.length) out.removePeople = gone.ids;
+  }
+}
+
+const UPDATE_VERB = /^\s*(?:please\s+)?(?:update|change|edit|modify|move|reschedule|postpone|push|extend|rename|reassign|set|mark)\b/i;
+const PEOPLE_TO_TASK = /^\s*(?:please\s+)?(?:add|assign|remove|take|unassign)\b[\s\S]*\b(?:to|from|on|off)\s+(?:task\s+)?[A-Za-z][A-Za-z0-9]{0,11}\s?[-–]\s?\d{1,5}\b/i;
+const UPDATE_THIS = /^\s*(?:please\s+)?(?:update|edit|change)\s+(?:it|this(?:\s+(?:one|task))?|the\s+task)\b/i;
+
+/**
+ * UPDATE a task: "update EO26-14 due Friday", "add Vishal to EO26-14", "change the brief of
+ * EO26-14 to …", "priority high", "move to in progress", "rename to …". `codes` are the task
+ * codes in the message (taken out before the fields are read).
+ */
+function readUpdate(raw: string, t: string, opts: ParseOptions, codes: string[], out: Extracted): Extracted {
+  let text = raw;
+  for (const code of codes) {
+    const [p, n] = code.split("-");
+    text = text.replace(new RegExp(`(?:\\b(?:of|for|on|in|to|from)\\s+)?(?:\\btask\\s+)?\\b${escapeRe(p!)}\\s?[-–]?\\s?${n}\\b`, "gi"), " ");
+  }
+  text = text.replace(/^\s*(?:please\s+)?(?:update|edit|change)\s+(?:it|this(?:\s+(?:one|task))?|the\s+task)\b[\s,:]*/i, "").replace(/\s+/g, " ").trim();
+  const edit = fieldEdit(text);
+  if (edit && edit.field !== "note") {
+    if (edit.field === "name") out.shortName = capFirst(clip(edit.value, 80));
+    else if (edit.field === "briefAppend") out.briefAppend = clip(edit.value, 2000);
+    else out.brief = capFirst(clip(edit.value, 2000));
+    return out;
+  }
+  const lower = normalizeNumbers(fixDayWords(text).text);
+  readDates(lower, opts, out);
+  const priority = /\b(?:priority\s+(?:to\s+|is\s+|as\s+)?(low|medium|normal|high|urgent)|(low|medium|normal|high|urgent)\s+priority)\b/i.exec(lower);
+  if (priority) {
+    const p = (priority[1] ?? priority[2])!.toLowerCase();
+    out.priority = (p === "normal" ? "medium" : p) as Extracted["priority"];
+  }
+  if (/\b(?:in[\s-]progress|start(?:ed)?\s+work(?:ing)?)\b/i.test(lower)) out.status = "in_progress";
+  else if (/\b(?:(?:back\s+)?to\s+(?:to[\s-]?do|todo)|status\s+(?:to\s+)?(?:to[\s-]?do|todo)|as\s+(?:to[\s-]?do|todo)|not\s+started)\b/i.test(lower)) out.status = "todo";
+  readPeople(text, opts, [], out);
+  return out;
+}
+
 /** Reads one message into a draft change. `text` is the latest user message. */
 export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   const raw = text.trim();
@@ -638,6 +747,29 @@ export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   const t = normalizeNumbers(fixed.text);
   if (fixed.fixes.length) out.fixes = fixed.fixes;
   const freeAnswer = FREE_TEXT.has(opts.asking) && !COMMAND_START.test(raw);
+  // A scope chip ("Video · 6 of 6 left") is the unit only.
+  const scopeChip = /^\s*(.+?)\s*·\s*\d+\s+of\s+\d+\s+left\s*$/i.exec(raw);
+  if (scopeChip) {
+    const unit = matchUnit(scopeChip[1]!, opts.units);
+    return unit ? { unit: unit.unit } : out;
+  }
+
+  // Update a task: a change verb with a task code ("move EO26-14 due date to Friday", "add Vishal to
+  // EO26-14"), "update this / it", or any change once updating. Out-of-scope asks ("move my hours …") excluded.
+  if (!freeAnswer) {
+    const codesEarly = findTaskCodes(t, opts.codes);
+    const oos = detectIntent(t) === "out_of_scope" || detectIntent(t) === "cancel";
+    const command =
+      !oos &&
+      ((codesEarly.length > 0 && (UPDATE_VERB.test(raw) || PEOPLE_TO_TASK.test(raw))) ||
+        (opts.action !== "create" && UPDATE_THIS.test(raw)) ||
+        /^\s*update (?:it|this|task)\s*$/i.test(raw));
+    if (command || (opts.action === "update" && !oos && !/^\s*(?:close|log)\b/i.test(raw) && !/^\s*(?:new task|create a task)\b/i.test(raw))) {
+      if (command) out.intent = "update";
+      if (codesEarly[0] && (command || opts.asking === "task")) out.taskCode = codesEarly[0];
+      return readUpdate(raw, t, opts, codesEarly, out);
+    }
+  }
 
   // Field edits come first, before any date / people / intent reading: their text is the value, verbatim.
   if (!freeAnswer) {
@@ -750,59 +882,12 @@ export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
     const named = /\b(?:called|named|short name(?: is)?)\s+["“]?([^",.;”]+)/i.exec(raw);
     if (named) out.shortName = capFirst(clip(tidy(named[1]!), 80));
 
-    const due = new RegExp(`\\b(?:due|by|deadline|deliver(?:y|ed)?(?:\\s+(?:on|by))?)\\s+(?:on\\s+|is\\s+)?(${DATE_WORD})`, "i").exec(t);
-    const dueDay = due ? resolveDay(due[1]!, opts.today) : null;
-    if (dueDay) out.dueDate = dueDay;
-    const start = new RegExp(`\\b(?:start(?:s|ing)?|begin(?:s|ning)?)\\s+(?:on\\s+|from\\s+)?(${DATE_WORD})`, "i").exec(t);
-    const startDay = start ? resolveDay(start[1]!, opts.today) : null;
-    if (startDay) out.startDate = startDay;
-    // "from tomorrow to 30 Oct", "Today 23 Oct → Sat 24 Oct" (the date chips).
-    const span =
-      /→/.test(t)
-        ? t.split("→")
-        : new RegExp(`\\bfrom\\s+(${DATE_WORD})\\s+(?:to|till|until|-|–)\\s+(${DATE_WORD})`, "i").exec(t)?.slice(1, 3);
-    if (span && span.length >= 2) {
-      const a = resolveLooseDay(span[0]!, opts.today);
-      const b = resolveLooseDay(span[1]!, opts.today);
-      if (a && b) {
-        out.startDate = a;
-        out.dueDate = b;
-      }
-    }
-    if (opts.asking === "dates" && !out.startDate && !out.dueDate) {
-      const day = resolveLooseDay(t, opts.today);
-      if (day) out.anyDate = day;
-    }
+    readDates(t, opts, out);
 
     const brief = /\bbrief(?:\s+is|\s*[:\-–])\s*(.+)$/i.exec(raw);
     if (brief) out.brief = capFirst(clip(tidy(brief[1]!), 2000));
 
-    // People: "for Rahaf and Izzat", "add Vishal", "remove Izzat".
-    const remove = /\b(?:remove|without|drop)\s+([\p{L}' -]+)/iu.exec(raw);
-    // Quoted text is never read for names.
-    const peopleText = (remove ? raw.slice(0, remove.index) : raw).replace(/["“][^"”]*["”]/g, " ");
-    const matched = matchPeople(peopleText.replace(URL_RE, " "), opts.people, {
-      me: opts.me,
-      skip: spans,
-      anyCase: opts.asking === "assignees",
-    });
-    // Names after "add / and / plus / with / for / assign to", or before "also / too", in any case
-    // and with a typo ("add vishl also").
-    const nameWords = [
-      ...peopleText.matchAll(/\b(?:add|and|plus|with|for|include|also|assign(?:ed)?\s+to)\s+([\p{L}'-]+)/giu),
-      ...peopleText.matchAll(/\b([\p{L}'-]+)\s+(?:also|too|as well)\b/giu),
-    ].map((m) => m[1]!);
-    if (nameWords.length) {
-      const extra = matchPeople(nameWords.join(" "), opts.people, { me: opts.me, skip: spans, anyCase: true });
-      for (const id of extra.ids) if (!matched.ids.includes(id)) matched.ids.push(id);
-      for (const a of extra.ambiguous) if (!matched.ambiguous.some((x) => x.said.toLowerCase() === a.said.toLowerCase())) matched.ambiguous.push(a);
-    }
-    if (matched.ids.length) out.addPeople = matched.ids;
-    if (matched.ambiguous.length) out.ambiguousPeople = matched.ambiguous;
-    if (remove) {
-      const gone = matchPeople(remove[1]!, opts.people, { me: opts.me, anyCase: true });
-      if (gone.ids.length) out.removePeople = gone.ids;
-    }
+    readPeople(raw, opts, spans, out);
   }
 
   // Close note / log memo: what's left after the command, code and time.

@@ -160,6 +160,49 @@ check("field edits on a ready card", () => {
   assert.deepEqual(parseVoiceText("add moe", { ...c, people }).addPeople, ["u-moe"]);
 });
 
+check("update a task", () => {
+  const a = parseVoiceText("move EO26-14 due date to Friday", base);
+  assert.equal(a.intent, "update");
+  assert.equal(a.taskCode, "EO26-14");
+  assert.equal(a.dueDate, "2026-10-30");
+  const b = parseVoiceText("add Vishal to EO26-14", base);
+  assert.equal(b.intent, "update");
+  assert.equal(b.taskCode, "EO26-14");
+  assert.deepEqual(b.addPeople, ["u-vishal"]);
+  const c = parseVoiceText("change the brief of EO26-14 to use the new logo", base);
+  assert.equal(c.intent, "update");
+  assert.equal(c.brief, "Use the new logo");
+  const d = parseVoiceText("update EO26-14, due froday, add vishal and remove izzat, priority high", base);
+  assert.equal(d.dueDate, "2026-10-30");
+  assert.deepEqual(d.addPeople, ["u-vishal"]);
+  assert.deepEqual(d.removePeople, ["u-izzat"]);
+  assert.equal(d.priority, "high");
+  const e = parseVoiceText("update EO26-16, due froday and add vishal", base);
+  assert.equal(e.dueDate, "2026-10-30");
+  assert.deepEqual(e.addPeople, ["u-vishal"]);
+  assert.deepEqual(parseVoiceText("reassign EO26-16 to izzat", base).addPeople, ["u-izzat"]);
+  const u = opts({ action: "update" });
+  assert.equal(parseVoiceText("rename to Hero banner v2", u).shortName, "Hero banner v2");
+  assert.equal(parseVoiceText("add to the brief: Arabic captions", u).briefAppend, "Arabic captions");
+  assert.equal(parseVoiceText("move to in progress", u).status, "in_progress");
+  assert.equal(parseVoiceText("urgent priority", u).priority, "urgent");
+  assert.equal(parseVoiceText("start Monday", u).startDate, "2026-10-26");
+  assert.equal(parseVoiceText("push it to next Monday", u).dueDate, "2026-10-26");
+  assert.equal(parseVoiceText("Update it", opts({ action: null })).intent, "update");
+  assert.equal(parseVoiceText("update this, due tomorrow", opts({ action: null })).dueDate, "2026-10-24");
+  // Not updates.
+  assert.equal(parseVoiceText("Move my 4 hours from EO26-7 to EO26-8", base).intent, "out_of_scope");
+  assert.equal(parseVoiceText("change due to friday", opts({ action: "create" })).intent, undefined);
+  assert.equal(parseVoiceText("Close it", u).intent, "close");
+});
+
+check("scope item chips", () => {
+  // The chip "Video · 6 of 6 left" names the unit only (no number, no short name).
+  const c = parseVoiceText("Video · 6 of 6 left", opts({ action: "create", asking: "unit" }));
+  assert.equal(c.unit, "Video");
+  assert.equal(c.shortName, undefined);
+});
+
 check("brief tidy (rules)", () => {
   const tidy = tidyBriefRules(
     "Cut three 15-second vertical reels from the BTS footage, Arabic captions, logo end card. Use the hero shot first. Refs https://drive.google.com/x",

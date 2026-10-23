@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useCurrentUser } from "@/hooks/use-auth";
-import { useCreateTask, useSubmitTask, useTask, useUploadTaskFiles } from "@/hooks/use-tasks";
+import { useCreateTask, useSubmitTask, useTask, useUpdateTask, useUpdateTaskStatus, useUploadTaskFiles } from "@/hooks/use-tasks";
 import { useCreateTimeLog } from "@/hooks/use-timelogs";
 import {
   useVoiceTranscribe,
@@ -503,6 +503,8 @@ function SummaryCard({
   const submitTask = useSubmitTask();
   const upload = useUploadTaskFiles(taskId);
   const createLog = useCreateTimeLog();
+  const updateTask = useUpdateTask();
+  const updateStatus = useUpdateTaskStatus();
   const queryClient = useQueryClient();
   const [saving, setSaving] = useState(false);
   const closed = item.state === "closed";
@@ -557,6 +559,15 @@ function SummaryCard({
         return;
       }
       const task = draft.task!;
+      if (draft.action === "update") {
+        // The edit form's PATCH body (only what changed), then the status move.
+        if (draft.updatePatch && Object.keys(draft.updatePatch).length) {
+          await updateTask.mutateAsync({ id: task.id, input: draft.updatePatch });
+        }
+        if (draft.updateStatus) await updateStatus.mutateAsync({ id: task.id, status: draft.updateStatus });
+        onDone({ text: `Updated ${task.code}.`, link: `/tasks?task=${task.id}` });
+        return;
+      }
       const span = timeSpan();
       if (draft.action === "log_time") {
         if (!span) return;

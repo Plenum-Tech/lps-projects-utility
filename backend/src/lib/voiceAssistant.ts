@@ -12,7 +12,15 @@ import { canCreateProjectTasks, projectVisibilityFilter } from "./projectAccess.
 import { isProjectApproved } from "./projectApproval.js";
 import { isProjectExpired } from "./projectExpiry.js";
 import { SCOPE_UNITS, scopeTotals } from "./scopeUnits.js";
-import { canManageTask, canViewTaskAsync, isAssignee, loggedMinutesByTask, taskProjectFlags } from "./taskAccess.js";
+import {
+  canManageTask,
+  canManageTaskAsync,
+  canTransition,
+  canViewTaskAsync,
+  isAssignee,
+  loggedMinutesByTask,
+  taskProjectFlags,
+} from "./taskAccess.js";
 import { richTextToPlain } from "./richText.js";
 import {
   briefHtml,
@@ -120,6 +128,30 @@ export interface VoiceDraft {
   briefChoice: "tidy" | "plain" | null;
   /** What is saved as the task's description (simple HTML; set by the server each turn). */
   briefHtml: string | null;
+  /** Update: new priority / status (To do ↔ In progress). */
+  priority: "low" | "medium" | "high" | "urgent" | null;
+  status: "todo" | "in_progress" | null;
+  /** Update: the task as it is now (re-read by the server every turn), and the task the fields were filled from. */
+  baseline: VoiceBaseline | null;
+  baseFor: string | null;
+  /** Update: the PATCH /api/tasks/:id body and the status move the app sends after "Update task" (set by the server). */
+  updatePatch: Record<string, unknown> | null;
+  updateStatus: "todo" | "in_progress" | null;
+}
+
+/** An existing task's editable fields, before the update. */
+export interface VoiceBaseline {
+  startDate: string | null;
+  dueDate: string | null;
+  assignees: Array<{ id: string; name: string }>;
+  titleParts: { unit: string; quantity: number; shortName: string } | null;
+  title: string;
+  priority: "low" | "medium" | "high" | "urgent";
+  status: string;
+  /** The brief as plain text. */
+  brief: string;
+  /** The status moves the user may make (of To do / In progress). */
+  moves: Array<"todo" | "in_progress">;
 }
 
 export function emptyDraft(): VoiceDraft {
@@ -148,6 +180,12 @@ export function emptyDraft(): VoiceDraft {
     focusTaskId: null,
     briefTidy: null,
     briefChoice: null,
+    priority: null,
+    status: null,
+    baseline: null,
+    baseFor: null,
+    updatePatch: null,
+    updateStatus: null,
     briefHtml: null,
   };
 }
@@ -252,7 +290,7 @@ function allUnits(ctx: VoiceContext): string[] {
 // Tasks
 // ---------------------------------------------------------------------------
 
-type TaskPurpose = "close" | "log_time" | "rework";
+type TaskPurpose = "close" | "log_time" | "rework" | "update";
 
 /** A quick-reply label: cut at a word, at most `max` characters. */
 function chip(text: string, max = 48): string {
@@ -290,6 +328,13 @@ async function taskProblem(ctx: VoiceContext, task: ITask, purpose: TaskPurpose)
   if (purpose === "rework") {
     if (!task.project || !ctx.projects.some((p) => p.id === String(task.project))) {
       return `You can't add tasks in ${code}'s project (it's closed, not approved, or you aren't on it).`;
+    }
+    return null;
+  }
+  if (purpose === "update") {
+    // The same rule as PATCH /api/tasks/:id (applyTaskUpdate): its assignees, or whoever manages it.
+    if (!isAssignee(ctx.user, task) && !(await canManageTaskAsync(ctx.user, task))) {
+      return `You can't edit ${code} — only its assignees, its creator, the project manager or an admin can.`;
     }
     return null;
   }
@@ -387,7 +432,7 @@ export async function sanitizeDraft(ctx: VoiceContext, raw: unknown): Promise<Vo
   const d = emptyDraft();
   if (typeof raw !== "object" || raw === null) return d;
   const r = raw as Record<string, unknown>;
-  d.action = (["create", "close", "log_time"] as const).find((a) => a === r.action) ?? null;
+  d.action = (["create", "close", "log_time", "update"] as const).find((a) => a === r.action) ?? null;
   d.asking = VOICE_FIELDS.find((f) => f === r.asking) ?? null;
   if (d.action === "create") {
     const projectId = typeof r.project === "object" && r.project ? (r.project as { id?: unknown }).id : null;
@@ -436,7 +481,124 @@ export async function sanitizeDraft(ctx: VoiceContext, raw: unknown): Promise<Vo
       d.finalFile = { name: file.name.slice(0, 200), size: Number(file.size) };
     }
   }
+  if (d.action === "update") {
+    d.task = await reloadTask(ctx, r.task, "update");
+    if (d.task) {
+      // The baseline is always re-read; the app's copy is ignored.
+      d.baseline = await loadBaseline(ctx, d.task.id);
+      d.baseFor = r.baseFor === d.task.id && d.baseline ? d.task.id : null;
+    }
+    if (d.baseFor) {
+      d.startDate = dayKey(r.startDate);
+      d.dueDate = dayKey(r.dueDate);
+      if (Array.isArray(r.assignees)) {
+        const known = new Map([...ctx.people, ...(d.baseline?.assignees ?? [])].map((p) => [p.id, p.name]));
+        for (const a of r.assignees as Array<{ id?: unknown }>) {
+          const name = typeof a?.id === "string" ? known.get(a.id) : undefined;
+          if (name && !d.assignees.some((x) => x.id === a.id)) d.assignees.push({ id: a.id as string, name });
+        }
+      }
+      d.unit = str(r.unit, TASK_TITLE_LIMITS.unitMax);
+      const q = Number(r.quantity);
+      d.quantity = Number.isInteger(q) && q >= 1 && q <= TASK_TITLE_LIMITS.quantityMax ? q : null;
+      d.shortName = str(r.shortName, TASK_TITLE_LIMITS.shortNameMax);
+      d.brief = str(r.brief, 2000);
+      const tidy = r.briefTidy as { objective?: unknown; bullets?: unknown } | null | undefined;
+      if (d.brief && tidy && typeof tidy.objective === "string" && Array.isArray(tidy.bullets)) {
+        d.briefTidy = {
+          objective: tidy.objective.slice(0, 500),
+          bullets: (tidy.bullets as unknown[]).filter((b): b is string => typeof b === "string").slice(0, 12).map((b) => b.slice(0, 300)),
+        };
+      }
+      d.briefChoice = d.brief && (r.briefChoice === "tidy" || r.briefChoice === "plain") ? r.briefChoice : null;
+      if (d.briefChoice === "tidy" && !d.briefTidy) d.briefChoice = null;
+      d.priority = (["low", "medium", "high", "urgent"] as const).find((p) => p === r.priority) ?? null;
+      d.status = (["todo", "in_progress"] as const).find((s) => s === r.status) ?? null;
+    }
+  }
   return d;
+}
+
+/** The task's editable fields now, and the status moves the user may make. */
+async function loadBaseline(ctx: VoiceContext, taskId: string): Promise<VoiceBaseline | null> {
+  const task = await Task.findById(taskId);
+  if (!task) return null;
+  const ids = task.assignees.map(String);
+  const users = await User.find({ _id: { $in: task.assignees } }).select("name").lean<Array<{ _id: mongoose.Types.ObjectId; name: string }>>();
+  const names = new Map(users.map((u) => [String(u._id), u.name]));
+  const flags = await taskProjectFlags(task, ctx.user);
+  const moves = (["todo", "in_progress"] as const).filter((to) => to !== task.status && canTransition(ctx.user, task, to, flags));
+  const key = (d?: Date | null) => (d ? d.toISOString().slice(0, 10) : null);
+  return {
+    startDate: key(task.startDate),
+    dueDate: key(task.dueDate),
+    assignees: ids.map((id) => ({ id, name: names.get(id) ?? "Someone" })),
+    titleParts: task.titleParts ? { unit: task.titleParts.unit, quantity: task.titleParts.quantity, shortName: task.titleParts.shortName } : null,
+    title: task.title,
+    priority: task.priority,
+    status: task.status,
+    brief: richTextToPlain(task.description).trim(),
+    moves: [...moves],
+  };
+}
+
+/** Fills the update draft from the task once (later turns change these values). */
+function fillFromBaseline(d: VoiceDraft): void {
+  const b = d.baseline;
+  if (!b || !d.task) return;
+  d.baseFor = d.task.id;
+  d.startDate = b.startDate;
+  d.dueDate = b.dueDate;
+  d.assignees = b.assignees.map((a) => ({ ...a }));
+  d.unit = b.titleParts?.unit ?? null;
+  d.quantity = b.titleParts?.quantity ?? null;
+  d.shortName = b.titleParts?.shortName ?? null;
+  d.brief = null;
+  d.briefTidy = null;
+  d.briefChoice = null;
+  d.priority = b.priority;
+  d.status = null;
+}
+
+/** What an update changes: "Before → After" rows, the PATCH body (the edit form's shape) and a status move. */
+export function updateChanges(d: VoiceDraft): { rows: Array<[string, string]>; patch: Record<string, unknown>; status: "todo" | "in_progress" | null } {
+  const rows: Array<[string, string]> = [];
+  const patch: Record<string, unknown> = {};
+  const b = d.baseline;
+  if (!b || d.action !== "update" || !d.baseFor) return { rows, patch, status: null };
+  const day = (k: string | null) => (k ? fmtShortDay(k) : "—");
+  if (d.startDate !== b.startDate) {
+    rows.push(["Start", `${day(b.startDate)} → ${day(d.startDate)}`]);
+    patch.startDate = d.startDate;
+  }
+  if (d.dueDate !== b.dueDate) {
+    rows.push(["Due", `${day(b.dueDate)} → ${day(d.dueDate)}`]);
+    patch.dueDate = d.dueDate;
+  }
+  const added = d.assignees.filter((a) => !b.assignees.some((x) => x.id === a.id));
+  const removed = b.assignees.filter((a) => !d.assignees.some((x) => x.id === a.id));
+  if (added.length || removed.length) {
+    rows.push(["Assignees", [...added.map((a) => `+ ${a.name}`), ...removed.map((a) => `− ${a.name}`)].join(", ")]);
+    patch.assignees = d.assignees.map((a) => a.id);
+  }
+  if (b.titleParts && d.unit && d.quantity && d.shortName) {
+    const after = { unit: d.unit, quantity: d.quantity, shortName: d.shortName };
+    if (after.unit !== b.titleParts.unit || after.quantity !== b.titleParts.quantity || after.shortName !== b.titleParts.shortName) {
+      rows.push(["Name", `${composeTaskTitle(b.titleParts)} → ${composeTaskTitle(after)}`]);
+      patch.titleParts = after;
+    }
+  }
+  if (d.brief) {
+    rows.push(["Brief", briefShort(d)]);
+    patch.description = draftBriefHtml(d);
+  }
+  if (d.priority && d.priority !== b.priority) {
+    rows.push(["Priority", `${capWord(b.priority)} → ${capWord(d.priority)}`]);
+    patch.priority = d.priority;
+  }
+  const status = d.status && d.status !== b.status ? d.status : null;
+  if (status) rows.push(["Status", `${capWord(STATUS_LABEL[b.status] ?? b.status)} → ${capWord(STATUS_LABEL[status] ?? status)}`]);
+  return { rows, patch, status };
 }
 
 // ---------------------------------------------------------------------------
@@ -450,9 +612,13 @@ const NLU_SCHEMA = {
   required: [
     "intent", "project", "iteration", "unit", "quantity", "shortName", "brief", "assigneesAdd", "assigneesRemove",
     "dueDate", "startDate", "reworkOf", "reworkSource", "task", "minutes", "start", "end", "note", "finalUrl",
+    "priority", "status", "briefAppend",
   ],
   properties: {
-    intent: { type: ["string", "null"], enum: ["create", "rework", "close", "log_time", "out_of_scope", "cancel", null] },
+    intent: { type: ["string", "null"], enum: ["create", "rework", "close", "log_time", "update", "out_of_scope", "cancel", null] },
+    priority: { type: ["string", "null"], enum: ["low", "medium", "high", "urgent", null] },
+    status: { type: ["string", "null"], enum: ["todo", "in_progress", null] },
+    briefAppend: nullableString,
     project: nullableString,
     iteration: { type: ["string", "null"], enum: ["new", "rework", null] },
     unit: nullableString,
@@ -494,6 +660,9 @@ interface NluReply {
   end: string | null;
   note: string | null;
   finalUrl: string | null;
+  priority: "low" | "medium" | "high" | "urgent" | null;
+  status: "todo" | "in_progress" | null;
+  briefAppend: string | null;
 }
 
 function draftForModel(d: VoiceDraft): Record<string, unknown> {
@@ -530,7 +699,7 @@ async function aiExtract(
   const system = [
     "You read one person's chat with the Projects Utility task assistant (voice transcripts or typed, English or Arabic) and return task fields as JSON.",
     `Today is ${weekday} ${ctx.today}, ${String(now.hour).padStart(2, "0")}:${String(now.minute).padStart(2, "0")} in the app timezone (${appTimeZone()}).`,
-    "Actions: create (new task, or a rework of an existing task), close (complete a task), log_time. Anything else (what's due, move time, delete, reassign …) is intent out_of_scope; cancel / start over is intent cancel.",
+    "Actions: create (new task, or a rework of an existing task), close (complete a task), log_time, update (change an existing task: start / due date, assignees, brief, priority, short name, To do ↔ In progress). Anything else (what's due, move time, delete, reassign …) is intent out_of_scope; cancel / start over is intent cancel.",
     "Return ONLY what the LATEST user message says or changes; null (or []) for everything it doesn't mention. Never repeat values already in the draft.",
     `The assistant's last question was for: ${draft.asking ?? "nothing yet"}. A short reply answers that question (a brief, short name, outcome note or link is taken whole).`,
     "Fields: project = a project code from the list (or the name as said); unit = one of the project's units; quantity = whole number; shortName = the short task name without unit or quantity (max 80 chars);",
@@ -538,6 +707,7 @@ async function aiExtract(
     "\"A → B\" or \"from A to B\" days are startDate → dueDate; a single day answering \"when does it start\" is startDate, answering \"when is it due\" is dueDate;",
     "iteration = new or rework (only when said); reworkOf = the original task's code (like MO-6); reworkSource = external when the client asked for it, internal for our own review;",
     "task = the task code (like ENOC-13), number, or title words; minutes = time spent; start / end = \"YYYY-MM-DDTHH:mm\" app time when a time range is said;",
+    "update: task = the task's code; assigneesAdd / assigneesRemove for people; brief replaces the brief, briefAppend adds to it; priority low|medium|high|urgent; status todo|in_progress (never completed — that is close);",
     "note = the outcome note (close) or memo (log time) — what was done, without the code or the time; finalUrl = an http(s) link.",
     `Current draft: ${JSON.stringify(draftForModel(draft))}`,
     `Projects (code — name — brand — units):\n${projectLines.join("\n") || "(none)"}`,
@@ -619,6 +789,9 @@ async function aiExtract(
   }
   if (reply.note) out.note = reply.note;
   if (reply.finalUrl) out.finalUrl = reply.finalUrl;
+  if (reply.priority) out.priority = reply.priority;
+  if (reply.status) out.status = reply.status;
+  if (reply.briefAppend) out.briefAppend = reply.briefAppend;
   return out;
 }
 
@@ -706,13 +879,18 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
       const units = project?.units ?? [];
       const known = units.find((u) => u.toLowerCase() === ex.unit!.toLowerCase());
       if (units.length && !known) {
-        notes.push(`${ex.unit} isn't in ${project!.code}'s scope (${units.join(", ")}).`);
+        notes.push(`${ex.unit} isn't in this project's scope.`);
         draft.unit = null;
       } else draft.unit = (known ?? ex.unit).slice(0, TASK_TITLE_LIMITS.unitMax);
     }
     if (ex.quantity) {
       if (ex.quantity >= 1 && ex.quantity <= TASK_TITLE_LIMITS.quantityMax) draft.quantity = ex.quantity;
       else notes.push(`The quantity must be from 1 to ${TASK_TITLE_LIMITS.quantityMax}.`);
+    }
+    // A scope unit without a number gets the next one (used + 1), as the form fills it.
+    if (draft.unit && !draft.quantity && draft.project && draft.iteration !== "rework") {
+      const units = ctx.projects.find((p) => p.id === draft.project!.id)?.units ?? [];
+      if (units.some((u) => u.toLowerCase() === draft.unit!.toLowerCase())) draft.quantity = await nextNumber(ctx, draft.project.id, draft.unit);
     }
     if (ex.shortName) draft.shortName = ex.shortName.slice(0, TASK_TITLE_LIMITS.shortNameMax);
     if (ex.brief || ex.briefAppend) {
@@ -759,6 +937,12 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
     }
     // A rework is due in two days unless said (the same default the server uses).
     if (draft.iteration === "rework" && !draft.dueDate) draft.dueDate = addDays(appToday(), 2).toISOString().slice(0, 10);
+  }
+
+  if (draft.action === "update") {
+    const result = await applyUpdate(ctx, draft, ex, contextTaskId);
+    notes.push(...result.notes);
+    if (result.override) override = result.override;
   }
 
   if (draft.action === "close" || draft.action === "log_time") {
@@ -823,7 +1007,39 @@ export interface VoiceExistingTask {
   status: string;
 }
 
-const RECENT_DONE_DAYS = 30;
+export const EXISTING_CHIP = "Or work on an existing task";
+/** The scope chips: "Reel · 3 of 10 left". */
+const SCOPE_CHIP = /^\s*(.+?)\s*·\s*\d+\s+of\s+\d+\s+left\s*$/i;
+
+/**
+ * Per scope unit: the approved total and what new-work tasks already use — the
+ * same sums as GET /api/projects/:id/scope-usage (the form's unit dropdown).
+ */
+async function scopeUsageOf(ctx: VoiceContext, projectId: string | null): Promise<Array<{ unit: string; total: number; used: number }>> {
+  const project = ctx.projects.find((p) => p.id === projectId);
+  if (!project || !project.scopeItems.length) return [];
+  const totals = scopeTotals(project.scopeItems as never);
+  const used = await Task.aggregate<{ _id: string; used: number }>([
+    {
+      $match: {
+        project: new mongoose.Types.ObjectId(project.id),
+        iteration: { $ne: "rework" },
+        "overScope.status": { $ne: "rejected" },
+        "titleParts.unit": { $type: "string" },
+      },
+    },
+    { $group: { _id: { $toLower: "$titleParts.unit" }, used: { $sum: "$titleParts.quantity" } } },
+  ]);
+  const usedBy = new Map(used.map((u) => [u._id.trim(), u.used]));
+  return [...totals.entries()].map(([key, t]) => ({ unit: t.unit, total: t.total, used: usedBy.get(key) ?? 0 }));
+}
+
+/** The next number for a unit (used + 1), as the form fills it. */
+async function nextNumber(ctx: VoiceContext, projectId: string | null, unit: string): Promise<number> {
+  const usage = await scopeUsageOf(ctx, projectId);
+  const row = usage.find((u) => u.unit.toLowerCase() === unit.toLowerCase());
+  return Math.min(TASK_TITLE_LIMITS.quantityMax, (row?.used ?? 0) + 1);
+}
 const STOP_WORDS = new Set(["the", "and", "for", "new", "task", "with", "from", "due", "this", "that"]);
 
 /**
@@ -832,10 +1048,10 @@ const STOP_WORDS = new Set(["the", "and", "for", "new", "task", "with", "from", 
  */
 async function existingTasks(ctx: VoiceContext, d: VoiceDraft, said: string): Promise<VoiceExistingTask[]> {
   if (!d.project) return [];
-  const since = new Date(Date.now() - RECENT_DONE_DAYS * 86_400_000);
   const rows = await Task.find({
     project: new mongoose.Types.ObjectId(d.project.id),
-    $or: [{ status: { $in: OPEN_STATUSES } }, { status: "completed", completedAt: { $gte: since } }],
+    // Open tasks only (to do / in progress / in review / rejected).
+    status: { $in: OPEN_STATUSES },
   })
     .select("shortCode number title status titleParts updatedAt")
     .sort({ updatedAt: -1 })
@@ -964,6 +1180,7 @@ async function tidyBrief(ctx: VoiceContext, text: string, projectName: string | 
               "Rewrite a spoken task brief from a creative agency into a short structured brief.",
               "objective: one line saying what is to be done. bullets: the deliverables with counts / sizes / durations, language / captions, references / links, deadline notes, and any other instruction — one fact per bullet.",
               "Keep EVERY fact and number from the brief, add nothing that isn't in it, don't guess. Keep the brief's language (English or Arabic). Short plain sentences, no markdown.",
+              "Only write bullets for things the brief actually says. NEVER write a bullet about something missing (no \"not specified\", \"not mentioned\", \"none\", \"no captions\", \"no references provided\"). Don't name a language, size or duration the brief doesn't name. A short brief may have no bullets at all.",
               projectName ? `Project: ${projectName}` : "",
             ]
               .filter(Boolean)
@@ -977,9 +1194,14 @@ async function tidyBrief(ctx: VoiceContext, text: string, projectName: string | 
     const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const out = JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as Partial<TidyBrief>;
     if (typeof out.objective !== "string" || !out.objective.trim() || !Array.isArray(out.bullets)) throw new Error("Unexpected model reply");
+    // Bullets about what the brief doesn't say, or naming a language it doesn't name, are dropped.
+    const said = text.toLowerCase();
+    const invented = (b: string) =>
+      /\b(?:not\s+(?:specified|mentioned|provided|given|required)|none|n\/a|no\s+(?:\w+\s+){0,2}(?:provided|mentioned|specified|required|given))\b/i.test(b) ||
+      [...b.toLowerCase().matchAll(/\b(english|arabic|french|hindi|urdu|russian|chinese|german|spanish)\b/g)].some((m) => !said.includes(m[1]!));
     return {
       objective: out.objective.trim().slice(0, 500),
-      bullets: out.bullets.filter((b) => typeof b === "string" && b.trim()).slice(0, 12).map((b) => b.trim().slice(0, 300)),
+      bullets: out.bullets.filter((b) => typeof b === "string" && b.trim() && !invented(b)).slice(0, 12).map((b) => b.trim().slice(0, 300)),
     };
   } catch (err) {
     console.error("[voice] brief tidy failed, using the rules", err instanceof Error ? err.message : err);
@@ -989,6 +1211,98 @@ async function tidyBrief(ctx: VoiceContext, text: string, projectName: string | 
   }
 }
 
+// ---------------------------------------------------------------------------
+// Update a task
+// ---------------------------------------------------------------------------
+
+/**
+ * Applies a message to an UPDATE draft: finds the task (one the user may edit — the
+ * PATCH rule), fills the draft from it once, then changes dates, people, name, brief,
+ * priority and status. Due before start, a name on an older free-title task, or a
+ * status move the user can't make are refused with a note.
+ */
+async function applyUpdate(
+  ctx: VoiceContext,
+  draft: VoiceDraft,
+  ex: Extracted,
+  contextTaskId: string | null
+): Promise<{ notes: string[]; override?: Turn["override"] }> {
+  const notes: string[] = [];
+  let override: Turn["override"];
+  if (ex.taskCode || ex.taskNumber || ex.taskText) {
+    const found = await findTask(ctx, { code: ex.taskCode, number: ex.taskNumber, text: ex.taskText }, "update");
+    if ("task" in found) {
+      if (draft.task?.id !== found.task.id) draft.baseFor = null;
+      draft.task = found.task;
+    } else if (found.choices?.length) override = { ask: "task", reply: found.error, chips: found.choices };
+    else notes.push(found.error);
+  } else if (!draft.task && contextTaskId) {
+    // "Update this" from a task's page / "Work on this task".
+    const task = await Task.findById(contextTaskId);
+    const problem = task ? await taskProblem(ctx, task, "update") : "I couldn't find that task.";
+    if (task && !problem) draft.task = await toRef(task);
+    else if (problem) notes.push(problem);
+  }
+  if (!draft.task) return { notes, override };
+  if (draft.baseFor !== draft.task.id) {
+    draft.baseline = await loadBaseline(ctx, draft.task.id);
+    fillFromBaseline(draft);
+  }
+  const base = draft.baseline;
+  if (!base) return { notes, override };
+
+  // Dates: due on or after start.
+  if (ex.startDate) draft.startDate = ex.startDate;
+  if (ex.dueDate) draft.dueDate = ex.dueDate;
+  if (ex.anyDate && !ex.startDate && !ex.dueDate) draft.dueDate = ex.anyDate;
+  if (draft.startDate && draft.dueDate && draft.startDate > draft.dueDate) {
+    notes.push(`The due date can't be before the start date (${fmtDay(draft.startDate)} → ${fmtDay(draft.dueDate)}).`);
+    if (ex.startDate && !ex.dueDate) draft.startDate = base.startDate;
+    else draft.dueDate = base.dueDate;
+  }
+
+  // People (anyone on the staff; the server adds project members as the edit form does).
+  const byId = new Map(ctx.people.map((p) => [p.id, p]));
+  for (const id of ex.addPeople ?? []) {
+    const person = byId.get(id);
+    if (person && !draft.assignees.some((a) => a.id === id)) draft.assignees.push({ id, name: person.name });
+  }
+  if (ex.removePeople?.length) {
+    const left = draft.assignees.filter((a) => !ex.removePeople!.includes(a.id));
+    if (left.length === 0) notes.push("A task needs at least one assignee, so I kept them.");
+    else draft.assignees = left;
+  }
+  if (ex.ambiguousPeople?.length && !override) {
+    const first = ex.ambiguousPeople[0]!;
+    override = { ask: "changes", reply: `Which ${first.said}?`, chips: first.ids.slice(0, 6).map((id) => `add ${byId.get(id)?.name ?? ""}`) };
+  }
+
+  // Name: only tasks with the controlled name (unit + number + short name).
+  if (ex.shortName || ex.unit || ex.quantity) {
+    if (!base.titleParts) notes.push(`${draft.task.code} has an older free title — rename it in the task form.`);
+    else {
+      if (ex.shortName) draft.shortName = ex.shortName.slice(0, TASK_TITLE_LIMITS.shortNameMax);
+      if (ex.unit) draft.unit = ex.unit.slice(0, TASK_TITLE_LIMITS.unitMax);
+      if (ex.quantity && ex.quantity >= 1 && ex.quantity <= TASK_TITLE_LIMITS.quantityMax) draft.quantity = ex.quantity;
+    }
+  }
+
+  // Brief: replace, or add on to the current one.
+  if (ex.brief || ex.briefAppend) {
+    draft.brief = (ex.brief ?? [draft.brief ?? base.brief, ex.briefAppend].filter(Boolean).join("\n")).slice(0, 2000);
+    draft.briefTidy = null;
+    draft.briefChoice = null;
+  }
+
+  if (ex.priority) draft.priority = ex.priority;
+  if (ex.status) {
+    if (ex.status === base.status) notes.push(`${draft.task.code} is already ${STATUS_LABEL[ex.status]}.`);
+    else if (!base.moves.includes(ex.status)) notes.push(`You can't move ${draft.task.code} from ${STATUS_LABEL[base.status]} to ${STATUS_LABEL[ex.status]}.`);
+    else draft.status = ex.status;
+  }
+  return { notes, override };
+}
+
 /** Required fields still empty, in the order they are asked. Mirrors the task form and the close dialog. */
 export function missingFields(d: VoiceDraft): VoiceField[] {
   const out: VoiceField[] = [];
@@ -996,15 +1310,15 @@ export function missingFields(d: VoiceDraft): VoiceField[] {
   if (d.action === "create") {
     // A rework's project is the original task's.
     if (!d.project && d.iteration !== "rework") out.push("project");
+    // Like the Add task form, the name starts from one of the project's scope items.
+    if (d.project && d.iteration !== "rework" && !d.unit) out.push("unit");
     if (!d.iteration) out.push("iteration");
     if (d.iteration === "rework") {
       if (!d.reworkOf) out.push("reworkOf");
       if (!d.reworkSource) out.push("reworkSource");
       // Brief, assignees and files come from the original task when not said.
     } else {
-      // The project's existing tasks come first: reuse a name or work on one instead.
-      if (d.project && d.existingFor !== d.project.id) out.splice(out.indexOf("iteration") >= 0 ? out.indexOf("iteration") : out.length, 0, "existing");
-      if (!d.unit) out.push("unit");
+      if (!d.unit && !out.includes("unit")) out.push("unit");
       if (!d.quantity) out.push("quantity");
       if (!d.shortName) out.push("shortName");
       if (!d.brief) out.push("brief");
@@ -1016,6 +1330,10 @@ export function missingFields(d: VoiceDraft): VoiceField[] {
     return out;
   }
   if (!d.task) return ["task"];
+  if (d.action === "update") {
+    if (d.brief && !d.briefChoice) return ["briefReview"];
+    return updateChanges(d).rows.length || updateChanges(d).status ? [] : ["changes"];
+  }
   if (d.action === "close") {
     if (!d.task.hasFinal && !d.finalUrl && !d.finalFile) out.push("final");
     if (!d.note) out.push("note");
@@ -1036,7 +1354,9 @@ async function question(
     case "existing": {
       const existing = await existingTasks(ctx, d, said);
       return {
-        reply: `Already in ${d.project?.code ?? "this project"} — tap one to make a new task like it or to work on it, or start a new name.`,
+        reply: existing.length
+          ? `Open tasks in ${d.project?.code ?? "this project"} — tap one to make a new task like it or to work on it, or carry on with a new name.`
+          : `${d.project?.code ?? "This project"} has no open tasks — carry on with a new name.`,
         chips: [EXISTING_NONE],
         existing,
       };
@@ -1084,8 +1404,10 @@ async function question(
     case "reworkSource":
       return { reply: "Whose review asked for this rework?", chips: ["Internal review", "External review"] };
     case "unit": {
-      const units = ctx.projects.find((p) => p.id === d.project?.id)?.units ?? [];
-      return { reply: "Which scope unit is it?", chips: (units.length ? units : [...SCOPE_UNITS]).slice(0, 8) };
+      const usage = await scopeUsageOf(ctx, d.project?.id ?? null);
+      // No scope on the project: the unit is free text, as in the form.
+      if (!usage.length) return { reply: "Which scope unit is it? (e.g. Video, Post, Banner)", chips: [...SCOPE_UNITS].slice(0, 6) };
+      return { reply: "Which scope item is this?", chips: usage.map((u) => `${u.unit} · ${Math.max(0, u.total - u.used)} of ${u.total} left`) };
     }
     case "quantity":
       return { reply: `How many ${d.unit ? d.unit.toLowerCase() : "units"}?`, chips: ["1", "2", "3"] };
@@ -1095,10 +1417,19 @@ async function question(
       return { reply: "What's the brief? Say what needs to be done.", chips: [] };
     case "assignees":
       return { reply: "Who's doing it?", chips: ["Me"] };
+    case "changes": {
+      const moves = d.baseline?.moves ?? [];
+      return {
+        reply: `What should change on ${d.task?.code ?? "the task"}? For example "due Friday", "add Vishal", "priority high", "brief: …" or "rename to …".`,
+        chips: ["due tomorrow", "priority high", ...(moves.includes("in_progress") ? ["move to in progress"] : moves.includes("todo") ? ["move back to to do"] : [])],
+      };
+    }
     case "task":
       return {
         reply:
-          d.action === "close"
+          d.action === "update"
+            ? "Which task should change? Say its code, like MO-6."
+            : d.action === "close"
             ? "Which task are you closing? Say the task code, like MO-6."
             : "Which task is the time for? Say the task code, like MO-6.",
         chips: await taskChips(ctx, d.action === "close" ? "close" : "log_time"),
@@ -1131,7 +1462,9 @@ function fmtShortDay(key: string): string {
   const d = new Date(`${key}T00:00:00Z`);
   const weekday = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" }).format(d);
   const month = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" }).format(d);
-  return `${weekday} ${d.getUTCDate()} ${month}`;
+  // Another year is said ("Wed 20 Oct 2027").
+  const year = key.slice(0, 4) !== appDateKey(new Date()).slice(0, 4) ? ` ${key.slice(0, 4)}` : "";
+  return `${weekday} ${d.getUTCDate()} ${month}${year}`;
 }
 const addDayKey = (key: string, days: number) => addDays(new Date(`${key}T00:00:00Z`), days).toISOString().slice(0, 10);
 const fmtClock = (iso: string) =>
@@ -1164,7 +1497,7 @@ function briefShort(d: VoiceDraft): string {
 
 /** What the app saves as the description: the chosen brief as simple HTML. */
 function draftBriefHtml(d: VoiceDraft): string | null {
-  if (d.action !== "create" || !d.brief) return null;
+  if ((d.action !== "create" && d.action !== "update") || !d.brief) return null;
   return d.briefChoice === "tidy" && d.briefTidy ? briefHtml(d.briefTidy) : briefHtml(d.brief);
 }
 
@@ -1222,6 +1555,9 @@ async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard 
   }
   if (!d.task) return null;
   const taskRow = `${d.task.code} · ${d.task.title}`;
+  if (d.action === "update") {
+    return { title: "Update task", rows: [["Task", taskRow], ...updateChanges(d).rows], confirm: "Update task" };
+  }
   if (d.action === "close") {
     const rows: Array<[string, string]> = [["Task", taskRow]];
     rows.push([
@@ -1248,7 +1584,7 @@ export interface VoiceUnderstandResult {
   reply: string;
   chips: string[];
   draft: VoiceDraft;
-  action: "create" | "rework" | "close" | "log_time" | "none";
+  action: "create" | "rework" | "close" | "log_time" | "update" | "none";
   missing: VoiceField[];
   ready: boolean;
   /** The field being asked for ("final" = show the photo / file / link choices). */
@@ -1261,6 +1597,20 @@ export interface VoiceUnderstandResult {
 }
 
 const KEEP_AS_IT_WAS = "Keep it as it was";
+
+/** The chips and other short fixed replies — read by the rules, never sent to the model. */
+const QUICK_REPLY =
+  /^(?:new task|close a task|log time|close it|update it|new work|rework|internal review|external review|me|keep it as it was|none — new name|\d+ (?:minutes?|hours?)|due tomorrow|priority (?:low|medium|high|urgent)|move to in progress|move back to to do|(?:due|start|add|remove) [\p{L} ]{2,30}|[^→]{2,40}→[^→]{2,40})$/iu;
+
+/** Whether most of a value's words (4+ letters) were in the person's message (guards against invented text). */
+function grounded(value: string, said: string): boolean {
+  const words = (s: string) => s.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 4);
+  const v = words(value);
+  if (v.length === 0) return true;
+  const s = new Set(words(said));
+  const hits = v.filter((w) => s.has(w) || [...s].some((x) => x.startsWith(w.slice(0, 5)) || w.startsWith(x.slice(0, 5)))).length;
+  return hits / v.length >= 0.5;
+}
 const capWord = (w: string) => (w ? w[0]!.toUpperCase() + w.slice(1) : w);
 
 /** What a change message did to a ready draft, in words ("due moved to Fri 30 Oct", "added Vishal"). */
@@ -1287,6 +1637,8 @@ function changesBetween(a: VoiceDraft, b: VoiceDraft): string[] {
   if (b.note && a.note !== b.note) out.push(b.action === "log_time" ? "memo updated" : "note updated");
   if (b.finalUrl && a.finalUrl !== b.finalUrl) out.push("link updated");
   if (b.finalFile && a.finalFile?.name !== b.finalFile.name) out.push(`file ${b.finalFile.name}`);
+  if (b.priority && a.priority !== b.priority && b.action === "update") out.push(`priority ${b.priority}`);
+  if (b.status && a.status !== b.status) out.push(`status ${STATUS_LABEL[b.status]}`);
   return out;
 }
 
@@ -1370,8 +1722,24 @@ async function choiceTurn(
   ctx: VoiceContext,
   draft: VoiceDraft,
   text: string
-): Promise<{ draft: VoiceDraft; notes: string[]; reply?: string; chips?: string[] } | null> {
+): Promise<{ draft: VoiceDraft; notes: string[]; reply?: string; chips?: string[]; existing?: VoiceExistingTask[] } | null> {
   const t = text.trim();
+  // A scope chip: that unit, numbered next (unless a number was said before).
+  const scope = SCOPE_CHIP.exec(t);
+  if (scope && draft.action === "create" && draft.project) {
+    const units = ctx.projects.find((p) => p.id === draft.project!.id)?.units ?? [];
+    const unit = units.find((u) => u.toLowerCase() === scope[1]!.trim().toLowerCase());
+    if (unit) {
+      const next = { ...draft, unit, quantity: draft.quantity ?? (await nextNumber(ctx, draft.project.id, unit)) };
+      return { draft: next, notes: [] };
+    }
+  }
+  if (t === EXISTING_CHIP && draft.action === "create" && draft.project) {
+    const next = { ...draft, existingFor: draft.project.id };
+    const q = await question(ctx, next, "existing", "");
+    next.asking = "existing";
+    return { draft: next, notes: [], reply: q.reply, chips: q.chips, existing: q.existing };
+  }
   if (draft.asking === "existing" || /^(?:new task like|work on)\s+\S+$/i.test(t)) {
     const like = /^new task like\s+(\S+)$/i.exec(t);
     if (like) {
@@ -1387,8 +1755,8 @@ async function choiceTurn(
       return {
         draft: next,
         notes: [],
-        reply: `OK — ${task.shortCode ?? `#${task.number}`} · ${task.title} (${STATUS_LABEL[task.status] ?? task.status}). Close it or log time?`,
-        chips: ["Close it", "Log time"],
+        reply: `OK — ${task.shortCode ?? `#${task.number}`} · ${task.title} (${STATUS_LABEL[task.status] ?? task.status}). Close it, log time or update it?`,
+        chips: ["Close it", "Log time", "Update it"],
       };
     }
     if (draft.asking === "existing" && draft.project && (t === EXISTING_NONE || /^none\b/i.test(t))) {
@@ -1427,6 +1795,9 @@ export async function understand(
   const nameBefore = [draft.unit, draft.quantity, draft.shortName].join("|");
   const done = (next: VoiceDraft, result: Omit<VoiceUnderstandResult, "draft">): VoiceUnderstandResult => {
     next.briefHtml = draftBriefHtml(next);
+    const update = next.action === "update" ? updateChanges(next) : null;
+    next.updatePatch = update && Object.keys(update.patch).length ? update.patch : null;
+    next.updateStatus = update?.status ?? null;
     return { ...result, draft: next };
   };
   const actionOf = (d: VoiceDraft): VoiceUnderstandResult["action"] =>
@@ -1445,11 +1816,12 @@ export async function understand(
       ? await choiceTurn(ctx, draft, last)
       : null;
   if (choice?.reply) {
-    const asking = choice.draft.asking === "brief" ? "brief" : null;
+    const asking = choice.draft.asking === "brief" || choice.draft.asking === "existing" ? choice.draft.asking : null;
     choice.draft.asking = asking;
     return done(choice.draft, {
       reply: choice.reply,
       chips: choice.chips ?? [],
+      ...(choice.existing?.length ? { existing: choice.existing } : {}),
       action: actionOf(choice.draft),
       missing: missingFields(choice.draft),
       ready: false,
@@ -1465,7 +1837,8 @@ export async function understand(
     // Anything said instead of picking from the list carries on with a new task.
     if (draft.asking === "existing" && draft.project) draft = { ...draft, existingFor: draft.project.id };
     if (last.trim()) {
-      if (voiceConfigured()) {
+      // Quick replies (the chips) are read by the rules: nothing for the model to guess about.
+      if (voiceConfigured() && !QUICK_REPLY.test(last.trim())) {
         try {
           ex = await aiExtract(ctx, messages, draft);
           ai = true;
@@ -1488,6 +1861,17 @@ export async function understand(
         });
       }
     }
+    // Free text from the model must come from what the person said: a value whose words mostly
+    // aren't in the latest message (a repeated brief, or an invented one) is dropped.
+    if (ai) {
+      for (const field of ["brief", "briefAppend", "note", "shortName"] as const) {
+        const value = ex[field];
+        if (value && !grounded(value, last)) delete ex[field];
+      }
+    }
+    // The model sometimes repeats values already in the draft: those aren't changes.
+    if (ex.brief && draft.brief && ex.brief.trim() === draft.brief.trim()) delete ex.brief;
+    if (ex.shortName && draft.shortName && ex.shortName.trim() === draft.shortName.trim()) delete ex.shortName;
     // "Work on this task" → "close it" / "log time" use that task.
     const taskContext = draft.focusTaskId ?? (contextTaskId && mongoose.isValidObjectId(contextTaskId) ? contextTaskId : null);
     const turn = await applyExtracted(ctx, draft, ex, taskContext);
@@ -1558,7 +1942,7 @@ export async function understand(
   }
 
   // A new brief is offered tidied (AI rewrite, or the rules); nothing to tidy → kept as said.
-  if (next.action === "create" && next.iteration !== "rework" && next.brief && !next.briefChoice && !next.briefTidy) {
+  if ((next.action === "update" || (next.action === "create" && next.iteration !== "rework")) && next.brief && !next.briefChoice && !next.briefTidy) {
     const tidy = await tidyBrief(ctx, next.brief, next.project?.name ?? null);
     if (tidy.bullets.length === 0) next.briefChoice = "plain";
     else next.briefTidy = tidy;
@@ -1591,6 +1975,11 @@ export async function understand(
     const ask = missing[0]!;
     q ??= await question(ctx, next, ask, last);
     next.asking = ask;
+    // Once the scope item is known, working on an existing task is offered once, as a side option.
+    if (next.action === "create" && next.iteration !== "rework" && next.project && next.unit && next.existingFor !== next.project.id && ask !== "existing") {
+      q = { ...q, chips: [...q.chips, EXISTING_CHIP] };
+      next.existingFor = next.project.id;
+    }
     return done(next, {
       reply: prefix + q.reply,
       chips: q.chips,

@@ -1,6 +1,7 @@
 import { useMutation } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import type { TaskUpdateInput } from "@/types";
 
 // ---------------------------------------------------------------------------
 // Voice task assistant (POST /api/voice/transcribe + /api/voice/understand).
@@ -22,6 +23,7 @@ export type VoiceField =
   | "dates"
   | "existing"
   | "briefReview"
+  | "changes"
   | "task"
   | "final"
   | "note"
@@ -40,7 +42,7 @@ export interface VoiceTaskRef {
 }
 
 export interface VoiceDraft {
-  action: "create" | "close" | "log_time" | null;
+  action: "create" | "close" | "log_time" | "update" | null;
   asking: VoiceField | null;
   project: { id: string; name: string; code: string } | null;
   iteration: "new" | "rework" | null;
@@ -66,6 +68,14 @@ export interface VoiceDraft {
   briefChoice: "tidy" | "plain" | null;
   /** The chosen brief as simple HTML — what is saved as the description. */
   briefHtml: string | null;
+  priority: "low" | "medium" | "high" | "urgent" | null;
+  status: "todo" | "in_progress" | null;
+  /** Update: the task as it is now (server-side), and which task the fields came from. */
+  baseline: Record<string, unknown> | null;
+  baseFor: string | null;
+  /** Update: the PATCH /api/tasks/:id body and the status move to send after "Update task". */
+  updatePatch: TaskUpdateInput | null;
+  updateStatus: "todo" | "in_progress" | null;
 }
 
 export interface VoiceExistingTask {
@@ -85,7 +95,7 @@ export interface VoiceReply {
   reply: string;
   chips: string[];
   draft: VoiceDraft;
-  action: "create" | "rework" | "close" | "log_time" | "none";
+  action: "create" | "rework" | "close" | "log_time" | "update" | "none";
   missing: VoiceField[];
   ready: boolean;
   ask: VoiceField | null;
