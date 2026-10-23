@@ -1,4 +1,8 @@
-import { LuTimer } from "react-icons/lu";
+import { useState } from "react";
+import { LuArrowRightLeft, LuTimer } from "react-icons/lu";
+
+import { EditTimeLogDialog } from "@/components/timelogs/edit-time-log-dialog";
+import { Button } from "@/components/ui/button";
 
 import { useTimeLogs } from "@/hooks/use-timelogs";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
@@ -19,10 +23,12 @@ function statusOf(log: TimeLog) {
 
 /**
  * Task page, under Actual start / end: every time entry on the task, one row
- * each (date, person, from – to, duration, status), oldest first.
+ * each (date, person, from – to, duration, status), oldest first. "Move / edit"
+ * opens the time log editor (times, memo, or another task) for entries the viewer may edit.
  */
 export function TaskTimeEntries({ taskId }: { taskId: string }) {
   const logs = useTimeLogs({ scope: "team", task: taskId, limit: 100, offset: 0 });
+  const [editing, setEditing] = useState<TimeLog | null>(null);
   const entries = [...(logs.data?.logs ?? [])].sort((a, b) => a.startTime.localeCompare(b.startTime));
   if (entries.length === 0) return null;
   const total = entries.reduce((sum, log) => sum + (log.endTime ? log.durationMinutes : 0), 0);
@@ -45,7 +51,7 @@ export function TaskTimeEntries({ taskId }: { taskId: string }) {
           return (
             <li
               key={log._id}
-              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 py-2 sm:grid-cols-[7.5rem_minmax(0,1fr)_10rem_4.5rem_6rem]"
+              className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-0.5 py-2 sm:grid-cols-[7.5rem_minmax(0,1fr)_10rem_4.5rem_6rem_6.5rem]"
             >
               <span className="text-muted-foreground tabular-nums">{formatDate(log.startTime)}</span>
               <span className="truncate font-medium text-foreground sm:order-none">{log.user.name}</span>
@@ -57,10 +63,19 @@ export function TaskTimeEntries({ taskId }: { taskId: string }) {
                 <span aria-hidden className={cn("size-2 rounded-full", status.dot)} />
                 {status.label}
               </span>
+              <span className="flex justify-end">
+                {log.permissions?.canEdit && log.source !== "timesheet" && !log.isRunning && (
+                  <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setEditing(log)}>
+                    <LuArrowRightLeft aria-hidden />
+                    Move / edit
+                  </Button>
+                )}
+              </span>
             </li>
           );
         })}
       </ul>
+      <EditTimeLogDialog log={editing} onOpenChange={(open) => !open && setEditing(null)} />
     </section>
   );
 }
