@@ -10,7 +10,8 @@ import { isProjectApprover, projectApproverIds } from "./projectApproval.js";
 // ---------------------------------------------------------------------------
 // Changes that need leadership approval (models/ChangeRequest.ts). Each request
 // emails leadership when it is made: project and brand changes one per
-// project / brand, a manpower plan version as one consolidated list.
+// project / brand. Manpower plan saves are kept as a draft request (no email)
+// until someone sends them (sendForApproval): one consolidated list then.
 // ---------------------------------------------------------------------------
 
 /** Leadership changes apply directly (marked by requireAuth, or an approver). */
@@ -35,6 +36,9 @@ export function clip(text: string | null | undefined, max = 400): string {
 /**
  * Records a change for approval and emails leadership. A pending request for
  * the same target is replaced (its payload merged under the new one).
+ * `send: false` (manpower plan saves): recorded without telling anyone — a new
+ * request is a draft until sendForApproval; one replacing a sent request stays
+ * sent (in the queue) and its new lines show as "not sent yet".
  */
 export async function requestChange(params: {
   kind: ChangeKind;
@@ -54,7 +58,10 @@ export async function requestChange(params: {
    * from the pending request it replaces (a resent scope whose "Other scope" is unchanged again).
    */
   dropKeys?: Array<{ key: string; label: string }>;
+  /** false: save quietly (no in-app notification / email) — see above. Default true. */
+  send?: boolean;
 }): Promise<IChangeRequest> {
+  const send = params.send !== false;
   const target: Record<string, unknown> =
     params.kind === "project_change"
       ? { project: params.project }
@@ -100,6 +107,9 @@ export async function requestChange(params: {
     changes: changes.slice(0, 300),
     payload,
     requestedBy: params.actor._id,
+    // Sent now, or (a quiet save) as sent as the request it replaces.
+    draft: send ? false : previous ? previous.draft : true,
+    ...(send ? { sentAt: new Date(), sentBy: params.actor._id, sentChanges: changes.slice(0, 300) } : sentState(previous)),
   });
   logActivity({
     action: "settings_updated",
@@ -107,33 +117,93 @@ export async function requestChange(params: {
     targetType: "change_request",
     targetId: request._id as mongoose.Types.ObjectId,
     targetName: params.title,
-    details: { change: previous ? "resent" : "requested", kind: params.kind, lines: changes.length, ...(previous ? { replaces: String(previous._id) } : {}) },
+    details: {
+      change: send ? (previous ? "resent" : "requested") : "saved_not_sent",
+      kind: params.kind,
+      lines: changes.length,
+      ...(previous ? { replaces: String(previous._id) } : {}),
+    },
     ip: params.ip,
   });
+  if (send) await notifyApprovalRequested(request, params.actor, { updated: Boolean(previous), notifyActor: params.notifyActor });
+  return request;
+}
+
+/** What a quiet save carries over from the request it replaces (one sent before drafts existed: as sent when made). */
+function sentState(previous: IChangeRequest | null): Pick<IChangeRequest, "sentAt" | "sentBy" | "sentChanges"> {
+  if (!previous || previous.draft) return { sentAt: null, sentBy: null, sentChanges: [] };
+  if (previous.sentAt) return { sentAt: previous.sentAt, sentBy: previous.sentBy, sentChanges: previous.sentChanges };
+  return { sentAt: previous.createdAt, sentBy: previous.requestedBy, sentChanges: previous.changes };
+}
+
+/** Lines of a sent request changed since it was last sent (new / different ones, and sent ones now gone). */
+export function changesSinceSent(request: Pick<IChangeRequest, "changes" | "sentChanges" | "sentAt" | "draft">): number {
+  if (request.draft) return request.changes.length;
+  // Sent before drafts existed (no record of when): nothing new.
+  if (!request.sentAt) return 0;
+  const key = (c: IChangeLine) => `${c.label}\u0000${c.after}`;
+  const sent = new Set((request.sentChanges ?? []).map(key));
+  const labels = new Set(request.changes.map((c) => c.label));
+  return request.changes.filter((c) => !sent.has(key(c))).length + (request.sentChanges ?? []).filter((c) => !labels.has(c.label)).length;
+}
+
+/**
+ * Sends a (draft or since-updated) request to leadership: one in-app notification
+ * and email with every change line. It then shows in the approvals queue.
+ */
+export async function sendForApproval(request: IChangeRequest, actor: IUser, note: string, ip?: string): Promise<IChangeRequest> {
+  const updated = Boolean(request.sentAt);
+  const fresh = changesSinceSent(request);
+  request.draft = false;
+  request.sentAt = new Date();
+  request.sentBy = actor._id as mongoose.Types.ObjectId;
+  request.sentChanges = request.changes.slice(0, 300);
+  await request.save();
+  logActivity({
+    action: "settings_updated",
+    actor,
+    targetType: "change_request",
+    targetId: request._id as mongoose.Types.ObjectId,
+    targetName: request.title,
+    details: { change: updated ? "sent_update" : "sent", kind: request.kind, lines: request.changes.length, newLines: fresh, note: note || undefined },
+    ip,
+  });
+  await notifyApprovalRequested(request, actor, { updated, note, newLines: updated ? fresh : undefined });
+  return request;
+}
+
+/** "Approval needed" to the approvers (in-app + email), listing the request's change lines. */
+async function notifyApprovalRequested(
+  request: IChangeRequest,
+  actor: IUser,
+  opts: { updated: boolean; notifyActor?: boolean; note?: string; newLines?: number }
+): Promise<void> {
+  const { changes, title, kind } = request;
   const shown = changes.slice(0, 40);
+  const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   notifyUsers({
     recipients: await projectApproverIds(),
-    actor: params.actor,
-    includeActor: Boolean(params.notifyActor),
+    actor,
+    includeActor: Boolean(opts.notifyActor),
     type: "change_approval_requested",
-    title: `${KIND_LABEL[params.kind]} to approve${previous ? " (updated)" : ""}`,
-    message: `${params.actor.name}: ${params.title} (${changes.length} change${changes.length === 1 ? "" : "s"}).`,
+    title: `${KIND_LABEL[kind]} to approve${opts.updated ? " (updated)" : ""}`,
+    message: `${actor.name}: ${title} (${n(changes.length, "change")}${opts.newLines ? `, ${opts.newLines} new` : ""}).`,
     link: `/approvals/${String(request._id)}`,
     email: {
-      subject: `Approval needed: ${params.title}${previous ? " (updated)" : ""}`,
-      heading: `${KIND_LABEL[params.kind]} Awaiting Approval`,
-      intro: previous
-        ? `${params.actor.name} updated a change waiting for your approval (it replaces the earlier request). Nothing changes until it's approved.`
-        : `${params.actor.name} made ${changes.length === 1 ? "a change" : `${changes.length} changes`} that need your approval. Nothing changes until it's approved.`,
-      cardTitle: params.title,
+      subject: `Approval needed: ${title}${opts.updated ? " (updated)" : ""}`,
+      heading: `${KIND_LABEL[kind]} Awaiting Approval`,
+      intro: opts.updated
+        ? `${actor.name} updated a change waiting for your approval${opts.newLines ? ` (${n(opts.newLines, "new change")} since it was sent)` : " (it replaces the earlier request)"}. Nothing changes until it's approved.`
+        : `${actor.name} made ${changes.length === 1 ? "a change" : `${changes.length} changes`} that need your approval. Nothing changes until it's approved.`,
+      cardTitle: title,
       rows: [
+        ...(opts.note ? [["Note", clip(opts.note, 500)] as [string, string]] : []),
         ...shown.map((c): [string, string] => [c.label, c.before === "—" && c.after ? c.after : `${c.before} → ${c.after}`]),
         ...(changes.length > shown.length ? [["…", `${changes.length - shown.length} more in the app`] as [string, string]] : []),
       ],
       buttonLabel: "Review in Approvals",
     },
   });
-  return request;
 }
 
 /** A brand_edit request that changes the brand scope (rows, "Other scope" or the agreement total). */

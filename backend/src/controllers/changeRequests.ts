@@ -28,7 +28,7 @@ function row(r: IChangeRequest & { requestedBy?: unknown; decidedBy?: unknown; b
   return json;
 }
 
-/** Pending requests (oldest first) and the last 30 days' decisions. */
+/** Pending requests (oldest first; plan changes saved but not sent yet are left out) and the last 30 days' decisions. */
 export async function changeRequestsForApprovals(): Promise<{ pending: Row[]; recent: Row[] }> {
   const since = new Date(Date.now() - 30 * 86_400_000);
   const populate = [
@@ -38,7 +38,7 @@ export async function changeRequestsForApprovals(): Promise<{ pending: Row[]; re
     { path: "project", select: "name code" },
   ];
   const [pending, recent] = await Promise.all([
-    ChangeRequest.find({ status: "pending" }).sort({ createdAt: 1 }).limit(200).populate(populate),
+    ChangeRequest.find({ status: "pending", draft: { $ne: true } }).sort({ createdAt: 1 }).limit(200).populate(populate),
     ChangeRequest.find({ status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since } })
       .sort({ decidedAt: -1 })
       .limit(50)

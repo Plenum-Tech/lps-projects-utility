@@ -8,6 +8,7 @@ import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
 import { firstName, newRowKey, rowToInput } from "@/lib/manpower";
 import { cn } from "@/lib/utils";
+import { PlanSendBanner } from "@/components/manpower/plan-send-banner";
 import type { BrandPersonLoad, BrandSummary, ManpowerRowInput, PendingPlanInfo } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -99,12 +100,28 @@ export function planVersionText(planVersion: number | null, pending: PendingPlan
 }
 
 /** "Plan changes waiting for approval — version 13 by Nazeer, 20 Oct 4:04 PM (View request)". */
-export function PendingPlanBanner({ pending, savesApproved, className }: { pending: PendingPlanInfo; savesApproved?: boolean; className?: string }) {
+export function PendingPlanBanner({
+  pending,
+  savesApproved,
+  className,
+  month,
+  canSend = false,
+}: {
+  pending: PendingPlanInfo;
+  savesApproved?: boolean;
+  className?: string;
+  /** With the month: the "saved, not sent yet — Send for approval" banner too. */
+  month?: string;
+  canSend?: boolean;
+}) {
+  const notSent = pending.request?.sent === false;
   return (
+    <>
+    {month && pending.request && <PlanSendBanner month={month} request={pending.request} canSend={canSend} savesApproved={savesApproved} className={className} />}
     <div role="status" className={cn("flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-foreground", className)}>
       <LuHourglass aria-hidden className="size-4 shrink-0 text-amber-600 dark:text-amber-400" />
       <span>
-        <span className="font-medium">Plan changes waiting for approval</span> — version {pending.version}
+        <span className="font-medium">{notSent ? "Plan changes saved, not sent for approval yet" : "Plan changes waiting for approval"}</span> — version {pending.version}
         {pending.by ? ` by ${pending.by.name}` : ""}, {formatDate(pending.at)} {formatTimeOfDay(pending.at)}
         {pending.note ? <span className="text-muted-foreground"> · {pending.note}</span> : null}
       </span>
@@ -120,6 +137,7 @@ export function PendingPlanBanner({ pending, savesApproved, className }: { pendi
           : " Your changes are added to the ones waiting."}
       </span>
     </div>
+    </>
   );
 }
 
@@ -405,6 +423,8 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
   const save = useSaveManpowerPlan();
   const [edits, setEdits] = useState<Record<string, string[]>>({});
   const [original, setOriginal] = useState<Record<string, string[]>>({});
+  // Leadership's saves: nobody is told unless they tick "Notify team".
+  const [notifyTeam, setNotifyTeam] = useState(false);
   const count = Object.keys(edits).length;
   // 404 = no plan for the month yet: the first save creates version 1.
   const noPlan = (plan.error as { response?: { status?: number } } | null)?.response?.status === 404;
@@ -450,6 +470,7 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
   function reset() {
     setEdits({});
     setOriginal({});
+    setNotifyTeam(false);
   }
 
   function submit(brands: Map<string, BrandInfo>, note: string, onDone?: () => void) {
@@ -457,7 +478,7 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
     const base = loaded ? plan.data! : null;
     const rows = base ? base.plan.rows.map(rowToInput) : [];
     save.mutate(
-      { month, baseVersion: base ? (fromPending ?? base.latestVersion) : null, rows: applyCellEdits(rows, edits, brands), note },
+      { month, baseVersion: base ? (fromPending ?? base.latestVersion) : null, rows: applyCellEdits(rows, edits, brands), note, notifyTeam: notifyTeam || undefined },
       {
         onSuccess: () => {
           reset();
@@ -467,11 +488,28 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
     );
   }
 
-  return { ...api, count, ready, plan, save, submit, reset };
+  return { ...api, count, ready, plan, save, submit, reset, notifyTeam, setNotifyTeam };
 }
 
 /** Sticky "Save changes (n)" bar for unsaved cell edits. */
-export function SaveBar({ count, saving, ready, onSave, onReset, hint }: { count: number; saving: boolean; ready: boolean; onSave: () => void; onReset: () => void; hint?: string }) {
+export function SaveBar({
+  count,
+  saving,
+  ready,
+  onSave,
+  onReset,
+  hint,
+  notify,
+}: {
+  count: number;
+  saving: boolean;
+  ready: boolean;
+  onSave: () => void;
+  onReset: () => void;
+  hint?: string;
+  /** Leadership: the "Notify team" option (off = a quiet save). */
+  notify?: { value: boolean; set: (value: boolean) => void };
+}) {
   if (count === 0) return null;
   return (
     <div className="sticky bottom-3 z-20 mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card/95 p-3 shadow-lg backdrop-blur">
@@ -479,7 +517,13 @@ export function SaveBar({ count, saving, ready, onSave, onReset, hint }: { count
         <span className="font-medium">{count} unsaved change{count === 1 ? "" : "s"}</span>
         <span className="ml-2 text-xs text-muted-foreground">{hint ?? "Saved as a new version of the manpower plan — the same data as the Manpower page."}</span>
       </p>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {notify && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs" title="Tell the people added to projects and the approvers about this change">
+            <input type="checkbox" className="size-3.5 accent-primary" checked={notify.value} onChange={(e) => notify.set(e.target.checked)} />
+            Notify team
+          </label>
+        )}
         <Button type="button" variant="outline" size="sm" onClick={onReset} disabled={saving}>
           <LuUndo2 aria-hidden /> Discard
         </Button>

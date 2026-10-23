@@ -1123,7 +1123,9 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         title={`Team · Manpower plan ${monthLabel(month)} · ${planVersionText(data.planVersion, data.pendingPlan)}`}
         actions={<CellLegend max={max} pending={Boolean(data.pendingPlan)} />}
       >
-        {data.pendingPlan && <PendingPlanBanner className="mb-2" pending={data.pendingPlan} savesApproved={data.planSavesApproved} />}
+        {data.pendingPlan && (
+          <PendingPlanBanner className="mb-2" pending={data.pendingPlan} savesApproved={data.planSavesApproved} month={month} canSend={Boolean(data.canEditPlan)} />
+        )}
         {new Set(b.planLines.map((l) => l.name.replace(/\s+/g, " ").trim().toLowerCase())).size < b.planLines.length && (
           <p className="mb-2 text-xs">
             <span className="rounded bg-amber-100 px-1.5 py-px text-xs font-medium text-amber-800 dark:bg-amber-500/15 dark:text-amber-300">duplicate line</span>{" "}
@@ -1154,6 +1156,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           ready={edits.ready}
           saving={edits.save.isPending}
           onReset={edits.reset}
+          notify={data.planSavesApproved ? { value: edits.notifyTeam, set: edits.setNotifyTeam } : undefined}
           onSave={() =>
             edits.submit(new Map([[b._id, { name: b.name, isPitch: b.isPitch }]]), `Brand ${b.name}: ${edits.count} team change${edits.count === 1 ? "" : "s"}`, () => void detail.refetch())
           }

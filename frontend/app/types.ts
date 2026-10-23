@@ -3275,6 +3275,24 @@ export interface BrandPersonLoad {
   brands: number;
 }
 
+/**
+ * The month's pending plan change request: plan saves add up quietly and leadership
+ * is told only when someone sends them ("Send for approval" / "Send update").
+ */
+export interface PendingPlanRequestInfo {
+  _id: string;
+  /** Sent to leadership (in their approvals queue); false = saved, not sent yet. */
+  sent: boolean;
+  /** Change lines it holds. */
+  changes: number;
+  /** Lines not sent yet (all of them while not sent; new / changed ones since it was sent). */
+  unsent: number;
+  sentAt: string | null;
+  sentBy: { _id: string; name: string } | null;
+  savedAt: string;
+  savedBy: { _id: string; name: string } | null;
+}
+
 /** The month's manpower plan version waiting for leadership approval. */
 export interface PendingPlanInfo {
   version: number;
@@ -3283,6 +3301,7 @@ export interface PendingPlanInfo {
   note: string;
   /** The approval request to open (null when there is none). */
   changeRequestId: string | null;
+  request?: PendingPlanRequestInfo | null;
 }
 
 interface BrandDashboardBase {
@@ -4164,6 +4183,8 @@ export interface ManpowerPlanResponse {
   latestVersion: number | null;
   /** A version waiting for leadership approval, if any. */
   pendingVersion?: number | null;
+  /** Its change request: sent to leadership or not yet. */
+  pendingRequest?: PendingPlanRequestInfo | null;
   /** The viewer's saves are approved at once (leadership); else they wait for approval. */
   savesApproved?: boolean;
   /** Status of the version shown. */
@@ -4207,6 +4228,8 @@ export interface ManpowerSaveInput {
   note: string;
   maxProjectsPerPerson?: number;
   source?: "edit" | "copy";
+  /** Leadership: tell the people added to projects and the approvers. Default off. */
+  notifyTeam?: boolean;
 }
 
 /** GET /manpower/suggest — the plan row a project matches, as a team by role. */

@@ -1003,6 +1003,8 @@ export interface ProjectWriteOptions {
   planIncludesPending?: boolean;
   /** Scope / team changes that skip approval are collected here and sent to the approvers once per run. */
   exceptions?: ExceptionBatch;
+  /** Nobody is told (no "added to a project" notification / email): a quiet plan → project sync. */
+  silent?: boolean;
 }
 
 /** The pitch's steps (lib/pitches.ts reads their status from these task titles). */
@@ -1805,7 +1807,7 @@ export async function updateProjectCore(
     }
   }
   const added = [...(newManager ? [newManager] : []), ...newTeamMembers.filter((u) => !newManager?.equals(u))];
-  if (added.length) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
+  if (added.length && !options.silent) notifyMembersAdded(project, added, actor, options.sendEmail !== false);
   pushProjectUpdate(project, "updated", { fields: changed, actorId: actor._id.toString() });
   // The team is also the project's line in the month's manpower plan.
   if (changed.includes("team") && !options.skipPlanSync) await syncProjectTeamToPlan(project, actor);

@@ -85,6 +85,7 @@ async function pendingPlanOf(month: string) {
   if (!pending) return null;
   const request = await ChangeRequest.findOne({ kind: "manpower_plan", status: "pending", month, version: pending.version }).select("_id").lean();
   const by = pending.createdBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  const { pendingRequestInfo } = await import("./manpower.js");
   return {
     info: {
       version: pending.version,
@@ -92,6 +93,8 @@ async function pendingPlanOf(month: string) {
       at: pending.createdAt,
       note: pending.note ?? "",
       changeRequestId: request ? String(request._id) : null,
+      // Sent to leadership or not, and what is new since (the "Send for approval" banner).
+      request: await pendingRequestInfo(month, pending.version),
     },
     rows: (pending.rows ?? []) as IManpowerRow[],
   };

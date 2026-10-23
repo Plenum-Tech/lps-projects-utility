@@ -63,6 +63,23 @@ export function useSaveManpowerPlan() {
   });
 }
 
+/** Sends the month's saved plan changes to leadership for approval (one email with all of them). */
+export function useSendPlanForApproval() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ month, note }: { month: string; note?: string }) =>
+      (await api.post<{ month: string; changeRequestId: string; message: string }>(`/manpower/${month}/send`, { note })).data,
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: brandKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["project-approvals"] });
+      toast.success(data.message);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
 /** The plan row a project matches (brand + month + type + name), as a team by role. */
 export function useManpowerTeamSuggestion(
   params: { brand: string; month: string; type: string; title: string; row?: string },

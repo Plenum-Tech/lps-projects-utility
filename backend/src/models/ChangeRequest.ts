@@ -9,6 +9,9 @@ import mongoose, { Schema } from "mongoose";
 //  - project_move:   projects moving to another brand (payload { from, to, projectIds })
 // Leadership's own changes apply straight away and never create one.
 // A newer request for the same target replaces the pending one ("superseded").
+// A manpower_plan request starts as a draft (`draft: true`): plan saves add up
+// silently and leadership isn't told until someone sends it ("Send for approval":
+// one email with every change). Drafts stay out of the approvals list and counts.
 // ---------------------------------------------------------------------------
 
 export const CHANGE_KINDS = ["project_change", "brand_edit", "manpower_plan", "project_move"] as const;
@@ -43,6 +46,12 @@ export interface IChangeRequest extends mongoose.Document {
   reason: string;
   /** A rejected brand scope change whose banner was dismissed on the brand page. */
   dismissedAt: Date | null;
+  /** manpower_plan: saved but not sent for approval yet (not in leadership's queue). */
+  draft: boolean;
+  /** When / by whom it was last sent for approval, and the change lines sent then. */
+  sentAt: Date | null;
+  sentBy: mongoose.Types.ObjectId | null;
+  sentChanges: IChangeLine[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -72,6 +81,10 @@ const changeRequestSchema = new Schema<IChangeRequest>(
     decidedAt: { type: Date, default: null },
     reason: { type: String, default: "", maxlength: 500 },
     dismissedAt: { type: Date, default: null },
+    draft: { type: Boolean, default: false },
+    sentAt: { type: Date, default: null },
+    sentBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    sentChanges: { type: [changeLineSchema], default: [] },
   },
   { timestamps: true }
 );
@@ -83,6 +96,7 @@ changeRequestSchema.set("toJSON", {
     const json = ret as unknown as Record<string, unknown>;
     delete json.__v;
     delete json.payload;
+    delete json.sentChanges;
     return json;
   },
 });

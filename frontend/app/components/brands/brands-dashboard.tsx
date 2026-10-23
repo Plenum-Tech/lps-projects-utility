@@ -385,7 +385,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
             : `Same people as the Manpower plan (${monthLabel(month)}: ${planVersionText(data.planVersion, data.pendingPlan)}). Only leadership and Nazeer change it.`}
         </p>
       </div>
-      {data.pendingPlan && <PendingPlanBanner pending={data.pendingPlan} savesApproved={data.planSavesApproved} />}
+      {data.pendingPlan && <PendingPlanBanner pending={data.pendingPlan} savesApproved={data.planSavesApproved} month={month} canSend={Boolean(data.canEditPlan)} />}
       <div className="overflow-x-auto rounded-xl border bg-card">
         <table className="w-full text-sm">
           <thead className="text-xs text-muted-foreground">
@@ -460,6 +460,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
         ready={edits.ready}
         saving={edits.save.isPending}
         onReset={edits.reset}
+        notify={data.planSavesApproved ? { value: edits.notifyTeam, set: edits.setNotifyTeam } : undefined}
         onSave={() => edits.submit(brandInfo, `Brands → Allocation: ${edits.count} change${edits.count === 1 ? "" : "s"}`, refetch)}
       />
     </div>

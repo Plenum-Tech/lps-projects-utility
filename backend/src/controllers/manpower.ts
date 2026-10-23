@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
-import { ExceptionBatch, isLeadershipActor, requestChange } from "../lib/changeRequests.js";
+import { changesSinceSent, ExceptionBatch, isLeadershipActor, requestChange, sendForApproval } from "../lib/changeRequests.js";
 import { rowPeopleKey } from "../lib/manpowerSync.js";
 import { applyPlanDelta, combineNotes, deltaIsEmpty, planDelta, withoutConflicts } from "../lib/manpowerMerge.js";
 import { ChangeRequest } from "../models/ChangeRequest.js";
@@ -269,6 +269,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
   res.json({
     month,
     version: plan.version,
+    pendingRequest: pendingVersion != null ? await pendingRequestInfo(month, pendingVersion) : null,
     // The version edits start from (the latest approved one).
     latestVersion: latestApproved?.version ?? null,
     pendingVersion,
@@ -290,6 +291,65 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     unlinkedProjects: unlinked,
     people: personRows,
     available,
+  });
+}
+
+/**
+ * The month's pending plan change request, for the "not sent yet" banner: sent or
+ * not, the lines it holds, how many are new since it was sent, who saved last.
+ */
+export async function pendingRequestInfo(month: string, version: number) {
+  const [request, plan] = await Promise.all([
+    ChangeRequest.findOne({ kind: "manpower_plan", status: "pending", month }).sort({ createdAt: -1 }).populate("sentBy", "name"),
+    ManpowerPlan.findOne({ month, version }).select("createdAt createdBy").populate("createdBy", "name").lean(),
+  ]);
+  if (!request) return null;
+  const savedBy = plan?.createdBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  const sentBy = request.sentBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
+  return {
+    _id: String(request._id),
+    sent: !request.draft,
+    changes: request.changes.length,
+    unsent: changesSinceSent(request),
+    sentAt: request.sentAt ?? null,
+    sentBy: sentBy?._id ? { _id: String(sentBy._id), name: sentBy.name ?? "" } : null,
+    savedAt: plan?.createdAt ?? request.updatedAt,
+    savedBy: savedBy?._id ? { _id: String(savedBy._id), name: savedBy.name ?? "" } : null,
+  };
+}
+
+/**
+ * POST /api/manpower/:month/send — `{ note? }`: sends the month's saved, waiting plan
+ * changes to leadership (one email with every change). Again after more saves: "Send update".
+ */
+export async function sendPlan(req: Request, res: Response): Promise<void> {
+  const month = param(req, "month") ?? "";
+  if (!MONTH.test(month)) {
+    res.status(400).json({ error: "month must be YYYY-MM" });
+    return;
+  }
+  const body = (req.body ?? {}) as { note?: unknown };
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+  const request = await ChangeRequest.findOne({ kind: "manpower_plan", status: "pending", month }).sort({ createdAt: -1 });
+  if (!request) {
+    res.status(404).json({ error: "There are no saved plan changes waiting for this month" });
+    return;
+  }
+  const user = req.user!;
+  if (!canEditManpower(user) && String(request.requestedBy) !== String(user._id) && !(await isLeadershipActor(user))) {
+    res.status(403).json({ error: "Only the plan editors, leadership or the person who saved these changes can send them" });
+    return;
+  }
+  if (!request.draft && changesSinceSent(request) === 0) {
+    res.status(409).json({ error: "Nothing new to send — leadership already has these changes" });
+    return;
+  }
+  const update = Boolean(request.sentAt);
+  await sendForApproval(request, user, note, req.ip);
+  res.json({
+    month,
+    changeRequestId: String(request._id),
+    message: update ? "Update sent to leadership for approval" : `Sent to leadership for approval (${request.changes.length} change${request.changes.length === 1 ? "" : "s"})`,
   });
 }
 
@@ -446,6 +506,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     note?: unknown;
     maxProjectsPerPerson?: unknown;
     source?: unknown;
+    notifyTeam?: unknown;
   };
   const rows = await parseRows(body.rows);
   if (!Array.isArray(rows)) {
@@ -498,6 +559,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
       source,
       actor: req.user!,
       ip: req.ip,
+      notifyTeam: body.notifyTeam === true,
     });
     res.status(201).json({ month, version: saved.version, ...(saved.pendingApproval ? { pendingApproval: saved.pendingApproval } : {}) });
   } catch (err) {
@@ -525,6 +587,9 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
  *    is rebased on the new approved one (rebasePendingPlan).
  * When the save was made on the very version it lands on, its rows are used as
  * they are (order, everything).
+ * Nobody is told about a save: a non-leader's pending changes wait (quietly) until
+ * someone sends them for approval (sendPlan); leadership's live changes reach the
+ * linked projects' teams without notifications unless `notifyTeam`.
  */
 export async function writePlanVersion(params: {
   month: string;
@@ -540,6 +605,8 @@ export async function writePlanVersion(params: {
   source: "edit" | "copy";
   actor: IUser;
   ip?: string;
+  /** Leadership: tell the people added to projects and the approvers (plan → project sync). Default off. */
+  notifyTeam?: boolean;
 }): Promise<{ version: number; pendingApproval?: string }> {
   const { month, before, actor, ip } = params;
   // Brand-linked lines are named after their brand (new, relinked or renamed lines).
@@ -577,14 +644,15 @@ export async function writePlanVersion(params: {
   if (!needsApproval) {
     // Projects pinned to a dropped duplicate line follow the brand's kept line.
     for (const [from, to] of repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
-    await syncPlanToProjects(month, approvedRows, rows, actor, ip);
+    await syncPlanToProjects(month, approvedRows, rows, actor, ip, { notify: params.notifyTeam === true });
     // The work waiting for approval is carried onto the new approved version.
     if (pending) await rebasePendingPlan(month, { version: plan.version, rows }, actor, ip, approvedRows);
   } else {
     // One pending version per month: this one (which includes the earlier pending changes) replaces it.
     await ManpowerPlan.updateMany({ month, status: "pending", version: { $ne: plan.version } }, { $set: { status: "superseded" } });
     const changes = await planChanges(approvedRows, rows);
-    await requestChange({
+    // Saved quietly: leadership is told when someone sends it ("Send for approval").
+    const request = await requestChange({
       kind: "manpower_plan",
       actor,
       title: `Manpower plan ${month} — version ${plan.version}`,
@@ -593,8 +661,11 @@ export async function writePlanVersion(params: {
       month,
       version: plan.version,
       ip,
+      send: false,
     });
-    pendingApproval = `Version ${plan.version} was sent to leadership for approval${addsUp ? ` (together with the changes already waiting in version ${pending!.version})` : ""}. The plan keeps using version ${approvedVersion ?? "—"} until then.`;
+    pendingApproval = request.draft
+      ? `Saved — not sent for approval yet. Use "Send for approval" on the Manpower plan when you're ready (version ${plan.version}).`
+      : `Saved — not sent yet. Leadership still sees what you sent; use "Send update" to send the new changes (version ${plan.version}).`;
   }
   logActivity({
     action: "settings_updated",
@@ -741,15 +812,19 @@ export async function suggestTeam(req: Request, res: Response): Promise<void> {
 /**
  * Plan → projects: after an approved plan change, the projects linked to each
  * changed line get that line's people as their team (plan roles; "Others"
- * stays as it is on the project).
+ * stays as it is on the project). `notify: false`: nobody is told (no "added to
+ * a project" messages, no "changed from the manpower plan" note to the approvers).
  */
 export async function syncPlanToProjects(
   month: string,
   before: IManpowerRow[],
   after: IManpowerRow[],
   actor: IUser,
-  ip?: string
+  ip?: string,
+  options: { notify?: boolean } = {}
 ): Promise<number> {
+  // Default (approvals): the approvers and added people are told. A leadership save only on request.
+  const notify = options.notify !== false;
   try {
     const old = new Map(before.map((r) => [r.key, rowPeopleKey(r.cells)]));
     const changed = new Map(after.filter((r) => old.get(r.key) !== rowPeopleKey(r.cells)).map((r) => [r.key, r]));
@@ -790,10 +865,10 @@ export async function syncPlanToProjects(
         ...row.cells.filter((c) => (c.users ?? []).length).map((c) => ({ role: c.role, users: c.users.map(String) })),
         ...others.map((t) => ({ role: t.role, users: t.users.map(String) })),
       ];
-      const result = await updateProjectCore(actor, project, { team } as never, ip, { skipApproval: true, skipPlanSync: true, exceptions });
+      const result = await updateProjectCore(actor, project, { team } as never, ip, { skipApproval: true, skipPlanSync: true, exceptions, silent: !notify });
       if (!("error" in result)) updated += 1;
     }
-    await exceptions.flush();
+    if (notify) await exceptions.flush();
     return updated;
   } catch (err) {
     console.error("[manpower] plan → projects sync failed", month, err);
