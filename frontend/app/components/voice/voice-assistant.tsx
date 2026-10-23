@@ -5,6 +5,7 @@ import { LuCamera, LuCircleCheck, LuLoaderCircle, LuMic, LuPaperclip, LuRotateCc
 
 import { ShortCode } from "@/components/projects/project-badges";
 import { ACCEPT, MAX_FILE_SIZE } from "@/components/tasks/task-files";
+import { TaskDetailsPanel } from "@/components/voice/task-details-panel";
 import { useRecorder, type RecorderError } from "@/components/voice/use-recorder";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -417,13 +418,22 @@ export function VoiceAssistant() {
                 );
               }
               return (
-                <SummaryCard
-                  key={item.id}
-                  item={item}
-                  onDone={(line) => finished(item.id, line)}
-                  onChange={() => change(item.id)}
-                  onError={(message) => push({ kind: "bot", text: message, error: true })}
-                />
+                <div key={item.id} className="grid gap-2">
+                  {/* What the task is, before confirming (open for closing, folded for the others). */}
+                  {item.card.task && item.draft.action !== "create" && item.state === "open" && (
+                    <TaskDetailsPanel
+                      taskId={item.card.task._id}
+                      defaultOpen={item.draft.action === "close"}
+                      onOpenTask={() => setOpen(false)}
+                    />
+                  )}
+                  <SummaryCard
+                    item={item}
+                    onDone={(line) => finished(item.id, line)}
+                    onChange={() => change(item.id)}
+                    onError={(message) => push({ kind: "bot", text: message, error: true })}
+                  />
+                </div>
               );
             })}
             {busy && (
