@@ -20,6 +20,7 @@ import {
   isAssignee,
   loggedMinutesByTask,
   taskProjectFlags,
+  taskVisibilityFilter,
 } from "./taskAccess.js";
 import { richTextToPlain } from "./richText.js";
 import {
@@ -212,6 +213,8 @@ export interface VoiceContext {
   people: VocabPerson[];
   /** Codes of every project the user can see (task codes said as "MO 6"). */
   codes: string[];
+  /** Tasks created or touched in this chat, newest first (the app sends them): top candidates. */
+  recent: string[];
 }
 
 type LeanProject = {
@@ -276,6 +279,7 @@ export async function loadVoiceContext(user: IUser): Promise<VoiceContext> {
     projects,
     people: people.map((p) => ({ id: String(p._id), name: p.name })),
     codes: codes.filter(Boolean),
+    recent: [],
   };
 }
 
@@ -357,7 +361,7 @@ async function findTask(
   ctx: VoiceContext,
   ref: { code?: string; number?: number; text?: string },
   purpose: TaskPurpose
-): Promise<{ task: VoiceTaskRef } | { error: string; choices?: string[] }> {
+): Promise<{ task: VoiceTaskRef; note?: string } | { error: string; choices?: string[] }> {
   let task: ITask | null = null;
   if (ref.code) {
     task = await Task.findOne({ shortCode: new RegExp(`^${escapeRe(ref.code)}$`, "i") });
@@ -366,28 +370,26 @@ async function findTask(
     task = await Task.findOne({ number: ref.number });
     if (!task) return { error: `I couldn't find task #${ref.number}.` };
   } else if (ref.text) {
-    const words = ref.text
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter((w) => w.length >= 3)
-      .slice(0, 6);
-    if (!words.length) return { error: "Which task? Say its code, like MO-6." };
-    const matches = await Task.find({
-      $and: [
-        { $or: [{ assignees: ctx.user._id }, { assignedBy: ctx.user._id }] },
-        { status: { $in: purpose === "close" ? CLOSABLE : OPEN_STATUSES } },
-        ...words.map((w) => ({ title: new RegExp(escapeRe(w), "i") })),
-      ],
-    })
-      .sort({ updatedAt: -1 })
-      .limit(5);
-    if (matches.length === 0) return { error: `I couldn't find an open task of yours matching "${ref.text}". Say its code, like MO-6.` };
-    if (matches.length > 1) {
-      return {
-        error: "A few tasks match — which one?",
-        choices: matches.map((t) => chip(`${t.shortCode || `#${t.number}`} · ${t.title}`)),
-      };
+    // Described in words ("my reel one video edit task from the home service"): the tasks the
+    // user can act on, scored by title, project and this chat's tasks.
+    const scored = await searchTasks(ctx, ref.text, purpose);
+    const usable: Array<{ task: ITask; score: number }> = [];
+    for (const row of scored.slice(0, 12)) {
+      if (!(await taskProblem(ctx, row.task, purpose))) usable.push(row);
+      if (usable.length >= 5) break;
     }
-    task = matches[0]!;
+    const top = usable[0];
+    if (!top || top.score < 3) {
+      const chips = await taskChips(ctx, purpose);
+      return { error: "I couldn't find that task. Say its code, like MO-6, or pick one.", choices: chips.length ? chips : undefined };
+    }
+    const close = usable.filter((r) => r.score >= top.score - 1);
+    if (close.length > 1) {
+      return { error: "A few tasks match — which one?", choices: close.slice(0, 5).map((r) => chip(`${r.task.shortCode || `#${r.task.number}`} · ${r.task.title}`)) };
+    }
+    task = top.task;
+    const verb = purpose === "close" ? "Closing" : purpose === "log_time" ? "Logging time on" : purpose === "update" ? "Updating" : "Using";
+    return { task: await toRef(task), note: `${verb} ${task.shortCode || `#${task.number}`} · ${task.title}.` };
   }
   if (!task) return { error: "Which task? Say its code, like MO-6." };
   const problem = await taskProblem(ctx, task, purpose);
@@ -406,16 +408,79 @@ async function reloadTask(ctx: VoiceContext, ref: unknown, purpose: TaskPurpose)
 
 /** The user's open tasks as quick-reply chips ("MO-6 · Reel 3 – Teaser"). */
 async function taskChips(ctx: VoiceContext, purpose: TaskPurpose): Promise<string[]> {
+  const statuses = purpose === "close" ? CLOSABLE : OPEN_STATUSES;
+  const recent = ctx.recent.map((id) => new mongoose.Types.ObjectId(id));
   const tasks = await Task.find({
-    assignees: ctx.user._id,
-    status: { $in: purpose === "close" ? CLOSABLE : OPEN_STATUSES },
+    $or: [{ _id: { $in: recent } }, { assignees: ctx.user._id }, { assignedBy: ctx.user._id }],
+    status: { $in: statuses },
     shortCode: { $type: "string" },
   })
-    .select("shortCode title dueDate")
-    .sort({ dueDate: 1, updatedAt: -1 })
-    .limit(4)
-    .lean<Array<{ shortCode: string; title: string }>>();
-  return tasks.map((t) => chip(`${t.shortCode} · ${t.title}`));
+    .select("shortCode title updatedAt")
+    .sort({ updatedAt: -1 })
+    .limit(20)
+    .lean<Array<{ _id: mongoose.Types.ObjectId; shortCode: string; title: string }>>();
+  // This chat's tasks first, then the most recently changed.
+  tasks.sort((a, b) => Number(ctx.recent.includes(String(b._id))) - Number(ctx.recent.includes(String(a._id))));
+  return tasks.slice(0, 4).map((t) => chip(`${t.shortCode} · ${t.title}`));
+}
+
+const TASK_STOP = new Set(
+  ("close closing complete completed finish finished done log logged time spent hour hours minute minutes min mins task tasks my " +
+    "the and with from for of on in to is it its this that was were be been am me we our update updated updation change " +
+    "detail details name named called project which say says please want would like just now today").split(" ")
+);
+
+/**
+ * Open tasks the user can see, scored against a description: title words (with "reel one" → Reel 1),
+ * the project's name / code / brand (speech-to-text slips allowed: "sofa" ~ Safa), this chat's tasks
+ * (+6, the newest +8) and the user's own (+1). Highest first.
+ */
+async function searchTasks(ctx: VoiceContext, text: string, purpose: TaskPurpose): Promise<Array<{ task: ITask; score: number }>> {
+  const words = normalizeNumbers(text)
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w && !TASK_STOP.has(w) && (/^\d+$/.test(w) || w.length >= 3));
+  const near = (a: string, b: string) => a === b || (a.length >= 4 && b.length >= 4 && (a.slice(0, 4) === b.slice(0, 4) || editDistance(a, b) <= 1));
+  // Projects the words point at.
+  const projectScore = new Map<string, number>();
+  const visibleProjects = await Project.find(projectVisibilityFilter(ctx.user))
+    .select("name code brand")
+    .populate("brand", "name")
+    .lean<Array<{ _id: mongoose.Types.ObjectId; name: string; code: string; brand?: { name?: string } | null }>>();
+  for (const p of visibleProjects) {
+    const pw = `${p.name} ${p.brand?.name ?? ""}`.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter((w) => w.length >= 3);
+    let hits = words.filter((w) => !/^\d+$/.test(w) && pw.some((x) => near(w, x))).length;
+    if (words.includes(p.code.toLowerCase())) hits += 3;
+    if (hits) projectScore.set(String(p._id), hits);
+  }
+  const titleWords = words.filter((w) => !/^\d+$/.test(w) && w.length >= 3);
+  const recent = ctx.recent.map((id) => new mongoose.Types.ObjectId(id));
+  const or: Record<string, unknown>[] = [
+    ...titleWords.map((w) => ({ title: new RegExp(escapeRe(w.slice(0, 4)), "i") })),
+    ...(projectScore.size ? [{ project: { $in: [...projectScore.keys()].map((id) => new mongoose.Types.ObjectId(id)) } }] : []),
+    ...(recent.length ? [{ _id: { $in: recent } }] : []),
+  ];
+  if (!or.length) return [];
+  const rows = await Task.find({
+    $and: [await taskVisibilityFilter(ctx.user), { status: { $in: purpose === "close" ? CLOSABLE : OPEN_STATUSES } }, { $or: or }],
+  })
+    .sort({ updatedAt: -1 })
+    .limit(300);
+  const scored = rows.map((task) => {
+    const tw = task.title.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    let score = 0;
+    for (const w of titleWords) if (tw.some((x) => near(w, x))) score += tw.includes(w) ? 2 : 1;
+    // "reel one" → "Reel 1": a unit word followed by its number.
+    for (let i = 0; i < words.length - 1; i++) {
+      if (/^\d+$/.test(words[i + 1]!) && tw.some((x, j) => near(words[i]!, x) && tw[j + 1] === words[i + 1])) score += 2;
+    }
+    score += 2 * (projectScore.get(String(task.project)) ?? 0);
+    const r = ctx.recent.indexOf(String(task._id));
+    if (r >= 0) score += r === 0 ? 8 : 6;
+    if (isAssignee(ctx.user, task) || task.assignedBy?.equals(ctx.user._id)) score += 1;
+    return { task, score };
+  });
+  return scored.sort((a, b) => b.score - a.score);
 }
 
 // ---------------------------------------------------------------------------
@@ -966,6 +1031,7 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
     if (ex.taskCode || ex.taskNumber || ex.taskText) {
       const found = await findTask(ctx, { code: ex.taskCode, number: ex.taskNumber, text: ex.taskText }, purpose);
       if ("task" in found) {
+        if (found.note) notes.push(found.note);
         if (draft.task?.id !== found.task.id) {
           draft.finalFile = null;
           draft.finalUrl = null;
@@ -1248,6 +1314,7 @@ async function applyUpdate(
   if (ex.taskCode || ex.taskNumber || ex.taskText) {
     const found = await findTask(ctx, { code: ex.taskCode, number: ex.taskNumber, text: ex.taskText }, "update");
     if ("task" in found) {
+      if (found.note) notes.push(found.note);
       if (draft.task?.id !== found.task.id) draft.baseFor = null;
       draft.task = found.task;
     } else if (found.choices?.length) override = { ask: "task", reply: found.error, chips: found.choices };
@@ -1866,10 +1933,12 @@ export async function understand(
   user: IUser,
   messages: Array<{ role: "user" | "assistant"; text: string }>,
   rawDraft: unknown,
-  contextTaskId: string | null
+  contextTaskId: string | null,
+  recentTaskIds: string[] = []
 ): Promise<VoiceUnderstandResult> {
   if (isGuestUser(user)) throw new Error("Guests can't use the voice assistant");
   const ctx = await loadVoiceContext(user);
+  ctx.recent = recentTaskIds.filter((id) => mongoose.isValidObjectId(id)).slice(0, 10);
   let draft = await sanitizeDraft(ctx, rawDraft);
   const last = [...messages].reverse().find((m) => m.role === "user")?.text ?? "";
   // The card was showing: this message is a change to it.
@@ -1907,7 +1976,7 @@ export async function understand(
     // The request that was waiting is read again on a fresh draft.
     const users = messages.filter((m) => m.role === "user");
     const previous = users[users.length - 2]?.text ?? "";
-    return understand(user, [...messages.slice(0, -1).filter((m) => m.text !== START_NEW), { role: "user", text: previous }], null, contextTaskId);
+    return understand(user, [...messages.slice(0, -1).filter((m) => m.text !== START_NEW), { role: "user", text: previous }], null, contextTaskId, recentTaskIds);
   }
   // "Use as brief" / "Add to brief" / "Use as note|memo" after an unclear change.
   const usedAs = wasReady ? useAsField(draft, last, messages) : null;
@@ -1947,19 +2016,29 @@ export async function understand(
           console.error("[voice] AI reading failed, using the rules", err instanceof Error ? err.message : err);
         }
       }
+      const rules = parseVoiceText(last, {
+        asking: draft.asking,
+        action: draft.action,
+        today: ctx.today,
+        projects: ctx.projects,
+        people: ctx.people,
+        me: String(user._id),
+        units: allUnits(ctx),
+        codes: ctx.codes,
+        keepShortName: Boolean(draft.shortName),
+      });
       if (!ai) {
         // FALLBACK: the rules-based parser (no OPENAI_API_KEY, or the model failed).
-        ex = parseVoiceText(last, {
-          asking: draft.asking,
-          action: draft.action,
-          today: ctx.today,
-          projects: ctx.projects,
-          people: ctx.people,
-          me: String(user._id),
-          units: allUnits(ctx),
-          codes: ctx.codes,
-          keepShortName: Boolean(draft.shortName),
-        });
+        ex = rules;
+      } else {
+        // What the model left out but the words clearly say (a task code, the time, an outcome word, a link) is kept.
+        for (const key of ["taskCode", "taskNumber", "minutes", "note", "finalUrl"] as const) {
+          if (ex[key] === undefined && rules[key] !== undefined) (ex as Record<string, unknown>)[key] = rules[key];
+        }
+        if (!ex.start && rules.start && rules.end) {
+          ex.start = rules.start;
+          ex.end = rules.end;
+        }
       }
     }
     // Free text from the model must come from what the person said: a value whose words mostly
@@ -2001,6 +2080,15 @@ export async function understand(
     // The model sometimes repeats values already in the draft: those aren't changes.
     if (ex.brief && draft.brief && ex.brief.trim() === draft.brief.trim()) delete ex.brief;
     if (ex.shortName && draft.shortName && ex.shortName.trim() === draft.shortName.trim()) delete ex.shortName;
+    // A task described in words ("close my reel one video edit task from the home service …"): the
+    // whole message is matched against the tasks the user can act on (the model's guess may be a project code).
+    const nextAction = ex.intent === "close" || ex.intent === "log_time" || ex.intent === "update" ? ex.intent : draft.action;
+    if ((nextAction === "close" || nextAction === "log_time" || nextAction === "update") && !draft.task && !ex.taskCode && !ex.taskNumber) {
+      const mentions = draft.asking === "task" || Boolean(ex.taskText) || /\b(?:task|reel|video|post|static|story|carousel)\b/i.test(last);
+      if (mentions && !/^\s*(?:close|log time|update) (?:it|this)\s*$/i.test(last) && !/^\s*(?:close a task|log time)\s*$/i.test(last)) {
+        ex.taskText = [last, ex.taskText && !last.includes(ex.taskText) ? ex.taskText : null].filter(Boolean).join(" ").slice(0, 400);
+      }
+    }
     // "Work on this task" → "close it" / "log time" use that task.
     const taskContext = draft.focusTaskId ?? (contextTaskId && mongoose.isValidObjectId(contextTaskId) ? contextTaskId : null);
     const turn = await applyExtracted(ctx, draft, ex, taskContext, last);

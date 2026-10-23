@@ -940,9 +940,20 @@ export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   // Close note / log memo: what's left after the command, code and time.
   if ((action === "close" || action === "log_time") && !freeAnswer) {
     const explicit = /\b(?:note|outcome|memo)(?:\s+is|\s*[:\-–])\s*(.+)$/i.exec(raw);
-    const note = explicit ? capFirst(tidy(explicit[1]!)) : remainder(t, [...codes, ...(number ? [number[0]] : [])]);
-    // A bare answer to "which task" / "how long" isn't a note.
-    if (note && opts.asking !== "task" && opts.asking !== "time" && opts.asking !== "final" && !/^(?:task|this(?: one)?|it)$/i.test(note)) {
+    // A task described in words (no code): the leftover words describe the task, so the note is
+    // only the outcome said ("… is completed" → "Completed").
+    const described = codes.length === 0 && !number && /\b(?:task|reel|video|post|static|story|carousel|from)\b/i.test(t);
+    const outcome = /\b(completed|complete|done|finished|delivered|ready|submitted)\b/i.exec(t);
+    const note = explicit
+      ? capFirst(tidy(explicit[1]!))
+      : described
+        ? outcome
+          ? capFirst(outcome[1]!.toLowerCase())
+          : ""
+        : remainder(t, [...codes, ...(number ? [number[0]] : [])]);
+    // A bare answer to "which task" / "how long" isn't a note (an outcome said with it is).
+    const answer = opts.asking === "task" || opts.asking === "time" || opts.asking === "final";
+    if (note && (!answer || (described && outcome)) && !/^(?:task|this(?: one)?|it)$/i.test(note)) {
       out.note = note;
     }
   }

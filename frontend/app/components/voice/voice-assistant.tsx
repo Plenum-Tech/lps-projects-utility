@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 const MAX_RECORD_SECONDS = 60;
 const START_CHIPS = ["New task", "Close a task", "Log time"];
 const FILE_CHIPS = ["📷 Take photo", "Pick a file", "Say a link"];
+const FOLLOW_UP_CHIPS = ["Close it", "Log time", "Update it"];
 
 type ChatItem =
   | { id: number; kind: "bot"; text: string; error?: boolean }
@@ -75,6 +76,8 @@ export function VoiceAssistant() {
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
   const [voiceOff, setVoiceOff] = useState(false);
+  // Tasks created / changed in this chat, newest first: "close it", "that task" … mean these.
+  const [recentTaskIds, setRecentTaskIds] = useState<string[]>([]);
   const understand = useVoiceUnderstand();
   const transcribe = useVoiceTranscribe();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -150,7 +153,7 @@ export function VoiceAssistant() {
       const res = await understand.mutateAsync({
         messages: apiMessages({ text: message }),
         draft: options.draftOverride !== undefined ? options.draftOverride : draft,
-        ...(contextTaskId ? { context: { taskId: contextTaskId } } : {}),
+        context: { ...(contextTaskId ? { taskId: contextTaskId } : {}), recentTaskIds },
       });
       setDraft(res.draft);
       setAsk(res.ask);
@@ -258,13 +261,20 @@ export function VoiceAssistant() {
     setChips(START_CHIPS);
   }
 
-  function finished(id: number, line: { text: string; link?: string }) {
+  function finished(id: number, line: { text: string; link?: string; taskId?: string; followUp?: boolean }) {
     setItems((current) => current.map((item) => (item.id === id && item.kind === "card" ? { ...item, state: "closed" } : item)));
-    push({ kind: "done", ...line });
-    setDraft(null);
+    push({ kind: "done", text: line.text, link: line.link });
+    if (line.taskId) setRecentTaskIds((current) => [line.taskId!, ...current.filter((t) => t !== line.taskId)].slice(0, 10));
     setAsk(null);
     setFile(null);
-    setChips(START_CHIPS);
+    if (line.followUp && line.taskId) {
+      // The new task is the one "close it" / "log time" / "update it" act on next.
+      setDraft({ focusTaskId: line.taskId } as VoiceDraft);
+      setChips(FOLLOW_UP_CHIPS);
+    } else {
+      setDraft(null);
+      setChips(START_CHIPS);
+    }
   }
 
   function change(id: number) {
@@ -493,7 +503,7 @@ function SummaryCard({
   onError,
 }: {
   item: Extract<ChatItem, { kind: "card" }>;
-  onDone: (line: { text: string; link?: string }) => void;
+  onDone: (line: { text: string; link?: string; taskId?: string; followUp?: boolean }) => void;
   onChange: () => void;
   onError: (message: string) => void;
 }) {
@@ -555,6 +565,8 @@ function SummaryCard({
         onDone({
           text: `Created ${data.task.shortCode ?? "the task"} · ${data.task.title}.${data.task.assignees.length ? ` ${data.task.assignees.map((a) => a.name.split(" ")[0]).join(" and ")} ${data.task.assignees.length === 1 ? "was" : "were"} notified.` : ""}`,
           link: `/tasks?task=${data.task._id}`,
+          taskId: data.task._id,
+          followUp: true,
         });
         return;
       }
@@ -565,7 +577,7 @@ function SummaryCard({
           await updateTask.mutateAsync({ id: task.id, input: draft.updatePatch });
         }
         if (draft.updateStatus) await updateStatus.mutateAsync({ id: task.id, status: draft.updateStatus });
-        onDone({ text: `Updated ${task.code}.`, link: `/tasks?task=${task.id}` });
+        onDone({ text: `Updated ${task.code}.`, link: `/tasks?task=${task.id}`, taskId: task.id });
         return;
       }
       const span = timeSpan();
@@ -579,7 +591,7 @@ function SummaryCard({
           memo: draft.note ?? "",
         });
         const minutes = Math.round((span.end.getTime() - span.start.getTime()) / 60_000);
-        onDone({ text: `${formatMinutes(minutes)} logged on ${task.code}.`, link: `/tasks?task=${task.id}` });
+        onDone({ text: `${formatMinutes(minutes)} logged on ${task.code}.`, link: `/tasks?task=${task.id}`, taskId: task.id });
         return;
       }
       // Close: the final file is uploaded first (a failed upload logs no time).
@@ -615,6 +627,7 @@ function SummaryCard({
             ? `${task.code} is completed.${minutes ? ` ${formatMinutes(minutes)} logged.` : ""}`
             : `${task.code} was sent to ${task.reviewer ?? "the creator"} for review.${minutes ? ` ${formatMinutes(minutes)} logged.` : ""}`,
         link: `/tasks?task=${task.id}`,
+        taskId: task.id,
       });
     } catch (error) {
       // The server's rule (scope, manual time off, permissions …) is shown in the chat.

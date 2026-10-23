@@ -107,7 +107,7 @@ export interface VoiceReply {
 
 export interface VoiceUnderstandInput {
   messages: Array<{ role: "user" | "assistant"; text: string }>;
-  context?: { taskId?: string };
+  context?: { taskId?: string; recentTaskIds?: string[] };
   draft?: VoiceDraft | null;
 }
 

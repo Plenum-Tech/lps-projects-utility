@@ -70,7 +70,7 @@ export async function transcribeVoice(req: Request, res: Response): Promise<void
 }
 
 /**
- * POST /api/voice/understand — { messages: [{ role, text }] (≤ 20), context?: { taskId? }, draft? }
+ * POST /api/voice/understand — { messages: [{ role, text }] (≤ 20), context?: { taskId?, recentTaskIds? }, draft? }
  * → { reply, chips, draft, action, missing, ready, ask, card, ai }. Nothing is saved.
  */
 export async function understandVoice(req: Request, res: Response): Promise<void> {
@@ -88,7 +88,11 @@ export async function understandVoice(req: Request, res: Response): Promise<void
     }
     messages.push({ role: m.role, text: m.text.slice(0, VOICE_LIMITS.maxMessageChars) });
   }
-  const context = typeof body.context === "object" && body.context !== null ? (body.context as { taskId?: unknown }) : {};
+  const context = typeof body.context === "object" && body.context !== null ? (body.context as { taskId?: unknown; recentTaskIds?: unknown }) : {};
   const taskId = typeof context.taskId === "string" && mongoose.isValidObjectId(context.taskId) ? context.taskId : null;
-  res.json(await understand(req.user!, messages, body.draft, taskId));
+  // Tasks created / touched in this chat (newest first) — the first candidates for "close it", "that task" …
+  const recent = Array.isArray(context.recentTaskIds)
+    ? (context.recentTaskIds as unknown[]).filter((id): id is string => typeof id === "string" && mongoose.isValidObjectId(id)).slice(0, 10)
+    : [];
+  res.json(await understand(req.user!, messages, body.draft, taskId, recent));
 }

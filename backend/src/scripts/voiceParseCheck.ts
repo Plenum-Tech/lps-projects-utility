@@ -229,6 +229,24 @@ check("the voice conversation that broke (fallback)", () => {
   assert.equal(keep.taskCode, undefined);
 });
 
+check("closing a task described in words (fallback)", () => {
+  const a = parseVoiceText(
+    "close my Reel video edit task from the home service with the updation of the task is completed and the time spent is 30 minutes.",
+    base
+  );
+  assert.equal(a.intent, "close");
+  assert.equal(a.taskCode, undefined);
+  assert.equal(a.minutes, 30);
+  assert.equal(a.note, "Completed");
+  const b = parseVoiceText(
+    "My video, my task name is a reel one video edit task from the home service hosting sofa campaign. And task detail is completed and it is time spent is 30 minutes.",
+    opts({ action: "close", asking: "task" })
+  );
+  assert.equal(b.minutes, 30);
+  assert.equal(b.note, "Completed");
+  assert.ok(b.taskText && /reel one video edit/i.test(b.taskText));
+});
+
 check("scope item chips", () => {
   // The chip "Video · 6 of 6 left" names the unit only (no number, no short name).
   const c = parseVoiceText("Video · 6 of 6 left", opts({ action: "create", asking: "unit" }));
