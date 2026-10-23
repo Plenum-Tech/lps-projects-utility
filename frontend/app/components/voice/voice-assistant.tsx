@@ -54,7 +54,7 @@ type ChatItem =
   | { id: number; kind: "done"; text: string; link?: string; task?: VoiceTaskInfo }
   | { id: number; kind: "existing"; tasks: Array<VoiceExistingTask & { info?: VoiceTaskInfo }>; state: "open" | "closed" }
   /** Tasks to pick from (choice) or tasks named / understood (link). */
-  | { id: number; kind: "tasks"; tasks: VoiceTaskInfo[]; choice: boolean; state: "open" | "closed"; understood?: boolean };
+  | { id: number; kind: "tasks"; tasks: VoiceTaskInfo[]; choice: boolean; state: "open" | "closed"; understood?: boolean; details?: VoiceDraft["action"] };
 
 /** A chat item before it gets its id. */
 type NewItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, "id"> : never) : never;
@@ -177,7 +177,11 @@ export function VoiceAssistant() {
         current.map((item) => (item.kind === "existing" || (item.kind === "tasks" && item.choice) ? { ...item, state: "closed" } : item)),
       );
       // What the message was understood to mean, right under it.
-      if (res.resolved) push({ kind: "tasks", tasks: [res.resolved], choice: false, state: "open", understood: true });
+      // Closing / updating / logging time / commenting: the task's details come with it.
+      if (res.resolved) {
+        const action = res.draft.action;
+        push({ kind: "tasks", tasks: [res.resolved], choice: false, state: "open", understood: true, ...(action && action !== "create" ? { details: action } : {}) });
+      }
       push({ kind: "bot", text: res.reply });
       if (res.related?.length) push({ kind: "tasks", tasks: res.related, choice: false, state: "open" });
       if (res.existing?.length) push({ kind: "existing", tasks: res.existing, state: "open" });
@@ -377,7 +381,13 @@ export function VoiceAssistant() {
                 return (
                   <div key={item.id} className={cn("grid gap-1.5", item.understood && "self-end w-[86%]")}>
                     {item.understood && <span className="text-right text-[11px] text-muted-foreground">Understood as</span>}
-                    {item.tasks.map((task) => (
+                    {item.details ? (
+                      <TaskDetailsPanel
+                        taskId={item.tasks[0]!._id}
+                        defaultOpen={item.details === "close"}
+                        onOpenTask={() => setOpen(false)}
+                      />
+                    ) : item.tasks.map((task) => (
                       <TaskChip
                         key={task._id}
                         task={task}
@@ -420,7 +430,11 @@ export function VoiceAssistant() {
               return (
                 <div key={item.id} className="grid gap-2">
                   {/* What the task is, before confirming (open for closing, folded for the others). */}
-                  {item.card.task && item.draft.action !== "create" && item.state === "open" && (
+                  {item.card.task &&
+                    item.draft.action !== "create" &&
+                    item.state === "open" &&
+                    // Already shown with "Understood as" for this task.
+                    !items.some((x) => x.kind === "tasks" && x.details && x.tasks[0]?._id === item.card.task!._id) && (
                     <TaskDetailsPanel
                       taskId={item.card.task._id}
                       defaultOpen={item.draft.action === "close"}
