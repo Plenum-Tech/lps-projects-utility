@@ -5,6 +5,7 @@ import { Outlet } from "react-router";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { NotificationBell } from "@/components/notifications/notification-bell";
 import { TimerWidget } from "@/components/timer/timer-widget";
+import { VoiceAssistant } from "@/components/voice/voice-assistant";
 import { Separator } from "@/components/ui/separator";
 import {
   SidebarInset,
@@ -45,7 +46,8 @@ export function AppShell() {
             <NotificationBell />
           </div>
         </header>
-        <div className="flex-1">
+        {/* Bottom padding: the last row of a page isn't hidden under the voice button. */}
+        <div className="flex-1 pb-20">
           {publicSettings.isPending ? (
             <div className="flex justify-center py-24" role="status" aria-label="Loading">
               <LuLoaderCircle aria-hidden className="size-6 animate-spin text-muted-foreground" />
@@ -57,6 +59,8 @@ export function AppShell() {
           )}
         </div>
       </SidebarInset>
+      {/* Floating mic: create / close a task or log time by voice (staff only). */}
+      <VoiceAssistant />
     </SidebarProvider>
   );
 }

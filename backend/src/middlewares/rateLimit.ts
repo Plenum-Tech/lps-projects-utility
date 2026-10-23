@@ -272,3 +272,14 @@ export const outcomeReadinessRateLimit = rateLimit({
   keyGenerator: userOrIpKey,
   message: "You've checked a lot of outcome notes in the last hour. Try again later.",
 });
+
+/**
+ * Voice task assistant (POST /api/voice/transcribe and /understand — at most one
+ * OpenAI call each): 30 per minute per user, in its own store.
+ */
+export const voiceRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: userOrIpKey,
+  message: "That's a lot of voice notes in a minute. Wait a moment and try again.",
+});

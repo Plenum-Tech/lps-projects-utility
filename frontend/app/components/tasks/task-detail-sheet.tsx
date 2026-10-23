@@ -15,6 +15,7 @@ import {
   LuLoaderCircle,
   LuLock,
   LuMessagesSquare,
+  LuMic,
   LuPencil,
   LuRefreshCw,
   LuRepeat,
@@ -56,6 +57,7 @@ import { TaskTimerAction } from "@/components/tasks/task-timer-button";
 import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { TaskComments } from "@/components/tasks/task-comments";
 import { GuestBadge, InviteGuestDialog } from "@/components/tasks/invite-guest-dialog";
+import { openVoiceAssistant } from "@/components/voice/voice-assistant";
 import { TaskFiles } from "@/components/tasks/task-files";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -341,6 +343,12 @@ function TaskDetail({
                   </DropdownMenuGroup>
                 </DropdownMenuContent>
               </DropdownMenu>
+            )}
+            {!guest && (
+              <Button variant="outline" size="sm" onClick={() => openVoiceAssistant(task._id)} title="Close this task or log time by voice">
+                <LuMic aria-hidden />
+                Voice
+              </Button>
             )}
             {!viewOnly && !guest && <PearityGenerateButton task={task} />}
             {canAddRework && (

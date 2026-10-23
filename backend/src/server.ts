@@ -57,6 +57,7 @@ import timeLogsRouter from "./routes/timelogs.js";
 import timeReportsRouter from "./routes/timeReports.js";
 import timesheetsRouter from "./routes/timesheets.js";
 import usersRouter from "./routes/users.js";
+import voiceRouter from "./routes/voice.js";
 import settingsRouter from "./routes/settings.js";
 import analyticsRouter from "./routes/analytics.js";
 import brandsRouter from "./routes/brands.js";
@@ -291,6 +292,8 @@ app.use("/api/imports", importsRouter);
 app.use("/api/brands", brandsRouter);
 app.use("/api/project-approval", projectApprovalRouter);
 app.use("/api/manpower", manpowerRouter);
+// Voice task assistant: speech-to-text + reading a request into task fields (saving uses the task / time APIs).
+app.use("/api/voice", voiceRouter);
 app.use("/api/analytics", analyticsRouter);
 // Pearity: server-to-server API (Bearer key) first, then the session/admin endpoints.
 app.use("/api/integrations/pearity/v1", pearityApiRouter);
