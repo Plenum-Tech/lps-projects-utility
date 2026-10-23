@@ -2519,29 +2519,40 @@ export async function understand(
 // Speech-to-text
 // ---------------------------------------------------------------------------
 
-/** The user's words for the transcription prompt: brands, codes, units, team first names (≤ ~800 chars). */
+/**
+ * The words speech-to-text should spell the app's way (≤ ~1000 chars): people first —
+ * the user's project teams in full, then every staff first name ("Vivek", "Vishal",
+ * "Nazeer") — then scope units, then brands and project codes.
+ */
 export async function speechPrompt(user: IUser): Promise<string> {
   const ctx = await loadVoiceContext(user);
   const byId = new Map(ctx.people.map((p) => [p.id, p.name]));
-  const words: string[] = [];
-  const add = (w: string) => {
+  const people: string[] = [];
+  const terms: string[] = [];
+  const add = (list: string[], w: string) => {
     const t = w.trim();
-    if (t && !words.includes(t)) words.push(t);
+    if (t && !people.includes(t) && !terms.includes(t)) list.push(t);
   };
   const mine = ctx.projects.filter((p) => p.mine);
+  for (const p of mine) for (const id of p.memberIds) add(people, byId.get(id) ?? "");
+  for (const p of ctx.people) add(people, p.name.split(/\s+/)[0] ?? "");
+  for (const u of allUnits(ctx)) add(terms, u);
   for (const p of mine.length ? mine : ctx.projects.slice(0, 20)) {
-    if (p.brand) add(p.brand);
-    add(p.code);
+    if (p.brand) add(terms, p.brand);
+    add(terms, p.code);
   }
-  for (const u of allUnits(ctx)) add(u);
-  // Full names, so speech-to-text spells them as the app does ("Nazeer", not "Nasir").
-  for (const p of mine) for (const id of p.memberIds) add(byId.get(id) ?? "");
   let prompt = "";
-  for (const w of words) {
-    if (prompt.length + w.length + 2 > 800) break;
+  const append = (w: string) => {
+    if (prompt.length + w.length + 2 > 1000) return false;
     prompt += prompt ? `, ${w}` : w;
-  }
-  return prompt;
+    return true;
+  };
+  // Names lead (they are what speech-to-text gets wrong most), as a short sentence.
+  prompt = "People: ";
+  for (const w of people) if (!append(w)) break;
+  prompt += ". Work: ";
+  for (const w of terms) if (!append(w)) break;
+  return prompt.replace(/: ,/g, ":").replace(/\. Work: $/, ".");
 }
 
 const EXTENSIONS: Record<string, string> = {
