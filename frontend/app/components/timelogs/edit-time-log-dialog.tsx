@@ -3,6 +3,7 @@ import { LuLoaderCircle, LuSave } from "react-icons/lu";
 
 import { ShortCode } from "@/components/projects/project-badges";
 import { validateTimeRange } from "@/components/timelogs/manual-time-log-dialog";
+import { TimeTargetFields } from "@/components/timelogs/time-target-fields";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -21,7 +22,7 @@ import type { TimeLog, TimeLogUpdateInput } from "@/types";
 
 const MEMO_MAX = 500;
 
-/** Edit memo / start / end of a log. A running timer only accepts its memo. */
+/** Edit memo / start / end of a log, or move it to another task / project. A running timer only accepts its memo. */
 export function EditTimeLogDialog({
   log: incoming,
   onOpenChange,
@@ -38,6 +39,9 @@ export function EditTimeLogDialog({
   const [memo, setMemo] = useState("");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  // Where the time is booked: moving it to another task (or project) is part of editing.
+  const [projectId, setProjectId] = useState("");
+  const [taskId, setTaskId] = useState("");
   const [submitted, setSubmitted] = useState(false);
   const open = Boolean(incoming);
   const running = Boolean(log?.isRunning);
@@ -48,6 +52,8 @@ export function EditTimeLogDialog({
       setMemo(log.memo ?? "");
       setStart(toDateTimeInput(log.startTime));
       setEnd(log.endTime ? toDateTimeInput(log.endTime) : "");
+      setProjectId(log.project?._id ?? "");
+      setTaskId(log.task?._id ?? "");
       setSubmitted(false);
     }
     // Reset only when a different log is opened (not on background refetches).
@@ -69,6 +75,12 @@ export function EditTimeLogDialog({
       if (log.endTime && end !== toDateTimeInput(log.endTime)) {
         input.endTime = fromDateTimeInput(end);
       }
+      // Moved to another task / project.
+      if (taskId !== (log.task?._id ?? "") || projectId !== (log.project?._id ?? "")) {
+        if (!taskId && !projectId) return;
+        input.task = taskId || null;
+        input.project = projectId || null;
+      }
     }
     if (Object.keys(input).length === 0) {
       onOpenChange(false);
@@ -85,7 +97,7 @@ export function EditTimeLogDialog({
           <DialogDescription>
             {running
               ? "This timer is still running — only the memo can be changed."
-              : "Adjust the times or memo. Overlapping entries are rejected."}
+              : "Adjust the times or memo, or move the time to another task. Overlapping entries are rejected."}
           </DialogDescription>
         </DialogHeader>
         {log && (
@@ -104,6 +116,22 @@ export function EditTimeLogDialog({
 
             {!running && (
               <>
+                <TimeTargetFields
+                  idPrefix="edit-log"
+                  projectId={projectId}
+                  taskId={taskId}
+                  enabled={open}
+                  invalid={submitted && !projectId && !taskId}
+                  onChange={(next) => {
+                    setProjectId(next.projectId);
+                    setTaskId(next.taskId);
+                  }}
+                />
+                {(taskId !== (log.task?._id ?? "") || projectId !== (log.project?._id ?? "")) && (
+                  <p className="-mt-2 text-xs text-muted-foreground">
+                    Saving moves this time to the task chosen above (it leaves {log.task?.shortCode ?? log.project?.code ?? "where it is now"}).
+                  </p>
+                )}
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="edit-log-start">Start</Label>
