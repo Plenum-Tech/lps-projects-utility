@@ -5,6 +5,7 @@ import { logActivity } from "../lib/activityLog.js";
 import { linkProjectsToRows } from "../lib/manpower/match.js";
 import { canEditManpower } from "../lib/manpowerAccess.js";
 import { changesSinceSent, ExceptionBatch, isLeadershipActor, requestChange, sendForApproval } from "../lib/changeRequests.js";
+import { markPlanNoticeBase, planNoticeInfo, sendPlanNotice } from "../lib/manpowerNotice.js";
 import { rowPeopleKey } from "../lib/manpowerSync.js";
 import { applyPlanDelta, combineNotes, deltaIsEmpty, planDelta, withoutConflicts } from "../lib/manpowerMerge.js";
 import { ChangeRequest } from "../models/ChangeRequest.js";
@@ -270,6 +271,8 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     month,
     version: plan.version,
     pendingRequest: pendingVersion != null ? await pendingRequestInfo(month, pendingVersion) : null,
+    // Leadership: the live changes not emailed yet ("Send email").
+    planNotice: (await isLeadershipActor(req.user!)) ? await planNoticeInfo(month) : null,
     // The version edits start from (the latest approved one).
     latestVersion: latestApproved?.version ?? null,
     pendingVersion,
@@ -350,6 +353,34 @@ export async function sendPlan(req: Request, res: Response): Promise<void> {
     month,
     changeRequestId: String(request._id),
     message: update ? "Update sent to leadership for approval" : `Sent to leadership for approval (${request.changes.length} change${request.changes.length === 1 ? "" : "s"})`,
+  });
+}
+
+/**
+ * POST /api/manpower/:month/notify — `{ note? }`, leadership: emails the plan's changes since the
+ * last email (approvers: all of them; each affected person: their own lines). Again later: an update.
+ */
+export async function notifyPlan(req: Request, res: Response): Promise<void> {
+  const month = param(req, "month") ?? "";
+  if (!MONTH.test(month)) {
+    res.status(400).json({ error: "month must be YYYY-MM" });
+    return;
+  }
+  if (!(await isLeadershipActor(req.user!))) {
+    res.status(403).json({ error: "Only leadership can email the plan's changes" });
+    return;
+  }
+  const body = (req.body ?? {}) as { note?: unknown };
+  const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
+  const sent = await sendPlanNotice(month, req.user!, note, req.ip);
+  if (!sent) {
+    res.status(409).json({ error: "Nothing new to email — everyone already has these changes" });
+    return;
+  }
+  res.json({
+    month,
+    ...sent,
+    message: `Emailed ${sent.changes} change${sent.changes === 1 ? "" : "s"} to leadership${sent.people ? ` and ${sent.people} ${sent.people === 1 ? "person" : "people"} affected` : ""}`,
   });
 }
 
@@ -506,7 +537,6 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     note?: unknown;
     maxProjectsPerPerson?: unknown;
     source?: unknown;
-    notifyTeam?: unknown;
   };
   const rows = await parseRows(body.rows);
   if (!Array.isArray(rows)) {
@@ -559,7 +589,6 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
       source,
       actor: req.user!,
       ip: req.ip,
-      notifyTeam: body.notifyTeam === true,
     });
     res.status(201).json({ month, version: saved.version, ...(saved.pendingApproval ? { pendingApproval: saved.pendingApproval } : {}) });
   } catch (err) {
@@ -589,7 +618,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
  * they are (order, everything).
  * Nobody is told about a save: a non-leader's pending changes wait (quietly) until
  * someone sends them for approval (sendPlan); leadership's live changes reach the
- * linked projects' teams without notifications unless `notifyTeam`.
+ * linked projects' teams quietly, and "Send email" (notifyPlan) tells people later.
  */
 export async function writePlanVersion(params: {
   month: string;
@@ -605,8 +634,6 @@ export async function writePlanVersion(params: {
   source: "edit" | "copy";
   actor: IUser;
   ip?: string;
-  /** Leadership: tell the people added to projects and the approvers (plan → project sync). Default off. */
-  notifyTeam?: boolean;
 }): Promise<{ version: number; pendingApproval?: string }> {
   const { month, before, actor, ip } = params;
   // Brand-linked lines are named after their brand (new, relinked or renamed lines).
@@ -628,6 +655,8 @@ export async function writePlanVersion(params: {
   const { dropDuplicateLinesOnSave } = await import("../lib/manpowerDedupe.js");
   const { rows, repin } = await dropDuplicateLinesOnSave(month, onto.rows, merged);
   const addsUp = needsApproval && Boolean(pending);
+  // Leadership: where the changes not emailed yet start (before this version exists).
+  if (!needsApproval) await markPlanNoticeBase(month);
   const plan = await ManpowerPlan.create({
     month,
     version: (highest?.version ?? 0) + 1,
@@ -644,7 +673,7 @@ export async function writePlanVersion(params: {
   if (!needsApproval) {
     // Projects pinned to a dropped duplicate line follow the brand's kept line.
     for (const [from, to] of repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
-    await syncPlanToProjects(month, approvedRows, rows, actor, ip, { notify: params.notifyTeam === true });
+    await syncPlanToProjects(month, approvedRows, rows, actor, ip, { notify: false });
     // The work waiting for approval is carried onto the new approved version.
     if (pending) await rebasePendingPlan(month, { version: plan.version, rows }, actor, ip, approvedRows);
   } else {

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getPlan, listPlanMonths, listPlanRows, savePlan, sendPlan, suggestTeam } from "../controllers/manpower.js";
+import { getPlan, listPlanMonths, listPlanRows, notifyPlan, savePlan, sendPlan, suggestTeam } from "../controllers/manpower.js";
 import { requireManpowerEditor } from "../lib/manpowerAccess.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
@@ -17,5 +17,7 @@ router.get("/:month", requireRole("admin", "head"), getPlan);
 router.post("/:month", requireRole("admin", "head"), requireManpowerEditor, savePlan);
 // Saved plan changes go to leadership only when someone sends them (plan editors, leadership or the person who saved).
 router.post("/:month/send", sendPlan);
+// Leadership's live changes: emailed when they press "Send email".
+router.post("/:month/notify", notifyPlan);
 
 export default router;

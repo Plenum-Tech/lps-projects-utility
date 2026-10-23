@@ -3293,6 +3293,21 @@ export interface PendingPlanRequestInfo {
   savedBy: { _id: string; name: string } | null;
 }
 
+/** Leadership's live plan changes since the last "Send email" (they're saved quietly). */
+export interface PlanNoticeInfo {
+  /** The latest approved version. */
+  version: number;
+  /** The approved version the changes are counted from (the last one emailed). */
+  baseVersion: number | null;
+  /** Change lines not emailed yet. */
+  changes: number;
+  savedAt: string;
+  savedBy: { _id: string; name: string } | null;
+  emailedAt: string | null;
+  emailedBy: { _id: string; name: string } | null;
+  emailedVersion: number | null;
+}
+
 /** The month's manpower plan version waiting for leadership approval. */
 export interface PendingPlanInfo {
   version: number;
@@ -3308,6 +3323,8 @@ interface BrandDashboardBase {
   month: string;
   planVersion: number | null;
   pendingPlan?: PendingPlanInfo | null;
+  /** Leadership: the plan's live changes not emailed yet ("Send email"). */
+  planNotice?: PlanNoticeInfo | null;
   /** The viewer's plan saves are approved at once (leadership); else they wait for approval. */
   planSavesApproved?: boolean;
   /** Names of everyone referenced (plan, pending plan, leads, teams). */
@@ -4185,6 +4202,8 @@ export interface ManpowerPlanResponse {
   pendingVersion?: number | null;
   /** Its change request: sent to leadership or not yet. */
   pendingRequest?: PendingPlanRequestInfo | null;
+  /** Leadership: the live changes not emailed yet. */
+  planNotice?: PlanNoticeInfo | null;
   /** The viewer's saves are approved at once (leadership); else they wait for approval. */
   savesApproved?: boolean;
   /** Status of the version shown. */
@@ -4228,8 +4247,6 @@ export interface ManpowerSaveInput {
   note: string;
   maxProjectsPerPerson?: number;
   source?: "edit" | "copy";
-  /** Leadership: tell the people added to projects and the approvers. Default off. */
-  notifyTeam?: boolean;
 }
 
 /** GET /manpower/suggest — the plan row a project matches, as a team by role. */

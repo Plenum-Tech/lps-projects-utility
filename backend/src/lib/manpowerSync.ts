@@ -186,6 +186,8 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
     const deduped = await dropDuplicateLinesOnSave(month, rows, nextRows);
     nextRows = deduped.rows;
     if (pinTo && deduped.repin.has(pinTo)) pinTo = deduped.repin.get(pinTo)!;
+    const { markPlanNoticeBase } = await import("./manpowerNotice.js");
+    await markPlanNoticeBase(month);
     const saved = await ManpowerPlan.create({
       month,
       version: (highest?.version ?? plan.version) + 1,

@@ -57,7 +57,23 @@ export function useSaveManpowerPlan() {
       void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
       // Brands → Overview / Allocation / brand pages read the latest plan version.
       void queryClient.invalidateQueries({ queryKey: brandKeys.all });
-      toast.success(data.pendingApproval ?? `Saved as version ${data.version}`);
+      toast.success(data.pendingApproval ?? `Version ${data.version} saved — not emailed yet. Use "Send email" when you're ready.`);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
+/** Leadership: emails the plan's live changes since the last email (approvers + the people affected). */
+export function useSendPlanEmail() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ month, note }: { month: string; note?: string }) =>
+      (await api.post<{ month: string; version: number; changes: number; people: number; message: string }>(`/manpower/${month}/notify`, { note })).data,
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: brandKeys.all });
+      toast.success(data.message);
     },
     onError: (error) => toast.error(getErrorMessage(error)),
   });

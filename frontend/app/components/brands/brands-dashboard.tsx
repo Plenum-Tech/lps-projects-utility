@@ -5,6 +5,7 @@ import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { PlanLeads } from "@/components/brands/plan-leads";
 import { MatchBadge } from "@/components/brands/scope-compare";
+import { PlanEmailBanner } from "@/components/manpower/plan-send-banner";
 import { AllocCell, CellLegend, cellTone, PendingPlanBanner, planVersionText, SaveBar, StatusDot, teamCell, useNameOf, usePlanEdits, type CellOption } from "@/components/brands/alloc-cell";
 import { EmptyState, QueryError } from "@/components/globals/query-states";
 import { Badge } from "@/components/ui/badge";
@@ -385,6 +386,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
             : `Same people as the Manpower plan (${monthLabel(month)}: ${planVersionText(data.planVersion, data.pendingPlan)}). Only leadership and Nazeer change it.`}
         </p>
       </div>
+      {data.planNotice && <PlanEmailBanner month={month} notice={data.planNotice} />}
       {data.pendingPlan && <PendingPlanBanner pending={data.pendingPlan} savesApproved={data.planSavesApproved} month={month} canSend={Boolean(data.canEditPlan)} />}
       <div className="overflow-x-auto rounded-xl border bg-card">
         <table className="w-full text-sm">
@@ -460,7 +462,6 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
         ready={edits.ready}
         saving={edits.save.isPending}
         onReset={edits.reset}
-        notify={data.planSavesApproved ? { value: edits.notifyTeam, set: edits.setNotifyTeam } : undefined}
         onSave={() => edits.submit(brandInfo, `Brands → Allocation: ${edits.count} change${edits.count === 1 ? "" : "s"}`, refetch)}
       />
     </div>

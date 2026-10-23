@@ -24,7 +24,7 @@ import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/
 
 import { InlineCellEditor, RowDialog, type CellValue } from "./plan-editors";
 import { PeopleView } from "./people-view";
-import { PlanSendBanner } from "./plan-send-banner";
+import { PlanEmailBanner, PlanSendBanner } from "./plan-send-banner";
 import { PlanTable, type TableRow } from "./plan-table";
 import { UnlinkedProjects } from "./unlinked-projects";
 
@@ -67,8 +67,6 @@ interface Draft {
   note: string;
   maxProjects: string;
   dirty: boolean;
-  /** Leadership: tell the people added to projects and the approvers (off: a quiet save). */
-  notifyTeam: boolean;
 }
 
 
@@ -202,7 +200,6 @@ export function ManpowerPage() {
       note: "",
       maxProjects: String(data?.plan.maxProjectsPerPerson ?? months.data?.limits.defaultMaxProjectsPerPerson ?? 6),
       dirty: source === "copy",
-      notifyTeam: false,
     });
     setParam({ tab: "plan" });
   }
@@ -222,7 +219,6 @@ export function ManpowerPage() {
         note: draft.note.trim(),
         maxProjectsPerPerson: Number.isInteger(max) && max >= 1 ? max : undefined,
         source: draft.source,
-        notifyTeam: data?.savesApproved ? draft.notifyTeam : undefined,
       },
       {
         onSuccess: () => {
@@ -363,19 +359,9 @@ export function ManpowerPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {data?.savesApproved ? (
-              <label className="flex cursor-pointer items-center gap-1.5 text-xs" title="Tell the people added to projects and the approvers about this change">
-                <input
-                  type="checkbox"
-                  className="size-3.5 accent-primary"
-                  checked={draft.notifyTeam}
-                  onChange={(e) => setDraft({ ...draft, notifyTeam: e.target.checked })}
-                />
-                Notify team
-              </label>
-            ) : (
-              <span className="text-xs text-muted-foreground">Saved quietly — send for approval when ready</span>
-            )}
+            <span className="text-xs text-muted-foreground">
+              {data?.savesApproved ? "Saved quietly — email the changes when ready" : "Saved quietly — send for approval when ready"}
+            </span>
             <Button variant="outline" size="sm" onClick={() => (draft.dirty ? setConfirmDiscard(true) : setDraft(null))} disabled={save.isPending}>
               Cancel
             </Button>
@@ -466,6 +452,7 @@ export function ManpowerPage() {
           </div>
 
           <TabsContent value="plan" className="mt-4 space-y-2">
+            {data && !editing && data.planNotice && <PlanEmailBanner month={month} notice={data.planNotice} />}
             {data && !editing && data.pendingRequest && (
               <PlanSendBanner month={month} request={data.pendingRequest} canSend={canEdit} savesApproved={data.savesApproved} />
             )}

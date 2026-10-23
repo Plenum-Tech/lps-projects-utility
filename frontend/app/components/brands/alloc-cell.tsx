@@ -423,8 +423,6 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
   const save = useSaveManpowerPlan();
   const [edits, setEdits] = useState<Record<string, string[]>>({});
   const [original, setOriginal] = useState<Record<string, string[]>>({});
-  // Leadership's saves: nobody is told unless they tick "Notify team".
-  const [notifyTeam, setNotifyTeam] = useState(false);
   const count = Object.keys(edits).length;
   // 404 = no plan for the month yet: the first save creates version 1.
   const noPlan = (plan.error as { response?: { status?: number } } | null)?.response?.status === 404;
@@ -470,7 +468,6 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
   function reset() {
     setEdits({});
     setOriginal({});
-    setNotifyTeam(false);
   }
 
   function submit(brands: Map<string, BrandInfo>, note: string, onDone?: () => void) {
@@ -478,7 +475,7 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
     const base = loaded ? plan.data! : null;
     const rows = base ? base.plan.rows.map(rowToInput) : [];
     save.mutate(
-      { month, baseVersion: base ? (fromPending ?? base.latestVersion) : null, rows: applyCellEdits(rows, edits, brands), note, notifyTeam: notifyTeam || undefined },
+      { month, baseVersion: base ? (fromPending ?? base.latestVersion) : null, rows: applyCellEdits(rows, edits, brands), note },
       {
         onSuccess: () => {
           reset();
@@ -488,7 +485,7 @@ export function usePlanEdits(month: string, enabled: boolean, fromPending: numbe
     );
   }
 
-  return { ...api, count, ready, plan, save, submit, reset, notifyTeam, setNotifyTeam };
+  return { ...api, count, ready, plan, save, submit, reset };
 }
 
 /** Sticky "Save changes (n)" bar for unsaved cell edits. */
@@ -499,7 +496,6 @@ export function SaveBar({
   onSave,
   onReset,
   hint,
-  notify,
 }: {
   count: number;
   saving: boolean;
@@ -507,8 +503,6 @@ export function SaveBar({
   onSave: () => void;
   onReset: () => void;
   hint?: string;
-  /** Leadership: the "Notify team" option (off = a quiet save). */
-  notify?: { value: boolean; set: (value: boolean) => void };
 }) {
   if (count === 0) return null;
   return (
@@ -518,12 +512,6 @@ export function SaveBar({
         <span className="ml-2 text-xs text-muted-foreground">{hint ?? "Saved as a new version of the manpower plan — the same data as the Manpower page."}</span>
       </p>
       <div className="flex flex-wrap items-center gap-2">
-        {notify && (
-          <label className="flex cursor-pointer items-center gap-1.5 text-xs" title="Tell the people added to projects and the approvers about this change">
-            <input type="checkbox" className="size-3.5 accent-primary" checked={notify.value} onChange={(e) => notify.set(e.target.checked)} />
-            Notify team
-          </label>
-        )}
         <Button type="button" variant="outline" size="sm" onClick={onReset} disabled={saving}>
           <LuUndo2 aria-hidden /> Discard
         </Button>

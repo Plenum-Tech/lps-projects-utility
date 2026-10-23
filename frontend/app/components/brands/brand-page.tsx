@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { LuArrowLeft, LuArrowRightLeft, LuCircleX, LuClock, LuDownload, LuExternalLink, LuLoaderCircle, LuPaperclip, LuPencil, LuPlus, LuScissors, LuSparkles, LuTags, LuTrash2, LuUndo2, LuX } from "react-icons/lu";
 
+import { PlanEmailBanner } from "@/components/manpower/plan-send-banner";
 import { AllocCell, CellLegend, cellTone, PendingPlanBanner, planVersionText, SaveBar, StatusDot, teamCell, useNameOf, usePlanEdits } from "@/components/brands/alloc-cell";
 import { monthLabel, MonthPicker, poolOptions, shortName } from "@/components/brands/brands-dashboard";
 import { MatchBadge, OtherScopeChange, OtherScopeField, OtherScopeText, ScopeDiffView, ScopeMatchBox, ScopeTotalCheck, ScopeTotalField } from "@/components/brands/scope-compare";
@@ -1123,6 +1124,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         title={`Team · Manpower plan ${monthLabel(month)} · ${planVersionText(data.planVersion, data.pendingPlan)}`}
         actions={<CellLegend max={max} pending={Boolean(data.pendingPlan)} />}
       >
+        {data.planNotice && <PlanEmailBanner className="mb-2" month={month} notice={data.planNotice} />}
         {data.pendingPlan && (
           <PendingPlanBanner className="mb-2" pending={data.pendingPlan} savesApproved={data.planSavesApproved} month={month} canSend={Boolean(data.canEditPlan)} />
         )}
@@ -1156,7 +1158,6 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           ready={edits.ready}
           saving={edits.save.isPending}
           onReset={edits.reset}
-          notify={data.planSavesApproved ? { value: edits.notifyTeam, set: edits.setNotifyTeam } : undefined}
           onSave={() =>
             edits.submit(new Map([[b._id, { name: b.name, isPitch: b.isPitch }]]), `Brand ${b.name}: ${edits.count} team change${edits.count === 1 ? "" : "s"}`, () => void detail.refetch())
           }

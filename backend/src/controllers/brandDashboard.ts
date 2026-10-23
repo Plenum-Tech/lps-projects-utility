@@ -257,6 +257,13 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
   return { month, plan, pendingPlan: pending?.info ?? null, rows, summaries, people, names, pool, max: load.max, projectsByBrand, isCurrent };
 }
 
+/** Leadership: the plan's live changes not emailed yet ("Send email"). */
+async function planNoticeFor(month: string, user: IUser) {
+  if (!(await isLeadershipActor(user))) return null;
+  const { planNoticeInfo } = await import("../lib/manpowerNotice.js");
+  return planNoticeInfo(month);
+}
+
 async function permissions(user: IUser) {
   return {
     canCreate: canCreateBrand(user),
@@ -284,6 +291,7 @@ export async function brandOverview(req: Request, res: Response): Promise<void> 
     month,
     planVersion: ctx.plan?.version ?? null,
     pendingPlan: ctx.pendingPlan,
+    planNotice: await planNoticeFor(month, user),
     max: ctx.max,
     roles: MANPOWER_ROLES,
     ...(await permissions(user)),
@@ -419,6 +427,7 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
     month,
     planVersion: ctx.plan?.version ?? null,
     pendingPlan: ctx.pendingPlan,
+    planNotice: await planNoticeFor(month, user),
     max: ctx.max,
     roles: MANPOWER_ROLES,
     ...(await permissions(user)),
