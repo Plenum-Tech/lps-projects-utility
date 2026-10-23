@@ -257,9 +257,9 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
   return { month, plan, pendingPlan: pending?.info ?? null, rows, summaries, people, names, pool, max: load.max, projectsByBrand, isCurrent };
 }
 
-/** Leadership: the plan's live changes not emailed yet ("Send email"). */
+/** Leadership and plan editors: the plan's live changes not emailed yet ("Send email"). */
 async function planNoticeFor(month: string, user: IUser) {
-  if (!(await isLeadershipActor(user))) return null;
+  if (!canEditManpower(user) && !(await isLeadershipActor(user))) return null;
   const { planNoticeInfo } = await import("../lib/manpowerNotice.js");
   return planNoticeInfo(month);
 }

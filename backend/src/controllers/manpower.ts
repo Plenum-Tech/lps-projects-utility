@@ -271,8 +271,8 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     month,
     version: plan.version,
     pendingRequest: pendingVersion != null ? await pendingRequestInfo(month, pendingVersion) : null,
-    // Leadership: the live changes not emailed yet ("Send email").
-    planNotice: (await isLeadershipActor(req.user!)) ? await planNoticeInfo(month) : null,
+    // Leadership and plan editors: the live changes not emailed yet ("Send email").
+    planNotice: canEditManpower(req.user!) || (await isLeadershipActor(req.user!)) ? await planNoticeInfo(month) : null,
     // The version edits start from (the latest approved one).
     latestVersion: latestApproved?.version ?? null,
     pendingVersion,
@@ -357,7 +357,7 @@ export async function sendPlan(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * POST /api/manpower/:month/notify — `{ note? }`, leadership: emails the plan's changes since the
+ * POST /api/manpower/:month/notify — `{ note? }`, leadership and plan editors: emails the plan's changes since the
  * last email (approvers: all of them; each affected person: their own lines). Again later: an update.
  */
 export async function notifyPlan(req: Request, res: Response): Promise<void> {
@@ -366,8 +366,8 @@ export async function notifyPlan(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "month must be YYYY-MM" });
     return;
   }
-  if (!(await isLeadershipActor(req.user!))) {
-    res.status(403).json({ error: "Only leadership can email the plan's changes" });
+  if (!canEditManpower(req.user!) && !(await isLeadershipActor(req.user!))) {
+    res.status(403).json({ error: "Only leadership and the plan editors can email the plan's changes" });
     return;
   }
   const body = (req.body ?? {}) as { note?: unknown };

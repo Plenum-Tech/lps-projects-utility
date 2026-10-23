@@ -128,6 +128,9 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   if (deduped.repin.size) plan.set("rows", deduped.rows);
   plan.status = "approved";
   await plan.save();
+  // Approved request: the requester is told by the decision; it stays out of leadership's "Send email".
+  const { markPlanApprovedVersion } = await import("../lib/manpowerNotice.js");
+  await markPlanApprovedVersion(plan.month, plan.version);
   for (const [from, to] of deduped.repin) await Project.updateMany({ manpowerRow: from }, { $set: { manpowerRow: to } });
   // The approved lines' people become the linked projects' teams.
   await syncPlanToProjects(plan.month, (live?.rows ?? []) as IManpowerRow[], plan.rows as IManpowerRow[], decider, ip);

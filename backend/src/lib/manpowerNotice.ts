@@ -7,6 +7,7 @@ import { User, type IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { clip } from "./changeRequests.js";
 import { linkProjectsToRows } from "./manpower/match.js";
+import { applyPlanDelta, planDelta } from "./manpowerMerge.js";
 import { MANPOWER_ROLES } from "./manpowerRoles.js";
 import { notifyUsersAsync } from "./notifications.js";
 import { projectApproverIds } from "./projectApproval.js";
@@ -46,19 +47,49 @@ export async function markPlanNoticeBase(month: string): Promise<void> {
   }
 }
 
-async function rowsOf(month: string, version: number | null): Promise<IManpowerRow[]> {
-  if (version == null) return [];
-  return ((await ManpowerPlan.findOne({ month, version }).select("rows").lean())?.rows ?? []) as IManpowerRow[];
+/** An approved change request made `version` live: its changes stay out of the next "Send email". */
+export async function markPlanApprovedVersion(month: string, version: number): Promise<void> {
+  try {
+    await markPlanNoticeBase(month);
+    await ManpowerPlanNotice.updateOne({ month }, { $addToSet: { approvedVersions: version } });
+  } catch (err) {
+    console.error("[manpower] notice approval mark failed", month, err);
+  }
 }
 
-/** The latest approved version vs the last emailed one: what "Send email" would send. */
+/**
+ * The rows "not emailed yet" are counted from: the last emailed version, with every approved
+ * request's own step (previous approved version → the version it made live) laid on top, as if
+ * already known. A later leadership edit of the same line / cell still differs, so it counts.
+ */
+async function knownRows(month: string, baseVersion: number | null, latestVersion: number, approvedVersions: number[]): Promise<IManpowerRow[]> {
+  const versions = await ManpowerPlan.find({ month, ...APPROVED_PLAN, version: { $gte: baseVersion ?? 0, $lte: latestVersion } })
+    .sort({ version: 1 })
+    .select("version rows")
+    .lean();
+  const start = baseVersion != null ? versions.find((v) => v.version === baseVersion) : undefined;
+  let previous = (start?.rows ?? []) as IManpowerRow[];
+  let known = previous;
+  const approvals = new Set(approvedVersions);
+  for (const v of versions) {
+    if (baseVersion != null && v.version <= baseVersion) continue;
+    const rows = v.rows as IManpowerRow[];
+    if (approvals.has(v.version)) known = applyPlanDelta(known, planDelta(previous, rows));
+    previous = rows;
+  }
+  return known;
+}
+
+/** The latest approved version vs what people already know: what "Send email" would send. */
 async function pendingNotice(month: string) {
   const latest = await ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version rows createdAt createdBy").populate("createdBy", "name").lean();
   if (!latest) return null;
+  const notice = await ManpowerPlanNotice.findOne({ month }).select("approvedVersions").lean();
   const baseVersion = await baseVersionOf(month);
   const { planChanges } = await import("../controllers/manpower.js");
-  const before = baseVersion === latest.version ? (latest.rows as IManpowerRow[]) : await rowsOf(month, baseVersion);
-  const changes = baseVersion === latest.version ? [] : await planChanges(before, latest.rows as IManpowerRow[]);
+  const after = latest.rows as IManpowerRow[];
+  const before = baseVersion === latest.version ? after : await knownRows(month, baseVersion, latest.version, notice?.approvedVersions ?? []);
+  const changes = baseVersion === latest.version ? [] : await planChanges(before, after);
   return { latest, baseVersion, before, changes };
 }
 
@@ -140,7 +171,7 @@ async function projectsByLine(month: string, rows: IManpowerRow[]): Promise<Map<
 /**
  * "Send email": one message about every plan change since the last email — the approvers
  * get the whole list, each affected person their own lines (and the projects on them).
- * Returns null when there is nothing new to send.
+ * Returns null when there is nothing new to send. Plan editors and leadership send it.
  */
 export async function sendPlanNotice(month: string, actor: IUser, note: string, ip?: string): Promise<{ version: number; changes: number; people: number } | null> {
   const pending = await pendingNotice(month);

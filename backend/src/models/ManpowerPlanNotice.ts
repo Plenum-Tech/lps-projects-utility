@@ -16,6 +16,11 @@ export interface IManpowerPlanNotice extends mongoose.Document {
   emailedBy: mongoose.Types.ObjectId | null;
   /** The approved version that email covered (= baseVersion right after sending). */
   emailedVersion: number | null;
+  /**
+   * Approved versions that came from an approved change request (a non-leader's changes, whose
+   * requester was told by the decision): their changes are left out of "not emailed yet".
+   */
+  approvedVersions: number[];
   createdAt: Date;
   updatedAt: Date;
 }
@@ -27,6 +32,7 @@ const noticeSchema = new Schema<IManpowerPlanNotice>(
     emailedAt: { type: Date, default: null },
     emailedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     emailedVersion: { type: Number, default: null },
+    approvedVersions: { type: [Number], default: [] },
   },
   { timestamps: true }
 );
