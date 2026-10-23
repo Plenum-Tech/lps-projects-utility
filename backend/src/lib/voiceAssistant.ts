@@ -13,15 +13,21 @@ import { isProjectApproved } from "./projectApproval.js";
 import { isProjectExpired } from "./projectExpiry.js";
 import { SCOPE_UNITS, scopeTotals } from "./scopeUnits.js";
 import { canManageTask, canViewTaskAsync, isAssignee, loggedMinutesByTask, taskProjectFlags } from "./taskAccess.js";
+import { richTextToPlain } from "./richText.js";
 import {
+  briefHtml,
+  briefPreview,
+  COMMON_WORDS,
+  editDistance,
   findTaskCodes,
   matchPeople,
   matchProjects,
   matchUnit,
   parseVoiceText,
+  tidyBriefRules,
   VOICE_FIELDS,
 } from "./voiceParse.js";
-import type { Extracted, VocabPerson, VocabProject, VoiceAction, VoiceField, VoiceIntent } from "./voiceParse.js";
+import type { Extracted, TidyBrief, VocabPerson, VocabProject, VoiceAction, VoiceField, VoiceIntent } from "./voiceParse.js";
 
 // ---------------------------------------------------------------------------
 // Voice task assistant (POST /api/voice/transcribe + /understand). A chat that
@@ -105,6 +111,15 @@ export interface VoiceDraft {
   finalUrl: string | null;
   /** A file / photo the app holds for the close (uploaded only after confirm). */
   finalFile: { name: string; size: number } | null;
+  /** Create: the project whose existing tasks were already offered (asked once per project). */
+  existingFor: string | null;
+  /** "Work on this task": the task "close it" / "log time" refer to. */
+  focusTaskId: string | null;
+  /** Create: the tidied brief offered, and what the person chose. */
+  briefTidy: TidyBrief | null;
+  briefChoice: "tidy" | "plain" | null;
+  /** What is saved as the task's description (simple HTML; set by the server each turn). */
+  briefHtml: string | null;
 }
 
 export function emptyDraft(): VoiceDraft {
@@ -129,6 +144,11 @@ export function emptyDraft(): VoiceDraft {
     note: null,
     finalUrl: null,
     finalFile: null,
+    existingFor: null,
+    focusTaskId: null,
+    briefTidy: null,
+    briefChoice: null,
+    briefHtml: null,
   };
 }
 
@@ -390,7 +410,18 @@ export async function sanitizeDraft(ctx: VoiceContext, raw: unknown): Promise<Vo
     d.startDate = dayKey(r.startDate);
     d.reworkSource = r.reworkSource === "internal" || r.reworkSource === "external" ? r.reworkSource : null;
     if (d.iteration === "rework") d.reworkOf = await reloadTask(ctx, r.reworkOf, "rework");
+    d.existingFor = d.project && r.existingFor === d.project.id ? d.project.id : null;
+    const tidy = r.briefTidy as { objective?: unknown; bullets?: unknown } | null | undefined;
+    if (d.brief && tidy && typeof tidy.objective === "string" && Array.isArray(tidy.bullets)) {
+      d.briefTidy = {
+        objective: tidy.objective.slice(0, 500),
+        bullets: (tidy.bullets as unknown[]).filter((b): b is string => typeof b === "string").slice(0, 12).map((b) => b.slice(0, 300)),
+      };
+    }
+    d.briefChoice = d.brief && (r.briefChoice === "tidy" || r.briefChoice === "plain") ? r.briefChoice : null;
+    if (d.briefChoice === "tidy" && !d.briefTidy) d.briefChoice = null;
   }
+  d.focusTaskId = typeof r.focusTaskId === "string" && mongoose.isValidObjectId(r.focusTaskId) ? r.focusTaskId : null;
   if (d.action === "close" || d.action === "log_time") {
     d.task = await reloadTask(ctx, r.task, d.action);
     const m = Number(r.minutes);
@@ -504,6 +535,7 @@ async function aiExtract(
     `The assistant's last question was for: ${draft.asking ?? "nothing yet"}. A short reply answers that question (a brief, short name, outcome note or link is taken whole).`,
     "Fields: project = a project code from the list (or the name as said); unit = one of the project's units; quantity = whole number; shortName = the short task name without unit or quantity (max 80 chars);",
     "brief = what needs to be done; assigneesAdd / assigneesRemove = people's names as listed (\"me\" for the speaker); dueDate / startDate = YYYY-MM-DD (a weekday means the next one after today);",
+    "\"A → B\" or \"from A to B\" days are startDate → dueDate; a single day answering \"when does it start\" is startDate, answering \"when is it due\" is dueDate;",
     "iteration = new or rework (only when said); reworkOf = the original task's code (like MO-6); reworkSource = external when the client asked for it, internal for our own review;",
     "task = the task code (like ENOC-13), number, or title words; minutes = time spent; start / end = \"YYYY-MM-DDTHH:mm\" app time when a time range is said;",
     "note = the outcome note (close) or memo (log time) — what was done, without the code or the time; finalUrl = an http(s) link.",
@@ -683,7 +715,12 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
       else notes.push(`The quantity must be from 1 to ${TASK_TITLE_LIMITS.quantityMax}.`);
     }
     if (ex.shortName) draft.shortName = ex.shortName.slice(0, TASK_TITLE_LIMITS.shortNameMax);
-    if (ex.brief) draft.brief = ex.brief.slice(0, 2000);
+    if (ex.brief || ex.briefAppend) {
+      // A new (or longer) brief is offered tidied again (understand() fills briefTidy).
+      draft.brief = (ex.brief ?? [draft.brief, ex.briefAppend].filter(Boolean).join("\n")).slice(0, 2000);
+      draft.briefTidy = null;
+      draft.briefChoice = null;
+    }
     const byId = new Map(ctx.people.map((p) => [p.id, p]));
     for (const id of ex.addPeople ?? []) {
       const person = byId.get(id);
@@ -708,9 +745,17 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
     }
     if (ex.dueDate) draft.dueDate = ex.dueDate;
     if (ex.startDate) draft.startDate = ex.startDate;
+    // A day said on its own answers whichever date is still missing (due first).
+    if (ex.anyDate && !ex.dueDate && !ex.startDate) {
+      if (!draft.dueDate) draft.dueDate = ex.anyDate;
+      else if (!draft.startDate) draft.startDate = ex.anyDate;
+      else draft.dueDate = ex.anyDate;
+    }
     if (draft.startDate && draft.dueDate && draft.startDate > draft.dueDate) {
-      notes.push("The start date was after the due date, so I left the start date out.");
-      draft.startDate = null;
+      // The date said now is dropped, so the question comes again.
+      notes.push(`The due date can't be before the start date (${fmtDay(draft.startDate)} → ${fmtDay(draft.dueDate)}).`);
+      if (ex.startDate && !ex.dueDate) draft.startDate = null;
+      else draft.dueDate = null;
     }
     // A rework is due in two days unless said (the same default the server uses).
     if (draft.iteration === "rework" && !draft.dueDate) draft.dueDate = addDays(appToday(), 2).toISOString().slice(0, 10);
@@ -762,6 +807,188 @@ async function applyExtracted(ctx: VoiceContext, input: VoiceDraft, ex: Extracte
   return { draft, notes, override };
 }
 
+// ---------------------------------------------------------------------------
+// Existing tasks of the project, "new task like this", "work on this task"
+// ---------------------------------------------------------------------------
+
+export const EXISTING_NONE = "None — new name";
+const BRIEF_USE = "Use tidied brief";
+const BRIEF_KEEP = "Keep as I said";
+const BRIEF_EDIT = "Edit by voice";
+
+export interface VoiceExistingTask {
+  id: string;
+  code: string;
+  title: string;
+  status: string;
+}
+
+const RECENT_DONE_DAYS = 30;
+const STOP_WORDS = new Set(["the", "and", "for", "new", "task", "with", "from", "due", "this", "that"]);
+
+/**
+ * Up to 8 of the project's tasks — open, or completed in the last 30 days —
+ * best match first to what was said (unit / short name words), else newest.
+ */
+async function existingTasks(ctx: VoiceContext, d: VoiceDraft, said: string): Promise<VoiceExistingTask[]> {
+  if (!d.project) return [];
+  const since = new Date(Date.now() - RECENT_DONE_DAYS * 86_400_000);
+  const rows = await Task.find({
+    project: new mongoose.Types.ObjectId(d.project.id),
+    $or: [{ status: { $in: OPEN_STATUSES } }, { status: "completed", completedAt: { $gte: since } }],
+  })
+    .select("shortCode number title status titleParts updatedAt")
+    .sort({ updatedAt: -1 })
+    .limit(80)
+    .lean<Array<{ _id: mongoose.Types.ObjectId; shortCode?: string | null; number?: number; title: string; status: string; titleParts?: { unit?: string } }>>();
+  const words = [d.unit ?? "", d.shortName ?? "", said]
+    .join(" ")
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter((w) => w.length >= 3 && !STOP_WORDS.has(w));
+  const scored = rows.map((t, index) => {
+    const title = t.title.toLowerCase();
+    let score = 0;
+    if (d.unit && t.titleParts?.unit?.toLowerCase() === d.unit.toLowerCase()) score += 2;
+    for (const w of new Set(words)) if (title.includes(w)) score += 1;
+    return { t, score, index };
+  });
+  scored.sort((a, b) => b.score - a.score || a.index - b.index);
+  return scored.slice(0, 8).map(({ t }) => ({
+    id: String(t._id),
+    code: t.shortCode || (t.number ? `#${t.number}` : "Task"),
+    title: t.title,
+    status: STATUS_LABEL[t.status] ?? t.status,
+  }));
+}
+
+/** A task of the draft's project the user can see, by code ("EO26-10"). */
+async function projectTaskByCode(ctx: VoiceContext, code: string): Promise<ITask | null> {
+  const task = await Task.findOne({ shortCode: new RegExp(`^${escapeRe(code)}$`, "i") });
+  if (!task || !(await canViewTaskAsync(ctx.user, task))) return null;
+  return task;
+}
+
+/** "New task like EO26-10": its unit + short name with the next number, its people and brief as a start. */
+async function copyFromTask(ctx: VoiceContext, draft: VoiceDraft, code: string): Promise<{ draft: VoiceDraft; note: string }> {
+  const task = await projectTaskByCode(ctx, code);
+  const project = task?.project ? ctx.projects.find((p) => p.id === String(task.project)) : undefined;
+  if (!task || !project) return { draft, note: `I couldn't use ${code} here.` };
+  const next: VoiceDraft = { ...draft, action: "create", iteration: "new", project: { id: project.id, name: project.name, code: project.code } };
+  next.existingFor = project.id;
+  const parts = task.titleParts;
+  if (parts?.unit && parts.shortName) {
+    const shortName = parts.shortName.replace(/\s+R\d+$/, "");
+    const [top] = await Task.aggregate<{ max: number }>([
+      {
+        $match: {
+          project: new mongoose.Types.ObjectId(project.id),
+          "titleParts.unit": { $regex: `^${escapeRe(parts.unit)}$`, $options: "i" },
+          "titleParts.shortName": { $regex: `^${escapeRe(shortName)}$`, $options: "i" },
+        },
+      },
+      { $group: { _id: null, max: { $max: "$titleParts.quantity" } } },
+    ]);
+    next.unit = parts.unit;
+    next.shortName = shortName;
+    next.quantity = Math.min(TASK_TITLE_LIMITS.quantityMax, Math.max(top?.max ?? parts.quantity, parts.quantity) + 1);
+  } else {
+    // An older free title ("ENOC | October 2026 | Zoom campaign | ppm plan"): the parts the project name doesn't already say.
+    const key = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+    const projectParts = new Set(project.name.split("|").map(key));
+    const own = task.title.split("|").map((s) => s.trim()).filter((s) => s && !projectParts.has(key(s)));
+    next.shortName = (own.join(" | ") || task.title).slice(0, TASK_TITLE_LIMITS.shortNameMax);
+  }
+  if (next.assignees.length === 0) {
+    const byId = new Map(ctx.people.map((p) => [p.id, p]));
+    next.assignees = task.assignees.map((id) => byId.get(String(id))).filter((p): p is VocabPerson => Boolean(p)).map((p) => ({ id: p.id, name: p.name }));
+  }
+  const brief = richTextToPlain(task.description).trim();
+  if (brief && !next.brief) {
+    // The copied brief is a starting point, kept as it was written.
+    next.brief = brief.slice(0, 2000);
+    next.briefTidy = null;
+    next.briefChoice = "plain";
+  }
+  const name = next.unit ? composeTaskTitle({ unit: next.unit, quantity: next.quantity ?? 1, shortName: next.shortName ?? "" }) : next.shortName;
+  return {
+    draft: next,
+    note: `New task like ${task.shortCode}: ${name}${next.assignees.length ? `, for ${next.assignees.map((a) => a.name.split(" ")[0]).join(" and ")}` : ""}${brief ? ", with its brief to start from" : ""}.`,
+  };
+}
+
+/** An open task with the same unit + number + short name in the project (a duplicate). */
+async function duplicateOf(d: VoiceDraft): Promise<{ code: string; title: string } | null> {
+  if (d.action !== "create" || d.iteration === "rework" || !d.project || !d.unit || !d.quantity || !d.shortName) return null;
+  const task = await Task.findOne({
+    project: new mongoose.Types.ObjectId(d.project.id),
+    status: { $in: OPEN_STATUSES },
+    "titleParts.unit": { $regex: `^${escapeRe(d.unit)}$`, $options: "i" },
+    "titleParts.quantity": d.quantity,
+    "titleParts.shortName": { $regex: `^${escapeRe(d.shortName)}$`, $options: "i" },
+  })
+    .select("shortCode number title")
+    .lean<{ shortCode?: string | null; number?: number; title: string }>();
+  return task ? { code: task.shortCode || `#${task.number}`, title: task.title } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Brief tidy: AI rewrite (OpenAI, same model as the reading), else the rules
+// ---------------------------------------------------------------------------
+
+const TIDY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["objective", "bullets"],
+  properties: { objective: { type: "string" }, bullets: { type: "array", items: { type: "string" } } },
+} as const;
+
+async function tidyBrief(ctx: VoiceContext, text: string, projectName: string | null): Promise<TidyBrief> {
+  const rules = () => tidyBriefRules(text, allUnits(ctx));
+  if (!voiceConfigured()) return rules();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NLU_TIMEOUT_MS);
+  try {
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY!.trim()}` },
+      body: JSON.stringify({
+        model: process.env.VOICE_NLU_MODEL?.trim() || "gpt-4o-mini",
+        temperature: 0,
+        response_format: { type: "json_schema", json_schema: { name: "task_brief", strict: true, schema: TIDY_SCHEMA } },
+        messages: [
+          {
+            role: "system",
+            content: [
+              "Rewrite a spoken task brief from a creative agency into a short structured brief.",
+              "objective: one line saying what is to be done. bullets: the deliverables with counts / sizes / durations, language / captions, references / links, deadline notes, and any other instruction — one fact per bullet.",
+              "Keep EVERY fact and number from the brief, add nothing that isn't in it, don't guess. Keep the brief's language (English or Arabic). Short plain sentences, no markdown.",
+              projectName ? `Project: ${projectName}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n"),
+          },
+          { role: "user", content: text.slice(0, 2000) },
+        ],
+      }),
+    });
+    if (!res.ok) throw new Error(`OpenAI ${res.status}`);
+    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const out = JSON.parse(json.choices?.[0]?.message?.content ?? "{}") as Partial<TidyBrief>;
+    if (typeof out.objective !== "string" || !out.objective.trim() || !Array.isArray(out.bullets)) throw new Error("Unexpected model reply");
+    return {
+      objective: out.objective.trim().slice(0, 500),
+      bullets: out.bullets.filter((b) => typeof b === "string" && b.trim()).slice(0, 12).map((b) => b.trim().slice(0, 300)),
+    };
+  } catch (err) {
+    console.error("[voice] brief tidy failed, using the rules", err instanceof Error ? err.message : err);
+    return rules();
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Required fields still empty, in the order they are asked. Mirrors the task form and the close dialog. */
 export function missingFields(d: VoiceDraft): VoiceField[] {
   const out: VoiceField[] = [];
@@ -775,11 +1002,16 @@ export function missingFields(d: VoiceDraft): VoiceField[] {
       if (!d.reworkSource) out.push("reworkSource");
       // Brief, assignees and files come from the original task when not said.
     } else {
+      // The project's existing tasks come first: reuse a name or work on one instead.
+      if (d.project && d.existingFor !== d.project.id) out.splice(out.indexOf("iteration") >= 0 ? out.indexOf("iteration") : out.length, 0, "existing");
       if (!d.unit) out.push("unit");
       if (!d.quantity) out.push("quantity");
       if (!d.shortName) out.push("shortName");
       if (!d.brief) out.push("brief");
+      else if (!d.briefChoice) out.push("briefReview");
       if (d.assignees.length === 0) out.push("assignees");
+      // Start and due date are both required for new work.
+      if (!d.startDate || !d.dueDate) out.push("dates");
     }
     return out;
   }
@@ -794,8 +1026,50 @@ export function missingFields(d: VoiceDraft): VoiceField[] {
   return out;
 }
 
-async function question(ctx: VoiceContext, d: VoiceDraft, field: VoiceField): Promise<{ reply: string; chips: string[] }> {
+async function question(
+  ctx: VoiceContext,
+  d: VoiceDraft,
+  field: VoiceField,
+  said = ""
+): Promise<{ reply: string; chips: string[]; existing?: VoiceExistingTask[] }> {
   switch (field) {
+    case "existing": {
+      const existing = await existingTasks(ctx, d, said);
+      return {
+        reply: `Already in ${d.project?.code ?? "this project"} — tap one to make a new task like it or to work on it, or start a new name.`,
+        chips: [EXISTING_NONE],
+        existing,
+      };
+    }
+    case "briefReview":
+      return {
+        reply: d.briefTidy ? `Here's the brief tidied up:\n${briefPreview(d.briefTidy)}` : "Use the brief as you said it?",
+        chips: [...(d.briefTidy ? [BRIEF_USE] : []), BRIEF_KEEP, BRIEF_EDIT],
+      };
+    case "dates": {
+      const t = ctx.today;
+      const label = (key: string) => (key === t ? `Today ${fmtShortDay(key).slice(4)}` : fmtShortDay(key));
+      if (!d.startDate && !d.dueDate) {
+        return {
+          reply: "When does it start and when is it due?",
+          chips: [
+            [t, addDayKey(t, 1)],
+            [t, addDayKey(t, 2)],
+            [addDayKey(t, 1), addDayKey(t, 3)],
+            [t, addDayKey(t, 7)],
+          ].map(([a, b]) => `${label(a!)} → ${label(b!)}`),
+        };
+      }
+      if (!d.startDate) {
+        const options = [t, addDayKey(t, 1)].filter((k) => k <= d.dueDate!);
+        return { reply: `When does it start? (due ${fmtDay(d.dueDate!)})`, chips: options.map(label) };
+      }
+      const from = d.startDate > t ? d.startDate : t;
+      return {
+        reply: `When is it due? (starts ${fmtDay(d.startDate)})`,
+        chips: [addDayKey(from, 1), addDayKey(from, 2), addDayKey(from, 7)].map(label),
+      };
+    }
     case "action":
       return { reply: "I can create a task, close a task or log time. What would you like to do?", chips: ["New task", "Close a task", "Log time"] };
     case "project":
@@ -852,6 +1126,14 @@ const fmtDay = (key: string) =>
   new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(
     new Date(`${key}T00:00:00Z`)
   );
+/** "Sat 24 Oct" (chips; parsed back by resolveLooseDay). */
+function fmtShortDay(key: string): string {
+  const d = new Date(`${key}T00:00:00Z`);
+  const weekday = new Intl.DateTimeFormat("en-GB", { weekday: "short", timeZone: "UTC" }).format(d);
+  const month = new Intl.DateTimeFormat("en-GB", { month: "short", timeZone: "UTC" }).format(d);
+  return `${weekday} ${d.getUTCDate()} ${month}`;
+}
+const addDayKey = (key: string, days: number) => addDays(new Date(`${key}T00:00:00Z`), days).toISOString().slice(0, 10);
 const fmtClock = (iso: string) =>
   new Intl.DateTimeFormat("en-GB", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: appTimeZone() }).format(new Date(iso));
 export function fmtMinutes(m: number): string {
@@ -873,6 +1155,19 @@ function timeRow(d: VoiceDraft): string {
   return "";
 }
 
+/** The brief on the card: the chosen version, first 3 lines + how many more. */
+function briefShort(d: VoiceDraft): string {
+  const text = d.briefChoice === "tidy" && d.briefTidy ? briefPreview(d.briefTidy) : (d.brief ?? "");
+  const lines = text.split("\n").filter((l) => l.trim());
+  return lines.length > 3 ? `${lines.slice(0, 3).join("\n")}\n… ${lines.length - 3} more` : lines.join("\n");
+}
+
+/** What the app saves as the description: the chosen brief as simple HTML. */
+function draftBriefHtml(d: VoiceDraft): string | null {
+  if (d.action !== "create" || !d.brief) return null;
+  return d.briefChoice === "tidy" && d.briefTidy ? briefHtml(d.briefTidy) : briefHtml(d.brief);
+}
+
 export interface VoiceCard {
   title: string;
   rows: Array<[string, string]>;
@@ -892,11 +1187,13 @@ async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard 
     } else {
       rows.push(["Type", "New work"]);
       rows.push(["Task name", composeTaskTitle({ unit: d.unit ?? "", quantity: d.quantity ?? 1, shortName: d.shortName ?? "" })]);
-      rows.push(["Brief", d.brief ?? ""]);
+      rows.push(["Brief", briefShort(d)]);
       rows.push(["Assignees", d.assignees.map((a) => a.name).join(", ")]);
     }
-    if (d.startDate) rows.push(["Start", fmtDay(d.startDate)]);
+    if (d.startDate || d.iteration !== "rework") rows.push(["Start", d.startDate ? fmtDay(d.startDate) : "—"]);
     rows.push(["Due", d.dueDate ? fmtDay(d.dueDate) : "—"]);
+    const duplicate = await duplicateOf(d);
+    if (duplicate) rows.push(["Heads-up", `${duplicate.code} ${duplicate.title} already exists`]);
     // Scope use after this task (new work only; reworks don't count) — the same sum the server checks.
     if (d.iteration === "new" && project && project.scopeItems.length && d.unit && d.quantity) {
       const totals = scopeTotals(project.scopeItems as never);
@@ -957,8 +1254,160 @@ export interface VoiceUnderstandResult {
   /** The field being asked for ("final" = show the photo / file / link choices). */
   ask: VoiceField | null;
   card: VoiceCard | null;
+  /** ask = "existing": the project's tasks to pick from. */
+  existing?: VoiceExistingTask[];
   /** True when the AI read the message (false = the rules-based fallback). */
   ai: boolean;
+}
+
+const KEEP_AS_IT_WAS = "Keep it as it was";
+const capWord = (w: string) => (w ? w[0]!.toUpperCase() + w.slice(1) : w);
+
+/** What a change message did to a ready draft, in words ("due moved to Fri 30 Oct", "added Vishal"). */
+function changesBetween(a: VoiceDraft, b: VoiceDraft): string[] {
+  const out: string[] = [];
+  const name = (d: VoiceDraft) => (d.unit && d.quantity && d.shortName ? composeTaskTitle({ unit: d.unit, quantity: d.quantity, shortName: d.shortName }) : "");
+  if (b.project && a.project?.id !== b.project.id) out.push(`project ${b.project.code}`);
+  if (name(b) && name(a) !== name(b)) out.push(`name ${name(b)}`);
+  if (b.reworkOf && a.reworkOf?.id !== b.reworkOf.id) out.push(`rework of ${b.reworkOf.code}`);
+  if (b.reworkSource && a.reworkSource !== b.reworkSource) out.push(`${b.reworkSource} review`);
+  if (b.startDate && a.startDate !== b.startDate) out.push(`start moved to ${fmtShortDay(b.startDate)}`);
+  if (b.dueDate && a.dueDate !== b.dueDate) out.push(`due moved to ${fmtShortDay(b.dueDate)}`);
+  const first = (n: string) => n.split(" ")[0];
+  const added = b.assignees.filter((x) => !a.assignees.some((y) => y.id === x.id));
+  const removed = a.assignees.filter((x) => !b.assignees.some((y) => y.id === x.id));
+  if (added.length) out.push(`added ${added.map((x) => first(x.name)).join(" and ")}`);
+  if (removed.length) out.push(`removed ${removed.map((x) => first(x.name)).join(" and ")}`);
+  if (a.brief !== b.brief || a.briefChoice !== b.briefChoice) out.push("brief updated");
+  if (b.task && a.task?.id !== b.task.id) out.push(`task ${b.task.code}`);
+  if (a.minutes !== b.minutes || a.start !== b.start || a.end !== b.end) {
+    const t = timeRow(b);
+    if (t) out.push(`time ${t.split(",")[0]}`);
+  }
+  if (b.note && a.note !== b.note) out.push(b.action === "log_time" ? "memo updated" : "note updated");
+  if (b.finalUrl && a.finalUrl !== b.finalUrl) out.push("link updated");
+  if (b.finalFile && a.finalFile?.name !== b.finalFile.name) out.push(`file ${b.finalFile.name}`);
+  return out;
+}
+
+/**
+ * Likely fixes for the parts that changed nothing — only where the message looks
+ * like a date or a people change: a near weekday after "due / start / by"
+ * ("due Friday"), a near first name after "add / remove / assign / for / with /
+ * and / plus" ("add Vishal"). Ordinary words are never offered as names.
+ */
+function suggestFixes(ctx: VoiceContext, text: string, d: VoiceDraft): string[] {
+  if (d.action !== "create") return [];
+  const out: string[] = [];
+  const days = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "tomorrow", "today"];
+  const plain = text.toLowerCase().replace(/["“][^"”]*["”]/g, " ");
+  for (const m of plain.matchAll(/\b(due|start|starts|by)\s+(?:on\s+)?(\p{L}+)/gu)) {
+    const day = days.find((x) => editDistance(m[2]!, x) <= 2);
+    if (day) out.push(`${m[1] === "start" || m[1] === "starts" ? "start" : "due"} ${capWord(day)}`);
+  }
+  const firsts = new Map<string, string>();
+  for (const p of ctx.people) {
+    const f = p.name.split(" ")[0]!;
+    if (f.length >= 3) firsts.set(f.toLowerCase(), f);
+  }
+  for (const m of plain.matchAll(/\b(add|remove|without|assign(?:ed)?\s+to|for|with|and|plus)\s+(\p{L}+)/gu)) {
+    const word = m[2]!;
+    if (word.length < 3 || COMMON_WORDS.has(word)) continue;
+    // Short words: one letter off at most; longer: two. Same first letter.
+    const max = word.length <= 4 ? 1 : 2;
+    let best: string | null = null;
+    let bestD = max + 1;
+    for (const [lower, f] of firsts) {
+      if (lower[0] !== word[0]) continue;
+      const dist = editDistance(word, lower);
+      if (dist < bestD) {
+        bestD = dist;
+        best = f;
+      }
+    }
+    if (!best) continue;
+    const removing = /^(?:remove|without)$/.test(m[1]!);
+    const onTask = d.assignees.some((a) => a.name.split(" ")[0] === best);
+    if (removing ? onTask : !onTask) out.push(`${removing ? "remove" : "add"} ${best}`);
+  }
+  return [...new Set(out)].slice(0, 3);
+}
+
+/** Parts of a change that were understood but already in the draft ("Vishal is already on it"). */
+function alreadySet(d: VoiceDraft, ex: Extracted): string[] {
+  const out: string[] = [];
+  const on = (ex.addPeople ?? []).map((id) => d.assignees.find((a) => a.id === id)).filter((a): a is { id: string; name: string } => Boolean(a));
+  if (on.length) out.push(`${on.map((a) => a.name.split(" ")[0]).join(" and ")} ${on.length === 1 ? "is" : "are"} already on it`);
+  if (ex.dueDate && ex.dueDate === d.dueDate) out.push(`it's already due ${fmtShortDay(ex.dueDate)}`);
+  if (ex.startDate && ex.startDate === d.startDate) out.push(`it already starts ${fmtShortDay(ex.startDate)}`);
+  return out.map((s, i) => (i === 0 ? capWord(s) : s));
+}
+
+const USE_AS_BRIEF = "Use as brief";
+const ADD_TO_BRIEF = "Add to brief";
+const USE_AS_NOTE = "Use as note";
+const USE_AS_MEMO = "Use as memo";
+
+/** "Use as brief" / "Add to brief" / "Use as note|memo": the person's previous message is the text. */
+function useAsField(draft: VoiceDraft, last: string, messages: Array<{ role: string; text: string }>): VoiceDraft | null {
+  const t = last.trim();
+  if (![USE_AS_BRIEF, ADD_TO_BRIEF, USE_AS_NOTE, USE_AS_MEMO].includes(t)) return null;
+  const users = messages.filter((m) => m.role === "user");
+  const previous = users[users.length - 2]?.text.trim();
+  if (!previous) return null;
+  if (draft.action === "create" && (t === USE_AS_BRIEF || t === ADD_TO_BRIEF)) {
+    const brief = (t === ADD_TO_BRIEF && draft.brief ? `${draft.brief}\n${previous}` : previous).slice(0, 2000);
+    return { ...draft, brief, briefTidy: null, briefChoice: null };
+  }
+  if ((draft.action === "close" && t === USE_AS_NOTE) || (draft.action === "log_time" && t === USE_AS_MEMO)) {
+    return { ...draft, note: previous.slice(0, draft.action === "log_time" ? 500 : 2000) };
+  }
+  return null;
+}
+
+/** Taps on the existing-task list and the brief choices — handled without reading the words. */
+async function choiceTurn(
+  ctx: VoiceContext,
+  draft: VoiceDraft,
+  text: string
+): Promise<{ draft: VoiceDraft; notes: string[]; reply?: string; chips?: string[] } | null> {
+  const t = text.trim();
+  if (draft.asking === "existing" || /^(?:new task like|work on)\s+\S+$/i.test(t)) {
+    const like = /^new task like\s+(\S+)$/i.exec(t);
+    if (like) {
+      const copied = await copyFromTask(ctx, draft, like[1]!);
+      return { draft: copied.draft, notes: [copied.note] };
+    }
+    const work = /^work on\s+(\S+)$/i.exec(t);
+    if (work) {
+      const task = await projectTaskByCode(ctx, work[1]!);
+      if (!task) return { draft, notes: [`I couldn't find ${work[1]}.`] };
+      const next = emptyDraft();
+      next.focusTaskId = String(task._id);
+      return {
+        draft: next,
+        notes: [],
+        reply: `OK — ${task.shortCode ?? `#${task.number}`} · ${task.title} (${STATUS_LABEL[task.status] ?? task.status}). Close it or log time?`,
+        chips: ["Close it", "Log time"],
+      };
+    }
+    if (draft.asking === "existing" && draft.project && (t === EXISTING_NONE || /^none\b/i.test(t))) {
+      return { draft: { ...draft, existingFor: draft.project.id }, notes: [] };
+    }
+  }
+  if (draft.asking === "briefReview") {
+    if (t === BRIEF_USE || /^use (?:the )?tid/i.test(t)) return { draft: { ...draft, briefChoice: draft.briefTidy ? "tidy" : "plain" }, notes: [] };
+    if (t === BRIEF_KEEP || /^keep\b/i.test(t)) return { draft: { ...draft, briefChoice: "plain" }, notes: [] };
+    if (t === BRIEF_EDIT || /^edit\b/i.test(t)) {
+      return {
+        draft: { ...draft, brief: null, briefTidy: null, briefChoice: null, asking: "brief" },
+        notes: [],
+        reply: "Say the brief again — what needs to be done, how many, sizes, languages, links.",
+        chips: [],
+      };
+    }
+  }
+  return null;
 }
 
 export async function understand(
@@ -969,82 +1418,203 @@ export async function understand(
 ): Promise<VoiceUnderstandResult> {
   if (isGuestUser(user)) throw new Error("Guests can't use the voice assistant");
   const ctx = await loadVoiceContext(user);
-  const draft = await sanitizeDraft(ctx, rawDraft);
+  let draft = await sanitizeDraft(ctx, rawDraft);
   const last = [...messages].reverse().find((m) => m.role === "user")?.text ?? "";
+  // The card was showing: this message is a change to it.
+  const wasReady = draft.action !== null && draft.asking === null && missingFields(draft).length === 0;
+  // applyExtracted changes the draft in place: keep a copy to compare with.
+  const before = JSON.parse(JSON.stringify(draft)) as VoiceDraft;
+  const nameBefore = [draft.unit, draft.quantity, draft.shortName].join("|");
+  const done = (next: VoiceDraft, result: Omit<VoiceUnderstandResult, "draft">): VoiceUnderstandResult => {
+    next.briefHtml = draftBriefHtml(next);
+    return { ...result, draft: next };
+  };
+  const actionOf = (d: VoiceDraft): VoiceUnderstandResult["action"] =>
+    d.action === "create" ? (d.iteration === "rework" ? "rework" : "create") : (d.action ?? "none");
 
   let ex: Extracted = {};
   let ai = false;
-  if (last.trim()) {
-    if (voiceConfigured()) {
-      try {
-        ex = await aiExtract(ctx, messages, draft);
-        ai = true;
-      } catch (err) {
-        console.error("[voice] AI reading failed, using the rules", err instanceof Error ? err.message : err);
-      }
-    }
-    if (!ai) {
-      // FALLBACK: the rules-based parser (no OPENAI_API_KEY, or the model failed).
-      ex = parseVoiceText(last, {
-        asking: draft.asking,
-        action: draft.action,
-        today: ctx.today,
-        projects: ctx.projects,
-        people: ctx.people,
-        me: String(user._id),
-        units: allUnits(ctx),
-        codes: ctx.codes,
-        keepShortName: Boolean(draft.shortName),
-      });
-    }
-  }
-
-  const turn = await applyExtracted(ctx, draft, ex, contextTaskId && mongoose.isValidObjectId(contextTaskId) ? contextTaskId : null);
-  const next = turn.draft;
-  const missing = missingFields(next);
-  const action: VoiceUnderstandResult["action"] =
-    next.action === "create" ? (next.iteration === "rework" ? "rework" : "create") : next.action ?? "none";
-
-  if (turn.final) {
-    next.asking = null;
-    const q = !next.action ? await question(ctx, next, "action") : null;
-    return { reply: turn.final, chips: q?.chips ?? [], draft: next, action, missing, ready: false, ask: null, card: null, ai };
-  }
-  const prefix = turn.notes.length ? `${turn.notes.join(" ")} ` : "";
-  if (turn.override) {
-    next.asking = turn.override.ask;
-    return {
-      reply: prefix + turn.override.reply,
-      chips: turn.override.chips,
-      draft: next,
-      action,
-      missing,
+  let notes: string[] = [];
+  let next: VoiceDraft;
+  let override: Turn["override"];
+  // "Use as brief" / "Add to brief" / "Use as note|memo" after an unclear change.
+  const usedAs = wasReady ? useAsField(draft, last, messages) : null;
+  const choice = usedAs
+    ? { draft: usedAs, notes: [`Changed: ${changesBetween(before, usedAs).join(" · ") || "nothing"}.`] }
+    : last.trim()
+      ? await choiceTurn(ctx, draft, last)
+      : null;
+  if (choice?.reply) {
+    const asking = choice.draft.asking === "brief" ? "brief" : null;
+    choice.draft.asking = asking;
+    return done(choice.draft, {
+      reply: choice.reply,
+      chips: choice.chips ?? [],
+      action: actionOf(choice.draft),
+      missing: missingFields(choice.draft),
       ready: false,
-      ask: turn.override.ask,
+      ask: asking,
       card: null,
       ai,
-    };
+    });
+  }
+  if (choice) {
+    next = choice.draft;
+    notes = choice.notes;
+  } else {
+    // Anything said instead of picking from the list carries on with a new task.
+    if (draft.asking === "existing" && draft.project) draft = { ...draft, existingFor: draft.project.id };
+    if (last.trim()) {
+      if (voiceConfigured()) {
+        try {
+          ex = await aiExtract(ctx, messages, draft);
+          ai = true;
+        } catch (err) {
+          console.error("[voice] AI reading failed, using the rules", err instanceof Error ? err.message : err);
+        }
+      }
+      if (!ai) {
+        // FALLBACK: the rules-based parser (no OPENAI_API_KEY, or the model failed).
+        ex = parseVoiceText(last, {
+          asking: draft.asking,
+          action: draft.action,
+          today: ctx.today,
+          projects: ctx.projects,
+          people: ctx.people,
+          me: String(user._id),
+          units: allUnits(ctx),
+          codes: ctx.codes,
+          keepShortName: Boolean(draft.shortName),
+        });
+      }
+    }
+    // "Work on this task" → "close it" / "log time" use that task.
+    const taskContext = draft.focusTaskId ?? (contextTaskId && mongoose.isValidObjectId(contextTaskId) ? contextTaskId : null);
+    const turn = await applyExtracted(ctx, draft, ex, taskContext);
+    if (turn.final) {
+      const cleared = turn.draft;
+      cleared.asking = null;
+      const q = !cleared.action ? await question(ctx, cleared, "action") : null;
+      return done(cleared, {
+        reply: turn.final,
+        chips: q?.chips ?? [],
+        action: actionOf(cleared),
+        missing: missingFields(cleared),
+        ready: false,
+        ask: null,
+        card: null,
+        ai,
+      });
+    }
+    next = turn.draft;
+    notes = turn.notes;
+    override = turn.override;
+
+    // A change asked for on a ready card: say what changed — or that nothing did (never the same card silently).
+    if (wasReady && !override && next.action === before.action) {
+      const changes = changesBetween(before, next);
+      const fixes = (ex.fixes ?? []).map(([said, read]) => `"${said}" as ${capWord(read)}`);
+      if (changes.length) {
+        notes.unshift(`Changed: ${changes.join(" · ")}.${fixes.length ? ` (I read ${fixes.join(", ")}.)` : ""}`);
+      } else if (/^keep it as it was$/i.test(last.trim())) {
+        notes.unshift("No changes.");
+      } else if (alreadySet(before, ex).length) {
+        // Understood, but it was already so ("add Vishal" when Vishal is on it).
+        notes.unshift(`${alreadySet(before, ex).join(" · ")} — nothing to change.`);
+      } else {
+        const suggestions = suggestFixes(ctx, last, next);
+        next.asking = null;
+        // Long free text with no command: maybe it's the brief / note / memo.
+        if (!suggestions.length && last.trim().split(/\s+/).length >= 5) {
+          const field = next.action === "create" ? "brief" : next.action === "close" ? "outcome note" : "memo";
+          return done(next, {
+            reply: `${notes.length ? `${notes.join(" ")} ` : ""}Is this the new ${field}?`,
+            chips:
+              next.action === "create"
+                ? [USE_AS_BRIEF, ADD_TO_BRIEF, KEEP_AS_IT_WAS]
+                : [next.action === "close" ? USE_AS_NOTE : USE_AS_MEMO, KEEP_AS_IT_WAS],
+            action: actionOf(next),
+            missing: [],
+            ready: false,
+            ask: null,
+            card: null,
+            ai,
+          });
+        }
+        return done(next, {
+          reply: `${notes.length ? `${notes.join(" ")} ` : ""}I couldn't change anything from "${last.trim().slice(0, 80)}".${
+            suggestions.length ? ` Did you mean ${suggestions.map((s) => `"${s}"`).join(" or ")}?` : ""
+          } You can say "due Friday", "start tomorrow", "add Vishal" or "remove Izzat".`,
+          chips: [...suggestions, KEEP_AS_IT_WAS],
+          action: actionOf(next),
+          missing: [],
+          ready: false,
+          ask: null,
+          card: null,
+          ai,
+        });
+      }
+    }
+  }
+
+  // A new brief is offered tidied (AI rewrite, or the rules); nothing to tidy → kept as said.
+  if (next.action === "create" && next.iteration !== "rework" && next.brief && !next.briefChoice && !next.briefTidy) {
+    const tidy = await tidyBrief(ctx, next.brief, next.project?.name ?? null);
+    if (tidy.bullets.length === 0) next.briefChoice = "plain";
+    else next.briefTidy = tidy;
+  }
+  // Say so before a duplicate is made (when the name becomes complete or changes).
+  const nameAfter = [next.unit, next.quantity, next.shortName].join("|");
+  if (nameAfter !== nameBefore) {
+    const duplicate = await duplicateOf(next);
+    if (duplicate) notes.push(`${duplicate.code} ${duplicate.title} already exists — say another number or name, or "work on ${duplicate.code}".`);
+  }
+
+  const action = actionOf(next);
+  const prefix = notes.length ? `${notes.join(" ")} ` : "";
+  if (override) {
+    next.asking = override.ask;
+    return done(next, { reply: prefix + override.reply, chips: override.chips, action, missing: missingFields(next), ready: false, ask: override.ask, card: null, ai });
+  }
+  let missing = missingFields(next);
+  let q: Awaited<ReturnType<typeof question>> | null = null;
+  if (missing[0] === "existing") {
+    q = await question(ctx, next, "existing", last);
+    // A project without tasks has nothing to pick from.
+    if (!q.existing?.length) {
+      next.existingFor = next.project?.id ?? null;
+      missing = missingFields(next);
+      q = null;
+    }
   }
   if (missing.length) {
     const ask = missing[0]!;
+    q ??= await question(ctx, next, ask, last);
     next.asking = ask;
-    const q = await question(ctx, next, ask);
-    // The very first message with nothing understood gets a greeting-style prompt.
-    return { reply: prefix + q.reply, chips: q.chips, draft: next, action, missing, ready: false, ask, card: null, ai };
+    return done(next, {
+      reply: prefix + q.reply,
+      chips: q.chips,
+      action,
+      missing,
+      ready: false,
+      ask,
+      card: null,
+      ...(q.existing?.length ? { existing: q.existing } : {}),
+      ai,
+    });
   }
   next.asking = null;
   const card = await summaryCard(ctx, next);
-  return {
+  return done(next, {
     reply: `${prefix}Check and confirm — nothing is saved until you tap ${card?.confirm ?? "confirm"}.`,
     chips: [],
-    draft: next,
     action,
-    missing,
+    missing: [],
     ready: true,
     ask: null,
     card,
     ai,
-  };
+  });
 }
 
 // ---------------------------------------------------------------------------

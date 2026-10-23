@@ -27,6 +27,12 @@ export const VOICE_FIELDS = [
   "shortName",
   "brief",
   "assignees",
+  /** Start and due date of a new task (both required). */
+  "dates",
+  /** The project's existing tasks were listed: reuse a name, work on one, or a new name. */
+  "existing",
+  /** A tidied brief was offered: use it, keep the words as said, or say it again. */
+  "briefReview",
   "task",
   "final",
   "note",
@@ -65,6 +71,12 @@ export interface Extracted {
   /** "YYYY-MM-DD". */
   dueDate?: string;
   startDate?: string;
+  /** "add to the brief …": text added on to the brief. */
+  briefAppend?: string;
+  /** Typos read as day words: [said, read as]. */
+  fixes?: Array<[string, string]>;
+  /** A day said on its own in answer to "when?" (the assistant decides start or due). */
+  anyDate?: string;
   /** Task code of the original task ("MO-6"). */
   reworkOf?: string;
   reworkSource?: "internal" | "external";
@@ -199,6 +211,112 @@ export function resolveDay(phrase: string, today: string): string | null {
   return null;
 }
 
+/**
+ * The day in a short phrase: a calendar date wins ("Sat 24 Oct", "Today 23 Oct"),
+ * else the first day word ("tomorrow", "Friday", "in 3 days").
+ */
+export function resolveLooseDay(phrase: string, today: string): string | null {
+  const p = normalizeNumbers(phrase).toLowerCase();
+  const dm = /\b(\d{1,2})(?:st|nd|rd|th)?(?:\s+of)?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b/.exec(p);
+  if (dm) return resolveDay(`${dm[1]} ${dm[2]}`, today);
+  const md = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+(\d{1,2})(?:st|nd|rd|th)?\b/.exec(p);
+  if (md) return resolveDay(`${md[1]} ${md[2]}`, today);
+  const iso = /\b\d{4}-\d{2}-\d{2}\b/.exec(p);
+  if (iso) return iso[0];
+  const word = new RegExp(`\\b${DATE_WORD}`, "i").exec(p);
+  return word ? resolveDay(word[0], today) : null;
+}
+
+// ---------------------------------------------------------------------------
+// Brief tidy (rules) — the FALLBACK for the AI rewrite: the first sentence is
+// the objective, the rest become bullets, and counts, sizes / durations,
+// languages and links are pulled out into labelled lines. Nothing is added.
+// ---------------------------------------------------------------------------
+
+export interface TidyBrief {
+  objective: string;
+  bullets: string[];
+}
+
+export function tidyBriefRules(text: string, units: string[]): TidyBrief {
+  const clean = text.replace(/\s+/g, " ").trim();
+  const links = [...clean.matchAll(/\bhttps?:\/\/[^\s,<>"]+/gi)].map((m) => m[0].replace(/[.)]+$/, ""));
+  const noLinks = clean.replace(/\bhttps?:\/\/[^\s,<>"]+/gi, " ").replace(/\s+/g, " ").trim();
+  const sentences = noLinks
+    .split(/(?<=[.!?;])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // One long sentence: its first clause is the objective, the other clauses are bullets.
+  let parts = sentences;
+  if (sentences.length === 1) parts = sentences[0]!.split(/,\s+|\s+and then\s+/i).map((s) => s.trim()).filter(Boolean);
+  const strip = (s: string) => capFirst(s.replace(/[.;!?,]+$/, "").trim());
+  const objective = strip(parts[0] ?? clean);
+  // A part that only pointed at a link ("Refs …") goes; the link is listed on its own line.
+  const bullets = parts
+    .slice(1)
+    .map(strip)
+    .filter((s) => s.length > 1 && !/^(?:refs?|references?|links?|see|here|attached)$/i.test(s));
+
+  const n = normalizeNumbers(noLinks);
+  const unitWords = [...new Set([...units, "post", "reel", "video", "story", "static", "carousel", "banner", "cutdown", "photo", "design"])];
+  const alt = unitWords
+    .map((u) => u.toLowerCase())
+    .flatMap((u) => [u, u.endsWith("y") ? `${u.slice(0, -1)}ies` : `${u}s`])
+    .sort((a, b) => b.length - a.length)
+    .map(escapeRe)
+    .join("|");
+  // "3 reels", "3 15-second vertical reels" (up to two words between).
+  const counts = [...n.matchAll(new RegExp(`\\b(\\d{1,4})\\s+(?:[\\p{L}\\d-]+\\s+){0,2}?(${alt})\\b`, "giu"))].map((m) => `${m[1]} ${m[2]!.toLowerCase()}`);
+  const sizes = [
+    ...n.matchAll(/\b\d+(?:\.\d+)?\s*-?\s*(?:seconds?|secs?|minutes?|mins?|s)\b(?![a-z])|\b\d{1,2}:\d{1,2}\b|\b\d{3,4}\s*[x×]\s*\d{3,4}\b|\b(?:vertical|horizontal|square|portrait|landscape)\b/gi),
+  ].map((m) => m[0].replace(/\s*-\s*/, " ").toLowerCase());
+  const languages = [
+    ...n.matchAll(/\b(?:english|arabic|french|hindi|urdu|russian|chinese|german|spanish)(?:\s+(?:and|&|\/)\s+(?:english|arabic|french|hindi|urdu|russian|chinese|german|spanish))?(?:\s+(?:captions?|subtitles?|copy|voice-?over|vo|text))?\b/gi),
+  ].map((m) => m[0]);
+  const labelled: string[] = [];
+  if (counts.length) labelled.push(`Deliverables: ${[...new Set(counts)].join(", ")}`);
+  if (sizes.length) labelled.push(`Size / duration: ${[...new Set(sizes)].join(", ")}`);
+  if (languages.length) labelled.push(`Language: ${[...new Set(languages.map((l) => l.toLowerCase()))].map(capFirst).join(", ")}`);
+  if (links.length) labelled.push(`References: ${links.join(", ")}`);
+  // A clause that is only a pulled-out value ("Arabic captions") isn't repeated.
+  const pulled = new Set([...counts, ...sizes, ...languages].map((v) => v.toLowerCase()));
+  const rest = bullets.filter((b) => !pulled.has(normalizeNumbers(b).toLowerCase()));
+  return { objective, bullets: [...labelled, ...rest].slice(0, 12) };
+}
+
+/** Simple HTML the task's rich-text brief renders: <p> + <ul><li>. */
+export function briefHtml(brief: TidyBrief | string): string {
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  if (typeof brief === "string") {
+    // Lines starting with "•" / "-" (a copied brief's list) stay a list.
+    let html = "";
+    let list: string[] = [];
+    const flush = () => {
+      if (list.length) html += `<ul>${list.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
+      list = [];
+    };
+    for (const raw of brief.split(/\n+/)) {
+      const line = raw.trim();
+      if (!line) continue;
+      const item = /^[•\-*]\s+(.+)$/.exec(line);
+      if (item) list.push(item[1]!);
+      else {
+        flush();
+        html += `<p>${esc(line)}</p>`;
+      }
+    }
+    flush();
+    return html;
+  }
+  const items = brief.bullets.map((b) => `<li>${esc(b)}</li>`).join("");
+  return `<p>${esc(brief.objective)}</p>${items ? `<ul>${items}</ul>` : ""}`;
+}
+
+/** The tidied brief as chat text: the objective, then "• " bullets. */
+export function briefPreview(brief: TidyBrief): string {
+  return [brief.objective, ...brief.bullets.map((b) => `• ${b}`)].join("\n");
+}
+
 /** "2 hours", "45 minutes", "1h 30m", "1.5 hours" → minutes (after normalizeNumbers). */
 export function parseDuration(text: string): number | null {
   const compact = /\b(\d{1,2})\s*h\s*(\d{1,2})\s*m?\b/i.exec(text);
@@ -281,8 +399,22 @@ const NOT_NAMES = new Set([
   "tomorrow", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "rework", "work", "brief",
   "internal", "external", "client", "review", "done", "project", "please", "add", "remove", "assign", "assigned", "me",
   "reel", "reels", "video", "videos", "static", "statics", "story", "stories", "carousel", "carousels", "post", "posts",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+  "start", "starts", "due", "none", "like", "keep", "use", "edit", "said", "tidied",
   "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
 ]);
+
+/** Ordinary English words that must never be fuzzy-matched to a person's name. */
+export const COMMON_WORDS = new Set(
+  (
+    "also more most over image images high higher picture pictures photo photos product products quality make made take have " +
+    "with from into this that they them then than there their what when where which while will would could should about after " +
+    "again before below between both each just like only other same some such very well your more much many less good best " +
+    "nice better colour color size text logo video videos reel reels post posts story final draft copy brief name note memo " +
+    "update change adding added enhance improve fix fixed send sent shoot edit cut cuts make sure please thanks done also team " +
+    "client review today tomorrow week month time hours mins minutes"
+  ).split(" ")
+);
 
 /** People named in `text` (full name, or first name when it is unique). */
 export function matchPeople(
@@ -316,13 +448,77 @@ export function matchPeople(
     byFirst.set(first, [...(byFirst.get(first) ?? []), p]);
   }
   for (const w of new Set(words)) {
-    const found = byFirst.get(w);
+    let found = byFirst.get(w);
+    // A typed / misheard first name ("vishl"): the closest first names within 1 letter (2 for long names).
+    // Ordinary words ("more", "image", "over") are never read as a misspelt name.
+    if (!found && opts.anyCase && w.length >= 4 && !COMMON_WORDS.has(w)) {
+      const max = w.length >= 7 ? 2 : 1;
+      let best = max + 1;
+      let near: VocabPerson[] = [];
+      for (const [first, list] of byFirst) {
+        if (Math.abs(first.length - w.length) > max) continue;
+        const d = editDistance(w, first);
+        if (d < best) {
+          best = d;
+          near = [...list];
+        } else if (d === best) near.push(...list);
+      }
+      if (best <= max && near.length) found = near;
+    }
     if (!found) continue;
     if (found.length === 1) {
       if (!ids.includes(found[0]!.id)) ids.push(found[0]!.id);
     } else ambiguous.push({ said: capFirst(w), ids: found.map((p) => p.id) });
   }
   return { ids, ambiguous };
+}
+
+/** Edit distance where swapping two neighbouring letters counts as one ("firday" → "friday" = 1). */
+export function editDistance(a: string, b: string): number {
+  const d: number[][] = Array.from({ length: a.length + 1 }, (_, i) => Array.from({ length: b.length + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0)));
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      let v = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, d[i - 2]![j - 2]! + 1);
+      d[i]![j] = v;
+    }
+  }
+  return d[a.length]![b.length]!;
+}
+
+const DAY_WORDS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "tomorrow", "january", "february", "september", "october", "november", "december"];
+const SHORT_DAY_WORDS: Record<string, string> = { tmrw: "tomorrow", tmr: "tomorrow", tmw: "tomorrow", tmrrw: "tomorrow", tomoz: "tomorrow", tdy: "today", weds: "wednesday" };
+
+/**
+ * Typos in day words → the word ("froday" → "friday", "thrusday", "tomorow", "tmrw").
+ * 1 letter off for 5–6 letter words, 2 for longer ones; returns the fixes made.
+ */
+export function fixDayWords(text: string): { text: string; fixes: Array<[string, string]> } {
+  const fixes: Array<[string, string]> = [];
+  const out = text.replace(/\p{L}+/gu, (word) => {
+    const w = word.toLowerCase();
+    if (SHORT_DAY_WORDS[w]) {
+      fixes.push([word, SHORT_DAY_WORDS[w]!]);
+      return SHORT_DAY_WORDS[w]!;
+    }
+    if (w.length < 5 || DAY_WORDS.includes(w)) return word;
+    const max = w.length >= 7 ? 2 : 1;
+    let best: string | null = null;
+    let bestD = max + 1;
+    for (const target of DAY_WORDS) {
+      if (Math.abs(target.length - w.length) > max) continue;
+      const d = editDistance(w, target);
+      if (d < bestD) {
+        bestD = d;
+        best = target;
+      }
+    }
+    if (!best || bestD > max) return word;
+    fixes.push([word, best]);
+    return best;
+  });
+  return { text: out, fixes };
 }
 
 /** "3 reels" / "reel 3" → canonical unit + quantity (the unit list decides the spelling). */
@@ -411,13 +607,50 @@ function remainder(text: string, parts: string[]): string {
   return out.length >= 2 ? capFirst(clip(out, 2000)) : "";
 }
 
+/**
+ * "update the brief "…"", "brief: …", "add to the brief …", "change the name to …",
+ * "note: …", "memo …" — a field and its new text (quoted text wins), or null.
+ */
+export function fieldEdit(text: string): { field: "brief" | "briefAppend" | "name" | "note"; value: string } | null {
+  const forms: Array<[RegExp, "brief" | "briefAppend" | "name" | "note"]> = [
+    [/^\s*(?:please\s+)?(?:add|append)\s+(?:this\s+|that\s+)?(?:to|in|into)\s+(?:the\s+)?brief\b\s*(?:that\s+)?[:\-–]?\s*([\s\S]+)$/i, "briefAppend"],
+    [/^\s*(?:please\s+)?(?:(?:update|change|replace|set|edit|rewrite)\s+(?:the\s+)?brief|new\s+brief|brief)\b\s*(?:to|as|with|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "brief"],
+    [/^\s*(?:please\s+)?(?:(?:update|change|rename|set|edit)\s+(?:the\s+)?(?:short\s+name|task\s+name|name|title)|call\s+it|rename\s+it|short\s+name)\b\s*(?:to|as|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "name"],
+    [/^\s*(?:please\s+)?(?:(?:update|change|replace|set|edit)\s+(?:the\s+)?(?:outcome\s+)?(?:note|memo)|(?:outcome\s+)?note|memo)\b\s*(?:to|as|is)?\s*[:\-–]?\s*([\s\S]+)$/i, "note"],
+  ];
+  for (const [re, field] of forms) {
+    const m = re.exec(text);
+    if (!m) continue;
+    const quoted = /["“'‘]([^"”’]{2,})["”'’]/.exec(m[1]!);
+    const value = (quoted ? quoted[1]! : m[1]!).replace(/^["“'‘]|["”'’]$/g, "").replace(/\s+/g, " ").trim().replace(/[.!]+$/, "");
+    if (value.length >= 2) return { field, value };
+  }
+  return null;
+}
+
 /** Reads one message into a draft change. `text` is the latest user message. */
 export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
   const raw = text.trim();
   const out: Extracted = {};
   if (!raw) return out;
-  const t = normalizeNumbers(raw);
+  // Typos in day words are fixed first ("due froday" → "due friday") and reported back.
+  const fixed = fixDayWords(raw);
+  const t = normalizeNumbers(fixed.text);
+  if (fixed.fixes.length) out.fixes = fixed.fixes;
   const freeAnswer = FREE_TEXT.has(opts.asking) && !COMMAND_START.test(raw);
+
+  // Field edits come first, before any date / people / intent reading: their text is the value, verbatim.
+  if (!freeAnswer) {
+    const edit = fieldEdit(raw);
+    if (edit) {
+      if (edit.field === "name") return { ...out, shortName: capFirst(clip(edit.value, 80)) };
+      const forCreate = opts.action === "create" || opts.action === null;
+      if (edit.field === "briefAppend" && forCreate) return { ...out, briefAppend: clip(edit.value, 2000) };
+      if (forCreate && edit.field !== "note") return { ...out, brief: capFirst(clip(edit.value, 2000)) };
+      if (!forCreate) return { ...out, note: capFirst(clip(edit.value, 2000)) };
+      return { ...out, brief: capFirst(clip(edit.value, 2000)) };
+    }
+  }
 
   const intent = detectIntent(t);
   // In a free-text answer ("… it's done") only "cancel" is a command.
@@ -523,18 +756,47 @@ export function parseVoiceText(text: string, opts: ParseOptions): Extracted {
     const start = new RegExp(`\\b(?:start(?:s|ing)?|begin(?:s|ning)?)\\s+(?:on\\s+|from\\s+)?(${DATE_WORD})`, "i").exec(t);
     const startDay = start ? resolveDay(start[1]!, opts.today) : null;
     if (startDay) out.startDate = startDay;
+    // "from tomorrow to 30 Oct", "Today 23 Oct → Sat 24 Oct" (the date chips).
+    const span =
+      /→/.test(t)
+        ? t.split("→")
+        : new RegExp(`\\bfrom\\s+(${DATE_WORD})\\s+(?:to|till|until|-|–)\\s+(${DATE_WORD})`, "i").exec(t)?.slice(1, 3);
+    if (span && span.length >= 2) {
+      const a = resolveLooseDay(span[0]!, opts.today);
+      const b = resolveLooseDay(span[1]!, opts.today);
+      if (a && b) {
+        out.startDate = a;
+        out.dueDate = b;
+      }
+    }
+    if (opts.asking === "dates" && !out.startDate && !out.dueDate) {
+      const day = resolveLooseDay(t, opts.today);
+      if (day) out.anyDate = day;
+    }
 
     const brief = /\bbrief(?:\s+is|\s*[:\-–])\s*(.+)$/i.exec(raw);
     if (brief) out.brief = capFirst(clip(tidy(brief[1]!), 2000));
 
     // People: "for Rahaf and Izzat", "add Vishal", "remove Izzat".
     const remove = /\b(?:remove|without|drop)\s+([\p{L}' -]+)/iu.exec(raw);
-    const peopleText = remove ? raw.slice(0, remove.index) : raw;
+    // Quoted text is never read for names.
+    const peopleText = (remove ? raw.slice(0, remove.index) : raw).replace(/["“][^"”]*["”]/g, " ");
     const matched = matchPeople(peopleText.replace(URL_RE, " "), opts.people, {
       me: opts.me,
       skip: spans,
       anyCase: opts.asking === "assignees",
     });
+    // Names after "add / and / plus / with / for / assign to", or before "also / too", in any case
+    // and with a typo ("add vishl also").
+    const nameWords = [
+      ...peopleText.matchAll(/\b(?:add|and|plus|with|for|include|also|assign(?:ed)?\s+to)\s+([\p{L}'-]+)/giu),
+      ...peopleText.matchAll(/\b([\p{L}'-]+)\s+(?:also|too|as well)\b/giu),
+    ].map((m) => m[1]!);
+    if (nameWords.length) {
+      const extra = matchPeople(nameWords.join(" "), opts.people, { me: opts.me, skip: spans, anyCase: true });
+      for (const id of extra.ids) if (!matched.ids.includes(id)) matched.ids.push(id);
+      for (const a of extra.ambiguous) if (!matched.ambiguous.some((x) => x.said.toLowerCase() === a.said.toLowerCase())) matched.ambiguous.push(a);
+    }
     if (matched.ids.length) out.addPeople = matched.ids;
     if (matched.ambiguous.length) out.ambiguousPeople = matched.ambiguous;
     if (remove) {

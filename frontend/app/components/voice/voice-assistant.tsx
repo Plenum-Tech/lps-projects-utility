@@ -16,6 +16,7 @@ import {
   useVoiceUnderstand,
   type VoiceCard,
   type VoiceDraft,
+  type VoiceExistingTask,
   type VoiceField,
 } from "@/hooks/use-voice";
 import { api, getErrorCode, getErrorMessage } from "@/lib/api";
@@ -37,7 +38,8 @@ type ChatItem =
   | { id: number; kind: "bot"; text: string; error?: boolean }
   | { id: number; kind: "user"; text: string; voice?: boolean; apiText?: string }
   | { id: number; kind: "card"; card: VoiceCard; draft: VoiceDraft; file: File | null; state: "open" | "closed" }
-  | { id: number; kind: "done"; text: string; link?: string };
+  | { id: number; kind: "done"; text: string; link?: string }
+  | { id: number; kind: "existing"; tasks: VoiceExistingTask[]; state: "open" | "closed" };
 
 /** A chat item before it gets its id. */
 type NewItem = ChatItem extends infer T ? (T extends ChatItem ? Omit<T, "id"> : never) : never;
@@ -153,7 +155,10 @@ export function VoiceAssistant() {
       setDraft(res.draft);
       setAsk(res.ask);
       if (!res.draft.finalFile) setFile(null);
+      // An older list can't be picked from any more.
+      setItems((current) => current.map((item) => (item.kind === "existing" ? { ...item, state: "closed" } : item)));
       push({ kind: "bot", text: res.reply });
+      if (res.existing?.length) push({ kind: "existing", tasks: res.existing, state: "open" });
       if (res.card) {
         // An older card can't be confirmed any more.
         setItems((current) => current.map((item) => (item.kind === "card" ? { ...item, state: "closed" } : item)));
@@ -338,6 +343,16 @@ export function VoiceAssistant() {
                   </div>
                 );
               }
+              if (item.kind === "existing") {
+                return (
+                  <ExistingTasks
+                    key={item.id}
+                    item={item}
+                    disabled={busy || recorder.recording}
+                    onPick={(message) => void send(message)}
+                  />
+                );
+              }
               if (item.kind === "done") {
                 return (
                   <div key={item.id} className="flex items-start gap-2 rounded-xl bg-emerald-500/10 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-200">
@@ -515,7 +530,7 @@ function SummaryCard({
                 iteration: "rework",
                 reworkOf: draft.reworkOf!.id,
                 ...(draft.reworkSource ? { reworkSource: draft.reworkSource } : {}),
-                description: draft.brief ?? undefined,
+                description: draft.briefHtml ?? draft.brief ?? undefined,
                 assignees: draft.assignees.map((a) => a.id),
                 dueDate: draft.dueDate,
                 ...(draft.startDate ? { startDate: draft.startDate } : {}),
@@ -527,7 +542,7 @@ function SummaryCard({
                 titleParts: { unit: draft.unit!, quantity: draft.quantity!, shortName: draft.shortName! },
                 iteration: "new",
                 hasAttachments: false,
-                description: draft.brief ?? undefined,
+                description: draft.briefHtml ?? draft.brief ?? undefined,
                 assignees: draft.assignees.map((a) => a.id),
                 priority: "medium",
                 startDate: draft.startDate,
@@ -605,7 +620,7 @@ function SummaryCard({
         {card.rows.map(([label, value]) => (
           <div key={label} className="contents">
             <dt className="text-muted-foreground">{label}</dt>
-            <dd className="font-medium [overflow-wrap:anywhere]">{value || "—"}</dd>
+            <dd className="font-medium whitespace-pre-line [overflow-wrap:anywhere]">{value || "—"}</dd>
           </div>
         ))}
       </dl>
@@ -628,4 +643,51 @@ function formatMinutes(m: number): string {
   const h = Math.floor(m / 60);
   const r = m % 60;
   return h && r ? `${h}h ${r}m` : h ? `${h}h` : `${r}m`;
+}
+
+/**
+ * The project's existing tasks (best match first). Tapping one offers "New task
+ * like this" (its name with the next number, people and brief) or "Work on this
+ * task" (close it / log time).
+ */
+function ExistingTasks({
+  item,
+  disabled,
+  onPick,
+}: {
+  item: Extract<ChatItem, { kind: "existing" }>;
+  disabled: boolean;
+  onPick: (message: string) => void;
+}) {
+  const [picked, setPicked] = useState<string | null>(null);
+  const closed = item.state === "closed";
+  return (
+    <ul className={cn("divide-y overflow-hidden rounded-2xl border bg-card text-sm", closed && "opacity-60")} aria-label="Existing tasks">
+      {item.tasks.map((task) => (
+        <li key={task.id}>
+          <button
+            type="button"
+            disabled={closed || disabled}
+            onClick={() => setPicked((current) => (current === task.id ? null : task.id))}
+            aria-expanded={picked === task.id}
+            className="flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
+          >
+            <span className="shrink-0 font-medium">{task.code}</span>
+            <span className="min-w-0 flex-1 [overflow-wrap:anywhere]">{task.title}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">{task.status}</span>
+          </button>
+          {picked === task.id && !closed && (
+            <div className="flex gap-2 px-3 pb-2">
+              <Button type="button" size="sm" variant="outline" className="flex-1" disabled={disabled} onClick={() => onPick(`New task like ${task.code}`)}>
+                New task like this
+              </Button>
+              <Button type="button" size="sm" variant="outline" className="flex-1" disabled={disabled} onClick={() => onPick(`Work on ${task.code}`)}>
+                Work on this task
+              </Button>
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
 }

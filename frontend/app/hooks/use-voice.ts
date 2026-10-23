@@ -19,6 +19,9 @@ export type VoiceField =
   | "shortName"
   | "brief"
   | "assignees"
+  | "dates"
+  | "existing"
+  | "briefReview"
   | "task"
   | "final"
   | "note"
@@ -57,6 +60,19 @@ export interface VoiceDraft {
   note: string | null;
   finalUrl: string | null;
   finalFile: { name: string; size: number } | null;
+  existingFor: string | null;
+  focusTaskId: string | null;
+  briefTidy: { objective: string; bullets: string[] } | null;
+  briefChoice: "tidy" | "plain" | null;
+  /** The chosen brief as simple HTML — what is saved as the description. */
+  briefHtml: string | null;
+}
+
+export interface VoiceExistingTask {
+  id: string;
+  code: string;
+  title: string;
+  status: string;
 }
 
 export interface VoiceCard {
@@ -74,6 +90,8 @@ export interface VoiceReply {
   ready: boolean;
   ask: VoiceField | null;
   card: VoiceCard | null;
+  /** ask = "existing": the project's tasks to pick from. */
+  existing?: VoiceExistingTask[];
   ai: boolean;
 }
 
