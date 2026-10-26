@@ -104,6 +104,7 @@ function ScopeUpload({
   onCancelResend,
   onDone,
   history,
+  editRequest,
 }: {
   brandId: string;
   current: ScopeRow[];
@@ -115,6 +116,8 @@ function ScopeUpload({
   onDone: () => void;
   /** The version history, shown between the row editor (top) and the upload / paste box. */
   history?: React.ReactNode;
+  /** Bumped by the header's "Edit scope" button: opens the row editor on the current scope. */
+  editRequest?: number;
 }) {
   const toast = useToast();
   const units = useScopeUnits();
@@ -184,6 +187,11 @@ function ScopeUpload({
     setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
     showEditor();
   }
+
+  // The header's "Edit scope": open the editor on the current scope and scroll to it.
+  useEffect(() => {
+    if (editRequest) editCurrent();
+  }, [editRequest]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function reset() {
     setRows(null);
@@ -891,6 +899,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const nameOf = useNameOf(data?.names, data?.people, leadName);
   const removeFile = useDeleteBrandFile();
   const [splitting, setSplitting] = useState(false);
+  const [editScope, setEditScope] = useState(0);
   const [renaming, setRenaming] = useState(false);
   // Projects list: the month's projects, or every open one; ticked ones can move to another brand.
   const [allProjects, setAllProjects] = useState(false);
@@ -1016,6 +1025,18 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <MonthPicker month={month} onChange={onMonth} />
+          {data.canManage && !resend && (
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEditScope((n) => n + 1);
+                document.getElementById("scope-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              <LuPencil aria-hidden /> Edit scope
+            </Button>
+          )}
           {data.canCreate && b.status !== "pending" && (
             <Button type="button" variant="outline" onClick={() => setSplitting((s) => !s)} aria-expanded={splitting}>
               <LuScissors aria-hidden /> Split brand
@@ -1089,6 +1110,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             resend={resend}
             onCancelResend={() => setResend(null)}
             onDone={() => void detail.refetch()}
+            editRequest={editScope}
           />
         ) : (
           <ScopeHistory brandId={b._id} />
