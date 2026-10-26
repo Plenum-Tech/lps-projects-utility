@@ -12,6 +12,7 @@ import {
   Tags,
   GraduationCap,
   History,
+  Lightbulb,
   ListChecks,
   MailPlus,
   Timer,
@@ -84,6 +85,8 @@ interface NavItem {
   approvers?: boolean;
   /** Shown only to people who may see the Time Log Report (admins, leadership, heads). */
   timeReport?: boolean;
+  /** Shown only to leadership (the project approvers). */
+  leadership?: boolean;
 }
 
 interface ResolvedNavItem extends Omit<NavItem, "to"> {
@@ -194,6 +197,7 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Delivery Pulse", to: "/reports/delivery", icon: Activity },
       { title: "Task Report", to: "/reports/tasks", icon: ListChecks },
       { title: "Time Log Report", to: "/reports/time", icon: BarChart3, timeReport: true },
+      { title: "Insights", to: "/insights", icon: Lightbulb, leadership: true },
       // Weekly Timesheet (submit/approve workflow) is hidden: hours are covered by the
       // Time Log Report. The page still exists at /reports/timesheets.
       { title: "Activity Log", to: "/admin/activity-log", icon: History, roles: ADMIN },
@@ -222,7 +226,7 @@ const GUEST_GROUPS: ResolvedNavGroup[] = [
 function resolveGroups(
   role: Role,
   approver: { isApprover: boolean; pending: number },
-  access: { timeReport: boolean },
+  access: { timeReport: boolean; leadership: boolean },
 ): ResolvedNavGroup[] {
   return NAV_GROUPS.map((group, index) => ({
     key: group.label ?? `block-${index}`,
@@ -233,6 +237,7 @@ function resolveGroups(
       .filter((item) => !item.feature || FEATURES[item.feature])
       .filter((item) => !item.approvers || approver.isApprover)
       .filter((item) => !item.timeReport || access.timeReport)
+      .filter((item) => !item.leadership || access.leadership)
       .map((item) => ({
         ...item,
         to: typeof item.to === "string" ? item.to : (item.to[role] ?? ""),
@@ -282,7 +287,7 @@ export function AppSidebar() {
         (approvals.data?.changes?.pending.length ?? 0) +
         (overScope.data?.length ?? 0),
     },
-    { timeReport: user.access?.timeReport ?? user.role !== "employee" },
+    { timeReport: user.access?.timeReport ?? user.role !== "employee", leadership: Boolean(user.leadership) },
   );
   const location: NavLocation = { pathname, search: new URLSearchParams(search) };
 

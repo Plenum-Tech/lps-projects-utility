@@ -15,6 +15,7 @@ import {
   passwordSetupRateLimit,
   strictRateLimit,
   moderateRateLimit,
+  insightsRateLimit,
   standardRateLimit,
 } from "./middlewares/rateLimit.js";
 import { serve } from "inngest/express";
@@ -50,6 +51,7 @@ import performanceReviewsRouter from "./routes/performanceReviews.js";
 import projectMetaRouter from "./routes/projectMeta.js";
 import projectsRouter from "./routes/projects.js";
 import aiInsightsRouter from "./routes/aiInsights.js";
+import insightsRouter from "./routes/insights.js";
 import dashboardRouter from "./routes/dashboard.js";
 import { taskCategoriesRouter, taskLabelsRouter, taskSettingsRouter } from "./routes/taskMeta.js";
 import tasksRouter from "./routes/tasks.js";
@@ -245,6 +247,7 @@ app.use("/api/auth/password-reset/verify", passwordResetVerifyRateLimit);
 app.use("/api/auth/password-reset/complete", passwordResetCompleteRateLimit);
 // Moderate: expensive compute operations
 app.use("/api/ai-insights", moderateRateLimit);
+app.use("/api/insights/ask", insightsRateLimit);
 // Standard: general API endpoints. The SSE stream is long-lived and reconnects on
 // its own, so it is exempt — a 429 there would trigger a reconnect loop.
 app.use("/api", (req, res, next) =>
@@ -278,6 +281,8 @@ app.use("/api/attendance", attendanceRouter);
 app.use("/api/reports", timeReportsRouter);
 app.use("/api/performance-reviews", performanceReviewsRouter);
 app.use("/api/ai-insights", aiInsightsRouter);
+// Leadership Insights: questions answered from read-only data tools (lib/insights).
+app.use("/api/insights", insightsRouter);
 app.use("/api/dashboard", dashboardRouter);
 app.use("/api/tasks", tasksRouter);
 app.use("/api/task-labels", taskLabelsRouter);

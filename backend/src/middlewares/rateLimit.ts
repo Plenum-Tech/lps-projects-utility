@@ -188,6 +188,14 @@ export const standardRateLimit = rateLimit({
   keyGenerator: userOrIpKey,
 });
 
+/** Leadership Insights questions (each runs several AI calls): 20 per minute per signed-in user. */
+export const insightsRateLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  keyGenerator: userOrIpKey,
+  message: "Too many questions in a minute. Please wait a moment.",
+});
+
 /**
  * Public set-password link endpoints (GET preview + POST set): 10 requests per
  * 15 minutes per IP, in its own store.

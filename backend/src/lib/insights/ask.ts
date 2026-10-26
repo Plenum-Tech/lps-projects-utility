@@ -1,0 +1,240 @@
+import { appDateKey, appTimeZone } from "../appTime.js";
+import { dayFromKey, keyFromDay, mondayOfDay } from "../delivery/days.js";
+import type { ToolContext } from "./common.js";
+import { openAiToolDefs, runTool } from "./tools.js";
+import { INSIGHTS_UI_PROMPT } from "./uiPrompt.generated.js";
+
+// ---------------------------------------------------------------------------
+// Leadership Insights engine: OpenAI chat with tool calling over our read-only
+// data tools (at most MAX_TOOL_ROUNDS rounds), then the final answer in OpenUI
+// Lang (our component library only), streamed as it arrives. Same OpenAI
+// conventions as lib/briefCheck.ts (plain fetch, OPENAI_API_KEY).
+// ---------------------------------------------------------------------------
+
+const MAX_TOOL_ROUNDS = 4;
+const CALL_TIMEOUT_MS = 90_000;
+/** Tool results sent to the model are cut at this many characters. */
+const RESULT_MAX_CHARS = 24_000;
+const HISTORY_TURNS = 3;
+const HISTORY_ANSWER_CHARS = 1_500;
+
+export const insightsConfigured = () => Boolean(process.env.OPENAI_API_KEY?.trim());
+export const insightsModel = () => process.env.INSIGHTS_MODEL?.trim() || "gpt-4o-mini";
+
+export interface HistoryTurn {
+  question: string;
+  answer: string;
+}
+
+export interface ToolTrace {
+  name: string;
+  params: Record<string, unknown>;
+  ok: boolean;
+  ms: number;
+  /** Rows the tool returned (sum of its top-level lists) or its error. */
+  rows: number;
+  error?: string;
+}
+
+export interface AskEmitter {
+  tool(trace: ToolTrace): void;
+  delta(text: string): void;
+  /** Text streamed so far turned out to precede tool calls: the client drops it. */
+  reset(): void;
+}
+
+export interface AskResult {
+  answer: string;
+  tools: ToolTrace[];
+  /** Raw tool results (for the grounding check; not sent to the client). */
+  results: unknown[];
+  usage: { prompt: number; completion: number; total: number };
+  model: string;
+}
+
+type ChatMessage =
+  | { role: "system" | "user"; content: string }
+  | { role: "assistant"; content: string | null; tool_calls?: ToolCall[] }
+  | { role: "tool"; tool_call_id: string; content: string };
+
+interface ToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+function systemPrompt(): string {
+  const today = appDateKey();
+  const day = dayFromKey(today);
+  const monday = mondayOfDay(day);
+  const weekday = new Date(`${today}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  return [
+    "You are Leadership Insights for LPS, a creative agency, inside its Projects Utility. Leadership asks about delivery (tasks, on-time, late work), scope usage, hours logged, the manpower plan, pitches, rework, Pearity (AI generation tool) usage and approvals.",
+    `Today is ${weekday} ${today} (${appTimeZone()}). This month is ${today.slice(0, 7)}. This week started ${keyFromDay(monday)}; last week was ${keyFromDay(monday - 7)} to ${keyFromDay(monday - 1)}. "Last 3 months" means the 3 months up to today unless the user says otherwise. Quarters are calendar quarters (Q4 = Oct–Dec).`,
+    "How to work: first call the data tools you need (several in parallel when useful; filters take names, not ids). When you have the data, reply with the final answer in openui-lang as described below — no tool calls in that reply. One round of tool calls is usually enough: tool results are complete for the arguments given (lists say how many rows exist), so never repeat a call or re-ask the same tool for more rows unless a count shows rows were left out.",
+    "Hard rules: copy table cells (titles, names, outcome notes) verbatim from the results — never paraphrase or fill them in; use ONLY numbers that appear in tool results of this conversation; never estimate or invent figures, names or dates. If a tool returns an error, no plan or no rows, say so plainly. Never show emails, passwords, hourly rates, costs, salaries, leave or HR details — if asked, explain that Insights doesn't cover them. If the question can't be answered from the tools, reply with a short Report whose Callout lists what you can answer. If the asked period has no data (e.g. no plan for that month), say that first in the summary; you may then show the nearest period that has data, clearly labelled as such. Don't compute new percentages, sums or breakdowns yourself — show only figures present in the results (onPct is of the tasks with a recorded choice; use the *OfClosed shares for shares of all tasks).",
+    "",
+    INSIGHTS_UI_PROMPT,
+  ].join("\n");
+}
+
+function countRows(result: unknown): number {
+  if (!result || typeof result !== "object") return 0;
+  let n = 0;
+  for (const v of Object.values(result as Record<string, unknown>)) if (Array.isArray(v)) n += v.length;
+  return n;
+}
+
+interface StreamedTurn {
+  content: string;
+  toolCalls: ToolCall[];
+  usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | null;
+}
+
+/** One streamed chat completion: content deltas go to `onContent` while no tool call has appeared. */
+async function streamTurn(
+  messages: ChatMessage[],
+  allowTools: boolean,
+  signal: AbortSignal,
+  onContent: (text: string) => void
+): Promise<StreamedTurn> {
+  const timeout = AbortSignal.timeout(CALL_TIMEOUT_MS);
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    signal: AbortSignal.any([signal, timeout]),
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY!.trim()}` },
+    body: JSON.stringify({
+      model: insightsModel(),
+      temperature: 0.1,
+      stream: true,
+      stream_options: { include_usage: true },
+      messages,
+      tools: openAiToolDefs(),
+      tool_choice: allowTools ? "auto" : "none",
+    }),
+  });
+  if (!res.ok || !res.body) {
+    const detail = await res.text().catch(() => "");
+    throw new Error(`OpenAI ${res.status} ${detail.slice(0, 200)}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let usage: StreamedTurn["usage"] = null;
+  const calls: ToolCall[] = [];
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) >= 0) {
+      const line = buffer.slice(0, nl).trim();
+      buffer = buffer.slice(nl + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "[DONE]") continue;
+      const chunk = JSON.parse(data) as {
+        choices?: Array<{ delta?: { content?: string | null; tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }> } }>;
+        usage?: StreamedTurn["usage"];
+      };
+      if (chunk.usage) usage = chunk.usage;
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+      for (const tc of delta.tool_calls ?? []) {
+        const call = (calls[tc.index] ??= { id: "", type: "function", function: { name: "", arguments: "" } });
+        if (tc.id) call.id = tc.id;
+        if (tc.function?.name) call.function.name += tc.function.name;
+        if (tc.function?.arguments) call.function.arguments += tc.function.arguments;
+      }
+      if (delta.content) {
+        content += delta.content;
+        if (calls.length === 0) onContent(delta.content);
+      }
+    }
+  }
+  return { content, toolCalls: calls.filter(Boolean), usage };
+}
+
+/** Same tool + same arguments (the row limit ignored: results already say how many rows exist). */
+function callKey(call: ToolCall): string {
+  try {
+    const { limit: _limit, ...args } = JSON.parse(call.function.arguments || "{}") as Record<string, unknown>;
+    return `${call.function.name}:${JSON.stringify(Object.fromEntries(Object.entries(args).sort(([a], [b]) => a.localeCompare(b))))}`;
+  } catch {
+    return `${call.function.name}:${call.function.arguments}`;
+  }
+}
+
+/** Strips a ```openui fence the model sometimes adds around its answer. */
+export function cleanAnswer(text: string): string {
+  return text.replace(/^\s*```[a-z-]*\s*\n?/i, "").replace(/\n?```\s*$/, "").trim();
+}
+
+export async function askInsights(params: {
+  question: string;
+  history: HistoryTurn[];
+  ctx: ToolContext;
+  signal: AbortSignal;
+  emit: AskEmitter;
+}): Promise<AskResult> {
+  const { question, history, ctx, signal, emit } = params;
+  const messages: ChatMessage[] = [{ role: "system", content: systemPrompt() }];
+  for (const turn of history.slice(-HISTORY_TURNS)) {
+    messages.push({ role: "user", content: turn.question });
+    messages.push({ role: "assistant", content: turn.answer.slice(0, HISTORY_ANSWER_CHARS) });
+  }
+  messages.push({ role: "user", content: question });
+
+  const usage = { prompt: 0, completion: 0, total: 0 };
+  const tools: ToolTrace[] = [];
+  const results: unknown[] = [];
+  // Identical calls (same tool, same arguments) are answered once; a round of only repeats ends the tool phase.
+  const seen = new Set<string>();
+  let onlyRepeats = false;
+  for (let round = 0; ; round++) {
+    const allowTools = round < MAX_TOOL_ROUNDS && !onlyRepeats;
+    let streamed = false;
+    const turn = await streamTurn(messages, allowTools, signal, (text) => {
+      streamed = true;
+      emit.delta(text);
+    });
+    usage.prompt += turn.usage?.prompt_tokens ?? 0;
+    usage.completion += turn.usage?.completion_tokens ?? 0;
+    usage.total += turn.usage?.total_tokens ?? 0;
+    if (turn.toolCalls.length === 0 || !allowTools) {
+      return { answer: cleanAnswer(turn.content), tools, results, usage, model: insightsModel() };
+    }
+    if (streamed) emit.reset();
+
+    messages.push({ role: "assistant", content: turn.content || null, tool_calls: turn.toolCalls });
+    onlyRepeats = turn.toolCalls.every((call) => seen.has(callKey(call)));
+    const replies = await Promise.all(
+      turn.toolCalls.map(async (call) => {
+        const key = callKey(call);
+        if (seen.has(key)) {
+          return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ note: "Same call as before — its result is above. Do not call it again; write the answer now." }) };
+        }
+        seen.add(key);
+        const started = Date.now();
+        const out = await runTool(call.function.name, call.function.arguments, ctx);
+        results.push(out.result);
+        const error = out.ok ? undefined : String((out.result as { error?: unknown })?.error ?? "error");
+        const trace: ToolTrace = {
+          name: call.function.name,
+          params: (out.args && typeof out.args === "object" ? out.args : { raw: String(out.args) }) as Record<string, unknown>,
+          ok: out.ok,
+          ms: Date.now() - started,
+          rows: countRows(out.result),
+          ...(error ? { error } : {}),
+        };
+        tools.push(trace);
+        emit.tool(trace);
+        let json = JSON.stringify(out.result);
+        if (json.length > RESULT_MAX_CHARS) json = `${json.slice(0, RESULT_MAX_CHARS)}… [truncated: ask for fewer rows]`;
+        return { role: "tool" as const, tool_call_id: call.id, content: json };
+      })
+    );
+    messages.push(...replies);
+  }
+}
