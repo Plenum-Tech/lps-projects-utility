@@ -1,16 +1,40 @@
 import { Fragment, useMemo, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Link } from "react-router";
-import { LuFileSpreadsheet, LuFileUp, LuLoaderCircle, LuPlus, LuPresentation } from "react-icons/lu";
+import {
+  LuCalendarClock,
+  LuChevronDown,
+  LuCircleCheck,
+  LuCircleSlash,
+  LuExternalLink,
+  LuFileSpreadsheet,
+  LuFileUp,
+  LuLoaderCircle,
+  LuMessageSquareText,
+  LuPencil,
+  LuPlus,
+  LuPresentation,
+  LuRotateCcw,
+} from "react-icons/lu";
 
 import { CELL_TONE, PersonPicker, type CellTone } from "@/components/brands/alloc-cell";
 import { PitchImportDialog } from "@/components/brands/pitch-import-dialog";
+import { PitchOutcomeDialog, type PitchOutcomeMode, type PitchOutcomeTarget } from "@/components/brands/pitch-outcome-dialog";
 import { shortName } from "@/components/brands/brands-dashboard";
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { ProjectFormDialog } from "@/components/projects/project-form-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PitchEditError, usePitchEdit, usePitches, usePitchesExport, type PitchEdit } from "@/hooks/use-brand-dashboard";
+import { PitchEditError, usePitchEdit, usePitchOutcome, usePitches, usePitchesExport, type PitchEdit } from "@/hooks/use-brand-dashboard";
 import { getErrorMessage } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { PitchRow, PitchStepKey, PitchTone } from "@/types";
@@ -18,7 +42,8 @@ import type { PitchRow, PitchStepKey, PitchTone } from "@/types";
 // ---------------------------------------------------------------------------
 // Pitch & Growth Tracker (/pitches): pitches / proactive projects by month, laid out like the
 // Manpower plan grid. Dates, revenue, lead and end date edit in the cell (no
-// pop-up) for leadership, Nazeer and the pitch's lead / manager. The status
+// pop-up) for leadership, Nazeer and the pitch's lead / manager; a step cell opens
+// a menu to record its outcome (Held / Not held with notes, Rescheduled). The status
 // comes from the pitch's three tasks (Milestone 1 meeting, Milestone 2 meeting,
 // Client presentation); a missed date is emailed once to lead, manager and leadership.
 // ---------------------------------------------------------------------------
@@ -76,20 +101,51 @@ type Show = "all" | "missed" | "week" | "nodates";
 
 function stepTone(row: PitchRow, key: PitchStepKey, today: string): CellTone | "plain" {
   const s = row.steps.find((x) => x.key === key);
+  if (s?.outcome === "not_held") return "na";
+  if (s?.done) return "ok";
   if (!s?.due) return "na";
-  if (s.done) return "ok";
   const n = days(today, s.due);
   if (n < 0) return "miss";
   return n <= 2 ? "load" : "plain";
 }
 
-function stepText(row: PitchRow, key: PitchStepKey, today: string): string {
+function stepText(row: PitchRow, key: PitchStepKey, today: string): ReactNode {
   const s = row.steps.find((x) => x.key === key);
+  if (s?.outcome === "not_held") return `⊘ Not held${s.due ? ` · ${pitchDate(s.due)}` : ""}`;
+  if (s?.done) return `✓ Held${s.due ? ` · ${pitchDate(s.due)}` : ""}`;
   if (!s?.due) return "—";
-  if (s.done) return `✓ held ${pitchDate(s.due)}`;
   const n = days(today, s.due);
-  if (n < 0) return `✕ ${pitchDate(s.due)} · missed`;
-  return `${pitchDate(s.due)}${n === 0 ? " · today" : n <= 2 ? ` · in ${n}d` : ""}`;
+  const tag = s.outcome === "rescheduled" && (
+    <span className="ml-1 rounded bg-background/70 px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground ring-1 ring-border">
+      rescheduled
+    </span>
+  );
+  if (n < 0)
+    return (
+      <>
+        ✕ {pitchDate(s.due)} · missed{tag}
+      </>
+    );
+  return (
+    <>
+      {pitchDate(s.due)}
+      {n === 0 ? " · today" : n <= 2 ? ` · in ${n}d` : ""}
+      {tag}
+    </>
+  );
+}
+
+/** Hover text for a step cell: its outcome note (and where a rescheduled date came from). */
+function stepHint(row: PitchRow, key: PitchStepKey): string | undefined {
+  const s = row.steps.find((x) => x.key === key);
+  if (!s) return undefined;
+  const parts: string[] = [];
+  if (s.outcome === "not_held") parts.push(`Not held${s.outcomeNote ? `: ${s.outcomeNote}` : ""}`);
+  else if (s.outcome === "held" && s.outcomeNote) parts.push(`Notes: ${s.outcomeNote}`);
+  else if (s.outcome === "rescheduled") {
+    parts.push(`Rescheduled${s.rescheduledFrom ? ` from ${pitchDate(s.rescheduledFrom)}` : ""}${s.outcomeNote ? `: ${s.outcomeNote}` : ""}`);
+  }
+  return parts.join("\n") || undefined;
 }
 
 /** The cell's editor, right in the cell: commits on Enter or when focus leaves it; Escape cancels. */
@@ -131,6 +187,8 @@ export function PitchPlan({ quarter, onQuarterChange, canImport = false }: { qua
   const pitches = usePitches(quarter);
   const exporter = usePitchesExport();
   const edit = usePitchEdit(quarter);
+  const outcomeSave = usePitchOutcome(quarter);
+  const [outcome, setOutcome] = useState<PitchOutcomeTarget | null>(null);
   const [lead, setLead] = useState("all");
   const [show, setShow] = useState<Show>("all");
   const [editing, setEditing] = useState<string | null>(null);
@@ -220,28 +278,99 @@ export function PitchPlan({ quarter, onQuarterChange, canImport = false }: { qua
 
   function stepCell(row: PitchRow, key: PitchStepKey, label: string) {
     const cell = `${row.id}:${key}`;
+    const s = row.steps.find((x) => x.key === key);
     if (editing === cell) {
-      const s = row.steps.find((x) => x.key === key);
       return (
         <EditBox
           onCancel={() => setEditing(null)}
           onCommit={() => {
             const date = draft.date || null;
-            const changed = date !== (s?.due ?? null) || draft.held !== Boolean(s?.done);
-            commit(cell, changed ? { kind: "step", row, step: key, date, held: draft.held } : null);
+            // Held / not held go through the outcome menu; this editor only sets the date.
+            commit(cell, date !== (s?.due ?? null) ? { kind: "step", row, step: key, date, held: Boolean(s?.done) } : null);
           }}
         >
           <input autoFocus type="date" aria-label={label} className={cn(inputCls, "w-32")} value={draft.date} onChange={(e) => setDraft((d) => ({ ...d, date: e.target.value }))} />
-          <label className="flex items-center gap-1 whitespace-nowrap text-[11px] text-muted-foreground">
-            <input type="checkbox" checked={draft.held} onChange={(e) => setDraft((d) => ({ ...d, held: e.target.checked }))} />
-            held
-          </label>
         </EditBox>
       );
     }
+    const hint = stepHint(row, key);
+    // A step with its task: a menu of outcomes (Held / Not held / Rescheduled), plus the plain date edit.
+    if (s?.taskId && s.canAct) {
+      const cls = cn(
+        "flex w-full min-w-[6.5rem] cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-2 py-1 text-left text-xs hover:brightness-95 hover:ring-1 hover:ring-border focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+        TONE[stepTone(row, key, today)],
+      );
+      const pick = (mode: PitchOutcomeMode) => setOutcome({ row, step: key, title: label, mode });
+      return (
+        <>
+          <DropdownMenu>
+            <DropdownMenuTrigger className={cls} title={hint} aria-label={`${label} for ${row.title}${hint ? `. ${hint}` : ""}. Record the outcome`}>
+              {saving === cell || (outcomeSave.isPending && outcomeSave.variables?.row.id === row.id && outcomeSave.variables.step === key) ? (
+                <LuLoaderCircle aria-hidden className="inline size-3 animate-spin" />
+              ) : (
+                <span className="flex min-w-0 items-center">{stepText(row, key, today)}</span>
+              )}
+              {s.outcomeNote && <LuMessageSquareText aria-hidden className="size-3 shrink-0 opacity-70" />}
+              <LuChevronDown aria-hidden className="ml-auto size-3 shrink-0 opacity-60" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-auto min-w-52 max-w-80">
+              {hint && (
+                <DropdownMenuGroup>
+                  <DropdownMenuLabel className="whitespace-pre-wrap text-xs font-normal text-muted-foreground">{hint}</DropdownMenuLabel>
+                </DropdownMenuGroup>
+              )}
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => pick("held")}>
+                  <LuCircleCheck aria-hidden className="text-emerald-600 dark:text-emerald-400" />
+                  {s.outcome === "held" ? "Held — edit notes…" : "Held…"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => pick("not_held")}>
+                  <LuCircleSlash aria-hidden className="text-muted-foreground" />
+                  {s.outcome === "not_held" ? "Not held — edit reason…" : "Not held…"}
+                </DropdownMenuItem>
+                {!s.done && (
+                  <DropdownMenuItem onClick={() => pick("rescheduled")}>
+                    <LuCalendarClock aria-hidden />
+                    Rescheduled…
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                {row.canEdit && !s.done && (
+                  <DropdownMenuItem onClick={() => open(cell, row, key)}>
+                    <LuPencil aria-hidden />
+                    Correct the date
+                  </DropdownMenuItem>
+                )}
+                {s.done && (
+                  <DropdownMenuItem
+                    onClick={() =>
+                      outcomeSave.mutate(
+                        { row, step: key, input: { outcome: "reopen" } },
+                        { onError: (e) => setError({ cell, message: getErrorMessage(e), taskId: s.taskId }) },
+                      )
+                    }
+                  >
+                    <LuRotateCcw aria-hidden />
+                    Reopen the step
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem render={<Link to={`/tasks?task=${s.taskId}`} />}>
+                  <LuExternalLink aria-hidden />
+                  Open the task
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {cellError(cell)}
+        </>
+      );
+    }
+    const text = hint ? <span title={hint}>{stepText(row, key, today)}</span> : stepText(row, key, today);
     return (
       <>
-        {cellButton(cell, stepTone(row, key, today), stepText(row, key, today), row.canEdit, () => open(cell, row, key), `${label} for ${row.title}`)}
+        {cellButton(cell, stepTone(row, key, today), text, row.canEdit, () => open(cell, row, key), `${label} for ${row.title}${hint ? `. ${hint}` : ""}`)}
         {cellError(cell)}
       </>
     );
@@ -414,9 +543,9 @@ export function PitchPlan({ quarter, onQuarterChange, canImport = false }: { qua
         {(
           [
             ["ok", "Held / done"],
+            ["na", "Not held · no date"],
             ["load", "Due within 2 days"],
             ["miss", "Missed (not held / not closed) · no lead"],
-            ["na", "No date"],
             ["plain", "Upcoming"],
           ] as const
         ).map(([tone, label]) => (
@@ -530,6 +659,7 @@ export function PitchPlan({ quarter, onQuarterChange, canImport = false }: { qua
 
       <ProjectFormDialog open={newPitch} onOpenChange={setNewPitch} defaultType="Pitch" pitch />
       {canImport && <PitchImportDialog open={importOpen} onOpenChange={setImportOpen} />}
+      <PitchOutcomeDialog target={outcome} quarter={quarter} onClose={() => setOutcome(null)} />
     </div>
   );
 }

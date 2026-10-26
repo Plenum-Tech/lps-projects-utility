@@ -586,58 +586,70 @@ export async function stopTimerById(req: Request, res: Response): Promise<void> 
  * POST /api/timelogs — `{ project?, task?, startTime, endTime, memo?, user? }`.
  * Approvers may log for others (`user`); the employee is then notified.
  */
+export interface CreateTimeLogBody {
+  project?: unknown;
+  task?: unknown;
+  startTime?: unknown;
+  endTime?: unknown;
+  memo?: unknown;
+  user?: unknown;
+  subtask?: unknown;
+  /** Time spent entered while completing the task / a rework item (mandatory there). */
+  completion?: unknown;
+}
+
 export async function createTimeLog(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
-  const body = (req.body ?? {}) as {
-    project?: unknown;
-    task?: unknown;
-    startTime?: unknown;
-    endTime?: unknown;
-    memo?: unknown;
-    user?: unknown;
-    subtask?: unknown;
-    /** Time spent entered while completing the task / a rework item (mandatory there). */
-    completion?: unknown;
-  };
+  const result = await createTimeLogCore(actor, (req.body ?? {}) as CreateTimeLogBody);
+  if (isInvalid(result)) return send(res, result);
+  const populated = await loadPopulated(result.logs[0]!._id as mongoose.Types.ObjectId);
+  res.status(201).json({ log: serializeLog(actor, populated!), count: result.logs.length, totalMinutes: result.totalMinutes });
+}
+
+/**
+ * Validates and writes a manual time entry (one per date for a multi-day range) — shared by
+ * POST /api/timelogs and the Pitch tracker's "Held" outcome. Nothing is written when invalid.
+ */
+export async function createTimeLogCore(actor: IUser, body: CreateTimeLogBody): Promise<Invalid | { logs: ITimeLog[]; totalMinutes: number }> {
 
   let owner: IUser = actor;
   if (body.user !== undefined && body.user !== null && body.user !== "" && body.user !== actor._id.toString()) {
-    if (typeof body.user !== "string" || isInvalidObjectId(body.user)) return send(res, { status: 400, error: "user must be a valid user ID" });
+    if (typeof body.user !== "string" || isInvalidObjectId(body.user)) return { status: 400, error: "user must be a valid user ID" };
     const found = await User.findById(body.user);
-    if (!found) return send(res, { status: 404, error: "User not found" });
+    if (!found) return { status: 404, error: "User not found" };
     owner = found;
   }
   if (adminTargetDenied(actor, owner)) {
-    return send(res, { status: 403, error: "Only an admin can log time for an admin" });
+    return { status: 403, error: "Only an admin can log time for an admin" };
   }
 
   const start = parseInstant(body.startTime, "startTime");
-  if (isInvalid(start)) return send(res, start);
+  if (isInvalid(start)) return start;
   const end = parseInstant(body.endTime, "endTime");
-  if (isInvalid(end)) return send(res, end);
+  if (isInvalid(end)) return end;
   const memo = parseMemo(body.memo);
-  if (isInvalid(memo)) return send(res, memo);
+  if (isInvalid(memo)) return memo;
 
   const target = await resolveTarget(owner, body.project, body.task, {
     allowCompletedProject: body.completion === true,
   });
-  if (isInvalid(target)) return send(res, target);
+  if (isInvalid(target)) return target;
   const { project, task } = target;
 
   // Optional rework item on the task the time was spent on.
   let subtask: mongoose.Types.ObjectId | null = null;
   if (body.subtask !== undefined && body.subtask !== null && body.subtask !== "") {
     if (typeof body.subtask !== "string" || isInvalidObjectId(body.subtask)) {
-      return send(res, { status: 400, error: "subtask must be a valid rework item ID" });
+      return { status: 400, error: "subtask must be a valid rework item ID" };
     }
     if (!task || !task.subtasks.some((sub) => sub._id.equals(body.subtask as string))) {
-      return send(res, { status: 400, error: "The rework item isn't on this task" });
+      return { status: 400, error: "The rework item isn't on this task" };
     }
     subtask = new mongoose.Types.ObjectId(body.subtask);
   }
 
   if (!owner._id.equals(actor._id) && !isApprover(actor, owner, project)) {
-    return send(res, { status: 403, error: "Only admins, the employee's department head or the project manager can log time for others" });
+    return { status: 403, error: "Only admins, the employee's department head or the project manager can log time for others" };
   }
   // Completing a task requires the time spent, so that entry is always accepted
   // for your own time on a task you're assigned to (even with manual entries off).
@@ -646,21 +658,21 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
     owner._id.equals(actor._id) &&
     Boolean(task && (isAssignee(actor, task) || isSubtaskAssignee(actor, task)));
   if (project && !project.manualTimeLogs && !canManageProject(actor, project) && !completionEntry) {
-    return send(res, { status: 403, error: "Manual time entries are disabled for this project" });
+    return { status: 403, error: "Manual time entries are disabled for this project" };
   }
 
-  if (end.getTime() <= start.getTime()) return send(res, { status: 400, error: "endTime must be after startTime" });
+  if (end.getTime() <= start.getTime()) return { status: 400, error: "endTime must be after startTime" };
   // Several dates → one 8-hour entry per date; a same-day entry as entered.
   const windows = dailyWindows(start, end);
-  if (windows.length === 0) return send(res, { status: 400, error: "Nothing to log: the range only covers Saturday / Sunday" });
+  if (windows.length === 0) return { status: 400, error: "Nothing to log: the range only covers Saturday / Sunday" };
   let totalMinutes = 0;
   for (const w of windows) {
     const minutes = await validateWindow(owner._id, w.start, w.end);
-    if (isInvalid(minutes)) return send(res, minutes);
+    if (isInvalid(minutes)) return minutes;
     totalMinutes += minutes;
   }
   const limitError = await hourLimitError(project, totalMinutes);
-  if (limitError) return send(res, limitError);
+  if (limitError) return limitError;
 
   const hourlyRate = await resolveHourlyRate(owner._id, project);
   const status = await initialStatus();
@@ -693,8 +705,7 @@ export async function createTimeLog(req: Request, res: Response): Promise<void> 
   // A manual log on a task fills its empty Actual start with the log's start.
   if (log.task) await markActualStartFromLogs([{ task: log.task, start: log.startTime }]);
   scheduleProgressRecalc(log.project ?? null);
-  const populated = await loadPopulated(log._id as mongoose.Types.ObjectId);
-  res.status(201).json({ log: serializeLog(actor, populated!), count: logs.length, totalMinutes });
+  return { logs, totalMinutes };
 }
 
 /** Edit/delete: approvers any time; the owner while pending. Timesheet logs are edited via the timesheet. */

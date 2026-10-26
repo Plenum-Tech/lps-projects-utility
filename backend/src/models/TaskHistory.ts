@@ -34,6 +34,7 @@ export const TASK_HISTORY_ACTIONS = [
   "pearity_review_changes_requested",
   "pearity_review_rejected",
   "rework_added",
+  "pitch_outcome",
 ] as const;
 
 export type TaskHistoryAction = (typeof TASK_HISTORY_ACTIONS)[number];

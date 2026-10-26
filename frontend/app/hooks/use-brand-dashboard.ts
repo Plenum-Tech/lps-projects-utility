@@ -129,6 +129,46 @@ export function usePitchEdit(quarter: string) {
   });
 }
 
+export type PitchOutcomeInput =
+  | { outcome: "held"; notes: string; link?: string; file?: File | null; minutes?: number }
+  | { outcome: "not_held"; notes: string }
+  | { outcome: "rescheduled"; date: string; notes?: string }
+  | { outcome: "reopen" };
+
+/**
+ * A pitch step's outcome (POST /brands/pitches/:id/steps/:step/outcome). A file (minutes, deck)
+ * is uploaded to the step task first, then recorded as its final file.
+ */
+export function usePitchOutcome(quarter: string) {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ row, step, input }: { row: PitchRow; step: PitchStepKey; input: PitchOutcomeInput }) => {
+      const { file, ...body } = input as PitchOutcomeInput & { file?: File | null };
+      let fileId: string | undefined;
+      if (file) {
+        const taskId = row.steps.find((s) => s.key === step)?.taskId;
+        if (!taskId) throw new Error("Add the date first: it creates the step's task.");
+        const form = new FormData();
+        form.append("files", file);
+        const { data } = await api.post<{ files: Array<{ _id: string }> }>(`/tasks/${taskId}/files`, form, {
+          headers: { "Content-Type": "multipart/form-data" },
+          timeout: 300_000,
+        });
+        fileId = data.files[0]?._id;
+      }
+      return (await api.post<PitchPatchResult>(`/brands/pitches/${row.id}/steps/${step}/outcome`, { ...body, ...(fileId ? { fileId } : {}) })).data;
+    },
+    onSuccess: (data) => toast.success(data.message ?? "Pitch updated"),
+    onSettled: () => {
+      void queryClient.invalidateQueries({ queryKey: brandDashboardKeys.pitches(quarter) });
+      void queryClient.invalidateQueries({ queryKey: projectKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+      void queryClient.invalidateQueries({ queryKey: ["timelogs"] });
+    },
+  });
+}
+
 /** The brand page: brand, team, utilisation, projects and documents for a month. */
 export function useBrandDetail(id: string, month: string) {
   return useQuery({

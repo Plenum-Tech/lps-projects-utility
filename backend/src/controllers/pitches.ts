@@ -1,8 +1,10 @@
 import type { Request, Response } from "express";
 import ExcelJS from "exceljs";
 import mongoose from "mongoose";
+import { appTimeOn } from "../lib/appTime.js";
 import {
   brandLabel,
+  canActOnPitchStep,
   canEditPitch,
   currentQuarter,
   internalMeetingLabelId,
@@ -14,13 +16,18 @@ import {
   quarterMonths,
   stepsByProject,
   type PitchRow,
+  type PitchStep,
   type PitchStepKey,
 } from "../lib/pitches.js";
+import { pushTaskUpdate, recordTaskHistory } from "../lib/taskAccess.js";
 import { getViewableProjectOr404, projectVisibilityFilter } from "../lib/projectAccess.js";
 import { projectApproverIds } from "../lib/projectApproval.js";
 import { Project } from "../models/Project.js";
+import { Task } from "../models/Task.js";
+import { TaskFile } from "../models/TaskFile.js";
 import { updateProjectCore } from "./projects.js";
-import { createTaskCore } from "./tasks.js";
+import { applyStatusChange, createTaskCore } from "./tasks.js";
+import { createTimeLogCore } from "./timelogs.js";
 
 // ---------------------------------------------------------------------------
 // Brands → Pitch plan:
@@ -28,8 +35,9 @@ import { createTaskCore } from "./tasks.js";
 //   GET   /api/brands/pitches/export            the plan as .xlsx
 //   PATCH /api/brands/pitches/:id               in-place edits of one pitch
 // Only the projects the user may see (same rule as the projects list). Task
-// changes (due date, held = completed, assignees) go through the task API from
-// the page, so the task rules (completion requirements included) apply as usual.
+// changes (due date, assignees) go through the task API from the page, so the task
+// rules apply as usual; a step's outcome (held / not held / rescheduled) has its own
+// endpoint (POST /api/brands/pitches/:id/steps/:step/outcome).
 // ---------------------------------------------------------------------------
 
 function quarterOf(req: Request): string | null {
@@ -67,7 +75,17 @@ const fmtDate = (d: string | null) => (d ? pitchDate(d) : "");
 const stepCell = (r: PitchRow, key: PitchStepKey) => {
   const s = r.steps.find((x) => x.key === key);
   if (!s?.due) return "";
-  return `${pitchDate(s.due)}${s.done ? " (held)" : r.status.missed.some((m) => m.key === key) ? " (missed)" : ""}`;
+  const state =
+    s.outcome === "not_held"
+      ? " (not held)"
+      : s.done
+        ? " (held)"
+        : r.status.missed.some((m) => m.key === key)
+          ? " (missed)"
+          : s.outcome === "rescheduled" && s.rescheduledFrom
+            ? ` (rescheduled from ${pitchDate(s.rescheduledFrom)})`
+            : "";
+  return `${pitchDate(s.due)}${state}${s.outcomeNote ? `\n${s.outcomeNote}` : ""}`;
 };
 const ON_TIME = { on_time: "On time", late: "Late", na: "—" } as const;
 
@@ -269,4 +287,135 @@ export async function updatePitch(req: Request, res: Response): Promise<void> {
 
   const [row] = await loadPitchRows(user, projectVisibilityFilter(user), currentQuarter(), new Date(), project._id as mongoose.Types.ObjectId);
   res.json({ row: row ?? null, ...(message ? { message } : {}) });
+}
+
+// ---------------------------------------------------------------------------
+// Step outcomes
+// ---------------------------------------------------------------------------
+
+const OUTCOMES = ["held", "not_held", "rescheduled", "reopen"] as const;
+type OutcomeAction = (typeof OUTCOMES)[number];
+const OUTCOME_LABEL: Record<OutcomeAction, string> = { held: "held", not_held: "not held", rescheduled: "rescheduled", reopen: "reopened" };
+const HTTP_LINK = /^https?:\/\/\S+$/i;
+
+/**
+ * POST /api/brands/pitches/:id/steps/:step/outcome — what happened to a pitch step:
+ *   { outcome: "held", notes, link?, fileId?, minutes? }  closes the step task with the notes as its
+ *       outcome note (no final file / time log required); `fileId` = a file already uploaded to the
+ *       task; `minutes` = the meeting's length, logged for the caller under the usual time-log rules,
+ *       ending at the meeting (6 pm on a past date, else now)
+ *   { outcome: "not_held", notes }                         closes it as not held (`notes` = the reason)
+ *   { outcome: "rescheduled", date, notes? }               keeps it open, moves its due date (and the pitch date)
+ *   { outcome: "reopen" }                                  back to in progress, outcome cleared
+ * Stored on the task (pitchOutcome) and in its history. Whoever edits the pitch, the project's
+ * managers and the task's creator. Other tasks keep the normal closing rules.
+ */
+export async function recordPitchOutcome(req: Request, res: Response): Promise<void> {
+  const project = await getViewableProjectOr404(req, res);
+  if (!project) return;
+  const user = req.user!;
+  if (!/^pitch$/i.test(project.naming?.type ?? "")) return void res.status(400).json({ error: "This project isn't a pitch" });
+  if (project.archivedAt) return void res.status(409).json({ error: "This project is archived and read-only. Restore it first." });
+  const key = String(req.params.step ?? "");
+  if (!STEP_KEYS.has(key)) return void res.status(400).json({ error: "step must be milestone1, milestone2 or clientPresentation" });
+  const steps: PitchStep[] = (await stepsByProject([project]).then((m) => m.get(String(project._id)))) ?? [];
+  const step = steps.find((s) => s.key === key)!;
+  if (!step.taskId) return void res.status(400).json({ error: "Add the date first: it creates the step's task." });
+  const approvers = new Set((await projectApproverIds()).map(String));
+  if (!canActOnPitchStep(user, project, steps, step, approvers)) {
+    return void res.status(403).json({ error: "Only the pitch's lead or manager, leadership or the task's creator can record this" });
+  }
+  const task = await Task.findById(step.taskId);
+  if (!task) return void res.status(404).json({ error: "Task not found" });
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const outcome = String(body.outcome ?? "") as OutcomeAction;
+  if (!OUTCOMES.includes(outcome)) return void res.status(400).json({ error: "outcome must be held, not_held, rescheduled or reopen" });
+  const notes = typeof body.notes === "string" ? body.notes.trim() : "";
+  if (notes.length > 2000) return void res.status(400).json({ error: "Notes must be 2000 characters or fewer" });
+  const now = new Date();
+  const taskId = task._id as mongoose.Types.ObjectId;
+  const by = user._id as mongoose.Types.ObjectId;
+  const oldDue = task.dueDate ? task.dueDate.toISOString().slice(0, 10) : null;
+  let newDue: string | null = null;
+
+  if (outcome === "held" || outcome === "not_held") {
+    if (!notes) {
+      return void res.status(400).json({ error: outcome === "held" ? "Write the notes: what was discussed, the client's feedback" : "Write why it wasn't held" });
+    }
+    let finalFile: { fileId: mongoose.Types.ObjectId | null; url: string | null; addedAt: Date } | null = null;
+    let minutes = 0;
+    if (outcome === "held") {
+      const link = typeof body.link === "string" ? body.link.trim() : "";
+      const fileId = typeof body.fileId === "string" ? body.fileId : "";
+      if (link && (!HTTP_LINK.test(link) || link.length > 2000)) {
+        return void res.status(400).json({ error: "The link must start with http:// or https://" });
+      }
+      if (fileId) {
+        if (!mongoose.isValidObjectId(fileId) || !(await TaskFile.exists({ _id: fileId, task: taskId }))) {
+          return void res.status(400).json({ error: "The file must be uploaded to this task" });
+        }
+        finalFile = { fileId: new mongoose.Types.ObjectId(fileId), url: null, addedAt: now };
+      } else if (link) {
+        finalFile = { fileId: null, url: link, addedAt: now };
+      }
+      if (body.minutes !== undefined && body.minutes !== null && body.minutes !== "" && body.minutes !== 0) {
+        minutes = Number(body.minutes);
+        if (!Number.isInteger(minutes) || minutes < 1 || minutes > 12 * 60) {
+          return void res.status(400).json({ error: "The meeting length must be between 1 minute and 12 hours" });
+        }
+      }
+    }
+    // The time first: when it's refused (overlap, manual entries off…) nothing is written.
+    if (minutes > 0) {
+      const end = oldDue && oldDue < pitchToday(now) ? appTimeOn(oldDue, "18:00") : now;
+      const logged = await createTimeLogCore(user, {
+        task: String(taskId),
+        project: String(project._id),
+        startTime: new Date(end.getTime() - minutes * 60_000).toISOString(),
+        endTime: end.toISOString(),
+        memo: `${task.title} (pitch meeting)`,
+        completion: true,
+      });
+      if ("error" in logged) return void res.status(logged.status).json({ error: logged.error });
+    }
+    task.submissionNotes = outcome === "held" ? notes : `Not held: ${notes}`;
+    if (finalFile) task.finalFile = finalFile;
+    task.pitchOutcome = { outcome, note: notes, at: now, by, from: null };
+    if (task.status === "completed") {
+      await task.save();
+      pushTaskUpdate(task, "updated", { actorId: String(user._id) });
+    } else {
+      const result = await applyStatusChange(user, task, "completed", undefined, req.ip, { authorized: true });
+      if ("error" in result) return void res.status(result.status).json({ error: result.error });
+    }
+  } else if (outcome === "rescheduled") {
+    const raw = body.date;
+    if (typeof raw !== "string" || !DATE.test(raw)) return void res.status(400).json({ error: "Pick the new date" });
+    if (task.status === "completed") return void res.status(400).json({ error: "This step is closed. Reopen it first." });
+    if (raw === oldDue) return void res.status(400).json({ error: "That's the current date. Pick a new one." });
+    newDue = raw;
+    const date = new Date(`${raw}T00:00:00.000Z`);
+    task.dueDate = date;
+    task.pitchOutcome = { outcome: "rescheduled", note: notes, at: now, by, from: oldDue ? new Date(`${oldDue}T00:00:00.000Z`) : null };
+    await task.save();
+    if (!project.pitch) {
+      await Project.updateOne({ _id: project._id, pitch: null }, { $set: { pitch: { revenue: null, revenueTbc: false, status: "", missedNotified: [] } } });
+    }
+    await Project.updateOne({ _id: project._id }, { $set: { [`pitch.${key}`]: date } });
+    pushTaskUpdate(task, "updated", { actorId: String(user._id) });
+  } else {
+    if (task.status !== "completed") return void res.status(400).json({ error: "This step is still open" });
+    task.pitchOutcome = null;
+    const result = await applyStatusChange(user, task, "in_progress", undefined, req.ip, { authorized: true });
+    if ("error" in result) return void res.status(result.status).json({ error: result.error });
+  }
+
+  recordTaskHistory(taskId, user, "pitch_outcome", {
+    outcome,
+    ...(notes ? { notes } : {}),
+    ...(newDue ? { from: oldDue, to: newDue } : {}),
+  });
+  const [row] = await loadPitchRows(user, projectVisibilityFilter(user), currentQuarter(), new Date(), project._id as mongoose.Types.ObjectId);
+  res.json({ row: row ?? null, message: `${step.title} ${OUTCOME_LABEL[outcome]}` });
 }

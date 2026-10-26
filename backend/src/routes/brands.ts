@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controllers/brandFlow.js";
 import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
-import { exportPitches, listPitches, updatePitch } from "../controllers/pitches.js";
+import { exportPitches, listPitches, recordPitchOutcome, updatePitch } from "../controllers/pitches.js";
 import { brandReadiness } from "../controllers/brandReadiness.js";
 import { createBrand, decideBrand, deleteBrand, listBrands, moveProjects, previewMoveProjects, renameBrand, updateBrand } from "../controllers/brands.js";
 import { brandDetail, brandOverview, deleteBrandFile, downloadBrandFile, splitBrand, uploadBrandFiles } from "../controllers/brandDashboard.js";
@@ -27,6 +27,7 @@ router.get("/readiness", brandReadiness);
 router.get("/pitches", listPitches);
 router.get("/pitches/export", exportPitches);
 router.patch("/pitches/:id", updatePitch);
+router.post("/pitches/:id/steps/:step/outcome", recordPitchOutcome);
 router.post("/", requireBrandCreator, createBrand);
 // Brand flow (Brands → New brand): read the scope from files, read the pitch
 // tracker, then create the brand with its project, lead tasks and team.

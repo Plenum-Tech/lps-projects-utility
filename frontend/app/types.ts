@@ -1508,7 +1508,8 @@ export type TaskHistoryAction =
   | "pearity_review_approved"
   | "pearity_review_changes_requested"
   | "pearity_review_rejected"
-  | "rework_added";
+  | "rework_added"
+  | "pitch_outcome";
 
 export interface TaskHistoryEntry {
   _id: string;
@@ -4404,7 +4405,18 @@ export interface PitchStepState {
   taskId: string | null;
   assignees: string[];
   notified: boolean;
+  /** held / not_held: the step task is closed (closed elsewhere = held); rescheduled: open, date moved. */
+  outcome: PitchOutcome | null;
+  outcomeNote: string;
+  /** "YYYY-MM-DD" the outcome was recorded. */
+  outcomeAt: string | null;
+  /** Rescheduled: the date it moved from. */
+  rescheduledFrom: string | null;
+  /** The viewer may record this step's outcome. */
+  canAct?: boolean;
 }
+
+export type PitchOutcome = "held" | "not_held" | "rescheduled";
 
 export interface PitchRow {
   id: string;

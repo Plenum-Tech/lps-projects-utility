@@ -1014,23 +1014,29 @@ function overScopeBlock(task: ITask): Invalid | null {
   return null;
 }
 
-async function applyStatusChange(
+export async function applyStatusChange(
   user: IUser,
   task: ITask,
   to: TaskStatus,
   position: number | undefined,
-  ip: string | undefined
+  ip: string | undefined,
+  /**
+   * `authorized`: the caller already checked who may do this (the Pitch tracker's step
+   * outcomes), so the assignee / creator and transition checks are skipped, and so is the
+   * completion requirement (a pitch step closes with its outcome note only).
+   */
+  options: { authorized?: boolean } = {}
 ): Promise<Invalid | { changed: boolean }> {
   const blocked = overScopeBlock(task);
   if (blocked) return blocked;
   const flags = await taskProjectFlags(task, user);
   const manager = canManageTask(user, task, flags);
 
-  if (!manager && !isAssignee(user, task)) {
+  if (!options.authorized && !manager && !isAssignee(user, task)) {
     return { status: 403, error: "You can only move tasks assigned to you or created by you" };
   }
   const transition = { skipReview: flags.skipReview, projectManager: flags.projectManager };
-  if (!canTransition(user, task, to, transition)) {
+  if (!options.authorized && !canTransition(user, task, to, transition)) {
     const allowed = allowedTransitions(user, task, transition);
     return {
       status: 400,
@@ -1038,7 +1044,7 @@ async function applyStatusChange(
     };
   }
 
-  if ((to === "completed" || to === "in_review") && task.status !== to && task.status !== "in_review") {
+  if (!options.authorized && (to === "completed" || to === "in_review") && task.status !== to && task.status !== "in_review") {
     const blocker = await completionBlocker(task);
     if (blocker) return { status: 400, error: blocker };
   }

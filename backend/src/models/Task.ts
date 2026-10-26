@@ -181,6 +181,18 @@ export interface ITask extends mongoose.Document {
     source: "ai" | "rules";
     at: Date;
   } | null;
+  /**
+   * Pitch step tasks (Milestone 1 / 2 meeting, Client presentation): what happened, set from the
+   * Pitch & Growth Tracker (POST /api/brands/pitches/:id/steps/:step/outcome). "held" / "not_held"
+   * close the task; "rescheduled" keeps it open with the due date moved (`from` = the old date).
+   */
+  pitchOutcome?: {
+    outcome: "held" | "not_held" | "rescheduled";
+    note: string;
+    at: Date;
+    by: mongoose.Types.ObjectId;
+    from?: Date | null;
+  } | null;
   /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
   finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
   submittedAt?: Date | null;
@@ -358,6 +370,19 @@ const taskSchema = new Schema<ITask>(
           reply: { type: String, maxlength: 400, default: "" },
           source: { type: String, enum: ["ai", "rules"], required: true },
           at: { type: Date, required: true },
+        },
+        { _id: false }
+      ),
+      default: undefined,
+    },
+    pitchOutcome: {
+      type: new Schema(
+        {
+          outcome: { type: String, enum: ["held", "not_held", "rescheduled"], required: true },
+          note: { type: String, trim: true, maxlength: 2000, default: "" },
+          at: { type: Date, required: true },
+          by: { type: Schema.Types.ObjectId, ref: "User", required: true },
+          from: { type: Date, default: null },
         },
         { _id: false }
       ),

@@ -7,7 +7,7 @@ import { TaskLabel } from "../models/TaskLabel.js";
 import { User, type IUser } from "../models/User.js";
 import { canCreateBrand } from "./brandAccess.js";
 import { notifyUsersAsync } from "./notifications.js";
-import { canViewRates, projectLink } from "./projectAccess.js";
+import { canManageProject, canViewRates, projectLink } from "./projectAccess.js";
 import { projectApproverIds } from "./projectApproval.js";
 
 // ---------------------------------------------------------------------------
@@ -64,7 +64,24 @@ export interface PitchStep {
   notified: boolean;
   /** Recorded without an email: it was already missed when the check went live. */
   silent: boolean;
+  /**
+   * What happened, from the tracker's step menu: "held" / "not_held" (the task is closed;
+   * a step closed elsewhere counts as held), "rescheduled" (still open, date moved) or null.
+   */
+  outcome: PitchOutcome | null;
+  /** The outcome note (held: what was discussed; not held: the reason; rescheduled: optional). */
+  outcomeNote: string;
+  /** "YYYY-MM-DD" the outcome was recorded. */
+  outcomeAt: string | null;
+  /** Rescheduled: the date it moved from. */
+  rescheduledFrom: string | null;
+  /** Who created the step task (they may record its outcome). */
+  createdBy: string | null;
+  /** The viewer may record this step's outcome (set per viewer in loadPitchRows). */
+  canAct?: boolean;
 }
+
+export type PitchOutcome = "held" | "not_held" | "rescheduled";
 
 export type PitchTone = "ok" | "soon" | "missed" | "done" | "none";
 
@@ -96,7 +113,12 @@ export function orderSteps(steps: PitchStep[]): PitchStep[] {
   });
 }
 
-const doneLabel = (s: PitchStep) => (s.key === "clientPresentation" ? `Presented${s.due ? ` ${pitchDate(s.due)}` : ""}` : `${s.title} held`);
+const doneLabel = (s: PitchStep) =>
+  s.outcome === "not_held"
+    ? `${s.title} not held`
+    : s.key === "clientPresentation"
+      ? `Presented${s.due ? ` ${pitchDate(s.due)}` : ""}`
+      : `${s.title} held`;
 
 /** The automatic status line from the steps (only steps with a task or a date count). */
 export function pitchStatus(allSteps: PitchStep[], today: string): PitchStatus {
@@ -106,7 +128,7 @@ export function pitchStatus(allSteps: PitchStep[], today: string): PitchStatus {
   }
   if (steps.every((s) => s.done)) {
     const cp = steps.find((s) => s.key === "clientPresentation");
-    return { text: cp ? `${doneLabel(cp)} — all milestones done` : "All milestones done", tone: "done", missed: [] };
+    return { text: cp ? `${doneLabel(cp)} — all milestones closed` : "All milestones closed", tone: "done", missed: [] };
   }
 
   const nextStep = steps.find((s) => !s.done)!;
@@ -142,7 +164,7 @@ const OPEN_STATUSES = ["todo", "in_progress", "in_review"];
 /** The three steps of each project, from its tasks (first task of each step) and pitch dates. */
 export async function stepsByProject(projects: Array<Pick<LeanPitchProject, "_id" | "pitch">>): Promise<Map<string, PitchStep[]>> {
   const tasks = await Task.find({ project: { $in: projects.map((p) => p._id) }, title: { $in: ALL_TITLES } })
-    .select("project title status dueDate assignees createdAt")
+    .select("project title status dueDate assignees assignedBy createdAt pitchOutcome")
     .sort({ createdAt: 1 })
     .lean();
   const byKey = new Map<string, (typeof tasks)[number]>();
@@ -160,15 +182,28 @@ export async function stepsByProject(projects: Array<Pick<LeanPitchProject, "_id
         const due = dateKey(task?.dueDate ?? null) ?? dateKey(p.pitch?.[s.key] ?? null);
         const record = due ? (p.pitch?.missedNotified ?? []).find((n) => n.step === s.key && dateKey(n.dueDate) === due) : undefined;
         const notified = Boolean(record);
+        const done = task ? task.status === "completed" : false;
+        const po = task?.pitchOutcome ?? null;
+        // Held / not held only describe a closed task, rescheduled only an open one (a reopened task drops its old outcome).
+        const outcome: PitchOutcome | null = done
+          ? po?.outcome === "not_held" ? "not_held" : "held"
+          : po?.outcome === "rescheduled" ? "rescheduled" : null;
+        // The stored note belongs to the outcome shown (not to an older one).
+        const current = po !== null && po.outcome === outcome;
         return {
           key: s.key,
           title: s.title,
           due,
-          done: task ? task.status === "completed" : false,
+          done,
           taskId: task ? String(task._id) : null,
           assignees: task ? task.assignees.map(String) : [],
           notified,
           silent: Boolean(record?.silent),
+          outcome,
+          outcomeNote: current ? (po!.note ?? "") : "",
+          outcomeAt: current ? dateKey(po!.at) : null,
+          rescheduledFrom: current && outcome === "rescheduled" ? dateKey(po!.from ?? null) : null,
+          createdBy: task?.assignedBy ? String(task.assignedBy) : null,
         };
       })
     );
@@ -237,6 +272,25 @@ export function canEditPitch(
     canCreateBrand(user) ||
     String(project.manager ?? "") === id ||
     steps.some((s) => s.assignees.includes(id))
+  );
+}
+
+/**
+ * May record a step's outcome (Held / Not held / Rescheduled): whoever edits the pitch (leadership,
+ * brand creators, its lead / manager, any step assignee), the project's managers (admin, manager,
+ * creator) and the step task's creator.
+ */
+export function canActOnPitchStep(
+  user: Pick<IUser, "_id" | "email" | "role">,
+  project: Pick<LeanPitchProject, "manager" | "createdBy" | "members">,
+  steps: PitchStep[],
+  step: Pick<PitchStep, "createdBy">,
+  approvers: Set<string>
+): boolean {
+  return (
+    canEditPitch(user, project, steps, approvers) ||
+    canManageProject(user as IUser, project as unknown as IProject) ||
+    step.createdBy === String(user._id)
   );
 }
 
@@ -314,7 +368,7 @@ export async function loadPitchRows(
       milestone1: due("milestone1"),
       milestone2: due("milestone2"),
       deadline: dateKey(p.deadline ?? null),
-      steps: s,
+      steps: s.map((x) => ({ ...x, canAct: Boolean(x.taskId) && canActOnPitchStep(user, p, s, x, approvers) })),
       status,
       onTime: status.tone === "none" ? "na" : status.tone === "missed" ? "late" : "on_time",
       openTasks: openById.get(String(p._id)) ?? 0,

@@ -25,7 +25,7 @@ import {
   LuUsers,
 } from "react-icons/lu";
 
-import { formatDateTime } from "@/lib/format";
+import { formatDate, formatDateTime } from "@/lib/format";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,6 +69,7 @@ const ACTION_ICONS: Record<TaskHistoryAction, { icon: IconType; tone: string }> 
   pearity_review_changes_requested: { icon: LuCircleAlert, tone: "bg-warn/10 text-foreground" },
   pearity_review_rejected: { icon: LuCircleX, tone: "bg-destructive/10 text-destructive" },
   rework_added: { icon: LuRefreshCw, tone: "bg-warn/10 text-foreground" },
+  pitch_outcome: { icon: LuCalendarClock, tone: "bg-chart-3/15 text-foreground" },
 };
 
 function str(value: unknown): string {
@@ -213,6 +214,19 @@ function describe(entry: TaskHistoryEntry): string {
     }
     case "rework_added":
       return `added rework ${d.shortCode ? `${str(d.shortCode)} ` : ""}"${str(d.title)}" as a new task`;
+    case "pitch_outcome": {
+      const notes = str(d.notes) ? ` — "${str(d.notes)}"` : "";
+      switch (str(d.outcome)) {
+        case "held":
+          return `marked the meeting as held${notes}`;
+        case "not_held":
+          return `marked the meeting as not held${notes}`;
+        case "rescheduled":
+          return `rescheduled the meeting${str(d.from) ? ` from ${formatDate(str(d.from))}` : ""} to ${formatDate(str(d.to))}${notes}`;
+        default:
+          return "reopened the pitch step";
+      }
+    }
     default:
       return "made a change";
   }
