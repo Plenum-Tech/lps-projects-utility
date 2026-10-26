@@ -105,6 +105,7 @@ function ScopeUpload({
   onDone,
   history,
   editRequest,
+  onEditingChange,
 }: {
   brandId: string;
   current: ScopeRow[];
@@ -118,6 +119,8 @@ function ScopeUpload({
   history?: React.ReactNode;
   /** Bumped by the header's "Edit scope" button: opens the row editor on the current scope. */
   editRequest?: number;
+  /** The row editor opened / closed (the page hides its read-only scope view meanwhile). */
+  onEditingChange?: (editing: boolean) => void;
 }) {
   const toast = useToast();
   const units = useScopeUnits();
@@ -187,6 +190,10 @@ function ScopeUpload({
     setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
     showEditor();
   }
+
+  useEffect(() => {
+    onEditingChange?.(rows !== null);
+  }, [rows !== null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The header's "Edit scope": open the editor on the current scope and scroll to it.
   useEffect(() => {
@@ -900,6 +907,8 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const removeFile = useDeleteBrandFile();
   const [splitting, setSplitting] = useState(false);
   const [editScope, setEditScope] = useState(0);
+  // While the scope is being edited, the read-only view (table, other scope, match) is hidden: one copy on screen.
+  const [scopeEditing, setScopeEditing] = useState(false);
   const [renaming, setRenaming] = useState(false);
   // Projects list: the month's projects, or every open one; ticked ones can move to another brand.
   const [allProjects, setAllProjects] = useState(false);
@@ -1054,6 +1063,12 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           <RejectedScopeBanner request={data.lastRejectedScope} onEdit={() => startResend(data.lastRejectedScope!, "rejected")} />
         )}
         {(data.pendingScope || data.lastRejectedScope) && b.scopeItems.length > 0 && <h3 className="mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Current approved scope</h3>}
+        {scopeEditing ? (
+          <p className="rounded-lg bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
+            Editing the scope below. The current scope shows here again after you save or cancel.
+          </p>
+        ) : (
+        <>
         {b.scopeItems.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[36rem] text-sm">
@@ -1099,6 +1114,8 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             match={{ score: b.scopeMatch.score, missingFromScope: b.scopeMatch.missing, extraInScope: b.scopeMatch.extra, changedQty: b.scopeMatch.changed, source: b.scopeMatch.source }}
           />
         )}
+        </>
+        )}
         {(data.canManage || data.pendingScope?.canEdit || data.lastRejectedScope?.canEdit) ? (
           <ScopeUpload
             history={<ScopeHistory brandId={b._id} />}
@@ -1111,6 +1128,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             onCancelResend={() => setResend(null)}
             onDone={() => void detail.refetch()}
             editRequest={editScope}
+            onEditingChange={setScopeEditing}
           />
         ) : (
           <ScopeHistory brandId={b._id} />
