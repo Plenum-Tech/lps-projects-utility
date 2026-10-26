@@ -2,81 +2,68 @@ import { createLibrary, defineComponent, type ComponentRenderer } from "@openuid
 import { z } from "zod/v4";
 
 // ---------------------------------------------------------------------------
-// Leadership Insights: the OpenUI component library the model may answer with
-// (names, positional props, descriptions). Renderers live in
-// components/insights/library.tsx; this file has no UI imports so
-// scripts/insights-prompt.ts can build the same library with stub renderers and
-// write the generated system prompt to the backend
+// Leadership Insights: the OpenUI component library the model answers with in
+// the chat. Data is never written by the model: tables and charts are
+// DataBlock(tool, params, view), filled with live, server-computed data.
+// Renderers live in components/insights/library.tsx; this file has no UI
+// imports so scripts/insights-prompt.ts can build the same library with stub
+// renderers and write the generated system prompt to the backend
 // (backend/src/lib/insights/uiPrompt.generated.ts). Change a schema here →
 // run `bun run insights:prompt` in frontend/.
 // ---------------------------------------------------------------------------
 
-const cell = z.union([z.string(), z.number(), z.null()]);
-const unit = z.string().optional().describe("Value suffix such as '%' or 'h'");
+export const TOOL_NAMES = [
+  "tasksSummary",
+  "lateTasks",
+  "scopeUsage",
+  "timeLogged",
+  "manpowerLoad",
+  "pitchPipeline",
+  "reworkStats",
+  "pearityStats",
+  "approvalsWaiting",
+] as const;
+export const BLOCK_VIEWS = ["table", "bar", "stacked", "line", "pie", "kpis"] as const;
 
 const props = {
+  Text: z.object({ text: z.string().describe("1–3 plain sentences") }),
   Stat: z.object({
     label: z.string().describe("Short label"),
-    value: z.union([z.string(), z.number()]).describe("The number (copied exactly from a tool result)"),
-    hint: z.string().optional().describe("Small line under the value, e.g. 'of 480 with a due date'"),
+    value: z.union([z.string(), z.number()]).describe("A number copied exactly from a tool result"),
+    hint: z.string().optional(),
     tone: z.enum(["default", "good", "warn", "bad"]).optional(),
   }),
-  Series: z.object({
-    name: z.string().describe("Series name (legend)"),
-    values: z.array(z.number()).describe("One number per label, same order as the chart labels"),
-  }),
-  Slice: z.object({ label: z.string(), value: z.number() }),
-  Table: z.object({
-    columns: z.array(z.string()),
-    rows: z.array(z.array(cell)).describe("Each row has one cell per column"),
-    caption: z.string().optional(),
-  }),
-  BarChart: z.object({
-    title: z.string(),
-    labels: z.array(z.string()).describe("Category labels (x axis)"),
-  }),
-  StackedBar: z.object({
-    title: z.string(),
-    labels: z.array(z.string()),
-  }),
-  LineChart: z.object({
-    title: z.string(),
-    labels: z.array(z.string()).describe("Ordered labels, e.g. weeks"),
-  }),
-  PieChart: z.object({
-    title: z.string(),
-  }),
-  List: z.object({
-    items: z.array(z.string()),
-    title: z.string().optional(),
-  }),
+  List: z.object({ items: z.array(z.string()), title: z.string().optional() }),
   Callout: z.object({
     text: z.string(),
     tone: z.enum(["info", "good", "warn", "bad"]).optional(),
     title: z.string().optional(),
   }),
-  Text: z.object({ text: z.string().describe("One short paragraph of plain text") }),
+  DataBlock: z.object({
+    title: z.string(),
+    tool: z.enum(TOOL_NAMES).describe("The data tool"),
+    params: z.record(z.string(), z.unknown()).describe('The tool params as an object, e.g. {"month": "2026-10", "groupBy": "team"}'),
+    view: z.enum(BLOCK_VIEWS).optional().describe("table (default), bar, stacked, line (weeks/months), pie (shares), kpis (headline numbers)"),
+    list: z.string().optional().describe("Which list of the result (see updateBoard for each tool's lists)"),
+    only: z.array(z.string()).optional().describe("Keep only rows with these names (compare)"),
+    sortBy: z.string().optional().describe("Column key to sort the table by (e.g. reworkPct); default: the app picks the metric"),
+    sortDir: z.enum(["desc", "asc"]).optional(),
+  }),
   FollowUps: z.object({ questions: z.array(z.string()).describe("2–4 short follow-up questions the user can click") }),
 };
 
-export type InsightComponentName = keyof typeof props | "StatRow" | "Card" | "Report";
+export const COMPONENT_NAMES = ["Reply", "Text", "StatRow", "Stat", "List", "Callout", "DataBlock", "FollowUps"] as const;
+export type InsightComponentName = (typeof COMPONENT_NAMES)[number];
 
 const DESCRIPTIONS: Record<InsightComponentName, string> = {
-  Stat: "One KPI tile (use inside StatRow)",
+  Reply: "The chat reply: its blocks in order",
+  Text: "A short paragraph",
   StatRow: "A row of 2–4 Stat tiles",
-  Series: "A named list of numbers for a chart",
-  Slice: "One pie slice",
-  Table: "A compact table; prefer ≤ 15 rows",
-  BarChart: "Bar chart comparing categories (grouped bars when several series)",
-  StackedBar: "Stacked bar chart (parts of a whole per category, e.g. internal vs external)",
-  LineChart: "Line chart for a trend over time",
-  PieChart: "Pie chart for shares of a whole (≤ 6 slices)",
+  Stat: "One KPI tile (inside StatRow)",
   List: "Bulleted list of short findings",
   Callout: "Highlighted note: a key finding, caveat or warning",
-  Text: "A short paragraph",
+  DataBlock: "Live table / chart of a data tool's result (the app fetches the numbers; the user can filter, drill in and pin it to the board)",
   FollowUps: "Follow-up question chips (always last)",
-  Card: "A titled section grouping related blocks",
-  Report: "The whole answer: a title, a one-line summary, then blocks",
 };
 
 /** Builds the library with the given renderers (stubs in the prompt script). */
@@ -84,65 +71,38 @@ export function buildInsightsLibrary(r: Record<InsightComponentName, ComponentRe
   const def = (name: InsightComponentName, schema: z.ZodObject) =>
     defineComponent({ name, description: DESCRIPTIONS[name], props: schema, component: r[name] });
 
+  const Text = def("Text", props.Text);
   const Stat = def("Stat", props.Stat);
   const StatRow = def("StatRow", z.object({ stats: z.array(Stat.ref) }));
-  const Series = def("Series", props.Series);
-  const Slice = def("Slice", props.Slice);
-  const Table = def("Table", props.Table);
-  const BarChart = def("BarChart", props.BarChart.extend({ series: z.array(Series.ref).describe("Series(...) items"), unit }));
-  const StackedBar = def("StackedBar", props.StackedBar.extend({ series: z.array(Series.ref).describe("Series(...) items, stacked"), unit }));
-  const LineChart = def("LineChart", props.LineChart.extend({ series: z.array(Series.ref).describe("Series(...) items"), unit }));
-  const PieChart = def("PieChart", props.PieChart.extend({ slices: z.array(Slice.ref).describe("Slice(...) items") }));
   const List = def("List", props.List);
   const Callout = def("Callout", props.Callout);
-  const Text = def("Text", props.Text);
+  const DataBlock = def("DataBlock", props.DataBlock);
   const FollowUps = def("FollowUps", props.FollowUps);
-  const blocks = [StatRow, Table, BarChart, StackedBar, LineChart, PieChart, List, Callout, Text] as const;
-  const Card = def(
-    "Card",
+  const Reply = def(
+    "Reply",
     z.object({
-      title: z.string(),
-      children: z.array(z.union(blocks.map((b) => b.ref) as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]])),
-      description: z.string().optional(),
-    }),
-  );
-  const Report = def(
-    "Report",
-    z.object({
-      title: z.string(),
-      summary: z.string().describe("One-sentence answer to the question"),
       children: z.array(
-        z.union([...blocks, Card, FollowUps].map((b) => b.ref) as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]),
+        z.union([Text, StatRow, List, Callout, DataBlock, FollowUps].map((b) => b.ref) as unknown as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]),
       ),
     }),
   );
 
-  return createLibrary({
-    components: [Report, Card, StatRow, Stat, Table, BarChart, StackedBar, LineChart, PieChart, Series, Slice, List, Callout, Text, FollowUps],
-    root: "Report",
-  });
+  return createLibrary({ components: [Reply, Text, StatRow, Stat, List, Callout, DataBlock, FollowUps], root: "Reply" });
 }
 
 /** Extra rules appended to the generated prompt. */
 export const PROMPT_RULES = [
-  "Start with root = Report(...). Put a StatRow with the 2–4 headline numbers first when the data has them.",
-  "Every number you show must be copied from a tool result in this conversation — never estimate, round differently, add up or invent figures you were not given. If a tool returned an error or no data, say so in a Callout.",
-  "Prefer one chart plus one compact table over many blocks. Keep tables ≤ 15 rows; mention when rows were left out.",
-  "Chart series values must line up with the labels (same length, same order).",
-  "Every statement is `name = Expression` on one line; FollowUps must be referenced from the Report children (last), never written as a bare line.",
-  "End with FollowUps(...) holding 2–4 short follow-up questions.",
+  "Start with root = Reply([...]). Keep replies short: the DataBlock shows the detail, the Text says what matters.",
+  "Every number in Text, Stat or Callout must be copied from a tool result in this conversation — never estimate, add up or invent figures. If a tool returned an error or no data, say so in a Callout.",
+  "Never write tables or chart data yourself: use DataBlock with the tool and params you called (the app fetches the same data live).",
+  "Every statement is `name = Expression` on one line; FollowUps is referenced from the Reply children (last), never a bare line.",
   "Write plain text only inside strings (no markdown, no HTML).",
 ];
 
-/** One complete answer (made-up names and numbers: the shape, never the data). */
+/** One complete reply (made-up names and numbers: the shape, never the data). */
 export const PROMPT_EXAMPLES = [
-  `root = Report("Rework by team, last 3 months", "Team B has the highest rework rate (24.0%).", [kpis, chart, tbl, note, more])
-kpis = StatRow([s1, s2, s3])
-s1 = Stat("Tasks created", 500)
-s2 = Stat("Rework", 100, "20.0% of created", "warn")
-s3 = Stat("External rework", 10, "asked by clients")
-chart = StackedBar("Rework by team", ["Team A", "Team B"], [Series("Internal", [20, 30]), Series("External", [4, 6]), Series("Not set", [16, 24])])
-tbl = Table(["Team", "Created", "Rework", "Rate %"], [["Team A", 250, 40, 16.0], ["Team B", 250, 60, 24.0]])
-note = Callout("Half of the rework has no internal / external source recorded.", "info")
-more = FollowUps(["Which brands drive Team B's rework?", "Rework by person in Team B"])`,
+  `root = Reply([summary, data, more])
+summary = Text("Team B has the highest rework rate (24.0%); most rework has no internal / external source recorded.")
+data = DataBlock("Rework by team, last 3 months", "reworkStats", {"from": "2026-01-01", "to": "2026-03-31", "groupBy": "team"}, "stacked")
+more = FollowUps(["Which brands drive Team B's rework?", "Add this to the board"])`,
 ];

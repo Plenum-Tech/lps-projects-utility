@@ -4,15 +4,12 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { buildInsightsLibrary, PROMPT_EXAMPLES, PROMPT_RULES, type InsightComponentName } from "../app/lib/insights/schema";
+import { buildInsightsLibrary, COMPONENT_NAMES, PROMPT_EXAMPLES, PROMPT_RULES, type InsightComponentName } from "../app/lib/insights/schema";
 
 process.env.OPENUI_TELEMETRY_DISABLED = "1";
 
 const stub = () => null;
-const names: InsightComponentName[] = [
-  "Report", "Card", "StatRow", "Stat", "Table", "BarChart", "StackedBar", "LineChart",
-  "PieChart", "Series", "Slice", "List", "Callout", "Text", "FollowUps",
-];
+const names = COMPONENT_NAMES;
 const library = buildInsightsLibrary(Object.fromEntries(names.map((n) => [n, stub])) as Record<InsightComponentName, typeof stub>);
 const prompt = library.prompt({ additionalRules: PROMPT_RULES, examples: PROMPT_EXAMPLES });
 

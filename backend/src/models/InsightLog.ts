@@ -16,6 +16,9 @@ export interface IInsightToolCall {
 export interface IInsightLog extends mongoose.Document {
   user: mongoose.Types.ObjectId;
   question: string;
+  /** The board the question was asked on (null = unsaved), and how many board operations it made. */
+  board: mongoose.Types.ObjectId | null;
+  boardOps: number;
   tools: IInsightToolCall[];
   aiModel: string;
   status: "ok" | "error";
@@ -42,6 +45,8 @@ const insightLogSchema = new Schema<IInsightLog>(
   {
     user: { type: Schema.Types.ObjectId, ref: "User", required: true },
     question: { type: String, required: true, maxlength: 1000 },
+    board: { type: Schema.Types.ObjectId, ref: "InsightBoard", default: null },
+    boardOps: { type: Number, default: 0 },
     tools: { type: [toolCallSchema], default: [] },
     aiModel: { type: String, default: "" },
     status: { type: String, enum: ["ok", "error"], default: "ok" },

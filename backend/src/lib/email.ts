@@ -807,6 +807,68 @@ export function tableEmailTemplate(params: {
   return wrapTemplate(escapeHtml(params.heading), html);
 }
 
+/** One section of a Leadership Insights board report. */
+export interface InsightReportSection {
+  title: string;
+  subtitle: string;
+  kpis: Array<[label: string, value: string]>;
+  /** "Rework: 21.6 → 23.0" lines vs the previous report. */
+  changes: string[];
+  columns: string[];
+  rows: string[][];
+  /** Index of a numeric column drawn as an inline bar (null = none). */
+  barColumn: number | null;
+  more: number;
+  error?: string;
+}
+
+/** Scheduled Leadership Insights board report: one section per block. Every cell is escaped. */
+export function insightReportTemplate(params: { firstName: string; heading: string; intro: string; sections: InsightReportSection[]; path: string }): string {
+  const cellStyle = "padding: 5px 8px; border-bottom: 1px solid #f3f4f6; font-size: 12px;";
+  const sections = params.sections
+    .map((s) => {
+      const kpis = s.kpis
+        .map(([l, v]) => `<td style="padding: 6px 12px 6px 0; vertical-align: top;"><div style="color: #6b7280; font-size: 11px;">${escapeHtml(l)}</div><div style="font-size: 18px; font-weight: 700;">${escapeHtml(v)}</div></td>`)
+        .join("");
+      const changes = s.changes.length
+        ? `<p style="margin: 6px 0; font-size: 12px; color: #92400e;">Changed since last report: ${s.changes.map(escapeHtml).join(" · ")}</p>`
+        : "";
+      const max = s.barColumn === null ? 0 : Math.max(0, ...s.rows.map((r) => Number(String(r[s.barColumn!]).replace(/[^\d.-]/g, "")) || 0));
+      const head = s.columns.map((c) => `<th style="text-align: left; ${cellStyle} color: #6b7280;">${escapeHtml(c)}</th>`).join("");
+      const body = s.rows
+        .map(
+          (row) =>
+            `<tr>${row
+              .map((cell, i) => {
+                const n = Number(String(cell).replace(/[^\d.-]/g, "")) || 0;
+                const bar = i === s.barColumn && max > 0 ? `<div style="height: 6px; background: #3b82f6; border-radius: 3px; width: ${Math.round((n / max) * 100)}%; margin-top: 3px;"></div>` : "";
+                return `<td style="${cellStyle}">${escapeHtml(cell)}${bar}</td>`;
+              })
+              .join("")}</tr>`
+        )
+        .join("");
+      const table = s.rows.length
+        ? `<table style="width: 100%; border-collapse: collapse; margin: 8px 0;"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>${s.more > 0 ? `<p style="margin: 0; font-size: 11px; color: #6b7280;">+ ${s.more} more rows on the live board</p>` : ""}`
+        : "";
+      return `<div style="margin: 18px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px;">
+        <h3 style="margin: 0; font-size: 15px; color: #1f2937;">${escapeHtml(s.title)}</h3>
+        <p style="margin: 2px 0 6px; font-size: 12px; color: #6b7280;">${escapeHtml(s.subtitle)}</p>
+        ${s.error ? `<p style="font-size: 12px; color: #b91c1c;">${escapeHtml(s.error)}</p>` : ""}
+        ${kpis ? `<table><tr>${kpis}</tr></table>` : ""}
+        ${changes}
+        ${table}
+      </div>`;
+    })
+    .join("");
+  const html = `
+    <p>Hi <strong>${escapeHtml(params.firstName)}</strong>,</p>
+    <p>${escapeHtml(params.intro)}</p>
+    ${sections}
+    <a href="${escapeHtml(appUrl() + params.path)}" style="${BUTTON_STYLE}">Open the live board</a>
+  `;
+  return wrapTemplate(escapeHtml(params.heading), html);
+}
+
 /** Plain-text test message for the admin "send test email" action. */
 export function testEmailTemplate(params: { firstName: string; host: string | null }): string {
   const body = `

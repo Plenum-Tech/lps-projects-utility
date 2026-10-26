@@ -5,6 +5,7 @@ import { appDateKey, zonedParts } from "./appTime.js";
 import { runHrReminders } from "./hrJobs.js";
 import { purgeExpiredImportFiles } from "./imports/jobs.js";
 import { runPitchMissedReminders } from "./pitches.js";
+import { runDueInsightReports } from "./insights/reports.js";
 import { runMonthlyRetainers } from "./retainers.js";
 import { runProjectDeadlineReminders, runProjectProgressDeadlineMode } from "./projectJobs.js";
 import { isDbReady, runRecurringTasks, runTaskReminders } from "./taskJobs.js";
@@ -44,6 +45,8 @@ export const SCHEDULED_JOBS: JobDefinition[] = [
   { name: "import-file-cleanup", schedule: { kind: "every", minutes: 15 }, run: purgeExpiredImportFiles },
   // Pitch steps past their due date and not done: one email per step per due date.
   { name: "pitch-missed-dates", schedule: { kind: "every", minutes: 60 }, run: runPitchMissedReminders },
+  // Leadership Insights board reports whose schedule is due (each board has its own next run).
+  { name: "insight-reports", schedule: { kind: "every", minutes: 15 }, run: runDueInsightReports },
   { name: "project-progress-deadline-mode", schedule: { kind: "daily", at: "00:15" }, run: runProjectProgressDeadlineMode },
   // Monthly retainers: acts on the 1st (Dubai date) — plan copy + the month's retainer projects.
   { name: "monthly-retainers", schedule: { kind: "daily", at: "06:00" }, run: (now) => runMonthlyRetainers(now) },

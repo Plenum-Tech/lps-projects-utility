@@ -2,6 +2,7 @@ import { inngest } from "./client.js";
 import { generateInsightFunction } from "./functions/generateInsight.js";
 import { generateReviewFunction } from "./functions/generateReview.js";
 import { hrRemindersFunction } from "./functions/hrJobs.js";
+import { insightReportsFunction } from "./functions/insightReports.js";
 import {
   monthlyRetainersFunction,
   pitchMissedDatesFunction,
@@ -33,4 +34,5 @@ export const functions = [
   timeTrackerReminderFunction,
   dailyTimeLogReportFunction,
   hrRemindersFunction,
+  insightReportsFunction,
 ];

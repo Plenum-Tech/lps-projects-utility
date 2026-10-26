@@ -130,6 +130,27 @@ export function excerpt(text: string | null | undefined, max = 160): string {
 export const round1 = (n: number) => Math.round(n * 10) / 10;
 export const pctOf = (part: number, whole: number): number | null => (whole > 0 ? round1((part / whole) * 100) : null);
 
+/** Groups smaller than this are flagged `lowVolume` and ranked after the others when sorting by a rate. */
+export const LOW_VOLUME = 5;
+
+export const sortDirParam = z.enum(["desc", "asc"]).optional().describe("Sort direction (default desc).");
+
+/**
+ * Sorts tool rows by `key` (nulls last). For rates, rows flagged lowVolume go after
+ * the others so 1 of 1 = 100% doesn't top a ranking.
+ */
+export function sortRows<T extends Record<string, unknown>>(rows: T[], key: string, dir: "asc" | "desc" = "desc", rate = false): T[] {
+  const sign = dir === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    if (rate && Boolean(a.lowVolume) !== Boolean(b.lowVolume)) return a.lowVolume ? 1 : -1;
+    const x = a[key];
+    const y = b[key];
+    if (x == null || y == null) return x == null ? (y == null ? 0 : 1) : -1;
+    if (typeof x === "number" && typeof y === "number") return (x - y) * sign;
+    return String(x).localeCompare(String(y)) * sign;
+  });
+}
+
 /** Who asks (leadership; their own visibility is applied where a helper takes it). */
 export interface ToolContext {
   user: IUser;

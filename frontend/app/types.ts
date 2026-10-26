@@ -508,6 +508,7 @@ export type NotificationType =
   | "hr_date_upcoming"
   | "training_assigned"
   | "training_reminder"
+  | "insight_report"
   | "project_approval_requested"
   | "project_approved"
   | "project_rejected"

@@ -54,6 +54,7 @@ export const NOTIFICATION_TYPES = [
   "hr_date_upcoming",
   "training_assigned",
   "training_reminder",
+  "insight_report",
 ] as const;
 
 export type NotificationType = (typeof NOTIFICATION_TYPES)[number];

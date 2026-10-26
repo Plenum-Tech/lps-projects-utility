@@ -23,6 +23,9 @@ import {
   excerpt,
   filterParams,
   limitParam,
+  LOW_VOLUME,
+  sortDirParam,
+  sortRows,
   matchName,
   monthLabel,
   pctOf,
@@ -150,6 +153,8 @@ const tasksSummary = defineTool({
     ...periodParams,
     ...filterParams,
     groupBy: z.enum(GROUPS).optional().describe("Group rows by this (default none)."),
+    sortBy: z.enum(["created", "completed", "completedLate", "onTimePct", "open", "overdue", "rework"]).optional().describe("Rank groups by this (default created; onTimePct puts groups with fewer than 5 completed last)."),
+    sortDir: sortDirParam,
     limit: limitParam,
   }),
   async run(args) {
@@ -166,7 +171,6 @@ const tasksSummary = defineTool({
         ? []
         : grouped(c, by)
             .filter((g) => g.stats.created + g.stats.completed + g.stats.open > 0)
-            .sort((a, b) => b.stats.created + b.stats.completed - (a.stats.created + a.stats.completed) || a.name.localeCompare(b.name))
             .map((g) => ({
               name: g.name,
               created: g.stats.created,
@@ -177,7 +181,10 @@ const tasksSummary = defineTool({
               open: g.stats.open,
               overdue: g.stats.overdue,
               rework: g.stats.rework,
+              lowVolume: g.stats.completed < LOW_VOLUME,
             }));
+    const sortBy = args.sortBy ?? "created";
+    const ranked = sortRows(groups, sortBy, args.sortDir, sortBy === "onTimePct");
     return {
       period: { from: period.from, to: period.to, label: period.label, openAsOf: keyFromDay(asOf) },
       filters: c.applied,
@@ -196,7 +203,8 @@ const tasksSummary = defineTool({
       },
       createdInPeriodByCurrentStatus: byStatus,
       groupBy: by,
-      groups: take(groups, args.limit),
+      sortedBy: `${sortBy} ${args.sortDir ?? "desc"}`,
+      groups: take(ranked, args.limit),
       groupCount: groups.length,
     };
   },
@@ -242,6 +250,7 @@ const lateTasks = defineTool({
       tasks: shown.map((r) => {
         const p = r.f.project ? c.ref.projects.get(r.f.project) : null;
         return {
+          id: r.f.id,
           code: r.f.code,
           title: r.f.title,
           kind: r.kind,
@@ -262,11 +271,13 @@ const lateTasks = defineTool({
 const reworkStats = defineTool({
   name: "reworkStats",
   description:
-    "Rework among tasks created in the period: count, rate (% of tasks created), split internal (our review) vs external (client) vs not set; optionally grouped by brand, team or person. Default period: last 30 days.",
+    "Rework among tasks created in the period: count, rate (% of tasks created), split internal (our review) vs external (client) vs not set; optionally grouped by brand, team or person. Groups are ranked by sortBy (default reworkPct, desc); groups with fewer than 5 tasks are flagged lowVolume and ranked after the others for rates. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
     ...filterParams,
     groupBy: z.enum(["none", "brand", "team", "person"]).optional().describe("Group rows by this (default none)."),
+    sortBy: z.enum(["reworkPct", "rework", "created", "external", "internal"]).optional().describe("Rank groups by this (default reworkPct)."),
+    sortDir: sortDirParam,
     limit: limitParam,
   }),
   async run(args) {
@@ -287,8 +298,10 @@ const reworkStats = defineTool({
               internal: g.stats.reworkInternal,
               external: g.stats.reworkExternal,
               notSet: g.stats.reworkNotSet,
-            }))
-            .sort((a, b) => b.rework - a.rework || b.created - a.created);
+              lowVolume: g.stats.created < LOW_VOLUME,
+            }));
+    const sortBy = args.sortBy ?? "reworkPct";
+    const ranked = sortRows(groups, sortBy, args.sortDir, sortBy === "reworkPct");
     return {
       period: { from: period.from, to: period.to, label: period.label },
       filters: c.applied,
@@ -301,8 +314,10 @@ const reworkStats = defineTool({
         notSet: s.reworkNotSet,
       },
       groupBy: by,
-      groups: take(groups, args.limit),
+      sortedBy: `${sortBy} ${args.sortDir ?? "desc"}`,
+      groups: take(ranked, args.limit),
       groupCount: groups.length,
+      ...(by !== "none" ? { note: `lowVolume = fewer than ${LOW_VOLUME} tasks created (rate not comparable).` } : {}),
     };
   },
 });
@@ -758,6 +773,8 @@ const pearityStats = defineTool({
     ...periodParams,
     ...filterParams,
     groupBy: z.enum(["brand", "person"]).optional().describe("Rows by brand (default) or person."),
+    sortBy: z.enum(["closed", "on", "off", "notRecorded", "onPct"]).optional().describe("Rank rows by this (default closed; onPct puts rows with fewer than 5 closed last)."),
+    sortDir: sortDirParam,
     limit: limitParam,
   }),
   async run(args, ctx) {
@@ -789,9 +806,12 @@ const pearityStats = defineTool({
       totals: withShares(pickPearity((report.totals as Record<string, unknown>) ?? {})),
       groupBy: by,
       groups: take(
-        rows
-          .map((r) => ({ name: String(r.name ?? ""), ...pickPearity(r) }))
-          .sort((a, b) => Number((b as Record<string, unknown>).closed) - Number((a as Record<string, unknown>).closed) || a.name.localeCompare(b.name)),
+        sortRows(
+          rows.map((r) => ({ name: String(r.name ?? ""), ...pickPearity(r), lowVolume: Number(r.closed) < LOW_VOLUME })),
+          args.sortBy ?? "closed",
+          args.sortDir,
+          args.sortBy === "onPct"
+        ),
         args.limit
       ),
       groupCount: rows.length,

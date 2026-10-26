@@ -1,6 +1,8 @@
 import { appDateKey, appTimeZone } from "../appTime.js";
 import { dayFromKey, keyFromDay, mondayOfDay } from "../delivery/days.js";
+import { applyBoardOps, boardSummary, UPDATE_BOARD_DESCRIPTION, updateBoardParams, type BlockSpec } from "./board.js";
 import type { ToolContext } from "./common.js";
+import { z } from "zod/v4";
 import { openAiToolDefs, runTool } from "./tools.js";
 import { INSIGHTS_UI_PROMPT } from "./uiPrompt.generated.js";
 
@@ -19,7 +21,7 @@ const HISTORY_TURNS = 3;
 const HISTORY_ANSWER_CHARS = 1_500;
 
 export const insightsConfigured = () => Boolean(process.env.OPENAI_API_KEY?.trim());
-export const insightsModel = () => process.env.INSIGHTS_MODEL?.trim() || "gpt-4o-mini";
+export const insightsModel = () => process.env.INSIGHTS_MODEL?.trim() || "gpt-4.1-mini";
 
 export interface HistoryTurn {
   question: string;
@@ -41,6 +43,8 @@ export interface AskEmitter {
   delta(text: string): void;
   /** Text streamed so far turned out to precede tool calls: the client drops it. */
   reset(): void;
+  /** The conversation changed the board (validated blocks) and what each operation did. */
+  board(blocks: BlockSpec[], results: string[]): void;
 }
 
 export interface AskResult {
@@ -49,6 +53,8 @@ export interface AskResult {
   /** Raw tool results (for the grounding check; not sent to the client). */
   results: unknown[];
   usage: { prompt: number; completion: number; total: number };
+  /** The board after the conversation's operations (unchanged when there were none). */
+  blocks: BlockSpec[];
   model: string;
 }
 
@@ -63,7 +69,7 @@ interface ToolCall {
   function: { name: string; arguments: string };
 }
 
-function systemPrompt(): string {
+function systemPrompt(blocks: BlockSpec[]): string {
   const today = appDateKey();
   const day = dayFromKey(today);
   const monday = mondayOfDay(day);
@@ -72,6 +78,11 @@ function systemPrompt(): string {
     "You are Leadership Insights for LPS, a creative agency, inside its Projects Utility. Leadership asks about delivery (tasks, on-time, late work), scope usage, hours logged, the manpower plan, pitches, rework, Pearity (AI generation tool) usage and approvals.",
     `Today is ${weekday} ${today} (${appTimeZone()}). This month is ${today.slice(0, 7)}. This week started ${keyFromDay(monday)}; last week was ${keyFromDay(monday - 7)} to ${keyFromDay(monday - 1)}. "Last 3 months" means the 3 months up to today unless the user says otherwise. Quarters are calendar quarters (Q4 = Oct–Dec).`,
     "How to work: first call the data tools you need (several in parallel when useful; filters take names, not ids). When you have the data, reply with the final answer in openui-lang as described below — no tool calls in that reply. One round of tool calls is usually enough: tool results are complete for the arguments given (lists say how many rows exist), so never repeat a call or re-ask the same tool for more rows unless a count shows rows were left out.",
+    "Workspace: the screen has this chat and the user's Board, a saved workspace of live data blocks (each block = tool + params + view; the numbers are always fetched fresh). Current board:",
+    boardSummary(blocks),
+    "- To answer a question: call the data tools, then reply with a short Text (1–3 sentences with the key numbers) and usually ONE DataBlock(...) with the same tool and params you used (it shows the live data; the user can pin it to the board), then FollowUps.",
+    "- When the user asks to add / put something on the board, change a board block (period, filters, view, list), remove one, compare items on the board, or build an overview: call updateBoard (blocks are referred to by id; keep params in the tool's own format). Then reply with one short Text saying what changed — no DataBlock needed. You don't need to call the data tool before adding a block unless you also report its numbers.",
+    "Filters: apply only the filters this question asks for. Each question is fresh: never carry a brand, team, person or period filter over from an earlier question unless this question explicitly points back to it ('there', 'that brand', 'same for …', 'it'). If you do keep one, say so in the Text and the DataBlock title (e.g. 'still filtered to GITEX'). To compare several brands, teams or people, use ONE block without that filter plus only: [names] — filters take a single name. Rankings: for who / which is most, top, worst, frequently or a rate, pass the tool's sortBy for that metric (rates: the *Pct field; low-volume groups are flagged and ranked last).",
     "Hard rules: copy table cells (titles, names, outcome notes) verbatim from the results — never paraphrase or fill them in; use ONLY numbers that appear in tool results of this conversation; never estimate or invent figures, names or dates. If a tool returns an error, no plan or no rows, say so plainly. Never show emails, passwords, hourly rates, costs, salaries, leave or HR details — if asked, explain that Insights doesn't cover them. If the question can't be answered from the tools, reply with a short Report whose Callout lists what you can answer. If the asked period has no data (e.g. no plan for that month), say that first in the summary; you may then show the nearest period that has data, clearly labelled as such. Don't compute new percentages, sums or breakdowns yourself — show only figures present in the results (onPct is of the tasks with a recorded choice; use the *OfClosed shares for shares of all tasks).",
     "",
     INSIGHTS_UI_PROMPT,
@@ -109,7 +120,7 @@ async function streamTurn(
       stream: true,
       stream_options: { include_usage: true },
       messages,
-      tools: openAiToolDefs(),
+      tools: [...openAiToolDefs(), UPDATE_BOARD_TOOL],
       tool_choice: allowTools ? "auto" : "none",
     }),
   });
@@ -156,6 +167,14 @@ async function streamTurn(
   return { content, toolCalls: calls.filter(Boolean), usage };
 }
 
+const UPDATE_BOARD_TOOL = {
+  type: "function" as const,
+  function: (() => {
+    const { $schema: _s, ...parameters } = z.toJSONSchema(updateBoardParams, { io: "input" }) as Record<string, unknown>;
+    return { name: "updateBoard", description: UPDATE_BOARD_DESCRIPTION, parameters };
+  })(),
+};
+
 /** Same tool + same arguments (the row limit ignored: results already say how many rows exist). */
 function callKey(call: ToolCall): string {
   try {
@@ -174,12 +193,14 @@ export function cleanAnswer(text: string): string {
 export async function askInsights(params: {
   question: string;
   history: HistoryTurn[];
+  blocks: BlockSpec[];
   ctx: ToolContext;
   signal: AbortSignal;
   emit: AskEmitter;
 }): Promise<AskResult> {
   const { question, history, ctx, signal, emit } = params;
-  const messages: ChatMessage[] = [{ role: "system", content: systemPrompt() }];
+  let blocks = params.blocks;
+  const messages: ChatMessage[] = [{ role: "system", content: systemPrompt(blocks) }];
   for (const turn of history.slice(-HISTORY_TURNS)) {
     messages.push({ role: "user", content: turn.question });
     messages.push({ role: "assistant", content: turn.answer.slice(0, HISTORY_ANSWER_CHARS) });
@@ -203,7 +224,7 @@ export async function askInsights(params: {
     usage.completion += turn.usage?.completion_tokens ?? 0;
     usage.total += turn.usage?.total_tokens ?? 0;
     if (turn.toolCalls.length === 0 || !allowTools) {
-      return { answer: cleanAnswer(turn.content), tools, results, usage, model: insightsModel() };
+      return { answer: cleanAnswer(turn.content), tools, results, blocks, usage, model: insightsModel() };
     }
     if (streamed) emit.reset();
 
@@ -216,6 +237,18 @@ export async function askInsights(params: {
           return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ note: "Same call as before — its result is above. Do not call it again; write the answer now." }) };
         }
         seen.add(key);
+        if (call.function.name === "updateBoard") {
+          let raw: unknown = null;
+          try {
+            raw = JSON.parse(call.function.arguments || "{}");
+          } catch {
+            // reported below as invalid operations
+          }
+          const applied = applyBoardOps(blocks, raw);
+          blocks = applied.blocks;
+          emit.board(blocks, applied.results);
+          return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ results: applied.results, board: boardSummary(blocks) }) };
+        }
         const started = Date.now();
         const out = await runTool(call.function.name, call.function.arguments, ctx);
         results.push(out.result);

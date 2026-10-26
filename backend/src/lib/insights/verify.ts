@@ -37,6 +37,24 @@ function bracketed(text: string, open: number): string {
   return text.slice(open);
 }
 
+/**
+ * Name filters (brand / team / person / lead / project) the tools used that the question
+ * doesn't mention — usually carried over from an earlier question. Shown to the user.
+ */
+export function inheritedFilters(question: string, calls: Array<{ params: Record<string, unknown> }>): string[] {
+  const q = question.toLowerCase();
+  const out = new Set<string>();
+  for (const call of calls) {
+    for (const key of ["brand", "team", "person", "lead", "project"]) {
+      const value = call.params[key];
+      if (typeof value !== "string" || !value.trim()) continue;
+      const words = value.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+      if (!words.some((w) => q.includes(w))) out.add(`${key}: ${value}`);
+    }
+  }
+  return [...out];
+}
+
 export interface AnswerCheck {
   unmatchedNumbers: string[];
   unmatchedTexts: string[];
