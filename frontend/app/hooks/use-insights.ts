@@ -141,7 +141,7 @@ export function useSendReport() {
 }
 
 /** The conversation: streams answers and applies the board operations the model makes. */
-export function useInsightChat(params: { blocks: BlockSpec[]; boardId: string | null; onBoard: (blocks: BlockSpec[]) => void; onDone: (messages: ChatMessage[]) => void }) {
+export function useInsightChat(params: { blocks: BlockSpec[]; boardId: string | null; onBoard: (blocks: BlockSpec[], settings: { refresh?: InsightSchedule; report?: InsightSchedule }) => void; onDone: (messages: ChatMessage[]) => void | Promise<void> }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const nextId = useRef(1);
@@ -198,7 +198,7 @@ export function useInsightChat(params: { blocks: BlockSpec[]; boardId: string | 
             else if (event === "delta") update(id, (m) => ({ text: m.text + String(data.text ?? "") }));
             else if (event === "reset") update(id, () => ({ text: "" }));
             else if (event === "board") {
-              latest.current.onBoard(data.blocks as BlockSpec[]);
+              latest.current.onBoard(data.blocks as BlockSpec[], (data.settings ?? {}) as { refresh?: InsightSchedule; report?: InsightSchedule });
               update(id, (m) => ({ boardResults: [...(m.boardResults ?? []), ...((data.results as string[]) ?? [])] }));
             } else if (event === "done") {
               const patch: Partial<ChatMessage> = {

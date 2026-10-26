@@ -45,6 +45,8 @@ export interface Dataset {
   filters: FilterKind[];
   applied: Record<string, string>;
   sortedBy?: { key: string; dir: "asc" | "desc" };
+  /** A person's team: the definition used and the others. */
+  teamScope?: { value: string; definition: string; options: Array<{ value: string; label: string }> };
   note?: string;
 }
 

@@ -61,6 +61,8 @@ export interface AnswerCheck {
 }
 
 export function checkAnswer(answer: string, results: unknown[], question: string): AnswerCheck {
+  // Follow-up questions are suggestions, not figures.
+  answer = answer.replace(/FollowUps\(\s*\[[\s\S]*?\]\s*\)/g, "");
   const numbers = new Set<string>();
   const texts: string[] = [];
   collect(results, numbers, texts);

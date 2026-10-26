@@ -1,6 +1,6 @@
 import { appDateKey, appTimeZone } from "../appTime.js";
 import { dayFromKey, keyFromDay, mondayOfDay } from "../delivery/days.js";
-import { applyBoardOps, boardSummary, UPDATE_BOARD_DESCRIPTION, updateBoardParams, type BlockSpec } from "./board.js";
+import { applyBoardOps, boardSummary, UPDATE_BOARD_DESCRIPTION, updateBoardParams, type BlockSpec, type BoardSettings } from "./board.js";
 import type { ToolContext } from "./common.js";
 import { z } from "zod/v4";
 import { openAiToolDefs, runTool } from "./tools.js";
@@ -44,7 +44,7 @@ export interface AskEmitter {
   /** Text streamed so far turned out to precede tool calls: the client drops it. */
   reset(): void;
   /** The conversation changed the board (validated blocks) and what each operation did. */
-  board(blocks: BlockSpec[], results: string[]): void;
+  board(blocks: BlockSpec[], results: string[], settings: BoardSettings): void;
 }
 
 export interface AskResult {
@@ -82,6 +82,8 @@ function systemPrompt(blocks: BlockSpec[]): string {
     boardSummary(blocks),
     "- To answer a question: call the data tools, then reply with a short Text (1–3 sentences with the key numbers) and usually ONE DataBlock(...) with the same tool and params you used (it shows the live data; the user can pin it to the board), then FollowUps.",
     "- When the user asks to add / put something on the board, change a board block (period, filters, view, list), remove one, compare items on the board, or build an overview: call updateBoard (blocks are referred to by id; keep params in the tool's own format). Then reply with one short Text saying what changed — no DataBlock needed. You don't need to call the data tool before adding a block unless you also report its numbers.",
+    "Names: a filter that matches nothing returns an error with the closest names (suggestions) — never answer just 'not found': say what was not found and offer the suggestions as FollowUps (e.g. 'Hamza Sheikh's team'). '<Name> team' or '<Name>'s team': pass team: '<Name>' — the tools resolve a department, else that person's team, and return team.definition (which definition was used, default tasks they own or assigned); state it in the Text. The user can switch the definition with teamScope (own, assigned, department, projects).",
+    "Day-to-day updates: for a team or person's daily task update / status dashboard use teamDay (today's workload per person and the tasks) and taskActivity (updates in the last 24 hours). When the user asks for a dashboard, to keep it, or to refresh / email it every N hours: first call teamDay to read team.definition (say it in the Text), then call updateBoard to add the blocks — teamDay (people), teamDay with list tasks (all task details) and taskActivity (updates, last 24 hours) — AND a schedule op (refresh and / or report, e.g. '2h'). Otherwise offer FollowUps such as 'Pin this to a board and refresh every 2 hours' and 'Email me this every 2 hours'.",
     "Filters: apply only the filters this question asks for. Each question is fresh: never carry a brand, team, person or period filter over from an earlier question unless this question explicitly points back to it ('there', 'that brand', 'same for …', 'it'). If you do keep one, say so in the Text and the DataBlock title (e.g. 'still filtered to GITEX'). To compare several brands, teams or people, use ONE block without that filter plus only: [names] — filters take a single name. Rankings: for who / which is most, top, worst, frequently or a rate, pass the tool's sortBy for that metric (rates: the *Pct field; low-volume groups are flagged and ranked last).",
     "Hard rules: copy table cells (titles, names, outcome notes) verbatim from the results — never paraphrase or fill them in; use ONLY numbers that appear in tool results of this conversation; never estimate or invent figures, names or dates. If a tool returns an error, no plan or no rows, say so plainly. Never show emails, passwords, hourly rates, costs, salaries, leave or HR details — if asked, explain that Insights doesn't cover them. If the question can't be answered from the tools, reply with a short Report whose Callout lists what you can answer. If the asked period has no data (e.g. no plan for that month), say that first in the summary; you may then show the nearest period that has data, clearly labelled as such. Don't compute new percentages, sums or breakdowns yourself — show only figures present in the results (onPct is of the tasks with a recorded choice; use the *OfClosed shares for shares of all tasks).",
     "",
@@ -246,7 +248,7 @@ export async function askInsights(params: {
           }
           const applied = applyBoardOps(blocks, raw);
           blocks = applied.blocks;
-          emit.board(blocks, applied.results);
+          emit.board(blocks, applied.results, applied.settings);
           return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ results: applied.results, board: boardSummary(blocks) }) };
         }
         const started = Date.now();

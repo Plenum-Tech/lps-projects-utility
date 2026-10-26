@@ -5,10 +5,11 @@ import { pearityReport } from "../../controllers/pearityReport.js";
 import { Brand } from "../../models/Brand.js";
 import { ChangeRequest } from "../../models/ChangeRequest.js";
 import { APPROVED_PLAN, latestPlan, ManpowerPlan } from "../../models/ManpowerPlan.js";
-import { Project } from "../../models/Project.js";
+import { archivedProjectIds, Project } from "../../models/Project.js";
 import { Task } from "../../models/Task.js";
+import { TaskHistory } from "../../models/TaskHistory.js";
 import { TimeLog } from "../../models/TimeLog.js";
-import { appTimeZone } from "../appTime.js";
+import { appDayStart, appTimeZone } from "../appTime.js";
 import { dayFromKey, keyFromDay, mondayOfDay } from "../delivery/days.js";
 import { loadFacts, loadRefData, OTHER_TEAM, type DeliveryFilters, type RefData, type TaskFact } from "../delivery/facts.js";
 import { addFact, emptyAcc, finalize, openAt, statsFor, type Acc } from "../delivery/metrics.js";
@@ -17,6 +18,7 @@ import { MANPOWER_ROLES } from "../manpowerRoles.js";
 import { currentQuarter, loadPitchRows, pitchToday, brandLabel } from "../pitches.js";
 import { projectVisibilityFilter } from "../projectAccess.js";
 import { scopeTotals, scopeUnitOf, type ScopeItem } from "../scopeUnits.js";
+import { resolveTeam, teamInfo, teamScopeParam, type TeamFilter, type TeamScope } from "./people.js";
 import {
   brandIdByName,
   currentMonth,
@@ -33,7 +35,6 @@ import {
   personIdByName,
   resolvePeriod,
   round1,
-  teamIdByName,
   todayDay,
   ToolInputError,
   type Period,
@@ -58,6 +59,7 @@ export interface InsightTool<S extends z.ZodObject = z.ZodObject> {
 const defineTool = <S extends z.ZodObject>(tool: InsightTool<S>) => tool as unknown as InsightTool;
 
 const oid = (id: string) => new mongoose.Types.ObjectId(id);
+const teamFilterParams = { ...filterParams, teamScope: teamScopeParam };
 const take = <T>(rows: T[], limit: number | undefined, fallback = 25) => rows.slice(0, limit ?? fallback);
 
 // -- Delivery facts (tasks, late, rework) -------------------------------------
@@ -68,9 +70,10 @@ interface FactCtx {
   period: Period;
   today: number;
   applied: Record<string, string>;
+  team: TeamFilter | null;
 }
 
-async function loadTaskFacts(args: { brand?: string; team?: string; person?: string }, period: Period): Promise<FactCtx> {
+async function loadTaskFacts(args: { brand?: string; team?: string; person?: string; teamScope?: TeamScope }, period: Period): Promise<FactCtx> {
   const [settings, ref] = await Promise.all([getDeliverySettings(), loadRefData()]);
   const applied: Record<string, string> = {};
   const filters: DeliveryFilters = { team: null, brand: null, person: null };
@@ -79,18 +82,17 @@ async function loadTaskFacts(args: { brand?: string; team?: string; person?: str
     filters.brand = b.id;
     applied.brand = b.label;
   }
-  if (args.team) {
-    const t = teamIdByName(ref, args.team);
-    filters.team = t.id;
-    applied.team = t.label;
-  }
+  const team = args.team ? await resolveTeam(ref, args.team, args.teamScope) : null;
+  // A department narrows the scan like Delivery Pulse; a person's team is filtered below.
+  if (team?.kind === "department") filters.team = team.departmentId;
+  if (team) applied.team = team.label;
   if (args.person) {
     const p = personIdByName(ref, args.person);
     filters.person = p.id;
     applied.person = p.label;
   }
   const { facts } = await loadFacts(settings, ref, { kind: "all", department: null }, filters, period.start);
-  return { ref, facts, period, today: todayDay(), applied };
+  return { ref, facts: team?.kind === "person" ? facts.filter(team.matchFact) : facts, period, today: todayDay(), applied, team };
 }
 
 const GROUPS = ["none", "status", "brand", "project", "person", "team"] as const;
@@ -151,7 +153,7 @@ const tasksSummary = defineTool({
     "Task counts for a period: created, completed, completed on time vs late (actual end vs due date), open and overdue (as of the period end or today), rework; optionally grouped by status, brand, project, person or team. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
-    ...filterParams,
+    ...teamFilterParams,
     groupBy: z.enum(GROUPS).optional().describe("Group rows by this (default none)."),
     sortBy: z.enum(["created", "completed", "completedLate", "onTimePct", "open", "overdue", "rework"]).optional().describe("Rank groups by this (default created; onTimePct puts groups with fewer than 5 completed last)."),
     sortDir: sortDirParam,
@@ -188,6 +190,7 @@ const tasksSummary = defineTool({
     return {
       period: { from: period.from, to: period.to, label: period.label, openAsOf: keyFromDay(asOf) },
       filters: c.applied,
+      ...teamInfo(c.team),
       totals: {
         created: s.created,
         completed: s.completed,
@@ -216,7 +219,7 @@ const lateTasks = defineTool({
     "Lists late tasks: 'closed_late' = completed in the period after the due date (actual end vs due); 'overdue' = still open and past due today; 'both' returns both in one call. Each row: task code, title, brand, project, doers, due date, actual end, days late, outcome-note excerpt (the 'why'). Default period: last 30 days.",
   params: z.object({
     ...periodParams,
-    ...filterParams,
+    ...teamFilterParams,
     kind: z.enum(["closed_late", "overdue", "both"]).optional().describe("Which late tasks (default closed_late)."),
     limit: limitParam,
   }),
@@ -244,6 +247,7 @@ const lateTasks = defineTool({
     return {
       period: { from: period.from, to: period.to, label: period.label },
       filters: c.applied,
+      ...teamInfo(c.team),
       total: rows.length,
       closedLate: rows.filter((r) => r.kind === "closed_late").length,
       overdue: rows.filter((r) => r.kind === "overdue").length,
@@ -274,7 +278,7 @@ const reworkStats = defineTool({
     "Rework among tasks created in the period: count, rate (% of tasks created), split internal (our review) vs external (client) vs not set; optionally grouped by brand, team or person. Groups are ranked by sortBy (default reworkPct, desc); groups with fewer than 5 tasks are flagged lowVolume and ranked after the others for rates. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
-    ...filterParams,
+    ...teamFilterParams,
     groupBy: z.enum(["none", "brand", "team", "person"]).optional().describe("Group rows by this (default none)."),
     sortBy: z.enum(["reworkPct", "rework", "created", "external", "internal"]).optional().describe("Rank groups by this (default reworkPct)."),
     sortDir: sortDirParam,
@@ -305,6 +309,7 @@ const reworkStats = defineTool({
     return {
       period: { from: period.from, to: period.to, label: period.label },
       filters: c.applied,
+      ...teamInfo(c.team),
       totals: {
         created: s.created,
         rework: s.rework,
@@ -471,7 +476,7 @@ const timeLogged = defineTool({
     "Hours logged (pending + approved time logs, by start date) in a period, grouped by person, brand, project, team or week. Hours only — never rates or cost. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
-    ...filterParams,
+    ...teamFilterParams,
     project: z.string().max(80).optional().describe("Project code or name (or part of it)."),
     groupBy: z.enum(["person", "brand", "project", "team", "week"]).optional().describe("Group rows by this (default person)."),
     limit: limitParam,
@@ -481,7 +486,7 @@ const timeLogged = defineTool({
     const ref = await loadRefData();
     const applied: Record<string, string> = {};
     const brand = args.brand ? brandIdByName(ref, args.brand) : null;
-    const team = args.team ? teamIdByName(ref, args.team) : null;
+    const team = args.team ? await resolveTeam(ref, args.team, args.teamScope) : null;
     const person = args.person ? personIdByName(ref, args.person) : null;
     const project = args.project
       ? matchName(
@@ -519,7 +524,7 @@ const timeLogged = defineTool({
       const userId = String(r._id.user);
       const u = ref.users.get(userId);
       if (!u) continue; // guests
-      if (team && u.department !== team.id) continue;
+      if (team && !team.userIds.has(userId)) continue;
       const projectId = r._id.project ? String(r._id.project) : null;
       const p = projectId ? ref.projects.get(projectId) : null;
       if (brand && p?.brand !== brand.id) continue;
@@ -559,6 +564,7 @@ const timeLogged = defineTool({
       period: { from: period.from, to: period.to, label: period.label },
       filters: applied,
       totalHours: round1(total / 60),
+      ...teamInfo(team),
       groupBy: by,
       groups: take(
         list.map(({ key: _k, ...g }) => g),
@@ -771,7 +777,7 @@ const pearityStats = defineTool({
     "Pearity usage of tasks completed in the period: On vs Off Pearity (and not recorded), On %, Pearity generations (generate clicks, jobs completed / failed, assets saved to DAM), average outcome readiness and on-time %; in total, by brand or by person, plus a weekly trend. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
-    ...filterParams,
+    ...teamFilterParams,
     groupBy: z.enum(["brand", "person"]).optional().describe("Rows by brand (default) or person."),
     sortBy: z.enum(["closed", "on", "off", "notRecorded", "onPct"]).optional().describe("Rank rows by this (default closed; onPct puts rows with fewer than 5 closed last)."),
     sortDir: sortDirParam,
@@ -788,9 +794,13 @@ const pearityStats = defineTool({
       applied.brand = b.label;
     }
     if (args.team) {
-      const t = teamIdByName(ref, args.team);
-      query.department = t.id;
-      applied.team = t.label;
+      const t = await resolveTeam(ref, args.team, args.teamScope);
+      // The Pearity report filters by one department or one person: a person's team uses their department
+      // for "department", else the person themselves.
+      if (t.kind === "department" || t.scope === "department") {
+        if (t.departmentId) query.department = t.departmentId;
+      } else if (t.personId) query.user = t.personId;
+      applied.team = t.kind === "person" && t.scope !== "department" ? `${t.label} (only their own tasks here)` : t.label;
     }
     if (args.person) {
       const p = personIdByName(ref, args.person);
@@ -896,7 +906,227 @@ const approvalsWaiting = defineTool({
   },
 });
 
+// -- Day-to-day: today's workload per person and recent task activity ---------
+
+/** The people a team / person / brand filter selects (null = everyone) and the team info. */
+async function peopleScope(ref: RefData, args: { team?: string; person?: string; teamScope?: TeamScope }) {
+  const applied: Record<string, string> = {};
+  let users: Set<string> | null = null;
+  let team: TeamFilter | null = null;
+  if (args.team) {
+    team = await resolveTeam(ref, args.team, args.teamScope);
+    users = team.userIds;
+    applied.team = team.label;
+  }
+  if (args.person) {
+    const p = personIdByName(ref, args.person);
+    users = new Set([p.id]);
+    applied.person = p.label;
+  }
+  return { users, team, applied };
+}
+
+const OPEN = ["todo", "in_progress", "in_review"];
+const dateKeyUtc = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 10) : null);
+
+const teamDay = defineTool({
+  name: "teamDay",
+  description:
+    "Day-to-day task update for a team or person (or everyone): per person today's workload — tasks due today, due this week (to Sunday), in progress, in review, overdue, completed today and hours logged today; plus the list of those tasks. `team` may name a department or a person's team (\"Hamza team\").",
+  params: z.object({
+    team: filterParams.team,
+    teamScope: teamScopeParam,
+    person: filterParams.person,
+    brand: filterParams.brand,
+    limit: limitParam,
+  }),
+  async run(args) {
+    const ref = await loadRefData();
+    const { users, team, applied } = await peopleScope(ref, args);
+    const brand = args.brand ? brandIdByName(ref, args.brand) : null;
+    if (brand) applied.brand = brand.label;
+    const today = todayDay();
+    const todayKey = keyFromDay(today);
+    const weekEndKey = keyFromDay(mondayOfDay(today) + 6);
+    const dayStart = appDayStart(todayKey);
+    const match: Record<string, unknown> = {
+      $or: [{ status: { $in: OPEN } }, { status: "completed", completedAt: { $gte: dayStart } }],
+    };
+    if (users) match.assignees = { $in: [...users].map(oid) };
+    if (brand) match.project = { $in: [...ref.projects].filter(([, p]) => p.brand === brand.id).map(([id]) => oid(id)) };
+    const archived = await archivedProjectIds();
+    const tasks = await Task.find({ $and: [match, { $or: [{ status: "completed" }, { project: { $nin: archived } }] }] })
+      .select("title shortCode status dueDate completedAt assignees project")
+      .limit(5000)
+      .lean();
+    const hours = await TimeLog.aggregate<{ _id: mongoose.Types.ObjectId; minutes: number }>([
+      { $match: { startTime: { $gte: dayStart }, endTime: { $ne: null }, status: { $in: ["pending", "approved"] }, ...(users ? { user: { $in: [...users].map(oid) } } : {}) } },
+      { $group: { _id: "$user", minutes: { $sum: "$durationMinutes" } } },
+    ]);
+    type Row = { name: string; team: string | null; dueToday: number; dueThisWeek: number; inProgress: number; inReview: number; overdue: number; completedToday: number; hoursToday: number };
+    const rows = new Map<string, Row>();
+    const row = (id: string) => {
+      let r = rows.get(id);
+      if (!r) {
+        const u = ref.users.get(id);
+        r = { name: u?.name ?? "Unknown", team: u?.department ? (ref.departments.get(u.department) ?? null) : null, dueToday: 0, dueThisWeek: 0, inProgress: 0, inReview: 0, overdue: 0, completedToday: 0, hoursToday: 0 };
+        rows.set(id, r);
+      }
+      return r;
+    };
+    const list: Array<Record<string, unknown>> = [];
+    for (const t of tasks) {
+      const due = dateKeyUtc(t.dueDate);
+      const doers = (t.assignees ?? []).map(String).filter((id) => ref.users.has(id) && (!users || users.has(id)));
+      const open = OPEN.includes(t.status);
+      const flags = {
+        dueToday: open && due === todayKey,
+        dueThisWeek: open && due !== null && due >= todayKey && due <= weekEndKey,
+        overdue: open && due !== null && due < todayKey,
+        completedToday: t.status === "completed",
+      };
+      for (const d of doers) {
+        const r = row(d);
+        if (flags.dueToday) r.dueToday++;
+        if (flags.dueThisWeek) r.dueThisWeek++;
+        if (flags.overdue) r.overdue++;
+        if (flags.completedToday) r.completedToday++;
+        if (t.status === "in_progress") r.inProgress++;
+        if (t.status === "in_review") r.inReview++;
+      }
+      if (doers.length && (flags.dueThisWeek || flags.overdue || flags.completedToday)) {
+        const p = t.project ? ref.projects.get(String(t.project)) : null;
+        list.push({
+          id: String(t._id),
+          code: t.shortCode ?? "",
+          title: t.title,
+          people: doers.map((d) => ref.users.get(d)?.name ?? "Unknown"),
+          status: t.status,
+          due,
+          when: flags.completedToday ? "completed today" : flags.overdue ? "overdue" : flags.dueToday ? "due today" : "due this week",
+          brand: p?.brand ? (ref.brands.get(p.brand)?.name ?? null) : null,
+        });
+      }
+    }
+    for (const h of hours) if (!users || users.has(String(h._id))) row(String(h._id)).hoursToday = round1(h.minutes / 60);
+    const people = [...rows.values()].sort((a, b) => b.overdue - a.overdue || b.dueToday - a.dueToday || a.name.localeCompare(b.name));
+    const order = { overdue: 0, "due today": 1, "due this week": 2, "completed today": 3 } as Record<string, number>;
+    list.sort((a, b) => order[String(a.when)]! - order[String(b.when)]! || String(a.due ?? "").localeCompare(String(b.due ?? "")));
+    const sum = (k: keyof Row) => people.reduce((s, r) => s + Number(r[k]), 0);
+    return {
+      today: todayKey,
+      weekEnds: weekEndKey,
+      filters: applied,
+      ...teamInfo(team),
+      totals: { people: people.length, dueToday: sum("dueToday"), dueThisWeek: sum("dueThisWeek"), inProgress: sum("inProgress"), overdue: sum("overdue"), completedToday: sum("completedToday"), hoursToday: round1(sum("hoursToday")) },
+      people: take(people, args.limit, 60),
+      tasks: take(list, args.limit, 60),
+      taskCount: list.length,
+    };
+  },
+});
+
+const ACTIVITY_ACTIONS = ["created", "status_changed", "submitted", "reviewed", "comment_added", "rework_added", "subtask_completed"] as const;
+const ACTIVITY_LABEL: Record<string, string> = {
+  created: "created",
+  status_changed: "status",
+  submitted: "submitted",
+  reviewed: "reviewed",
+  comment_added: "comment",
+  rework_added: "rework added",
+  subtask_completed: "item done",
+};
+
+const taskActivity = defineTool({
+  name: "taskActivity",
+  description:
+    "Recent task updates (from task history): status changes, completions, submissions, reviews, comments (short excerpt), new tasks and rework — counts per person and the latest events, for the last N hours (default 24) or a date range. Filter by a team (department or a person's team), person or brand.",
+  params: z.object({
+    hours: z.number().int().min(1).max(336).optional().describe("Look back this many hours (default 24, max 336)."),
+    from: periodParams.from,
+    to: periodParams.to,
+    team: filterParams.team,
+    teamScope: teamScopeParam,
+    person: filterParams.person,
+    brand: filterParams.brand,
+    limit: limitParam,
+  }),
+  async run(args) {
+    const ref = await loadRefData();
+    const { users, team, applied } = await peopleScope(ref, args);
+    const brand = args.brand ? brandIdByName(ref, args.brand) : null;
+    if (brand) applied.brand = brand.label;
+    const end = args.to ? appDayStart(keyFromDay(dayFromKey(args.to) + 1)) : new Date();
+    const start = args.from ? appDayStart(args.from) : new Date(end.getTime() - (args.hours ?? 24) * 3_600_000);
+    // History has no createdAt index: the _id (creation time) range uses the primary index.
+    const match: Record<string, unknown> = {
+      _id: { $gte: mongoose.Types.ObjectId.createFromTime(Math.floor(start.getTime() / 1000)), $lt: mongoose.Types.ObjectId.createFromTime(Math.ceil(end.getTime() / 1000)) },
+      action: { $in: ACTIVITY_ACTIONS },
+    };
+    if (users) match.actor = { $in: [...users].map(oid) };
+    const events = await TaskHistory.find(match).sort({ _id: -1 }).limit(5000).lean();
+    const tasks = await Task.find({ _id: { $in: [...new Set(events.map((e) => String(e.task)))].map(oid) } })
+      .select("shortCode title project")
+      .lean();
+    const taskById = new Map(tasks.map((t) => [String(t._id), t]));
+    const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: appTimeZone(), month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    type Counts = { name: string; updates: number; statusChanges: number; completed: number; submitted: number; comments: number; created: number };
+    const byPerson = new Map<string, Counts>();
+    const list: Array<Record<string, unknown>> = [];
+    for (const e of events) {
+      const t = taskById.get(String(e.task));
+      if (!t) continue;
+      const p = t.project ? ref.projects.get(String(t.project)) : null;
+      if (brand && p?.brand !== brand.id) continue;
+      const actor = e.actor ? String(e.actor) : null;
+      const name = actor ? (ref.users.get(actor)?.name ?? null) : null;
+      if (!name) continue; // system / guests
+      const d = (e.details ?? {}) as Record<string, unknown>;
+      const c = byPerson.get(actor!) ?? { name, updates: 0, statusChanges: 0, completed: 0, submitted: 0, comments: 0, created: 0 };
+      byPerson.set(actor!, c);
+      c.updates++;
+      if (e.action === "status_changed") c.statusChanges++;
+      if (e.action === "status_changed" && d.to === "completed") c.completed++;
+      if (e.action === "submitted") c.submitted++;
+      if (e.action === "comment_added") c.comments++;
+      if (e.action === "created") c.created++;
+      const detail =
+        e.action === "status_changed"
+          ? `${String(d.from ?? "?").replace("_", " ")} → ${String(d.to ?? "?").replace("_", " ")}`
+          : e.action === "comment_added"
+            ? excerpt(String(d.excerpt ?? ""), 100)
+            : e.action === "submitted"
+              ? excerpt(String(d.submissionNotes ?? ""), 100)
+              : e.action === "rework_added"
+                ? String(d.shortCode ?? d.title ?? "")
+                : "";
+      list.push({
+        at: fmt.format(new Date(Number.parseInt(String(e._id).slice(0, 8), 16) * 1000)),
+        person: name,
+        id: String(t._id),
+        code: t.shortCode ?? "",
+        title: t.title,
+        action: ACTIVITY_LABEL[e.action] ?? e.action,
+        detail,
+        brand: p?.brand ? (ref.brands.get(p.brand)?.name ?? null) : null,
+      });
+    }
+    const people = [...byPerson.values()].sort((a, b) => b.updates - a.updates || a.name.localeCompare(b.name));
+    return {
+      period: { from: start.toISOString(), to: end.toISOString(), label: args.from ? `${args.from} to ${args.to ?? "now"}` : `last ${args.hours ?? 24} hours` },
+      filters: applied,
+      ...teamInfo(team),
+      totals: { updates: list.length, people: people.length, completed: people.reduce((s, p) => s + p.completed, 0), comments: people.reduce((s, p) => s + p.comments, 0), submitted: people.reduce((s, p) => s + p.submitted, 0) },
+      byPerson: take(people, args.limit, 40),
+      events: take(list, args.limit, 60),
+      eventCount: list.length,
+    };
+  },
+});
+
 export const INSIGHT_TOOLS: InsightTool[] = [
+  teamDay,
+  taskActivity,
   tasksSummary,
   lateTasks,
   scopeUsage,

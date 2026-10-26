@@ -37,6 +37,8 @@ export interface Dataset {
   filters: Array<"period" | "month" | "quarter" | "brand" | "team" | "person">;
   /** Filters the tool actually applied (names), shown as removable chips. */
   applied: Record<string, string>;
+  /** A person's team: which definition is used and the others (chips). */
+  teamScope?: { value: string; definition: string; options: Array<{ value: string; label: string }> };
   /** Server ranking of the rows ("reworkPct desc"), when the tool ranks. */
   sortedBy?: { key: string; dir: "asc" | "desc" };
   note?: string;
@@ -59,7 +61,7 @@ const PERIOD_FILTERS: Dataset["filters"] = ["period", "brand", "team", "person"]
 interface Shape {
   subtitle: string;
   kpis: Dataset["kpis"];
-  lists: Record<string, () => Omit<Dataset, "subtitle" | "kpis" | "list" | "lists" | "total" | "filters" | "applied" | "sortedBy" | "note"> & { items: number }>;
+  lists: Record<string, () => Omit<Dataset, "subtitle" | "kpis" | "list" | "lists" | "total" | "filters" | "applied" | "sortedBy" | "note" | "teamScope"> & { items: number }>;
   filters: Dataset["filters"];
   note?: string;
 }
@@ -212,6 +214,44 @@ function shape(tool: string, r: R, params: R): Shape {
         filters: PERIOD_FILTERS,
       };
     }
+    case "teamDay": {
+      const t = rec(r.totals);
+      const pcols = [col("name", "Person"), col("team", "Team"), col("dueToday", "Due today", true), col("dueThisWeek", "Due this week", true), col("inProgress", "In progress", true), col("inReview", "In review", true), col("overdue", "Overdue", true), col("completedToday", "Done today", true), col("hoursToday", "Hours today", true, "h")];
+      const tcols = [col("code", "Task"), col("title", "Title"), col("people", "People"), col("status", "Status"), col("due", "Due"), col("when", "When"), col("brand", "Brand")];
+      return {
+        subtitle: `Today ${r.today ?? ""} · week to ${r.weekEnds ?? ""}`,
+        kpis: [
+          { label: "Due today", value: cell(t.dueToday) },
+          { label: "Due this week", value: cell(t.dueThisWeek) },
+          { label: "Overdue", value: cell(t.overdue) },
+          { label: "Done today", value: cell(t.completedToday), hint: `${t.hoursToday ?? 0} h logged today` },
+        ],
+        lists: {
+          people: () => ({ columns: pcols, rows: rowsOf(list(r.people), pcols), items: Number(t.people ?? 0), labelKey: "name", series: ["dueToday", "inProgress", "overdue", "completedToday"], stacked: false, ordered: false, drill: { kind: "person", key: "name" } }),
+          tasks: () => ({ columns: tcols, rows: rowsOf(list(r.tasks), tcols, ["id"]), items: Number(r.taskCount ?? 0), labelKey: "code", series: [], stacked: false, ordered: false, drill: { kind: "task", key: "id" } }),
+        },
+        filters: ["brand", "team", "person"],
+      };
+    }
+    case "taskActivity": {
+      const t = rec(r.totals);
+      const pcols = [col("name", "Person"), col("updates", "Updates", true), col("statusChanges", "Status changes", true), col("completed", "Completed", true), col("submitted", "Submitted", true), col("comments", "Comments", true), col("created", "Created", true)];
+      const ecols = [col("at", "When"), col("person", "Who"), col("code", "Task"), col("title", "Title"), col("action", "Update"), col("detail", "Detail")];
+      return {
+        subtitle: String(rec(r.period).label ?? ""),
+        kpis: [
+          { label: "Updates", value: cell(t.updates) },
+          { label: "People active", value: cell(t.people) },
+          { label: "Completed", value: cell(t.completed) },
+          { label: "Comments", value: cell(t.comments) },
+        ],
+        lists: {
+          events: () => ({ columns: ecols, rows: rowsOf(list(r.events), ecols, ["id"]), items: Number(r.eventCount ?? 0), labelKey: "code", series: [], stacked: false, ordered: true, drill: { kind: "task", key: "id" } }),
+          byPerson: () => ({ columns: pcols, rows: rowsOf(list(r.byPerson), pcols), items: list(r.byPerson).length, labelKey: "name", series: ["completed", "submitted", "comments"], stacked: true, ordered: false, drill: { kind: "person", key: "name" } }),
+        },
+        filters: ["brand", "team", "person"],
+      };
+    }
     case "approvalsWaiting": {
       const cols = [col("kind", "Kind"), col("title", "What"), col("requestedBy", "Requested by"), col("brand", "Brand"), col("ageDays", "Age (days)", true)];
       return {
@@ -261,6 +301,7 @@ export function datasetOf(tool: string, result: unknown, opts: { list?: string; 
     total: items,
     filters: s.filters,
     applied: Object.fromEntries(Object.entries(rec(r.filters)).map(([k, v]) => [k, String(v)])),
+    ...(rec(r.team).scopes ? { teamScope: { value: String(rec(r.team).scope), definition: String(rec(r.team).definition), options: list(rec(r.team).scopes).map((o) => ({ value: String(o.value), label: String(o.label) })) } } : {}),
     ...(typeof r.sortedBy === "string" ? { sortedBy: { key: r.sortedBy.split(" ")[0]!, dir: r.sortedBy.endsWith("asc") ? ("asc" as const) : ("desc" as const) } } : {}),
     ...(s.note || r.note ? { note: String(s.note ?? r.note) } : {}),
     ...(r.error ? { note: String(r.error) } : {}),
@@ -269,6 +310,8 @@ export function datasetOf(tool: string, result: unknown, opts: { list?: string; 
 
 /** Lists each tool offers (for the model's prompt and validation). */
 export const TOOL_LISTS: Record<string, string[]> = {
+  teamDay: ["people", "tasks"],
+  taskActivity: ["events", "byPerson"],
   tasksSummary: ["groups"],
   lateTasks: ["tasks"],
   scopeUsage: ["brands", "projects"],

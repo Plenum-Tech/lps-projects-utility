@@ -297,19 +297,30 @@ export function InsightsWorkspace() {
     [createBoard, openBoard, title, toast, updateBoard],
   );
 
+  const pendingSettings = useRef<{ refresh?: InsightSchedule; report?: InsightSchedule } | null>(null);
   const latestBlocks = useRef(blocks);
   latestBlocks.current = blocks;
 
   const chat = useInsightChat({
     blocks,
     boardId,
-    onBoard: (next) => {
+    onBoard: (next, settings) => {
       latestBlocks.current = next;
       setBlocks(next);
+      if (settings.refresh || settings.report) pendingSettings.current = { ...pendingSettings.current, ...settings };
     },
-    onDone: (messages) => {
+    onDone: async (messages) => {
       const firstQuestion = messages.find((m) => m.role === "user")?.text;
-      void persist({ messages, blocks: latestBlocks.current, ...(!boardIdRef.current && firstQuestion ? { title: firstQuestion.slice(0, 80) } : {}) });
+      await persist({ messages, blocks: latestBlocks.current, ...(!boardIdRef.current && firstQuestion ? { title: firstQuestion.slice(0, 80) } : {}) });
+      // "Refresh / email me every 2 hours" asked in the chat: applied once the board is saved.
+      const settings = pendingSettings.current;
+      pendingSettings.current = null;
+      if (settings && boardIdRef.current) {
+        updateBoard.mutate(
+          { id: boardIdRef.current, ...(settings.refresh ? { refresh: settings.refresh } : {}), ...(settings.report ? { report: { schedule: settings.report } } : {}) },
+          { onSuccess: () => toast.success(`Board scheduled: ${[settings.refresh && `refresh ${SCHEDULE_LABELS[settings.refresh].toLowerCase()}`, settings.report && `report ${SCHEDULE_LABELS[settings.report].toLowerCase()}`].filter(Boolean).join(", ")}`) },
+        );
+      }
     },
   });
   // Open a saved board: its blocks, title and conversation.

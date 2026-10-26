@@ -2,6 +2,7 @@ import { z } from "zod/v4";
 import type { IUser } from "../../models/User.js";
 import { appDateKey } from "../appTime.js";
 import { richTextToPlain } from "../richText.js";
+import { editDistance, soundKey } from "../voiceParse.js";
 import { dayFromKey, keyFromDay } from "../delivery/days.js";
 import type { RefData } from "../delivery/facts.js";
 
@@ -94,15 +95,45 @@ export class ToolInputError extends Error {
 
 const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
 
-/** Exact (case-insensitive) match first, then "contains"; several "contains" matches → error with suggestions. */
-export function matchName<T>(kind: string, query: string, items: Array<{ id: T; names: string[]; label: string }>): { id: T; label: string } {
+/** How far a name is from the query: 0 = a word sounds the same, else the smallest edit distance of a word. */
+function closeness(query: string, name: string): number {
+  const qWords = norm(query).split(" ").filter(Boolean);
+  const nWords = norm(name).split(/[\s|,-]+/).filter(Boolean);
+  let best = Infinity;
+  for (const q of qWords) {
+    for (const n of nWords) {
+      if (q.length >= 3 && soundKey(q) === soundKey(n)) return 0;
+      best = Math.min(best, editDistance(q, n));
+    }
+  }
+  return best;
+}
+
+/** The closest names (sound-alike, typo-tolerant), for "did you mean" suggestions. */
+export function closestNames<T>(query: string, items: Array<{ id: T; names: string[]; label: string }>, max = 5): string[] {
+  return items
+    .map((i) => ({ label: i.label, d: Math.min(...i.names.map((n) => closeness(query, n))) }))
+    .filter((x) => x.d <= Math.max(2, Math.floor(norm(query).length / 3)))
+    .sort((a, b) => a.d - b.d || a.label.localeCompare(b.label))
+    .slice(0, max)
+    .map((x) => x.label);
+}
+
+/**
+ * Exact (case-insensitive) match first, then "contains", then a single sound-alike / 1–2 letter
+ * typo match (as the voice assistant reads names). No match or several → error WITH suggestions.
+ */
+export function matchName<T>(kind: string, query: string, items: Array<{ id: T; names: string[]; label: string }>, fuzzy = true): { id: T; label: string } {
   const q = norm(query);
   const exact = items.filter((i) => i.names.some((n) => norm(n) === q));
   if (exact.length === 1) return exact[0]!;
   const partial = exact.length > 1 ? exact : items.filter((i) => i.names.some((n) => norm(n).includes(q)));
   if (partial.length === 1) return partial[0]!;
-  if (partial.length === 0) throw new ToolInputError(`No ${kind} matches "${query}".`);
-  throw new ToolInputError(`"${query}" matches several ${kind}s — be more specific.`, partial.slice(0, 10).map((i) => i.label));
+  if (partial.length > 1) throw new ToolInputError(`"" matches several s — be more specific.`, partial.slice(0, 10).map((i) => i.label));
+  const near = fuzzy ? items.filter((i) => i.names.some((n) => closeness(query, n) <= (q.length >= 5 ? 1 : 0))) : [];
+  if (near.length === 1) return near[0]!;
+  const suggestions = near.length ? near.slice(0, 10).map((i) => i.label) : closestNames(query, items);
+  throw new ToolInputError(`No  matches "".`, suggestions);
 }
 
 export function brandIdByName(ref: RefData, query: string): { id: string; label: string } {

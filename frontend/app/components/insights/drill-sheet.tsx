@@ -27,6 +27,8 @@ function blocksFor(target: DrillTarget): Array<Omit<BlockSpec, "id">> {
       ];
     case "person":
       return [
+        { title: `${v} — today`, tool: "teamDay", params: { person: v }, list: "tasks" },
+        { title: `${v} — updates, last 24 hours`, tool: "taskActivity", params: { person: v } },
         { title: `${v} — tasks by brand, last 30 days`, tool: "tasksSummary", params: { person: v, groupBy: "brand" } },
         { title: `${v} — hours by brand, last 30 days`, tool: "timeLogged", params: { person: v, groupBy: "brand" }, view: "bar" },
         { title: `${v} — late and overdue tasks`, tool: "lateTasks", params: { person: v, kind: "both" } },

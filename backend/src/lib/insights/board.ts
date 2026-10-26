@@ -3,6 +3,7 @@ import { z } from "zod/v4";
 import type { ToolContext } from "./common.js";
 import { datasetOf, TOOL_LISTS, type Dataset } from "./datasets.js";
 import { INSIGHT_TOOLS, TOOL_BY_NAME, runTool } from "./tools.js";
+import { INSIGHT_SCHEDULES, type InsightSchedule } from "../../models/InsightBoard.js";
 
 // ---------------------------------------------------------------------------
 // Board blocks: what a block shows is stored as tool + params + view (never the
@@ -64,7 +65,7 @@ export async function runBlock(block: Pick<BlockSpec, "tool" | "params" | "list"
 // -- Board operations from the conversation (the updateBoard tool) -----------
 
 const opSchema = z.object({
-  op: z.enum(["add", "update", "remove"]),
+  op: z.enum(["add", "update", "remove", "schedule"]).describe("schedule: set how often the board refreshes while open (refresh) and / or emails a report to the user (report)."),
   blockId: z.string().max(32).optional().describe("Required for update / remove: the id of an existing block."),
   title: z.string().max(100).optional(),
   tool: z.enum(TOOL_NAMES).optional().describe("add: required. update: optional (changes the data)."),
@@ -74,6 +75,8 @@ const opSchema = z.object({
   only: z.array(z.string().max(80)).max(10).optional().describe("Keep only rows with these names (to compare e.g. two brands)."),
   sortBy: z.string().max(40).optional().describe("Column key to sort the block's table by (e.g. reworkPct)."),
   sortDir: z.enum(["desc", "asc"]).optional(),
+  refresh: z.enum(INSIGHT_SCHEDULES).optional().describe("schedule op: auto-refresh while open."),
+  report: z.enum(INSIGHT_SCHEDULES).optional().describe("schedule op: email + notification report to the user (leadership only)."),
 });
 
 export const updateBoardParams = z.object({ ops: z.array(opSchema).min(1).max(8) });
@@ -86,12 +89,24 @@ export const UPDATE_BOARD_DESCRIPTION =
   ".";
 
 /** Applies the model's board operations to a copy of the blocks; returns the new blocks and a line per op. */
-export function applyBoardOps(blocks: BlockSpec[], rawOps: unknown): { blocks: BlockSpec[]; results: string[] } {
+export interface BoardSettings {
+  refresh?: InsightSchedule;
+  report?: InsightSchedule;
+}
+
+export function applyBoardOps(blocks: BlockSpec[], rawOps: unknown): { blocks: BlockSpec[]; results: string[]; settings: BoardSettings } {
   const parsed = updateBoardParams.safeParse(rawOps);
-  if (!parsed.success) return { blocks, results: [`Invalid operations: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`] };
+  if (!parsed.success) return { blocks, settings: {}, results: [`Invalid operations: ${parsed.error.issues.slice(0, 3).map((i) => `${i.path.join(".")}: ${i.message}`).join("; ")}`] };
   const next = [...blocks];
+  const settings: BoardSettings = {};
   const results: string[] = [];
   for (const op of parsed.data.ops) {
+    if (op.op === "schedule") {
+      if (op.refresh) settings.refresh = op.refresh;
+      if (op.report) settings.report = op.report;
+      results.push(`schedule: ${[op.refresh && `refresh ${op.refresh}`, op.report && `report ${op.report}`].filter(Boolean).join(", ") || "nothing to change"}`);
+      continue;
+    }
     const index = op.blockId ? next.findIndex((b) => b.id === op.blockId) : -1;
     if (op.op === "remove") {
       if (index < 0) results.push(`remove: no block ${op.blockId}`);
@@ -128,7 +143,7 @@ export function applyBoardOps(blocks: BlockSpec[], rawOps: unknown): { blocks: B
     else next[index] = checked.block;
     results.push(`${op.op === "add" ? "added" : "updated"} "${checked.block.title}" (id ${checked.block.id})`);
   }
-  return { blocks: next, results };
+  return { blocks: next, results, settings };
 }
 
 /** The board as the model sees it (ids, titles, tool, params, view). */

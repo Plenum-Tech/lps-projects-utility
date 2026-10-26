@@ -121,9 +121,9 @@ export async function askInsight(req: Request, res: Response): Promise<void> {
         },
         delta: (text) => send("delta", { text }),
         reset: () => send("reset", {}),
-        board: (next, results) => {
+        board: (next, results, settings) => {
           boardOps += results.length;
-          send("board", { blocks: next, results });
+          send("board", { blocks: next, results, settings });
         },
       },
     });

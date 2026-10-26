@@ -54,6 +54,8 @@ const LIST_LABELS: Record<string, string> = {
   pitches: "Pitches",
   trend: "Weekly trend",
   items: "Items",
+  events: "Updates",
+  byPerson: "By person",
 };
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -271,6 +273,22 @@ export function DataBlock({
               </button>
             </span>
           ) : null}
+          {dataset.teamScope && (
+            <NativeSelect
+              size="sm"
+              aria-label="Team definition"
+              title={`Team = ${dataset.teamScope.definition}`}
+              className="[&_select]:h-6 [&_select]:rounded-full [&_select]:py-0 [&_select]:text-[11px]"
+              value={dataset.teamScope.value}
+              onChange={(e) => setParams({ ...spec.params, teamScope: e.target.value })}
+            >
+              {dataset.teamScope.options.map((o) => (
+                <NativeSelectOption key={o.value} value={o.value}>
+                  {o.label}
+                </NativeSelectOption>
+              ))}
+            </NativeSelect>
+          )}
           {dataset.lists.length > 1 && (
             <NativeSelect size="sm" aria-label="List" className="[&_select]:h-6 [&_select]:rounded-full [&_select]:py-0 [&_select]:text-[11px]" value={dataset.list} onChange={(e) => set({ list: e.target.value })}>
               {dataset.lists.map((l) => (
@@ -283,6 +301,7 @@ export function DataBlock({
         </div>
       )}
 
+      {dataset?.teamScope && <p className="text-[11px] text-muted-foreground">Team = {dataset.teamScope.definition}. Switch the definition with the team chip above.</p>}
       {query.isPending && <Skeleton className="h-40 w-full rounded-lg" />}
       {query.isError && <p className="text-sm text-critical">This data couldn't be loaded.</p>}
       {query.data && !dataset && <p className="text-sm text-critical">{query.data.error ?? "No data."}</p>}
