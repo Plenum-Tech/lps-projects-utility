@@ -272,7 +272,7 @@ export async function getPlan(req: Request, res: Response): Promise<void> {
     version: plan.version,
     pendingRequest: pendingVersion != null ? await pendingRequestInfo(month, pendingVersion) : null,
     // Leadership and plan editors: the live changes not emailed yet ("Send email").
-    planNotice: canEditManpower(req.user!) || (await isLeadershipActor(req.user!)) ? await planNoticeInfo(month) : null,
+    planNotice: canEditManpower(req.user!) || (await isLeadershipActor(req.user!)) ? await planNoticeInfo(month, String(req.user!._id)) : null,
     // The version edits start from (the latest approved one).
     latestVersion: latestApproved?.version ?? null,
     pendingVersion,
@@ -370,9 +370,26 @@ export async function notifyPlan(req: Request, res: Response): Promise<void> {
     res.status(403).json({ error: "Only leadership and the plan editors can email the plan's changes" });
     return;
   }
-  const body = (req.body ?? {}) as { note?: unknown };
+  const body = (req.body ?? {}) as { note?: unknown; recipients?: unknown };
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
-  const sent = await sendPlanNotice(month, req.user!, note, req.ip);
+  // The picker: only these people (staff); omitted = everyone by default.
+  let recipients: string[] | undefined;
+  if (body.recipients !== undefined) {
+    if (!Array.isArray(body.recipients) || body.recipients.some((id) => typeof id !== "string" || isInvalidObjectId(id))) {
+      res.status(400).json({ error: "recipients must be a list of people" });
+      return;
+    }
+    recipients = [...new Set(body.recipients as string[])].filter((id) => id !== String(req.user!._id));
+    if (recipients.length === 0) {
+      res.status(400).json({ error: "Pick at least one person to email" });
+      return;
+    }
+    if (recipients.length > 300 || (await User.countDocuments({ _id: { $in: recipients }, ...STAFF_FILTER })) !== recipients.length) {
+      res.status(400).json({ error: "Some of the people picked aren't staff members" });
+      return;
+    }
+  }
+  const sent = await sendPlanNotice(month, req.user!, note, req.ip, recipients);
   if (!sent) {
     res.status(409).json({ error: "Nothing new to email — everyone already has these changes" });
     return;
@@ -380,7 +397,7 @@ export async function notifyPlan(req: Request, res: Response): Promise<void> {
   res.json({
     month,
     ...sent,
-    message: `Emailed ${sent.changes} change${sent.changes === 1 ? "" : "s"} to leadership${sent.people ? ` and ${sent.people} ${sent.people === 1 ? "person" : "people"} affected` : ""}`,
+    message: `Emailed ${sent.changes} change${sent.changes === 1 ? "" : "s"} to ${sent.recipients} ${sent.recipients === 1 ? "person" : "people"}`,
   });
 }
 

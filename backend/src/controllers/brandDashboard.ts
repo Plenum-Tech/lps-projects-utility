@@ -261,7 +261,7 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
 async function planNoticeFor(month: string, user: IUser) {
   if (!canEditManpower(user) && !(await isLeadershipActor(user))) return null;
   const { planNoticeInfo } = await import("../lib/manpowerNotice.js");
-  return planNoticeInfo(month);
+  return planNoticeInfo(month, String(user._id));
 }
 
 async function permissions(user: IUser) {

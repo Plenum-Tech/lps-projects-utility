@@ -68,8 +68,13 @@ export function useSendPlanEmail() {
   const queryClient = useQueryClient();
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({ month, note }: { month: string; note?: string }) =>
-      (await api.post<{ month: string; version: number; changes: number; people: number; message: string }>(`/manpower/${month}/notify`, { note })).data,
+    mutationFn: async ({ month, note, recipients }: { month: string; note?: string; recipients?: string[] }) =>
+      (
+        await api.post<{ month: string; version: number; changes: number; people: number; recipients: number; message: string }>(`/manpower/${month}/notify`, {
+          note,
+          recipients,
+        })
+      ).data,
     onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
       void queryClient.invalidateQueries({ queryKey: brandKeys.all });

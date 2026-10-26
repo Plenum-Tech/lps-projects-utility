@@ -3,7 +3,7 @@ import { Brand } from "../models/Brand.js";
 import { APPROVED_PLAN, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
 import { ManpowerPlanNotice } from "../models/ManpowerPlanNotice.js";
 import { Project } from "../models/Project.js";
-import { User, type IUser } from "../models/User.js";
+import { STAFF_FILTER, User, type IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { clip } from "./changeRequests.js";
 import { linkProjectsToRows } from "./manpower/match.js";
@@ -96,8 +96,38 @@ async function pendingNotice(month: string) {
   return { latest, baseVersion, before, changes };
 }
 
-/** For the plan pages' "Version N saved — changes not emailed yet" banner (leadership). */
-export async function planNoticeInfo(month: string) {
+export interface NoticeRecipient {
+  _id: string;
+  name: string;
+  /** leadership: the approvers (the full list, FYI); people: someone added to / taken off a line. */
+  group: "leadership" | "people";
+  /** people: their own changes ("added to ZOOM TT · SPM / PM"). */
+  lines: string[];
+}
+
+/** Who "Send email" goes to by default: the approvers and everyone whose lines changed — never the sender. */
+async function defaultRecipients(pending: NonNullable<Awaited<ReturnType<typeof pendingNotice>>>, senderId: string): Promise<NoticeRecipient[]> {
+  if (pending.changes.length === 0) return [];
+  const approverIds = (await projectApproverIds()).map(String).filter((id) => id !== senderId);
+  const people = [...peopleChanges(pending.before, pending.latest.rows as IManpowerRow[])].filter(([id]) => id !== senderId && !approverIds.includes(id));
+  const users = await User.find({ _id: { $in: [...approverIds, ...people.map(([id]) => id)] }, ...STAFF_FILTER }).select("name").lean();
+  const name = new Map(users.map((u) => [String(u._id), u.name]));
+  return [
+    ...approverIds.filter((id) => name.has(id)).map((id): NoticeRecipient => ({ _id: id, name: name.get(id)!, group: "leadership", lines: [] })),
+    ...people
+      .filter(([id]) => name.has(id))
+      .map(([id, p]): NoticeRecipient => ({
+        _id: id,
+        name: name.get(id)!,
+        group: "people",
+        lines: [...p.added.map((l) => `added to ${l}`), ...p.removed.map((l) => `taken off ${l}`)],
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  ];
+}
+
+/** For the plan pages' "Version N saved — changes not emailed yet" banner and its recipient picker. */
+export async function planNoticeInfo(month: string, viewerId: string) {
   const [pending, notice] = await Promise.all([pendingNotice(month), ManpowerPlanNotice.findOne({ month }).populate("emailedBy", "name").lean()]);
   if (!pending) return null;
   const savedBy = pending.latest.createdBy as unknown as { _id: mongoose.Types.ObjectId; name?: string } | null;
@@ -111,6 +141,9 @@ export async function planNoticeInfo(month: string) {
     emailedAt: notice?.emailedAt ?? null,
     emailedBy: emailedBy?._id ? { _id: String(emailedBy._id), name: emailedBy.name ?? "" } : null,
     emailedVersion: notice?.emailedVersion ?? null,
+    emailedTo: notice?.emailedTo?.length ?? 0,
+    // Who "Send email" would go to (all ticked by default in the picker).
+    recipients: await defaultRecipients(pending, viewerId),
   };
 }
 
@@ -175,10 +208,24 @@ async function projectsByLine(month: string, rows: IManpowerRow[]): Promise<Map<
  * "Send email": one message about every plan change since the last email — the approvers
  * get the whole list, each affected person their own lines (and the projects on them).
  * Returns null when there is nothing new to send. Plan editors and leadership send it.
+ * `chosen` (the picker): only these people (staff ids, checked by the caller); anyone not in the
+ * default list gets the full list (FYI). Omitted: everyone by default. The sender never gets it.
  */
-export async function sendPlanNotice(month: string, actor: IUser, note: string, ip?: string): Promise<{ version: number; changes: number; people: number } | null> {
+export async function sendPlanNotice(
+  month: string,
+  actor: IUser,
+  note: string,
+  ip?: string,
+  chosen?: string[]
+): Promise<{ version: number; changes: number; people: number; recipients: number } | null> {
   const pending = await pendingNotice(month);
   if (!pending || pending.changes.length === 0) return null;
+  const senderId = String(actor._id);
+  const defaults = await defaultRecipients(pending, senderId);
+  const picked = chosen ? new Set(chosen.filter((id) => id !== senderId)) : new Set(defaults.map((r) => r._id));
+  const peopleIds = new Set(defaults.filter((r) => r.group === "people" && picked.has(r._id)).map((r) => r._id));
+  // The full list: the ticked approvers and anyone added in the picker.
+  const fyiIds = [...picked].filter((id) => !defaults.some((r) => r._id === id && r.group === "people"));
   const { latest, baseVersion, before, changes } = pending;
   const after = latest.rows as IManpowerRow[];
   const update = Boolean((await ManpowerPlanNotice.findOne({ month }).select("emailedAt").lean())?.emailedAt);
@@ -189,8 +236,8 @@ export async function sendPlanNotice(month: string, actor: IUser, note: string, 
   const shown = changes.slice(0, 40);
 
   // The approvers / leadership: everything (FYI).
-  await notifyUsersAsync({
-    recipients: await projectApproverIds(),
+  if (fyiIds.length) await notifyUsersAsync({
+    recipients: fyiIds,
     actor,
     type: "change_exception",
     title: `Manpower plan changed${update ? " (update)" : ""}: ${month}`,
@@ -212,13 +259,12 @@ export async function sendPlanNotice(month: string, actor: IUser, note: string, 
 
   // The people affected: one message each with their own changes.
   const people = peopleChanges(before, after);
-  const approvers = new Set((await projectApproverIds()).map(String));
   const lineProjects = await projectsByLine(month, after.length ? after : before);
   const names = new Map((await User.find({ _id: { $in: [...people.keys()] } }).select("name").lean()).map((u) => [String(u._id), u.name]));
   let told = 0;
   for (const [id, p] of people) {
-    // Approvers already have the full list; the person saving knows.
-    if (approvers.has(id) || id === String(actor._id) || !names.has(id)) continue;
+    // Only the people ticked in the picker (approvers get the full list instead; never the sender).
+    if (!peopleIds.has(id) || !names.has(id)) continue;
     const projects = [...new Set([...p.lines].flatMap((k) => lineProjects.get(k) ?? []))].filter(Boolean);
     await notifyUsersAsync({
       recipients: [id],
@@ -246,7 +292,16 @@ export async function sendPlanNotice(month: string, actor: IUser, note: string, 
 
   await ManpowerPlanNotice.updateOne(
     { month },
-    { $set: { baseVersion: latest.version, emailedAt: new Date(), emailedBy: actor._id, emailedVersion: latest.version }, $setOnInsert: { month } },
+    {
+      $set: {
+        baseVersion: latest.version,
+        emailedAt: new Date(),
+        emailedBy: actor._id,
+        emailedVersion: latest.version,
+        emailedTo: [...fyiIds, ...peopleIds].map((id) => new mongoose.Types.ObjectId(id)),
+      },
+      $setOnInsert: { month },
+    },
     { upsert: true }
   );
   logActivity({
@@ -255,8 +310,8 @@ export async function sendPlanNotice(month: string, actor: IUser, note: string, 
     targetType: "manpower_plan",
     targetId: latest._id as mongoose.Types.ObjectId,
     targetName: `Manpower plan ${month} v${latest.version}`,
-    details: { month, emailed: range, changes: changes.length, people: told, note: note || undefined },
+    details: { month, emailed: range, changes: changes.length, people: told, recipients: fyiIds.length + peopleIds.size, note: note || undefined },
     ip,
   });
-  return { version: latest.version, changes: changes.length, people: told };
+  return { version: latest.version, changes: changes.length, people: told, recipients: fyiIds.length + peopleIds.size };
 }

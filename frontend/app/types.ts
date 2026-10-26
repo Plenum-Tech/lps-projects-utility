@@ -3307,6 +3307,19 @@ export interface PlanNoticeInfo {
   emailedAt: string | null;
   emailedBy: { _id: string; name: string } | null;
   emailedVersion: number | null;
+  /** How many people the last email went to. */
+  emailedTo?: number;
+  /** Who "Send email" would go to (the picker; all ticked by default). The viewer is never in it. */
+  recipients?: PlanNoticeRecipient[];
+}
+
+/** One would-be recipient of the plan email: an approver (full list, FYI) or someone whose lines changed. */
+export interface PlanNoticeRecipient {
+  _id: string;
+  name: string;
+  group: "leadership" | "people";
+  /** Their own changes, e.g. "added to ZOOM TT · SPM / PM". */
+  lines: string[];
 }
 
 /** The month's manpower plan version waiting for leadership approval. */
