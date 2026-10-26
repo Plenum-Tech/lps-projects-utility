@@ -47,7 +47,7 @@ export async function markPlanNoticeBase(month: string): Promise<void> {
   }
 }
 
-/** An approved change request made `version` live: its changes stay out of the next "Send email". */
+/** An approved change request made `version` live (recorded; its changes are included in the next "Send email"). */
 export async function markPlanApprovedVersion(month: string, version: number): Promise<void> {
   try {
     await markPlanNoticeBase(month);
@@ -88,7 +88,10 @@ async function pendingNotice(month: string) {
   const baseVersion = await baseVersionOf(month);
   const { planChanges } = await import("../controllers/manpower.js");
   const after = latest.rows as IManpowerRow[];
-  const before = baseVersion === latest.version ? after : await knownRows(month, baseVersion, latest.version, notice?.approvedVersions ?? []);
+  // Approved requests (e.g. a plan editor's changes) are included in the next "Send email" too
+  // (user decision, 26 Oct 2026); recorded approvals are kept on the notice but no longer excluded.
+  void notice;
+  const before = baseVersion === latest.version ? after : await knownRows(month, baseVersion, latest.version, []);
   const changes = baseVersion === latest.version ? [] : await planChanges(before, after);
   return { latest, baseVersion, before, changes };
 }
