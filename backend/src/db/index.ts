@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { refreshCompanySettings } from "../lib/companySettings.js";
+import { refreshScopeUnits } from "../lib/scopeUnitSettings.js";
 import { runDbMaintenance } from "../lib/dbMaintenance.js";
 
 function envInt(name: string, fallback: number): number {
@@ -67,6 +68,8 @@ export async function connectDB(): Promise<void> {
   // Load company settings (timezone, app URL, branding) for request-less code:
   // jobs and scripts. Never throws — env fallbacks apply on failure.
   await refreshCompanySettings();
+  // Settings → Scope units (validators and the scope reader use the list). Never throws.
+  await refreshScopeUnits();
 }
 
 /** Disconnects from MongoDB — used for clean shutdowns and tests. */

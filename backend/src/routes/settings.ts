@@ -9,6 +9,7 @@ import {
   uploadCompanyLogo,
 } from "../controllers/settings.js";
 import { getDeliverySettingsHandler, updateDeliverySettings } from "../controllers/deliverySettings.js";
+import { getScopeUnits, updateScopeUnits } from "../controllers/scopeUnitSettings.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireRole } from "../middlewares/requireRole.js";
 
@@ -27,5 +28,9 @@ router.delete("/company/logo", requireAuth, requireRole("admin"), deleteCompanyL
 // Delivery Pulse settings (traffic managers, teams, rework, brief rules, brand team map).
 router.get("/delivery", requireAuth, requireRole("admin"), getDeliverySettingsHandler);
 router.patch("/delivery", requireAuth, requireRole("admin"), updateDeliverySettings);
+
+// Scope units: read by every signed-in user (the scope editors), edited by admins / leadership.
+router.get("/scope-units", requireAuth, getScopeUnits);
+router.put("/scope-units", requireAuth, requireRole("admin"), updateScopeUnits);
 
 export default router;

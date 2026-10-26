@@ -11,7 +11,7 @@ import { isGuestUser } from "./guests.js";
 import { canCreateProjectTasks, projectVisibilityFilter } from "./projectAccess.js";
 import { isProjectApproved } from "./projectApproval.js";
 import { isProjectExpired } from "./projectExpiry.js";
-import { SCOPE_UNITS, scopeTotals } from "./scopeUnits.js";
+import { scopeTotals, scopeUnitNames } from "./scopeUnits.js";
 import {
   canManageTask,
   canManageTaskAsync,
@@ -295,7 +295,7 @@ export async function loadVoiceContext(user: IUser): Promise<VoiceContext> {
 /** Units the user may name: the projects' scope units plus the standard ones. */
 function allUnits(ctx: VoiceContext): string[] {
   const seen = new Map<string, string>();
-  for (const u of [...ctx.projects.flatMap((p) => p.units), ...SCOPE_UNITS]) {
+  for (const u of [...ctx.projects.flatMap((p) => p.units), ...scopeUnitNames()]) {
     if (!seen.has(u.toLowerCase())) seen.set(u.toLowerCase(), u);
   }
   return [...seen.values()];
@@ -1626,7 +1626,7 @@ async function question(
     case "unit": {
       const usage = await scopeUsageOf(ctx, d.project?.id ?? null);
       // No scope on the project: the unit is free text, as in the form.
-      if (!usage.length) return { reply: "Which scope unit is it? (e.g. Video, Post, Banner)", chips: [...SCOPE_UNITS].slice(0, 6) };
+      if (!usage.length) return { reply: "Which scope unit is it? (e.g. Video, Post, Banner)", chips: scopeUnitNames().slice(0, 6) };
       return { reply: "Which scope item is this?", chips: usage.map((u) => `${u.unit} · ${Math.max(0, u.total - u.used)} of ${u.total} left`) };
     }
     case "quantity":

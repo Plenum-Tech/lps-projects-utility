@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import mammoth from "mammoth";
 import { briefCheckConfigured, briefCheckModel } from "./briefCheck.js";
-import { SCOPE_LANGUAGES, SCOPE_LIMITS, SCOPE_UNITS } from "./scopeUnits.js";
+import { SCOPE_LANGUAGES, SCOPE_LIMITS, scopeUnitDefs, scopeUnitNames } from "./scopeUnits.js";
 
 // ---------------------------------------------------------------------------
 // Brand flow, step 2: read the brief / SOW the user gives (images, PDFs, Word /
@@ -135,26 +135,60 @@ async function localText(f: ExtractInputFile): Promise<string | null> {
 // Shared normalising (AI and rule results go through the same checks)
 // ---------------------------------------------------------------------------
 
-const UNIT_WORDS: Array<[RegExp, string]> = [
-  [/\breels?\b/, "Reel"],
-  [/\bstor(?:y|ies)\b/, "Story"],
-  [/\bcarousels?\b/, "Carousel"],
-  [/\b(?:videos?|films?|tiktoks?|shorts|youtube|motion|animations?|gifs?)\b/, "Video"],
-  [/\b(?:posts?|statics?|images?|visuals?|designs?|banners?|creatives?|artworks?|key ?visuals?|kv|graphics?|infographics?)\b/, "Static"],
-];
+/** Words of the standard units (by lower-cased unit name); motion / animation words go to Video without an Animation unit. */
+const STANDARD_UNIT_WORDS: Record<string, RegExp> = {
+  reel: /\breels?\b/,
+  story: /\bstor(?:y|ies)\b/,
+  carousel: /\bcarousels?\b/,
+  animation: /\b(?:animations?|animated|motion(?:\s+graphics?)?|gifs?)\b/,
+  video: /\b(?:videos?|films?|tiktoks?|shorts|youtube)\b/,
+  static: /\b(?:posts?|statics?|images?|visuals?|designs?|banners?|creatives?|artworks?|key ?visuals?|kv|graphics?|infographics?)\b/,
+};
+const ANIMATION_AS_VIDEO = /\b(?:motion|animations?|gifs?)\b/;
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+let unitWordsFor: readonly unknown[] | null = null;
+let unitWordsCache: Array<[RegExp, string]> = [];
+
+/** The configured (visible) units' words: standard units their vocabulary, custom ones their name (singular / plural). */
+function unitWords(): Array<[RegExp, string]> {
+  const defs = scopeUnitDefs();
+  if (unitWordsFor === defs) return unitWordsCache;
+  const visible = defs.filter((u) => !u.hidden && u.name.toLowerCase() !== "others");
+  const has = (name: string) => visible.some((u) => u.name.toLowerCase() === name);
+  const out: Array<[RegExp, string]> = [];
+  for (const u of visible) {
+    const std = STANDARD_UNIT_WORDS[u.name.toLowerCase()];
+    if (std) out.push([std, u.name]);
+    else {
+      const l = u.name.toLowerCase().trim();
+      const forms = [l, l.endsWith("y") ? `${l.slice(0, -1)}ies` : `${l}s`, `${l}es`].map(escapeRe).join("|");
+      out.push([new RegExp(String.raw`\b(?:${forms})\b`), u.name]);
+    }
+    if (u.name.toLowerCase() === "video" && !has("animation")) out.push([ANIMATION_AS_VIDEO, u.name]);
+  }
+  unitWordsFor = defs;
+  unitWordsCache = out;
+  return out;
+}
+
+/** The unit name for "Others" (the catch-all), as configured. */
+const othersUnit = () => scopeUnitDefs().find((u) => u.name.toLowerCase() === "others")?.name ?? "Others";
 
 /**
  * The scope unit a deliverable name belongs to: the unit word that comes first
- * ("Statics/ motion graphics" → Static, "Reels/Motion Graphics" → Reel, "Native TikTok videos" → Video).
+ * ("Statics/ motion graphics" → Static, "Reels/Motion Graphics" → Reel, "Native TikTok videos" → Video,
+ * "4 animations" → Animation).
  */
 export function unitFor(what: string): string {
   const w = what.toLowerCase();
   let best: { at: number; unit: string } | null = null;
-  for (const [re, unit] of UNIT_WORDS) {
+  for (const [re, unit] of unitWords()) {
     const m = re.exec(w);
     if (m && (!best || m.index < best.at)) best = { at: m.index, unit };
   }
-  return best?.unit ?? "Others";
+  return best?.unit ?? othersUnit();
 }
 
 /** Zero-width characters some documents are full of (U+200B …). */
@@ -241,7 +275,7 @@ function languagesIn(text: string): string[] {
  * ("Native Snap stories", "TikTok videos") gets that unit.
  */
 export function cleanRows(rows: ExtractedScopeRow[], sink?: CleanSink): ExtractedScopeRow[] {
-  const units = new Map(SCOPE_UNITS.map((u) => [u.toLowerCase(), u as string]));
+  const units = new Map(scopeUnitNames().map((u) => [u.toLowerCase(), u]));
   const langs = new Map(SCOPE_LANGUAGES.map((l) => [l.toLowerCase(), l as string]));
   const out: ExtractedScopeRow[] = [];
   for (const r of rows) {
@@ -259,7 +293,7 @@ export function cleanRows(rows: ExtractedScopeRow[], sink?: CleanSink): Extracte
       continue;
     }
     // Brackets don't decide the unit ("Live event coverage (… 3 recap videos)" stays Others).
-    if (unit === "Others") unit = unitFor(what.replace(/\(.*?\)/g, " "));
+    if (unit === othersUnit()) unit = unitFor(what.replace(/\(.*?\)/g, " "));
     const languageList = [...new Set((Array.isArray(r.languageList) ? r.languageList : []).map((l) => langs.get(String(l).toLowerCase())).filter((l): l is string => Boolean(l)))];
     const sizes = Math.min(SCOPE_LIMITS.maxMultiplier, Math.max(1, Math.round(Number(r.sizes) || 1)));
     // The same deliverable named twice (e.g. two pages of one brief) counts once.
@@ -332,8 +366,8 @@ function itemsOf(text: string): string[] {
     const parts = line.split(SENTENCE_SPLIT);
     if (parts.length < 2) return [line];
     // Split when 2+ pieces are deliverables, or the line opens with something else ("Budget AED 40,000, 3 reels").
-    const deliverables = parts.filter((p) => unitFor(p) !== "Others").length;
-    return deliverables >= 2 || unitFor(parts[0]!) === "Others" ? parts : [line];
+    const deliverables = parts.filter((p) => unitFor(p) !== othersUnit()).length;
+    return deliverables >= 2 || unitFor(parts[0]!) === othersUnit() ? parts : [line];
   });
 }
 
@@ -384,7 +418,7 @@ function countsLine(line: string): CountSeg[] | null {
   }
   const real = out.filter((s) => !TOTAL_LABEL.test(s.label));
   // One "Label: N" alone counts only when the label is a known deliverable ("Videos: 3", not "Budget: 40").
-  if (!real.length || (out.length === 1 && unitFor(real[0]!.label) === "Others")) return null;
+  if (!real.length || (out.length === 1 && unitFor(real[0]!.label) === othersUnit())) return null;
   return out;
 }
 
@@ -605,12 +639,15 @@ function normaliseCounts(line: string): string {
     .replace(/(^|[\s:(])x(\d{1,3})\b/gi, "$1$2x");
 }
 
-/** Unit of an item inside a posts breakdown: "videos", "animations" / "animated" (= reels / motion), "statics". */
+/** Unit of an item inside a posts breakdown: "videos", "animations" / "animated" (Animation, else Reel), "statics". */
 function breakdownUnit(word: string): string {
   const w = word.toLowerCase();
-  if (/animat|motion|gif/.test(w)) return "Reel";
+  if (/animat|motion|gif/.test(w)) return animationUnit() ?? "Reel";
   return unitFor(w);
 }
+
+/** The visible Animation unit's name, if there is one. */
+const animationUnit = () => scopeUnitDefs().find((u) => !u.hidden && u.name.toLowerCase() === "animation")?.name ?? null;
 
 /**
  * "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)" → 5 Video, 10 Reel, 5 Static
@@ -633,7 +670,7 @@ function postsPerMonth(line: string): { rows: Array<{ unit: string; what: string
         rows: parts.map((x) => ({ unit: breakdownUnit(x.word), what: `${x.word.charAt(0).toUpperCase()}${x.word.slice(1)}${tail}`, quantity: x.n })),
         note:
           sum === Number(m[2])
-            ? `${m[2]} posts/${period}${where ? ` on ${where}` : ""} = ${parts.map((x) => `${x.n} ${x.word}`).join(" + ")} (animations read as Reel).`
+            ? `${m[2]} posts/${period}${where ? ` on ${where}` : ""} = ${parts.map((x) => `${x.n} ${x.word}`).join(" + ")} (animations read as ${animationUnit() ?? "Reel"}).`
             : `${m[2]} posts/${period}${where ? ` on ${where}` : ""}, but the breakdown adds up to ${sum} — check.`,
       };
     }
@@ -1167,6 +1204,19 @@ export function extractByRules(rawTexts: Array<{ source: string; text: string }>
 // AI (OpenAI vision): reads images and PDFs too
 // ---------------------------------------------------------------------------
 
+/** The prompt with the configured units (Settings → Scope units) filled in. */
+function extractPrompt(): string {
+  const names = scopeUnitNames();
+  const anim = animationUnit();
+  const standard = new Set(["video", "static", "story", "carousel", "reel", "animation", "others"]);
+  const custom = names.filter((n) => !standard.has(n.toLowerCase()));
+  return EXTRACT_PROMPT.replace("{{UNITS}}", names.join(", "))
+    .replace("{{ANIMATION_RULE}}", anim ? ` ${anim} for animations / animated videos / motion graphics / GIFs,` : "")
+    .replace("{{CUSTOM_RULE}}", custom.length ? ` ${custom.map((n) => `${n} for ${n.toLowerCase()}s`).join(", ")},` : "")
+    .replace("{{ANIMATION_WORD}}", anim ? " or animation" : "")
+    .replace("{{ANIMATION_UNIT}}", anim ?? "Reel");
+}
+
 const EXTRACT_PROMPT = `You read briefs, statements of work (SOW) and pitch documents for a creative / marketing agency.
 You get one or more files (images, PDFs, documents) and maybe typed text. For EACH input, transcribe its text
 faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, across all inputs:
@@ -1176,10 +1226,10 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
 - "dates": {"clientPresentation","milestone1","milestone2","startDate","endDate"} as YYYY-MM-DD if stated, else null.
   startDate / endDate are the period of the work (contract or campaign start; end date, deadline or go-live).
 - "scope": the countable content deliverables, one row each: {"what": the deliverable as written (e.g. "Engagement posts"),
-  "unit": one of ${SCOPE_UNITS.join(", ")} (Reel for reels, Story for stories — "Snap stories", "Native Snap stories",
+  "unit": one of {{UNITS}} (Reel for reels, Story for stories — "Snap stories", "Native Snap stories",
   "Instagram stories" are Story —, Carousel, Video for videos / "TikTok videos" / "Native TikTok videos" / films,
-  Static for posts / statics / images / visuals, Others ONLY for anything else such as tweets). Never use Others for an item
-  whose name says story, video, reel, post, static or carousel. "quantity": integer,
+  Static for posts / statics / images / visuals,{{ANIMATION_RULE}}{{CUSTOM_RULE}} Others ONLY for anything else such as tweets).
+  Never use Others for an item whose name says story, video, reel, post, static, carousel{{ANIMATION_WORD}}. "quantity": integer,
   "languageList": languages from [${SCOPE_LANGUAGES.join(", ")}] the content is in (default ["English"]),
   "sizes": number of sizes/formats if stated else 1, "source": the input name it came from}.
   Services WITHOUT a count (strategy, community management, reporting, client meetings, content calendars, posting,
@@ -1204,7 +1254,7 @@ faithfully (keep bullet structure, max ${TEXT_MAX} characters). Then extract, ac
   (e.g. "Across the 4 phases: Static 29, Carousel 39, Reel 100, Story 173").
   A counted item inside a services list ("1 weekly status meeting at LPS Office") can still be a row.
   "On IG & Fb: 20 posts/month (5 videos, 10 animations and 5 statics)": the 20 is the TOTAL — list the breakdown
-  (5 × Video, 10 × Reel for animations / animated / motion, 5 × Static), "what" with the platforms and "(per month)".
+  (5 × Video, 10 × {{ANIMATION_UNIT}} for animations / animated / motion, 5 × Static), "what" with the platforms and "(per month)".
   "On LinkedIn & X: 4 static posts/month" → 4 × Static ("Static posts — LinkedIn & X (per month)").
   Hours, minutes, days, SLAs, percentages and amounts are NOT quantities ("6 hrs × 7 days moderation", "within 24 hrs",
   "up to 15 seconds") — those lines are service details for "otherScope".
@@ -1324,7 +1374,7 @@ async function extractWithAI(files: ExtractInputFile[], typed: string): Promise<
         temperature: 0,
         response_format: { type: "json_object" },
         messages: [
-          { role: "system", content: EXTRACT_PROMPT },
+          { role: "system", content: extractPrompt() },
           { role: "user", content },
         ],
       }),

@@ -30,7 +30,8 @@ import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
 import { rolesFromScope } from "@/lib/brand-roles";
 import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
-import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
+import { defaultScopeUnit, SCOPE_LANGUAGES, scopeUnitOptions } from "@/lib/scope";
+import { useScopeUnits } from "@/hooks/use-scope-units";
 import { stripComposedPrefix } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 import type { LeadMatch, PitchSheetRow, ScopeExtraction, StatedTotal } from "@/types";
@@ -191,6 +192,9 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       },
     );
   }
+  const scopeUnits = useScopeUnits();
+  // Visible units, plus any a row already uses that isn't offered any more.
+  const unitOptions = scopeUnitOptions(scopeUnits, rows.map((r) => r.unit));
   const setRow = (i: number, patch: Partial<Row>) => setRows((list) => list.map((r, j) => (j === i ? { ...r, ...patch } : r)));
   const pieces = rows.reduce((n, r) => n + r.quantity, 0);
   const hasAgreement = files.some(isAgreementFile);
@@ -201,8 +205,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
 
   // --- Step 3 ---------------------------------------------------------------
   const roles = useMemo(
-    () => rolesFromScope(rows, notes, (result?.texts ?? []).map((t) => t.text).join(" ")),
-    [rows, notes, result],
+    () => rolesFromScope(rows, notes, (result?.texts ?? []).map((t) => t.text).join(" "), scopeUnits),
+    [rows, notes, result, scopeUnits],
   );
   // Every manpower position: the ones the SOW asks for first (pre-filled), then the rest to fill if needed.
   const allRoles = useMemo(() => {
@@ -641,7 +645,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                       <tbody>
                         {rows.map((r, i) => (
                           <tr key={i} className="border-b last:border-0">
-                            <td className="py-1.5 pr-2"><OptionSelect aria-label={`Row ${i + 1} unit`} className="w-28" value={r.unit} onChange={(unit) => setRow(i, { unit })} options={SCOPE_UNITS.map((u) => ({ value: u, label: u }))} /></td>
+                            <td className="py-1.5 pr-2"><OptionSelect aria-label={`Row ${i + 1} unit`} className="w-28" value={r.unit} onChange={(unit) => setRow(i, { unit })} options={unitOptions} /></td>
                             <td className="py-1.5 pr-2"><Input aria-label={`Row ${i + 1} what`} value={r.what} onChange={(e) => setRow(i, { what: e.target.value })} maxLength={80} /></td>
                             <td className="py-1.5 pr-2"><Input aria-label={`Row ${i + 1} quantity`} type="number" min={1} className="w-20" value={r.quantity} onChange={(e) => setRow(i, { quantity: Math.max(1, Math.round(Number(e.target.value) || 1)) })} /></td>
                             <td className="py-1.5 pr-2">
@@ -664,7 +668,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                     </table>
                   </div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => setRows([...rows, { unit: "Static", what: "", quantity: 1, languageList: ["English"], sizes: 1, source: "typed" }])}>
+                    <Button type="button" variant="outline" size="sm" onClick={() => setRows([...rows, { unit: defaultScopeUnit(scopeUnits, "Static"), what: "", quantity: 1, languageList: ["English"], sizes: 1, source: "typed" }])}>
                       <LuPlus aria-hidden /> Add row
                     </Button>
                     <p className="text-sm"><span className="font-semibold tabular-nums">{pieces}</span> pieces · {deliverables} deliverables with languages and sizes</p>

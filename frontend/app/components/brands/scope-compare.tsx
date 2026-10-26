@@ -4,6 +4,8 @@ import { LuCircleCheck, LuLoaderCircle, LuPlus, LuSparkles, LuTriangleAlert, LuX
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { useScopeUnits } from "@/hooks/use-scope-units";
+import { findScopeUnit } from "@/lib/scope";
 import { diffIsEmpty } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
 import type { DiffRow, ScopeDiff, ScopeDiffSide, ScopeMatchResult, StatedTotal } from "@/types";
@@ -378,14 +380,15 @@ export function OtherScopeChange({ from, to, className }: { from: string; to: st
 // ---------------------------------------------------------------------------
 // The agreement's stated total ("96 content pieces per month") against the rows:
 // "Agreement total: 96 per month · rows add up to 84 — 12 short". Advice only.
-// The rows' QUANTITIES are added (not × languages × sizes); service rows can't be
-// told apart from content rows, so every row counts.
+// The rows' QUANTITIES are added (not × languages × sizes). Rows of a unit set not
+// to count toward the total (Settings → Scope units) are left out; every other row counts.
 // ---------------------------------------------------------------------------
 
-type QtyRow = { quantity: number; what?: string };
+type QtyRow = { quantity: number; what?: string; unit?: string };
 
-/** Rows' quantities added up; per phase: the rows whose name ends with " — <phase>". */
-export function scopeTotalCheck(total: StatedTotal, rows: QtyRow[]) {
+/** Rows' quantities added up; per phase: the rows whose name ends with " — <phase>". `counts` = whether a row counts. */
+export function scopeTotalCheck(total: StatedTotal, allRows: QtyRow[], counts: (row: QtyRow) => boolean = () => true) {
+  const rows = allRows.filter(counts);
   const sum = rows.reduce((n, r) => n + (Number(r.quantity) || 0), 0);
   const phases = (total.phases ?? []).map((p) => {
     const inPhase = rows.filter((r) => (r.what ?? "").trim().toLowerCase().endsWith(`— ${p.phase}`.toLowerCase()));
@@ -399,8 +402,11 @@ function gapText(diff: number) {
 }
 
 export function ScopeTotalCheck({ total, rows, className }: { total: StatedTotal | null | undefined; rows: QtyRow[]; className?: string }) {
+  const units = useScopeUnits();
   if (!total) return null;
-  const check = scopeTotalCheck(total, rows);
+  const counts = (r: QtyRow) => !r.unit || findScopeUnit(units, r.unit)?.countsTowardTotal !== false;
+  const check = scopeTotalCheck(total, rows, counts);
+  const left = [...new Set(rows.filter((r) => !counts(r)).map((r) => r.unit!))];
   const ok = check.diff === 0;
   return (
     <div
@@ -428,7 +434,8 @@ export function ScopeTotalCheck({ total, rows, className }: { total: StatedTotal
         </ul>
       )}
       <p className="mt-0.5 pl-6 text-xs opacity-80">
-        {total.text ? `“${total.text}” — ` : ""}the quantities of all rows are added (languages and sizes not multiplied). Advice only.
+        {total.text ? `“${total.text}” — ` : ""}the quantities of {left.length ? "the rows" : "all rows"} are added (languages and sizes not multiplied)
+        {left.length ? `; ${left.join(", ")} rows don't count toward the total` : ""}. Advice only.
       </p>
     </div>
   );

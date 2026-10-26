@@ -11,6 +11,7 @@ import {
   LuMapPin,
   LuMessagesSquare,
   LuPlug,
+  LuRuler,
   LuShieldCheck,
   LuSlidersHorizontal,
   LuTags,
@@ -35,6 +36,7 @@ import {
 } from "@/components/settings/sections/card-sections";
 import { CompanySection } from "@/components/settings/sections/company-section";
 import { IntegrationsSection } from "@/components/settings/sections/integrations-section";
+import { ScopeUnitsSection } from "@/components/settings/sections/scope-units-section";
 import type { Role } from "@/types";
 
 export interface SettingsSectionDef {
@@ -123,6 +125,15 @@ export const SETTINGS_SECTIONS: SettingsSectionDef[] = [
     roles: ADMIN,
     icon: LuTags,
     component: BrandsSection,
+  },
+  {
+    id: "scope-units",
+    title: "Scope Units",
+    description: "Units offered in scope rows (Video, Static, Animation …), who delivers each, and what counts toward the agreement total.",
+    keywords: ["scope", "unit", "units", "deliverables", "animation", "video", "reel", "static", "role", "manpower", "agreement total"],
+    roles: ADMIN,
+    icon: LuRuler,
+    component: ScopeUnitsSection,
   },
   {
     id: "delivery",

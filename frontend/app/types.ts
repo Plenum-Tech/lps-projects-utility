@@ -4371,6 +4371,27 @@ export interface ScopeItem {
   sizes: number;
 }
 
+/** Settings → Scope units: one unit offered in scope rows. */
+export interface ScopeUnitDef {
+  /** Stable id (a rename keeps it). */
+  key: string;
+  name: string;
+  /** Earlier names: rows saved under them stay valid. */
+  aliases: string[];
+  /** Manpower plan roles that deliver it (the first is the main one). */
+  roles: string[];
+  /** Counted in the "rows add up to" check against the agreement total. */
+  countsTowardTotal: boolean;
+  /** Not offered for new rows; existing rows keep it. */
+  hidden: boolean;
+}
+
+/** GET /settings/scope-units */
+export interface ScopeUnitsResponse {
+  units: Array<ScopeUnitDef & { rowCount: number }>;
+  roles: Array<{ key: string; label: string }>;
+}
+
 /** POST /brands/pitch-import/preview — what one tracker row creates. */
 export interface PitchImportRow {
   client: string;

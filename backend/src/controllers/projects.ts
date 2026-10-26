@@ -89,6 +89,9 @@ import { listTasksForProject } from "./tasks.js";
 // Validation helpers
 // ---------------------------------------------------------------------------
 
+/** Units already on the project's scope rows (stay valid when removed from Settings since). */
+const scopeUnitsOn = (project: { scopeItems?: Array<{ unit: string }> | null }) => (project.scopeItems ?? []).map((r) => r.unit);
+
 function bad(error: string, status = 400): Invalid {
   return { status, error };
 }
@@ -1458,7 +1461,7 @@ export async function updateProjectCore(
   if (body.scopeItems !== undefined) {
     const brandDoc = await brandById(project.naming?.brand ?? project.brand ?? null);
     if (brandDoc && brandLocksScope(brandDoc)) {
-      const parsed = parseScopeItems(body.scopeItems);
+      const parsed = parseScopeItems(body.scopeItems, scopeUnitsOn(project));
       if (typeof parsed === "string") return bad(parsed);
       // Only rows of the brand's scope (a different pick goes the usual way, approval included).
       const picked = pickBrandScope(brandDoc, parsed);
@@ -1495,7 +1498,7 @@ export async function updateProjectCore(
       }
     }
     if (body.scopeItems !== undefined) {
-      const parsed = parseScopeItems(body.scopeItems);
+      const parsed = parseScopeItems(body.scopeItems, scopeUnitsOn(project));
       if (typeof parsed === "string") return bad(parsed);
       if (scopeText(parsed) !== scopeText(project.scopeItems)) {
         held.scopeItems = parsed;
@@ -1625,7 +1628,7 @@ export async function updateProjectCore(
     changed.push("manpowerRow");
   }
   if (body.scopeItems !== undefined) {
-    const parsed = parseScopeItems(body.scopeItems);
+    const parsed = parseScopeItems(body.scopeItems, scopeUnitsOn(project));
     if (typeof parsed === "string") return bad(parsed);
     project.scopeItems = parsed;
     project.markModified("scopeItems");
@@ -1757,7 +1760,7 @@ export async function updateProjectCore(
   if (brandAfter && brandAfter !== brandBefore) {
     newBrandDoc = await brandById(new mongoose.Types.ObjectId(brandAfter));
     if (newBrandDoc && brandLocksScope(newBrandDoc)) {
-      const requested = body.scopeItems !== undefined ? parseScopeItems(body.scopeItems) : [];
+      const requested = body.scopeItems !== undefined ? parseScopeItems(body.scopeItems, scopeUnitsOn(project)) : [];
       const picked = pickBrandScope(newBrandDoc, typeof requested === "string" ? [] : requested);
       project.scopeItems = "error" in picked ? brandScopeForProject(newBrandDoc) : picked.rows;
       project.markModified("scopeItems");

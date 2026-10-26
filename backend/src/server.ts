@@ -65,6 +65,7 @@ import projectApprovalRouter from "./routes/projectApproval.js";
 import manpowerRouter from "./routes/manpower.js";
 import integrationsRouter, { pearityApiRouter } from "./routes/integrations.js";
 import { companySettingsFreshness } from "./lib/companySettings.js";
+import { scopeUnitsFreshness } from "./lib/scopeUnitSettings.js";
 import { isProduction, jobsMode, validateEnvironment } from "./lib/env.js";
 import { startScheduler, stopScheduler } from "./lib/scheduler.js";
 import { flushProgressRecalcs } from "./lib/projectProgress.js";
@@ -256,6 +257,7 @@ app.use("/api", (req, res, next) =>
 // Company settings (timezone, app URL, branding) are cached in memory; re-read
 // them at most once a minute so other instances' edits are picked up.
 app.use("/api", companySettingsFreshness);
+app.use("/api", scopeUnitsFreshness);
 
 // --- API routers ---
 app.use("/api/settings", settingsRouter);

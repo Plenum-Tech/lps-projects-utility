@@ -18,17 +18,18 @@ import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useBrandDetail, useDeleteBrandFile, useMovePreview, useMoveProjects, usePatchBrand, useRenameBrand, useSplitBrand, useUploadBrandFiles } from "@/hooks/use-brand-dashboard";
 import { useBrandScopeVersions, useScopeMatch } from "@/hooks/use-brand-scope";
+import { useScopeUnits } from "@/hooks/use-scope-units";
 import { useBrands, useExtractBrandScope } from "@/hooks/use-brands";
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from "@/components/ui/combobox";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
 import { useDismissChange, useWithdrawChange } from "@/hooks/use-project-approval";
 import { useToast } from "@/hooks/use-toast";
 import { getErrorMessage } from "@/lib/api";
-import { neededRoles, UNIT_ROLE } from "@/lib/brand-roles";
+import { neededRoles, unitRole } from "@/lib/brand-roles";
 import { PlanLeads } from "@/components/brands/plan-leads";
 import { downloadFromApi } from "@/lib/download";
 import { formatDate, formatTimeOfDay } from "@/lib/format";
-import { SCOPE_LANGUAGES, SCOPE_UNITS } from "@/lib/scope";
+import { defaultScopeUnit, SCOPE_LANGUAGES, scopeUnitOptions } from "@/lib/scope";
 import { diffScope } from "@/lib/scope-diff";
 import { cn } from "@/lib/utils";
 import type { BrandDetailResponse, BrandMoveItem, BrandScopeItem, BrandScopeRequest, BrandScopeVersion, ScopeExtraction, StatedTotal } from "@/types";
@@ -102,6 +103,7 @@ function ScopeUpload({
   resend,
   onCancelResend,
   onDone,
+  history,
 }: {
   brandId: string;
   current: ScopeRow[];
@@ -111,8 +113,11 @@ function ScopeUpload({
   resend: ScopeResend | null;
   onCancelResend: () => void;
   onDone: () => void;
+  /** The version history, shown between the row editor (top) and the upload / paste box. */
+  history?: React.ReactNode;
 }) {
   const toast = useToast();
+  const units = useScopeUnits();
   const extract = useExtractBrandScope();
   const patch = usePatchBrand();
   const upload = useUploadBrandFiles();
@@ -161,10 +166,14 @@ function ScopeUpload({
           setOtherScope(data.otherScope ?? "");
           setTotal(data.statedTotal ?? null);
           setExtraction(data);
+          showEditor();
         },
       },
     );
   }
+
+  // The editor sits at the top of the scope editor: bring it into view when it opens.
+  const showEditor = () => requestAnimationFrame(() => editor.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
 
   function editCurrent() {
     setFiles([]);
@@ -173,6 +182,7 @@ function ScopeUpload({
     setOtherScope(currentText);
     setTotal(currentTotal);
     setRows(current.map((r) => ({ ...r, languageList: [...r.languageList] })));
+    showEditor();
   }
 
   function reset() {
@@ -214,8 +224,90 @@ function ScopeUpload({
   }
 
   const busy = extract.isPending || patch.isPending || upload.isPending;
+  // Visible units, plus any a row already uses that isn't offered any more (it still saves).
+  const unitOptions = scopeUnitOptions(units, rows?.map((r) => r.unit) ?? []);
   return (
     <div className="mt-3 space-y-3">
+      {rows && (
+        <div ref={editor} className="scroll-mt-4 space-y-2">
+          <p className="text-sm font-medium">
+            {files.length
+              ? "Scope read from the files — check and edit"
+              : usedText
+                ? "Scope read from the text — check and edit"
+                : resend
+                  ? resend.status === "pending"
+                    ? "Edit the scope change waiting for approval — resending replaces it"
+                    : "Fix the rejected scope change and send it again"
+                  : "Edit the scope rows"}
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[36rem] text-sm">
+              <thead className="text-xs text-muted-foreground">
+                <tr className="border-b text-left">
+                  <th className="py-1.5 pr-2 font-medium">Unit</th>
+                  <th className="py-1.5 pr-2 font-medium">What</th>
+                  <th className="py-1.5 pr-2 font-medium">Qty</th>
+                  <th className="py-1.5 pr-2 font-medium">Languages</th>
+                  <th className="py-1.5 pr-2 font-medium">From</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} className="border-b last:border-0">
+                    <td className="py-1 pr-2"><OptionSelect aria-label={`Row ${i + 1} unit`} className="w-28" value={r.unit} onChange={(unit) => setRow(i, { unit })} options={unitOptions} /></td>
+                    <td className="py-1 pr-2"><Input aria-label={`Row ${i + 1} what`} value={r.what} maxLength={80} onChange={(e) => setRow(i, { what: e.target.value })} /></td>
+                    <td className="py-1 pr-2"><Input aria-label={`Row ${i + 1} quantity`} type="number" min={1} className="w-20" value={r.quantity} onChange={(e) => setRow(i, { quantity: Math.max(1, Math.round(Number(e.target.value) || 1)) })} /></td>
+                    <td className="py-1 pr-2">
+                      <div className="flex gap-2">
+                        {SCOPE_LANGUAGES.slice(0, 2).map((l) => (
+                          <label key={l} className="flex items-center gap-1 text-xs">
+                            <input type="checkbox" className="size-3.5 accent-primary" checked={r.languageList.includes(l)} onChange={() => setRow(i, { languageList: r.languageList.includes(l) ? r.languageList.filter((x) => x !== l) : [...r.languageList, l] })} />
+                            {l}
+                          </label>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="max-w-32 truncate py-1 pr-2 text-xs text-muted-foreground">{r.source || "typed"}</td>
+                    <td className="py-1"><Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove row ${i + 1}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}><LuX aria-hidden /></Button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <Button type="button" variant="outline" size="sm" onClick={() => setRows([...rows, { unit: defaultScopeUnit(units, "Static"), what: "", quantity: 1, languageList: ["English"], sizes: 1, source: "typed" }])}>
+            <LuPlus aria-hidden /> Add row
+          </Button>
+          <ScopeTotalField id={`scope-total-${brandId}`} value={total} onChange={setTotal} />
+          <ScopeTotalCheck total={total} rows={rows} />
+          {notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
+          <OtherScopeField id={`other-scope-${brandId}`} value={otherScope} onChange={setOtherScope} />
+          <ScopeMatchBox
+            match={match.data?.match}
+            loading={match.isFetching}
+            note={match.data && !match.data.match ? match.data.reason : match.isError ? "Couldn't compare with the agreement right now." : null}
+          />
+          {diff && (
+            <div className="rounded-lg border p-3">
+              <ScopeDiffView diff={diff} title="What will change against the current version" emptyText={textChanged ? "No row changes against the current version." : "No change against the current version."} />
+              {textChanged && <OtherScopeChange className="mt-2" from={currentText} to={otherScope} />}
+            </div>
+          )}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={reset} disabled={busy}>Cancel</Button>
+              <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
+                {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
+                {resend ? "Resend for approval" : "Save scope"}
+                {files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
+              </Button>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">Leadership's changes apply at once; anyone else's scope change goes to leadership for approval. The files are attached to the brand straight away.</p>
+        </div>
+      )}
+      {history}
       <div
         className="rounded-lg border-2 border-dashed bg-muted/30 p-3 text-center text-sm"
         onDragOver={(e) => e.preventDefault()}
@@ -266,85 +358,6 @@ function ScopeUpload({
         </div>
         {extract.isError && <FieldError>{getErrorMessage(extract.error)}</FieldError>}
       </div>
-      {rows && (
-        <div ref={editor} className="scroll-mt-4 space-y-2">
-          <p className="text-sm font-medium">
-            {files.length
-              ? "Scope read from the files — check and edit"
-              : usedText
-                ? "Scope read from the text — check and edit"
-                : resend
-                  ? resend.status === "pending"
-                    ? "Edit the scope change waiting for approval — resending replaces it"
-                    : "Fix the rejected scope change and send it again"
-                  : "Edit the scope rows"}
-          </p>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[36rem] text-sm">
-              <thead className="text-xs text-muted-foreground">
-                <tr className="border-b text-left">
-                  <th className="py-1.5 pr-2 font-medium">Unit</th>
-                  <th className="py-1.5 pr-2 font-medium">What</th>
-                  <th className="py-1.5 pr-2 font-medium">Qty</th>
-                  <th className="py-1.5 pr-2 font-medium">Languages</th>
-                  <th className="py-1.5 pr-2 font-medium">From</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} className="border-b last:border-0">
-                    <td className="py-1 pr-2"><OptionSelect aria-label={`Row ${i + 1} unit`} className="w-28" value={r.unit} onChange={(unit) => setRow(i, { unit })} options={SCOPE_UNITS.map((u) => ({ value: u, label: u }))} /></td>
-                    <td className="py-1 pr-2"><Input aria-label={`Row ${i + 1} what`} value={r.what} maxLength={80} onChange={(e) => setRow(i, { what: e.target.value })} /></td>
-                    <td className="py-1 pr-2"><Input aria-label={`Row ${i + 1} quantity`} type="number" min={1} className="w-20" value={r.quantity} onChange={(e) => setRow(i, { quantity: Math.max(1, Math.round(Number(e.target.value) || 1)) })} /></td>
-                    <td className="py-1 pr-2">
-                      <div className="flex gap-2">
-                        {SCOPE_LANGUAGES.slice(0, 2).map((l) => (
-                          <label key={l} className="flex items-center gap-1 text-xs">
-                            <input type="checkbox" className="size-3.5 accent-primary" checked={r.languageList.includes(l)} onChange={() => setRow(i, { languageList: r.languageList.includes(l) ? r.languageList.filter((x) => x !== l) : [...r.languageList, l] })} />
-                            {l}
-                          </label>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="max-w-32 truncate py-1 pr-2 text-xs text-muted-foreground">{r.source || "typed"}</td>
-                    <td className="py-1"><Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove row ${i + 1}`} onClick={() => setRows(rows.filter((_, j) => j !== i))}><LuX aria-hidden /></Button></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <ScopeTotalField id={`scope-total-${brandId}`} value={total} onChange={setTotal} />
-          <ScopeTotalCheck total={total} rows={rows} />
-          {notes.length > 0 && <ul className="list-disc pl-5 text-xs text-amber-800 dark:text-amber-300">{notes.map((n) => <li key={n}>{n}</li>)}</ul>}
-          <OtherScopeField id={`other-scope-${brandId}`} value={otherScope} onChange={setOtherScope} />
-          <ScopeMatchBox
-            match={match.data?.match}
-            loading={match.isFetching}
-            note={match.data && !match.data.match ? match.data.reason : match.isError ? "Couldn't compare with the agreement right now." : null}
-          />
-          {diff && (
-            <div className="rounded-lg border p-3">
-              <ScopeDiffView diff={diff} title="What will change against the current version" emptyText={textChanged ? "No row changes against the current version." : "No change against the current version."} />
-              {textChanged && <OtherScopeChange className="mt-2" from={currentText} to={otherScope} />}
-            </div>
-          )}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={() => setRows([...rows, { unit: "Static", what: "", quantity: 1, languageList: ["English"], sizes: 1, source: "typed" }])}>
-              <LuPlus aria-hidden /> Add row
-            </Button>
-            <div className="flex gap-2">
-              <Button type="button" variant="outline" size="sm" onClick={reset} disabled={busy}>Cancel</Button>
-              <Button type="button" size="sm" onClick={() => void save()} disabled={busy || rows.length === 0}>
-                {(patch.isPending || upload.isPending) && <LuLoaderCircle aria-hidden className="animate-spin" />}
-                {resend ? "Resend for approval" : "Save scope"}
-                {files.length ? ` & attach ${files.length} file${files.length === 1 ? "" : "s"}` : ""}
-              </Button>
-            </div>
-          </div>
-          <p className="text-xs text-muted-foreground">Leadership's changes apply at once; anyone else's scope change goes to leadership for approval. The files are attached to the brand straight away.</p>
-        </div>
-      )}
     </div>
   );
 }
@@ -884,6 +897,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const [picked, setPicked] = useState<string[]>([]);
   const [moving, setMoving] = useState(false);
   const toast = useToast();
+  const scopeUnits = useScopeUnits();
   useEffect(() => {
     setPicked([]);
     setMoving(false);
@@ -932,7 +946,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
   const max = data.max;
   const onBrand = new Set(Object.values(b.roles).flatMap((l) => l.map((p) => p._id)));
   const brandsOf = (pid: string) => (data.people[pid]?.brands ?? 0) + edits.brandDelta(pid, (brand) => brand === b._id && onBrand.has(pid));
-  const need = neededRoles(b.scopeItems);
+  const need = neededRoles(b.scopeItems, [], scopeUnits);
   const notNeeded = b.pending?.notNeeded ?? b.notNeeded;
   const cell = (role: string, label: string, needed: boolean) => {
     // Shown (and edited from): the proposed people when a plan version waits for approval.
@@ -1033,7 +1047,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
               </thead>
               <tbody>
                 {b.scopeItems.map((r, i) => {
-                  const role = UNIT_ROLE[r.unit] ?? "socialMedia";
+                  const role = unitRole(r.unit, scopeUnits);
                   const label = roleLabel.get(role) ?? role;
                   return (
                     <tr key={i} className="border-b last:border-0">
@@ -1064,9 +1078,9 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             match={{ score: b.scopeMatch.score, missingFromScope: b.scopeMatch.missing, extraInScope: b.scopeMatch.extra, changedQty: b.scopeMatch.changed, source: b.scopeMatch.source }}
           />
         )}
-        <ScopeHistory brandId={b._id} />
-        {(data.canManage || data.pendingScope?.canEdit || data.lastRejectedScope?.canEdit) && (
+        {(data.canManage || data.pendingScope?.canEdit || data.lastRejectedScope?.canEdit) ? (
           <ScopeUpload
+            history={<ScopeHistory brandId={b._id} />}
             key={resend ? `resend-${resend.nonce}` : "edit"}
             brandId={b._id}
             current={b.scopeItems.map((r) => ({ unit: r.unit, what: r.what, quantity: r.quantity, languageList: r.languageList, sizes: r.sizes, source: r.source ?? "" }))}
@@ -1076,6 +1090,8 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
             onCancelResend={() => setResend(null)}
             onDone={() => void detail.refetch()}
           />
+        ) : (
+          <ScopeHistory brandId={b._id} />
         )}
         <h3 className="mt-4 mb-1.5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Documents</h3>
         {b.files.length ? (

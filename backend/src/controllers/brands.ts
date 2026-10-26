@@ -69,8 +69,9 @@ export async function notifyBrandApprovalRequested(brand: IBrand, user: IUser, e
 }
 
 /** Brand scope rows from a request: project scope rows plus what / source. */
-export function parseBrandScope(raw: unknown) {
-  const parsed = parseScopeItems(raw);
+export function parseBrandScope(raw: unknown, keep: Array<{ unit: string }> = []) {
+  // Units already on the brand stay valid (removed from Settings since).
+  const parsed = parseScopeItems(raw, keep.map((r) => r.unit));
   if (typeof parsed === "string") throw new FieldError("scopeItems", parsed);
   const items = raw as Array<Record<string, unknown>>;
   return parsed.map((row, i) => ({
@@ -311,7 +312,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
       if (active !== brand.active) next.active = active;
     }
     if ("scopeItems" in body) {
-      const scopeItems = parseBrandScope(body.scopeItems);
+      const scopeItems = parseBrandScope(body.scopeItems, brand.scopeItems ?? []);
       if (scopeText(scopeItems) !== scopeText(brand.scopeItems ?? [])) next.scopeItems = scopeItems;
       else unchangedScope.push({ key: "scopeItems", label: "Scope" });
     }

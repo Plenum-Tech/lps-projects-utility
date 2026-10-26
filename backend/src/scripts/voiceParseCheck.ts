@@ -22,7 +22,7 @@ const base: ParseOptions = {
     { id: "u-sara1", name: "Sara Khan" },
     { id: "u-sara2", name: "Sara Lopez" },
   ],
-  units: ["Video", "Static", "Story", "Carousel", "Reel", "Others"],
+  units: ["Video", "Static", "Story", "Carousel", "Reel", "Animation", "Others"],
   codes: ["ZOOM", "MO", "ENOC", "EO26"],
 };
 const opts = (o: Partial<ParseOptions>): ParseOptions => ({ ...base, ...o });
@@ -57,6 +57,13 @@ check("time range", () => {
   assert.deepEqual(parseRange("from 10 to 12:30", base.today), { start: "2026-10-23T10:00", end: "2026-10-23T12:30" });
   assert.deepEqual(parseRange("worked 11am to 1", base.today), { start: "2026-10-23T11:00", end: "2026-10-23T13:00" });
   assert.equal(parseRange("MO-6 - 2 hours", base.today), null);
+});
+
+check("create: an Animation scope unit", () => {
+  const out = parseVoiceText("New task for ZOOM TT, two animations, logo reveal, due Thursday.", base);
+  assert.equal(out.intent, "create");
+  assert.equal(out.unit, "Animation");
+  assert.equal(out.quantity, 2);
 });
 
 check("create: the prototype sentence", () => {

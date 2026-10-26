@@ -4,10 +4,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { OptionSelect } from "@/components/projects/project-fields";
-import { SCOPE_LANGUAGES, SCOPE_UNITS, scopeTotal, scopeTotals } from "@/lib/scope";
+import { useScopeUnits } from "@/hooks/use-scope-units";
+import { defaultScopeUnit, SCOPE_LANGUAGES, scopeTotal, scopeTotals, scopeUnitOptions } from "@/lib/scope";
 import type { ScopeItem } from "@/types";
-
-const UNIT_OPTIONS = SCOPE_UNITS.map((u) => ({ value: u, label: u }));
 
 /** Scope as structured rows: unit × quantity × languages × sizes, with totals. */
 export function ScopeItemsEditor({
@@ -23,6 +22,9 @@ export function ScopeItemsEditor({
 }) {
   const set = (index: number, patch: Partial<ScopeItem>) => onChange(value.map((row, i) => (i === index ? { ...row, ...patch } : row)));
   const num = (raw: string, max: number) => Math.min(max, Math.max(1, Math.round(Number(raw) || 1)));
+  const units = useScopeUnits();
+  // Visible units, plus any a row already uses that isn't offered any more.
+  const unitOptions = scopeUnitOptions(units, value.map((r) => r.unit));
   const totals = scopeTotals(value);
   const grand = totals.reduce((n, t) => n + t.total, 0);
 
@@ -49,7 +51,7 @@ export function ScopeItemsEditor({
           <OptionSelect
             value={row.unit}
             onChange={(unit) => set(index, { unit })}
-            options={UNIT_OPTIONS}
+            options={unitOptions}
             disabled={disabled}
             aria-label={`Row ${index + 1} unit`}
           />
@@ -100,7 +102,7 @@ export function ScopeItemsEditor({
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => onChange([...value, { unit: "Video", quantity: 1, languages: 1, sizes: 1 }])}
+        onClick={() => onChange([...value, { unit: defaultScopeUnit(units, "Video"), quantity: 1, languages: 1, sizes: 1 }])}
         disabled={disabled}
       >
         <LuPlus aria-hidden />

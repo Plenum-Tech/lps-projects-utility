@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { useBrandOverview } from "@/hooks/use-brand-dashboard";
+import { useScopeUnits } from "@/hooks/use-scope-units";
 import { neededRoles } from "@/lib/brand-roles";
 import { firstName } from "@/lib/manpower";
 import { cn } from "@/lib/utils";
@@ -345,6 +346,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
   // A non-leader's edits start from the version waiting for approval (their earlier changes show and add up).
   const edits = usePlanEdits(month, Boolean(data?.canEditPlan), !data?.planSavesApproved ? (data?.pendingPlan?.version ?? null) : null);
   const nameOf = useNameOf(data?.names, data?.people);
+  const scopeUnits = useScopeUnits();
   const [showAll, setShowAll] = useState(false);
   const [q, setQ] = useState("");
   const roles = data?.roles ?? [];
@@ -411,7 +413,7 @@ export function BrandsAllocation({ month, data, isPending, error, refetch }: { m
                 </tr>
               )}
               {g.brands.map((b) => {
-              const need = neededRoles(b.scopeItems);
+              const need = neededRoles(b.scopeItems, [], scopeUnits);
               return (
                 <tr key={b._id} className="border-b last:border-0">
                   <td className={cn("sticky left-0 z-10 bg-card px-3 py-1.5 whitespace-nowrap", g.org && "pl-7")}>
