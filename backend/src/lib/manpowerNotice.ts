@@ -142,7 +142,7 @@ export async function planNoticeInfo(month: string, viewerId: string) {
     emailedBy: emailedBy?._id ? { _id: String(emailedBy._id), name: emailedBy.name ?? "" } : null,
     emailedVersion: notice?.emailedVersion ?? null,
     emailedTo: notice?.emailedTo?.length ?? 0,
-    // Who "Send email" would go to (all ticked by default in the picker).
+    // Who "Send email" would go to (picker: leadership ticked, the people whose lines changed unticked).
     recipients: await defaultRecipients(pending, viewerId),
   };
 }
@@ -209,7 +209,7 @@ async function projectsByLine(month: string, rows: IManpowerRow[]): Promise<Map<
  * get the whole list, each affected person their own lines (and the projects on them).
  * Returns null when there is nothing new to send. Plan editors and leadership send it.
  * `chosen` (the picker): only these people (staff ids, checked by the caller); anyone not in the
- * default list gets the full list (FYI). Omitted: everyone by default. The sender never gets it.
+ * default list gets the full list (FYI). Omitted: leadership only (as the picker starts). The sender never gets it.
  */
 export async function sendPlanNotice(
   month: string,
@@ -222,7 +222,7 @@ export async function sendPlanNotice(
   if (!pending || pending.changes.length === 0) return null;
   const senderId = String(actor._id);
   const defaults = await defaultRecipients(pending, senderId);
-  const picked = chosen ? new Set(chosen.filter((id) => id !== senderId)) : new Set(defaults.map((r) => r._id));
+  const picked = chosen ? new Set(chosen.filter((id) => id !== senderId)) : new Set(defaults.filter((r) => r.group === "leadership").map((r) => r._id));
   const peopleIds = new Set(defaults.filter((r) => r.group === "people" && picked.has(r._id)).map((r) => r._id));
   // The full list: the ticked approvers and anyone added in the picker.
   const fyiIds = [...picked].filter((id) => !defaults.some((r) => r._id === id && r.group === "people"));

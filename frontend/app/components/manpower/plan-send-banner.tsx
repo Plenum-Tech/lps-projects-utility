@@ -98,7 +98,7 @@ export function PlanSendBanner({
 
 /**
  * Leadership's (and plan editors') saves go live quietly: "Version 36 saved — 4 changes not emailed yet — Send email".
- * "Send email" opens a picker of everyone who'd get it (all ticked); one email then to the ticked people:
+ * "Send email" opens a picker (leadership ticked; the people whose lines changed listed, unticked); one email then to the ticked people:
  * approvers / anyone added get every change, each person whose lines changed their own lines.
  */
 export function PlanEmailBanner({ month, notice, className }: { month: string; notice: PlanNoticeInfo; className?: string }) {
@@ -150,7 +150,8 @@ function PlanEmailDialog({ month, notice, label, open, onClose }: { month: strin
   // Opening starts with everyone ticked.
   useEffect(() => {
     if (!open) return;
-    setTicked(new Set(recipients.map((r) => r._id)));
+    // Leadership is ticked; the people whose lines changed are listed, unticked ("Tick all").
+    setTicked(new Set(recipients.filter((r) => r.group === "leadership").map((r) => r._id)));
     setExtra([]);
     setSearch("");
     setNote("");
@@ -177,16 +178,37 @@ function PlanEmailDialog({ month, notice, label, open, onClose }: { month: strin
         <DialogHeader>
           <DialogTitle>Who gets the email?</DialogTitle>
           <DialogDescription>
-            {plural(notice.changes, "change")} in the {month} plan. Untick anyone who shouldn't get it — only ticked people are emailed and notified.
+            {plural(notice.changes, "change")} in the {month} plan. Leadership is ticked; tick the people whose lines changed if they should get it too — only ticked people are emailed and notified.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           {groups.map((g) =>
             g.people.length ? (
               <section key={g.title} className="space-y-1.5">
-                <h3 className="text-xs font-medium text-muted-foreground">
-                  {g.title} · {g.hint}
-                </h3>
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-xs font-medium text-muted-foreground">
+                    {g.title} · {g.hint}
+                  </h3>
+                  {g.people.length > 1 && (
+                    <button
+                      type="button"
+                      className="text-xs text-primary underline underline-offset-2"
+                      onClick={() => {
+                        const all = g.people.every((r) => ticked.has(r._id));
+                        setTicked((t) => {
+                          const next = new Set(t);
+                          for (const r of g.people) {
+                            if (all) next.delete(r._id);
+                            else next.add(r._id);
+                          }
+                          return next;
+                        });
+                      }}
+                    >
+                      {g.people.every((r) => ticked.has(r._id)) ? "Untick all" : "Tick all"}
+                    </button>
+                  )}
+                </div>
                 {g.people.map((r) => (
                   <label key={r._id} className="flex cursor-pointer items-start gap-2 text-sm">
                     <input type="checkbox" className="mt-0.5 size-4 accent-primary" checked={ticked.has(r._id)} onChange={(e) => toggle(r._id, e.target.checked)} />

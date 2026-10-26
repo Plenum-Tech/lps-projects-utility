@@ -3309,7 +3309,7 @@ export interface PlanNoticeInfo {
   emailedVersion: number | null;
   /** How many people the last email went to. */
   emailedTo?: number;
-  /** Who "Send email" would go to (the picker; all ticked by default). The viewer is never in it. */
+  /** Who "Send email" would go to (the picker: leadership ticked, people whose lines changed unticked). The viewer is never in it. */
   recipients?: PlanNoticeRecipient[];
 }
 

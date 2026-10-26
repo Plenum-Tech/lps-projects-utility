@@ -372,7 +372,7 @@ export async function notifyPlan(req: Request, res: Response): Promise<void> {
   }
   const body = (req.body ?? {}) as { note?: unknown; recipients?: unknown };
   const note = typeof body.note === "string" ? body.note.trim().slice(0, 500) : "";
-  // The picker: only these people (staff); omitted = everyone by default.
+  // The picker: only these people (staff); omitted = leadership only.
   let recipients: string[] | undefined;
   if (body.recipients !== undefined) {
     if (!Array.isArray(body.recipients) || body.recipients.some((id) => typeof id !== "string" || isInvalidObjectId(id))) {
