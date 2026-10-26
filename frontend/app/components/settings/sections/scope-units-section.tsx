@@ -153,7 +153,7 @@ export function ScopeUnitsSection() {
         {draft.length > 0 && draft.every((u) => u.hidden) && <p className="text-xs text-destructive">Keep at least one unit visible.</p>}
       </div>
       <p className="text-xs text-muted-foreground">
-        Renaming a unit keeps the old name working for rows saved under it. The scope reader (uploads and pasted text) recognises the visible units by name, e.g. “4 animations”.
+        Renaming a unit renames it in brand and project scope rows, task names and pending scope requests (history keeps the old name). The scope reader (uploads and pasted text) recognises the visible units by name, e.g. “4 animations”.
       </p>
     </SettingsFormCard>
   );

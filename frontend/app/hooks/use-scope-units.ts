@@ -31,7 +31,15 @@ export function useUpdateScopeUnits() {
       (await api.put<ScopeUnitsResponse>("/settings/scope-units", { units })).data,
     onSuccess: (data) => {
       queryClient.setQueryData(scopeUnitKeys.all, data);
-      toast.success("Scope units saved");
+      const r = data.renamed;
+      if (r) {
+        const n = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+        const parts = [n(r.brandRows, "brand row"), n(r.projectRows, "project row"), n(r.tasks, "task")];
+        if (r.requests) parts.push(n(r.requests, "pending request"));
+        toast.success(`Scope units saved. Renamed: ${parts.join(", ")}`);
+        // Scope rows and task names changed everywhere.
+        void queryClient.invalidateQueries();
+      } else toast.success("Scope units saved");
     },
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
   });

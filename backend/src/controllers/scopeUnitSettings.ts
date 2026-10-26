@@ -2,6 +2,7 @@ import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
+import { renameScopeUnits, type ScopeUnitRenameCounts } from "../lib/scopeUnitRename.js";
 import { refreshScopeUnits, setScopeUnitsCache } from "../lib/scopeUnitSettings.js";
 import { SCOPE_UNIT_LIMITS as L, scopeUnitDefs, type ScopeUnitDef } from "../lib/scopeUnits.js";
 import { Brand } from "../models/Brand.js";
@@ -12,7 +13,8 @@ import { ScopeUnitSettings } from "../models/ScopeUnitSettings.js";
 // /api/settings/scope-units — GET (any signed-in user: the scope editors offer
 // the list) / PUT (admin = admins and leadership): the whole ordered list.
 // A unit used by brand or project scope rows can't be removed (hide it);
-// a rename keeps the old name as an alias so saved rows stay valid.
+// a rename (same unit key, new name) renames the unit in the data too
+// (lib/scopeUnitRename.ts) and keeps the old name as an alias.
 // ---------------------------------------------------------------------------
 
 /** Scope rows per unit name (lower-cased), brands and projects together. */
@@ -133,14 +135,24 @@ export async function updateScopeUnits(req: Request, res: Response): Promise<voi
     { upsert: true, returnDocument: "after" }
   );
   setScopeUnitsCache(units);
+  // Renamed units (same key, new name): rename them in brands, projects, tasks and pending requests.
+  const byKey = new Map(before.map((u) => [u.key, u]));
+  const renames = units.flatMap((u) => {
+    const prev = byKey.get(u.key);
+    return prev && prev.name !== u.name ? [{ from: [prev.name, ...prev.aliases], to: u.name }] : [];
+  });
+  const renamed: ScopeUnitRenameCounts | null = renames.length ? await renameScopeUnits(renames) : null;
   logActivity({
     action: "settings_updated",
     actor: req.user,
     targetType: "scope_units",
     targetId: doc?._id as mongoose.Types.ObjectId | undefined,
     targetName: "Scope units",
-    details: { units: units.map((u) => `${u.name}${u.hidden ? " (hidden)" : ""}`) },
+    details: {
+      units: units.map((u) => `${u.name}${u.hidden ? " (hidden)" : ""}`),
+      ...(renamed ? { renamed: renames.map((r) => `${r.from[0]} → ${r.to}`), counts: renamed } : {}),
+    },
     ip: req.ip,
   });
-  res.json(await serialize());
+  res.json({ ...(await serialize()), renamed });
 }

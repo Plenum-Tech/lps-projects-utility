@@ -4390,6 +4390,8 @@ export interface ScopeUnitDef {
 export interface ScopeUnitsResponse {
   units: Array<ScopeUnitDef & { rowCount: number }>;
   roles: Array<{ key: string; label: string }>;
+  /** PUT only: what a rename updated (null when nothing was renamed). */
+  renamed?: { brandRows: number; agreementRows: number; projectRows: number; tasks: number; requests: number } | null;
 }
 
 /** POST /brands/pitch-import/preview — what one tracker row creates. */
