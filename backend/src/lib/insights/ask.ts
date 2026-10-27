@@ -3,6 +3,7 @@ import { dayFromKey, keyFromDay, mondayOfDay } from "../delivery/days.js";
 import { applyBoardOps, boardSummary, UPDATE_BOARD_DESCRIPTION, updateBoardParams, type BlockSpec, type BoardSettings } from "./board.js";
 import type { ToolContext } from "./common.js";
 import { z } from "zod/v4";
+import { describedCollections, queryCollections } from "./query.js";
 import { openAiToolDefs, runTool } from "./tools.js";
 import { INSIGHTS_UI_PROMPT } from "./uiPrompt.generated.js";
 
@@ -13,7 +14,8 @@ import { INSIGHTS_UI_PROMPT } from "./uiPrompt.generated.js";
 // conventions as lib/briefCheck.ts (plain fetch, OPENAI_API_KEY).
 // ---------------------------------------------------------------------------
 
-const MAX_TOOL_ROUNDS = 4;
+/** Fixed tools need one round; a dynamic query: catalog → fields → query → (fix) → answer. */
+const MAX_TOOL_ROUNDS = 6;
 const CALL_TIMEOUT_MS = 90_000;
 /** Tool results sent to the model are cut at this many characters. */
 const RESULT_MAX_CHARS = 24_000;
@@ -78,6 +80,7 @@ function systemPrompt(blocks: BlockSpec[]): string {
     "You are Leadership Insights for LPS, a creative agency, inside its Projects Utility. Leadership asks about delivery (tasks, on-time, late work), scope usage, hours logged, the manpower plan, pitches, rework, Pearity (AI generation tool) usage and approvals.",
     `Today is ${weekday} ${today} (${appTimeZone()}). This month is ${today.slice(0, 7)}. This week started ${keyFromDay(monday)}; last week was ${keyFromDay(monday - 7)} to ${keyFromDay(monday - 1)}. "Last 3 months" means the 3 months up to today unless the user says otherwise. Quarters are calendar quarters (Q4 = Oct–Dec).`,
     "How to work: first call the data tools you need (several in parallel when useful; filters take names, not ids). When you have the data, reply with the final answer in openui-lang as described below — no tool calls in that reply. One round of tool calls is usually enough: tool results are complete for the arguments given (lists say how many rows exist), so never repeat a call or re-ask the same tool for more rows unless a count shows rows were left out.",
+    "Dynamic queries: the fixed tools above come first. When none of them answers the question (other fields, other groupings, comments, task history, approvals detail, counts across collections), work like an analyst: 1) call describeData (no args) to see the collections, 2) describeData with the collections you need for their fields, 3) plan, 4) call runQuery with your plan in purpose and an aggregation that returns a small, grouped result with readable names. If runQuery returns an error, fix the pipeline and call it again. Always run runQuery yourself and put its key numbers in the Text (the answer's DataBlock uses runQuery with the same params); say in the Text that this was a custom query. Use a dynamic query too when a fixed tool can't express the exact question (e.g. status changes such as review → in progress, which live in taskhistories) or returns nothing for a question it doesn't really cover — never answer 'no data' before checking with a query.",
     "Workspace: the screen has this chat and the user's Board, a saved workspace of live data blocks (each block = tool + params + view; the numbers are always fetched fresh). Current board:",
     boardSummary(blocks),
     "- To answer a question: call the data tools, then reply with a short Text (1–3 sentences with the key numbers) and usually ONE DataBlock(...) with the same tool and params you used (it shows the live data; the user can pin it to the board), then FollowUps.",
@@ -214,6 +217,8 @@ export async function askInsights(params: {
   const results: unknown[] = [];
   // Identical calls (same tool, same arguments) are answered once; a round of only repeats ends the tool phase.
   const seen = new Set<string>();
+  // runQuery only on collections whose fields the model has read (describeData) — no guessed fields.
+  const described = new Set<string>();
   let onlyRepeats = false;
   for (let round = 0; ; round++) {
     const allowTools = round < MAX_TOOL_ROUNDS && !onlyRepeats;
@@ -251,8 +256,22 @@ export async function askInsights(params: {
           emit.board(blocks, applied.results, applied.settings);
           return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ results: applied.results, board: boardSummary(blocks) }) };
         }
+        if (call.function.name === "runQuery") {
+          let parsed: unknown = null;
+          try {
+            parsed = JSON.parse(call.function.arguments || "{}");
+          } catch {
+            // runTool reports invalid JSON
+          }
+          const unread = queryCollections(parsed).filter((c) => !described.has(c));
+          if (unread.length) {
+            seen.delete(key);
+            return { role: "tool" as const, tool_call_id: call.id, content: JSON.stringify({ error: `First call describeData with collections ${JSON.stringify(unread)} to see their real fields and example documents, then write the query with those fields.` }) };
+          }
+        }
         const started = Date.now();
         const out = await runTool(call.function.name, call.function.arguments, ctx);
+        if (call.function.name === "describeData" && out.ok) describedCollections(out.args).forEach((c) => described.add(c));
         results.push(out.result);
         const error = out.ok ? undefined : String((out.result as { error?: unknown })?.error ?? "error");
         const trace: ToolTrace = {

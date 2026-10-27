@@ -18,6 +18,7 @@ import { MANPOWER_ROLES } from "../manpowerRoles.js";
 import { currentQuarter, loadPitchRows, pitchToday, brandLabel } from "../pitches.js";
 import { projectVisibilityFilter } from "../projectAccess.js";
 import { projectMonth } from "../projectExpiry.js";
+import { describeData, describeDataParams, runQuery, runQueryParams } from "./query.js";
 import { scopeTotals, scopeUnitOf, type ScopeItem } from "../scopeUnits.js";
 import { resolveTeam, teamInfo, teamScopeParam, type TeamFilter, type TeamScope } from "./people.js";
 import {
@@ -1184,6 +1185,24 @@ const taskActivity = defineTool({
   },
 });
 
+// -- Dynamic queries (no fixed tool fits) ---------------------------------------
+
+const describeDataTool = defineTool({
+  name: "describeData",
+  description:
+    "The data catalog: every collection the app stores (tasks, projects, brands, time logs, people, manpower plans, approvals, comments, task history, Pearity…) with document counts, and — when you name collections — all their fields, types, links (→ collection) and allowed values, plus the query rules. Use it before runQuery, only when no other tool answers the question.",
+  params: describeDataParams,
+  run: (args) => describeData(args),
+});
+
+const runQueryTool = defineTool({
+  name: "runQuery",
+  description:
+    "Runs ONE read-only MongoDB aggregation pipeline you write on one collection (see describeData for fields and rules) and returns the rows. For questions no other tool covers: plan first (purpose), aggregate in the database (group / count / sum, join names with $lookup) and return few rows. On an error, read it, fix the pipeline and call again.",
+  params: runQueryParams,
+  run: (args) => runQuery(args),
+});
+
 export const INSIGHT_TOOLS: InsightTool[] = [
   teamDay,
   taskActivity,
@@ -1196,6 +1215,8 @@ export const INSIGHT_TOOLS: InsightTool[] = [
   reworkStats,
   pearityStats,
   approvalsWaiting,
+  describeDataTool,
+  runQueryTool,
 ];
 
 export const TOOL_BY_NAME = new Map(INSIGHT_TOOLS.map((t) => [t.name, t]));

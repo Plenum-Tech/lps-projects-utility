@@ -266,6 +266,21 @@ function shape(tool: string, r: R, params: R): Shape {
         filters: [],
       };
     }
+    case "runQuery": {
+      const rows = list(r.rows);
+      const keys = [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((k) => k !== "_id" || rows.some((row) => typeof row._id !== "string" || !/^[0-9a-f]{24}$/.test(row._id)));
+      const cols = keys.slice(0, 12).map((k) => col(k, k === "_id" ? "Group" : k.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/^./, (c) => c.toUpperCase()), rows.every((row) => row[k] === null || row[k] === undefined || typeof row[k] === "number")));
+      const label = cols.find((c) => !c.numeric)?.key ?? cols[0]?.key ?? "";
+      return {
+        subtitle: String(r.purpose ?? ""),
+        kpis: [{ label: "Rows", value: cell(r.rowCount) }],
+        lists: {
+          rows: () => ({ columns: cols, rows: rowsOf(rows, cols), items: Number(r.rowCount ?? rows.length), labelKey: label, series: cols.filter((c) => c.numeric).slice(0, 3).map((c) => c.key), stacked: false, ordered: false, drill: null }),
+        },
+        filters: [],
+        note: String(r.truncated ?? r.note ?? "Custom query written by the assistant."),
+      };
+    }
     default:
       void params;
       return { subtitle: "", kpis: [], lists: {}, filters: [] };
@@ -321,4 +336,5 @@ export const TOOL_LISTS: Record<string, string[]> = {
   reworkStats: ["groups"],
   pearityStats: ["groups", "trend"],
   approvalsWaiting: ["items"],
+  runQuery: ["rows"],
 };
