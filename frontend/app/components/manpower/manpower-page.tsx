@@ -185,6 +185,15 @@ export function ManpowerPage() {
 
   const viewRows = editing ? draft.rows : data ? planRowsToTable(data) : [];
 
+  // A written name that fits several people ("Nabil" → Omar Nabil, Mohamed Nabil) is shown red to be picked.
+  const unclearName = useMemo(() => {
+    const people = (assignable.data ?? []).map((u) => ({ name: u.name, words: u.name.toLowerCase().split(/\s+/) }));
+    return (name: string) => {
+      const key = name.trim().toLowerCase();
+      return key.includes(" ") || key.length < 3 ? [] : people.filter((p) => p.words.includes(key)).map((p) => p.name);
+    };
+  }, [assignable.data]);
+
   // Viewing a version other than the live one (an import or a change waiting for approval):
   // compare it with the latest approved version and highlight what differs.
   const compareWith = !editing && data && data.latestVersion && data.version !== data.latestVersion ? data.latestVersion : null;
@@ -551,6 +560,7 @@ export function ManpowerPage() {
               scope={editing ? undefined : data?.scope}
               highlight={editing ? null : highlight}
               changedCells={versionDiff?.cells}
+              unclearName={unclearName}
               newRows={versionDiff?.added}
               changedRows={versionDiff ? new Set([...versionDiff.cells.keys(), ...versionDiff.added]) : undefined}
               editing={editing}

@@ -193,6 +193,9 @@ export function ManpowerImportDialog({
   const nothingNew = Boolean(shown?.base && shown.diff.changed + shown.diff.added + shown.diff.removed === 0);
   const busy = previewQuery.isPending || save.isPending;
 
+  // Names that fit several people and aren't decided yet: importing waits for them.
+  const undecided = (shown?.names ?? []).filter((n) => (n.candidates?.length ?? 0) > 1 && !(n.key in nameFix));
+
   function runImport() {
     if (!file || !shown) return;
     save.mutate(
@@ -312,14 +315,56 @@ export function ManpowerImportDialog({
               )}
             </div>
 
-            {(shown.names.length > 0 || fixedNames.length > 0) && (
+            {/* A name that fits several people must be decided before importing. */}
+            {shown.names.some((n) => (n.candidates?.length ?? 0) > 1) && (
+              <div role="alert" className="rounded-lg border-2 border-red-400 bg-red-50 p-3 dark:border-red-800 dark:bg-red-950/40">
+                <p className="text-sm font-semibold text-red-900 dark:text-red-200">Who is this? Pick the right person</p>
+                <p className="mb-2 text-xs text-red-900/80 dark:text-red-200/80">
+                  These names fit more than one person. Pick who it is (it applies everywhere it&apos;s written), or keep it as an open slot.
+                </p>
+                <div className="grid gap-2">
+                  {shown.names
+                    .filter((n) => (n.candidates?.length ?? 0) > 1)
+                    .map((n) => (
+                      <div key={n.key} className="flex flex-wrap items-center gap-2">
+                        <span className="w-32 shrink-0 text-sm font-medium">
+                          “{n.name}” <span className="text-xs font-normal text-muted-foreground">×{n.count}</span>
+                        </span>
+                        {n.candidates!.map((c) => (
+                          <Button
+                            key={c._id}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 bg-background"
+                            onClick={() => setNameFix((m) => ({ ...m, [n.key]: { id: c._id, name: n.name, count: n.count } }))}
+                          >
+                            {c.name}
+                          </Button>
+                        ))}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8"
+                          onClick={() => setNameFix((m) => ({ ...m, [n.key]: { id: null, name: n.name, count: n.count } }))}
+                        >
+                          Keep as open slot
+                        </Button>
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {(shown.names.some((n) => (n.candidates?.length ?? 0) <= 1) || fixedNames.length > 0) && (
               <div className="rounded-lg border p-3">
                 <p className="text-sm font-medium">Names with no user</p>
                 <p className="mb-2 text-xs text-muted-foreground">
                   Pick who a name is (every place it&apos;s written), or keep it as an open slot.
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {shown.names.map((n) => (
+                  {shown.names.filter((n) => (n.candidates?.length ?? 0) <= 1).map((n) => (
                     <div key={n.key} className="flex items-center gap-2">
                       <span className="w-32 shrink-0 truncate text-sm" title={n.name}>
                         “{n.name}” <span className="text-xs text-muted-foreground">×{n.count}</span>
@@ -472,7 +517,12 @@ export function ManpowerImportDialog({
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={save.isPending}>
               Cancel
             </Button>
-            <Button type="button" size="sm" onClick={runImport} disabled={!shown || busy || nothingNew}>
+            {undecided.length > 0 && (
+              <span className="mr-auto text-xs font-medium text-red-700 dark:text-red-400">
+                Pick who {undecided.map((n) => `“${n.name}”`).join(", ")} {undecided.length === 1 ? "is" : "are"} first.
+              </span>
+            )}
+            <Button type="button" size="sm" onClick={runImport} disabled={!shown || busy || nothingNew || undecided.length > 0}>
               {save.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuUpload aria-hidden />}
               {shown ? `Import as version ${shown.nextVersion}${shown.savesApproved ? "" : " (for approval)"}` : "Import"}
             </Button>

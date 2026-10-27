@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { LuChevronLeft, LuChevronRight, LuFolderKanban, LuPencil, LuPlus } from "react-icons/lu";
+import { LuChevronDown, LuChevronLeft, LuChevronRight, LuFilter, LuFolderKanban, LuPencil, LuPlus } from "react-icons/lu";
 import { Link } from "react-router";
 
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +43,7 @@ export function PlanTable({
   changedRows,
   changedCells,
   newRows,
+  unclearName,
   scope,
   editing = false,
   onEditCell,
@@ -62,6 +63,8 @@ export function PlanTable({
   changedCells?: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Lines that aren't in the version compared with. */
   newRows?: ReadonlySet<string>;
+  /** The people a written (unmatched) name could be: 2+ marks it red to be picked. */
+  unclearName?: (name: string) => string[];
   /** Each line's scope (its linked projects' scope rows added up). */
   scope?: Record<string, Array<{ unit: string; total: number }>>;
   editing?: boolean;
@@ -73,6 +76,71 @@ export function PlanTable({
   renderCellEditor?: (row: TableRow, role: ManpowerRoleDef) => ReactNode;
 }) {
   const sections: ManpowerSection[] = ["active", "pitch"];
+  // Excel-style column filters: column ("brand" or a role key) → the values ticked.
+  const [filters, setFilters] = useState<Record<string, string[]>>({});
+  const valuesOf = (row: TableRow, col: string): string[] => {
+    if (col === "brand") return [row.brand?.name ?? "(no brand)"];
+    const cell = row.cells.find((c) => c.role === col);
+    if (!cell || (!cell.notNeeded && cell.users.length === 0 && cell.placeholders.length === 0)) return ["(empty)"];
+    if (cell.notNeeded) return ["— not needed"];
+    return [...cell.users.map((u) => u.name), ...cell.placeholders];
+  };
+  const passes = (row: TableRow) =>
+    Object.entries(filters).every(([col, picked]) => picked.length === 0 || valuesOf(row, col).some((v) => picked.includes(v)));
+  const columnValues = (col: string) => [...new Set(rows.flatMap((r) => valuesOf(r, col)))].sort((a, b) => a.localeCompare(b));
+  const filterButton = (col: string, label: string) => {
+    const picked = filters[col] ?? [];
+    const values = columnValues(col);
+    return (
+      <Popover>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              aria-label={`Filter ${label}`}
+              className={cn(
+                "inline-flex size-5 shrink-0 items-center justify-center rounded border bg-background text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none",
+                picked.length > 0 && "border-primary bg-primary text-primary-foreground hover:bg-primary/90",
+              )}
+            />
+          }
+        >
+          {picked.length > 0 ? <LuFilter aria-hidden className="size-3" /> : <LuChevronDown aria-hidden className="size-3" />}
+        </PopoverTrigger>
+        <PopoverContent className="w-64 p-2">
+          <div className="mb-1 flex items-center justify-between gap-2 px-1">
+            <span className="text-xs font-medium">{label}</span>
+            {picked.length > 0 && (
+              <button type="button" className="text-xs text-primary hover:underline" onClick={() => setFilters(({ [col]: _gone, ...rest }) => rest)}>
+                Clear
+              </button>
+            )}
+          </div>
+          <ul className="max-h-64 space-y-0.5 overflow-y-auto text-sm">
+            {values.map((v) => (
+              <li key={v}>
+                <label className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 hover:bg-accent">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-primary"
+                    checked={picked.includes(v)}
+                    onChange={(e) =>
+                      setFilters((f) => {
+                        const next = e.target.checked ? [...(f[col] ?? []), v] : (f[col] ?? []).filter((x) => x !== v);
+                        const { [col]: _old, ...rest } = f;
+                        return next.length ? { ...rest, [col]: next } : rest;
+                      })
+                    }
+                  />
+                  <span className="truncate">{v}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </PopoverContent>
+      </Popover>
+    );
+  };
   // True duplicates (same brand, same line name): flagged so they can be removed by hand.
   const lineId = (r: TableRow) => `${r.brand?._id ?? ""}|${r.name.replace(/\s+/g, " ").trim().toLowerCase()}`;
   const sameLines = new Map<string, number>();
@@ -137,22 +205,29 @@ export function PlanTable({
       <table className="w-max min-w-full border-separate border-spacing-0 text-sm">
         <thead>
           <tr>
-            <th className="sticky top-0 left-0 z-30 min-w-56 border-b bg-muted px-3 py-2 text-left text-xs font-medium text-muted-foreground">
-              Brand / project
+            {/* Spreadsheet-style headers: bold, wrapped, a filter at the bottom right of each column. */}
+            <th className="sticky top-0 left-0 z-30 min-w-56 border-r border-b-2 border-b-foreground/30 bg-muted px-3 py-2 text-left align-bottom">
+              <div className="flex items-end justify-between gap-2">
+                <span className="text-sm leading-tight font-semibold text-foreground">Brands / Projects</span>
+                {filterButton("brand", "Brands / Projects")}
+              </div>
             </th>
             {roles.map((role) => (
               <th
                 key={role.key}
                 scope="col"
-                className="sticky top-0 z-20 min-w-28 border-b border-l bg-muted px-2 py-2 text-left align-bottom text-xs font-medium text-muted-foreground"
+                className="sticky top-0 z-20 w-28 min-w-28 border-r border-b-2 border-b-foreground/30 bg-muted px-2 py-2 text-left align-bottom"
               >
-                {role.label}
+                <div className="flex h-full items-end justify-between gap-1">
+                  <span className="text-[13px] leading-tight font-semibold whitespace-normal text-foreground">{role.label}</span>
+                  {filterButton(role.key, role.label)}
+                </div>
               </th>
             ))}
           </tr>
         </thead>
         {sections.map((section) => {
-          const list = rows.filter((r) => r.section === section);
+          const list = rows.filter((r) => r.section === section && passes(r));
           if (list.length === 0 && !editing) return null;
           return (
             <tbody key={section}>
@@ -191,7 +266,7 @@ export function PlanTable({
                     const cell = row.cells.find((c) => c.role === role.key);
                     const hit = Boolean(highlight && cell?.users.some((u) => u._id === highlight));
                     const was = changedCells?.get(row.key)?.get(role.key);
-                    const content = <CellContent cell={cell} highlight={highlight} />;
+                    const content = <CellContent cell={cell} highlight={highlight} unclear={unclearName} />;
                     return (
                       <td
                         key={role.key}
@@ -311,7 +386,16 @@ function RowHeader({
   );
 }
 
-function CellContent({ cell, highlight }: { cell?: TableRow["cells"][number]; highlight?: string | null }) {
+function CellContent({
+  cell,
+  highlight,
+  unclear,
+}: {
+  cell?: TableRow["cells"][number];
+  highlight?: string | null;
+  /** The people a written name could be ("Nabil" → Omar Nabil, Mohamed Nabil); 2+ = needs picking. */
+  unclear?: (name: string) => string[];
+}) {
   if (!cell) return <span className="text-muted-foreground/40">·</span>;
   if (cell.notNeeded) return <span className="text-muted-foreground" title="Not needed">—</span>;
   return (
@@ -328,11 +412,23 @@ function CellContent({ cell, highlight }: { cell?: TableRow["cells"][number]; hi
           {firstName(u.name)}
         </span>
       ))}
-      {cell.placeholders.map((p) => (
-        <Badge key={p} variant="outline" className="border-dashed border-chart-4/60 bg-chart-4/10 text-xs font-normal" title="Open slot or a name not in the app">
-          {p}
-        </Badge>
-      ))}
+      {cell.placeholders.map((p) => {
+        const could = unclear?.(p) ?? [];
+        return could.length > 1 ? (
+          <Badge
+            key={p}
+            variant="outline"
+            className="border-red-500 bg-red-100 text-xs font-medium text-red-800 dark:bg-red-950 dark:text-red-300"
+            title={`Who is this? Could be ${could.join(" or ")} — edit the cell to pick the right person`}
+          >
+            {p} ?
+          </Badge>
+        ) : (
+          <Badge key={p} variant="outline" className="border-dashed border-chart-4/60 bg-chart-4/10 text-xs font-normal" title="Open slot or a name not in the app">
+            {p}
+          </Badge>
+        );
+      })}
       {cell.note && <span className="w-full text-[11px] text-muted-foreground italic">{cell.note}</span>}
     </div>
   );

@@ -406,7 +406,14 @@ async function buildImport(req: Request, res: Response, wb: ExcelJS.Workbook): P
           else acc.push(n);
           return acc;
         }, [])
-        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)),
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+        // People the name could be ("Nabil" → Omar Nabil, Mohamed Nabil): the dialog asks to pick one.
+        .map((n) => ({
+          ...n,
+          candidates: users
+            .filter((u) => personNameKey(u.name).split(" ").includes(n.key))
+            .map((u) => ({ _id: String(u._id), name: u.name })),
+        })),
       ignoredColumns: result.ignoredColumns,
       summary: {
         lines: rows.length,

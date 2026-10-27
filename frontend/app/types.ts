@@ -4303,7 +4303,8 @@ export interface ManpowerImportPreview {
   roles: ManpowerRoleDef[];
   lines: ManpowerImportLine[];
   /** Names that match nobody (after the mappings), most frequent first. */
-  names: Array<{ key: string; name: string; count: number }>;
+  /** Names with no user; `candidates`: the people it could be ("Nabil" → Omar Nabil, Mohamed Nabil). */
+  names: Array<{ key: string; name: string; count: number; candidates?: Array<{ _id: string; name: string }> }>;
   ignoredColumns: string[];
   summary: { lines: number; pitches: number; people: number; openSlots: number; noBrand: number; warnings: number };
   /** The version the import builds on (null: the month has no plan yet). */
