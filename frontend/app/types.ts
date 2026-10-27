@@ -4264,6 +4264,61 @@ export interface ManpowerSaveInput {
   source?: "edit" | "copy";
 }
 
+/** POST /manpower/import/sheets — the workbook's sheets and the one to start with. */
+export interface ManpowerImportSheets {
+  fileName: string;
+  sheets: Array<{ name: string; rows: number; hidden: boolean; readable: boolean; month: string | null }>;
+  suggested: { sheet: string | null; month: string | null };
+}
+
+export type ManpowerImportWarningKind = "no_brand" | "brand_pending" | "brand_lookalike" | "unknown_names" | "same_line";
+
+/** One sheet line as the import would save it. */
+export interface ManpowerImportLine {
+  /** Row number in the sheet (key for brand fixes). */
+  line: number;
+  sheetName: string;
+  /** The name the line gets on the plan. */
+  name: string;
+  section: ManpowerSection;
+  brand: { _id: string; name: string; status: "approved" | "pending" | "rejected" } | null;
+  /** False when the brand was picked by hand. */
+  brandAuto: boolean;
+  status: "added" | "changed" | "same";
+  cells: Array<{
+    role: string;
+    people: Array<{ _id: string; name: string }>;
+    /** Open slots; `unknown` = a name that matches nobody in the app. */
+    slots: Array<{ label: string; unknown: boolean }>;
+    notNeeded: boolean;
+    note: string;
+  }>;
+  warnings: Array<{ kind: ManpowerImportWarningKind; text: string }>;
+}
+
+/** POST /manpower/import/preview — nothing saved. */
+export interface ManpowerImportPreview {
+  month: string;
+  sheet: string;
+  roles: ManpowerRoleDef[];
+  lines: ManpowerImportLine[];
+  /** Names that match nobody (after the mappings), most frequent first. */
+  names: Array<{ key: string; name: string; count: number }>;
+  ignoredColumns: string[];
+  summary: { lines: number; pitches: number; people: number; openSlots: number; noBrand: number; warnings: number };
+  /** The version the import builds on (null: the month has no plan yet). */
+  base: { version: number; status: "approved" | "pending" } | null;
+  diff: { changed: number; added: number; removed: number; same: number; removedLines: string[] };
+  savesApproved: boolean;
+  nextVersion: number;
+}
+
+/** Brand per sheet line (row number → brand id, null = no brand); person per name (null = keep as an open slot). */
+export interface ManpowerImportMappings {
+  brands: Record<string, string | null>;
+  names: Record<string, string | null>;
+}
+
 /** GET /manpower/suggest — the plan row a project matches, as a team by role. */
 export interface ManpowerTeamSuggestion {
   row: { key: string; name: string; version: number; month: string } | null;

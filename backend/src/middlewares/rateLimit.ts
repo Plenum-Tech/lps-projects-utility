@@ -291,3 +291,14 @@ export const voiceRateLimit = rateLimit({
   keyGenerator: userOrIpKey,
   message: "That's a lot of voice notes in a minute. Wait a moment and try again.",
 });
+
+/**
+ * Manpower plan Excel import (POST /api/manpower/import/* — each step uploads the
+ * workbook again and reads it): 120 per 15 minutes per user.
+ */
+export const manpowerImportRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 120,
+  keyGenerator: userOrIpKey,
+  message: "Too many imports in a short time. Please wait a few minutes.",
+});

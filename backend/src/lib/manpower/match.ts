@@ -18,6 +18,9 @@ const words = (s: string): string[] =>
 
 const squash = (s: string): string => words(s).join("");
 
+/** A name written in the sheet, for comparing and for name mappings ("Yassimin" → "yassimin"). */
+export const personNameKey = (s: string): string => words(s).join(" ");
+
 // ----------------------------------------------------------------- people
 
 /** Spellings used in the sheet → the spelling in the user's name. */
@@ -44,7 +47,11 @@ export class PersonIndex {
   private byFirst = new Map<string, string[]>();
   private byLast = new Map<string, string[]>();
 
-  constructor(people: PersonRef[]) {
+  /**
+   * `mappings`: names fixed by hand at import (personNameKey → user id, or null =
+   * keep it as an open slot). They win over the automatic match.
+   */
+  constructor(people: PersonRef[], private mappings: Map<string, string | null> = new Map()) {
     // Active people first, so they win ties against former staff.
     const sorted = [...people].sort((a, b) => Number(b.active !== false) - Number(a.active !== false));
     for (const p of sorted) {
@@ -54,6 +61,12 @@ export class PersonIndex {
       push(this.byFirst, w[0]!, p._id);
       if (w.length > 1) push(this.byLast, w[w.length - 1]!, p._id);
     }
+  }
+
+  /** The hand-made mapping for a name: a user id, null (an open slot) or undefined (none). */
+  mapped(raw: string): string | null | undefined {
+    const key = personNameKey(raw);
+    return this.mappings.has(key) ? this.mappings.get(key)! : undefined;
   }
 
   match(raw: string): PersonMatch {
@@ -113,9 +126,17 @@ export function parseCell(text: string, people: PersonIndex): ParsedCell | null 
   const out: ParsedCell = { users: [], placeholders: [], notNeeded: false, note: notes.join("; "), unmatched: [] };
   for (const part of body.split(/\s*(?:\/|\+|&|,|\band\b)\s*/i)) {
     const token = part.replace(/[<>]/g, "").replace(/\.+$/, "").trim();
-    if (!token) continue;
+    if (!token || !/[\p{L}\p{N}]/u.test(token)) continue;
     if (NOT_NEEDED.test(token)) continue;
-    const m = SLOT_WORDS.test(token) ? ({ kind: "none" } as PersonMatch) : people.match(token);
+    const mapped = people.mapped(token);
+    if (mapped === null) {
+      // Kept as an open slot on purpose (import mapping): not "a name with no user".
+      const label = token.charAt(0).toUpperCase() + token.slice(1);
+      if (!out.placeholders.includes(label)) out.placeholders.push(label);
+      continue;
+    }
+    const m: PersonMatch =
+      mapped !== undefined ? { kind: "user", id: mapped } : SLOT_WORDS.test(token) ? { kind: "none" } : people.match(token);
     if (m.kind === "user") {
       if (!out.users.includes(m.id)) out.users.push(m.id);
       continue;

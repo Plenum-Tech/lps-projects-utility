@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { LuCopy, LuFilePlus, LuHistory, LuLoaderCircle, LuPencil, LuSave, LuUsers } from "react-icons/lu";
+import { LuCopy, LuFilePlus, LuFileSpreadsheet, LuHistory, LuLoaderCircle, LuPencil, LuSave, LuUsers } from "react-icons/lu";
 
 import { ConfirmDialog } from "@/components/globals/confirm-dialog";
 import type { MultiSelectOption } from "@/components/globals/multi-select";
@@ -22,6 +22,7 @@ import { namingMonthLabel } from "@/lib/projects";
 import { todayKey } from "@/lib/tasks";
 import type { ManpowerPlanResponse, ManpowerRowInput, ManpowerSection } from "@/types";
 
+import { ManpowerImportDialog } from "./import-dialog";
 import { InlineCellEditor, RowDialog, type CellValue } from "./plan-editors";
 import { PeopleView } from "./people-view";
 import { PlanEmailBanner, PlanSendBanner } from "./plan-send-banner";
@@ -134,6 +135,7 @@ export function ManpowerPage() {
   const [cellEdit, setCellEdit] = useState<{ rowKey: string; role: string } | null>(null);
   const [rowEdit, setRowEdit] = useState<{ rowKey?: string; section: ManpowerSection } | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const save = useSaveManpowerPlan();
 
   // Reset when switching month or version.
@@ -317,6 +319,12 @@ export function ManpowerPage() {
                   </Button>
                 );
               })()}
+              {canEdit && data && (
+                <Button size="sm" variant="outline" onClick={() => setImportOpen(true)}>
+                  <LuFileSpreadsheet aria-hidden />
+                  Import Excel
+                </Button>
+              )}
             </>
           )
         }
@@ -386,8 +394,8 @@ export function ManpowerPage() {
           description={
             canEdit
               ? copyFrom
-                ? `Start from ${namingMonthLabel(copyFrom)}'s latest version and adjust, or start blank.`
-                : "Start a blank plan for this month."
+                ? `Start from ${namingMonthLabel(copyFrom)}'s latest version and adjust, start blank, or import the month's sheet from the planning workbook.`
+                : "Start a blank plan for this month, or import the month's sheet from the planning workbook."
               : "Leadership hasn't planned this month yet."
           }
         >
@@ -412,6 +420,10 @@ export function ManpowerPage() {
               <Button variant="outline" onClick={() => startEdit([], null, "edit")}>
                 <LuFilePlus aria-hidden />
                 Start blank
+              </Button>
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                <LuFileSpreadsheet aria-hidden />
+                Import Excel
               </Button>
             </div>
           )}
@@ -630,6 +642,14 @@ export function ManpowerPage() {
             }}
           />
         </>
+      )}
+      {canEdit && (
+        <ManpowerImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          month={month}
+          onImported={(m) => setParam({ month: m, v: null, tab: null })}
+        />
       )}
     </div>
   );

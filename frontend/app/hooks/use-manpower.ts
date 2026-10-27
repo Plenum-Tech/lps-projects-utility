@@ -5,6 +5,9 @@ import { deliveryKeys } from "@/hooks/use-delivery";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
 import type {
+  ManpowerImportMappings,
+  ManpowerImportPreview,
+  ManpowerImportSheets,
   ManpowerMonthsResponse,
   ManpowerPlanResponse,
   ManpowerSaveInput,
@@ -132,5 +135,71 @@ export function useManpowerRows(month: string, enabled: boolean) {
       (await api.get<{ month: string; version: number | null; rows: ManpowerPlanRowRef[] }>("/manpower/rows", { params: { month } })).data,
     enabled: enabled && /^\d{4}-\d{2}$/.test(month),
     staleTime: 30_000,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Excel import (plan editors + leadership): sheets → preview → import. The file
+// is sent with each step; the server keeps it in memory for that request only.
+// ---------------------------------------------------------------------------
+
+function importForm(file: File, fields: Record<string, string | undefined>): FormData {
+  const form = new FormData();
+  form.append("file", file);
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined) form.append(k, v);
+  return form;
+}
+
+const MULTIPART = { headers: { "Content-Type": "multipart/form-data" }, timeout: 120_000 };
+
+/** Step 1: the workbook's sheets (and the sheet / month to start with). */
+export function useManpowerImportSheets() {
+  return useMutation({
+    mutationFn: async ({ file, month }: { file: File; month: string }) =>
+      (await api.post<ManpowerImportSheets>("/manpower/import/sheets", importForm(file, { month }), MULTIPART)).data,
+  });
+}
+
+export interface ManpowerImportInput {
+  file: File;
+  sheet: string;
+  month: string;
+  mappings: ManpowerImportMappings;
+}
+
+/** Step 2: what the import would save (nothing is saved). */
+export function useManpowerImportPreview() {
+  return useMutation({
+    mutationFn: async ({ file, sheet, month, mappings }: ManpowerImportInput) =>
+      (
+        await api.post<ManpowerImportPreview>(
+          "/manpower/import/preview",
+          importForm(file, { sheet, month, mappings: JSON.stringify(mappings) }),
+          MULTIPART,
+        )
+      ).data,
+  });
+}
+
+/** Step 3: save the sheet as the month's next version (approved for leadership, else waiting). */
+export function useManpowerImport() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ file, sheet, month, mappings, note, baseVersion }: ManpowerImportInput & { note: string; baseVersion: number | null }) =>
+      (
+        await api.post<{ month: string; version: number; status: "approved" | "pending"; pendingApproval?: string }>(
+          "/manpower/import",
+          importForm(file, { sheet, month, mappings: JSON.stringify(mappings), note, baseVersion: baseVersion == null ? "" : String(baseVersion) }),
+          MULTIPART,
+        )
+      ).data,
+    onSuccess: (data) => {
+      void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: brandKeys.all });
+      toast.success(data.pendingApproval ?? `Imported as version ${data.version} — not emailed yet. Use "Send email" when you're ready.`);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 }

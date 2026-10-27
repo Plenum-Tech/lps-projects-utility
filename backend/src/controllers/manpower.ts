@@ -410,7 +410,8 @@ interface RowInput {
   cells?: unknown;
 }
 
-async function parseRows(raw: unknown): Promise<IManpowerRow[] | Invalid> {
+/** Checks and converts saved rows (the plan page, the Excel import). */
+export async function parseRows(raw: unknown): Promise<IManpowerRow[] | Invalid> {
   if (!Array.isArray(raw)) return bad("rows must be an array");
   if (raw.length > MANPOWER_LIMITS.maxRows) return bad(`At most ${MANPOWER_LIMITS.maxRows} rows`);
   const brandIds = new Set<string>();
@@ -648,7 +649,7 @@ export async function writePlanVersion(params: {
   rows: IManpowerRow[];
   note: string;
   maxProjectsPerPerson: number;
-  source: "edit" | "copy";
+  source: "edit" | "copy" | "import";
   actor: IUser;
   ip?: string;
 }): Promise<{ version: number; pendingApproval?: string }> {

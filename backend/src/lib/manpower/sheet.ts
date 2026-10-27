@@ -33,6 +33,8 @@ const HEADER_ROLES: Array<[RegExp, string]> = [
 
 export interface SheetRow {
   key: string;
+  /** The line's row number in the sheet (identifies it in import previews). */
+  line: number;
   section: ManpowerSection;
   brand: string | null;
   type: null;
@@ -65,31 +67,88 @@ function cellText(value: ExcelJS.CellValue): string {
 
 const tidy = (s: string) => s.replace(/\s+/g, " ").trim();
 
+/** A workbook from a file path or an uploaded file (kept in memory only). */
+export async function loadWorkbook(source: string | Buffer): Promise<ExcelJS.Workbook> {
+  const wb = new ExcelJS.Workbook();
+  if (typeof source === "string") await wb.xlsx.readFile(source);
+  else await wb.xlsx.load(source as unknown as ArrayBuffer);
+  return wb;
+}
+
+/** The plan header ("Brands/ Projects") in the first 15 rows: its row and column, or null. */
+function findHeader(ws: ExcelJS.Worksheet): { row: number; col: number } | null {
+  for (let r = 1; r <= Math.min(ws.rowCount, 15); r++) {
+    const row = ws.getRow(r);
+    for (let c = 1; c <= ws.columnCount; c++) {
+      if (/brands\s*\/\s*projects/i.test(tidy(cellText(row.getCell(c).value)))) return { row: r, col: c };
+    }
+  }
+  return null;
+}
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/**
+ * The month a sheet's name stands for: "Nov 26" / "Nov26Consolidated" / "July 26 V1" →
+ * 2026-11 / 2026-11 / 2026-07, "Nov25_Consolidated" → 2025-11 (the two digits are the year). Null: none.
+ */
+export function sheetMonth(name: string): string | null {
+  const m = /(?:^|[^a-z])(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s_\-'.]*(20\d{2}|\d{2})(?!\d)/i.exec(name);
+  if (!m) return null;
+  const month = MONTHS.indexOf(m[1]!.toLowerCase()) + 1;
+  const year = m[2]!.length === 4 ? Number(m[2]) : 2000 + Number(m[2]);
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+export interface SheetInfo {
+  name: string;
+  /** Rows with something in them. */
+  rows: number;
+  hidden: boolean;
+  /** Has the plan header ("Brands/ Projects"): can be imported. */
+  readable: boolean;
+  /** The month the name stands for (sheetMonth), or null. */
+  month: string | null;
+}
+
+/** The workbook's sheets, in workbook order. */
+export function listSheets(wb: ExcelJS.Workbook): SheetInfo[] {
+  return wb.worksheets.map((ws) => ({
+    name: ws.name,
+    rows: ws.actualRowCount,
+    hidden: ws.state !== "visible",
+    readable: ws.actualRowCount > 0 && findHeader(ws) !== null,
+    month: sheetMonth(ws.name),
+  }));
+}
+
+/**
+ * The sheet to import for `month`: a readable sheet named for that month — visible first,
+ * then the plainest name ("Nov 26" before "Nov 26 V1"). Null when none is.
+ */
+export function sheetForMonth(sheets: SheetInfo[], month: string): string | null {
+  const hits = sheets
+    .filter((s) => s.readable && s.month === month)
+    .sort((a, b) => Number(a.hidden) - Number(b.hidden) || a.name.length - b.name.length);
+  return hits[0]?.name ?? null;
+}
+
 export async function readPlanSheet(
-  file: string,
+  source: string | Buffer | ExcelJS.Workbook,
   sheetName: string,
   people: PersonRef[],
-  brands: BrandRef[]
+  brands: BrandRef[],
+  /** Names fixed by hand (personNameKey → user id, or null = keep as an open slot). */
+  nameMappings?: Map<string, string | null>
 ): Promise<SheetResult> {
-  const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(file);
+  const wb = source instanceof ExcelJS.Workbook ? source : await loadWorkbook(source);
   const ws = wb.getWorksheet(sheetName);
   if (!ws) throw new Error(`Sheet "${sheetName}" not found. Sheets: ${wb.worksheets.map((w) => w.name).join(", ")}`);
 
   // Header row: the one with "Brands/ Projects".
-  let headerRow = 0;
-  let nameCol = 0;
-  for (let r = 1; r <= Math.min(ws.rowCount, 15) && !headerRow; r++) {
-    const row = ws.getRow(r);
-    for (let c = 1; c <= ws.columnCount; c++) {
-      if (/brands\s*\/\s*projects/i.test(tidy(cellText(row.getCell(c).value)))) {
-        headerRow = r;
-        nameCol = c;
-        break;
-      }
-    }
-  }
-  if (!headerRow) throw new Error(`No "Brands/ Projects" header in sheet "${sheetName}"`);
+  const found = findHeader(ws);
+  if (!found) throw new Error(`No "Brands/ Projects" header in sheet "${sheetName}"`);
+  const { row: headerRow, col: nameCol } = found;
 
   const roleCols: Array<{ col: number; role: string }> = [];
   const ignoredColumns: string[] = [];
@@ -102,7 +161,7 @@ export async function readPlanSheet(
     else ignoredColumns.push(label);
   }
 
-  const index = new PersonIndex(people);
+  const index = new PersonIndex(people, nameMappings);
   const order = new Map<string, number>(MANPOWER_ROLES.map((r, i) => [r.key, i]));
   const rows: SheetRow[] = [];
   const unbrandedRows: string[] = [];
@@ -127,7 +186,7 @@ export async function readPlanSheet(
     cells.sort((a, b) => order.get(a.role)! - order.get(b.role)!);
     const brand = matchBrand(name, brands);
     if (!brand) unbrandedRows.push(name);
-    rows.push({ key: randomUUID(), section, brand, type: null, name: name.slice(0, 120), cells });
+    rows.push({ key: randomUUID(), line: r, section, brand, type: null, name: name.slice(0, 120), cells });
   }
   return { rows, ignoredColumns, unbrandedRows, unmatchedNames };
 }
