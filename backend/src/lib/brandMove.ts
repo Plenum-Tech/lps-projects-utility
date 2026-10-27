@@ -53,6 +53,8 @@ export interface MoveItem {
   code: string;
   oldName: string;
   newName: string;
+  /** Structured names: the title used (the project's own, or numbered when the new name is taken). */
+  title: string | null;
   type: string | null;
   month: string | null;
   /** The target brand's scope replaces the project's ("replace"), or the project keeps its own ("keep"). */
@@ -193,13 +195,37 @@ export async function planBrandMove(from: IBrand, target: IBrand, projects: Lean
       if (changed) plan.writes.push({ month, before: rows, rows: next, latestVersion: live.version, max: live.maxProjectsPerPerson });
     }
   }
+  // Open projects' names are unique: a new name another open project already has gets a number
+  // ("…_Launch 2") instead of failing the move.
+  const taken = new Map(
+    (await Project.find({ archivedAt: null, _id: { $nin: [...movedIds].map((id) => new mongoose.Types.ObjectId(id)) } }).select("name code").lean()).map((o) => [
+      o.name.toLowerCase(),
+      o.code,
+    ])
+  );
   for (const p of projects) {
     const pid = String(p._id);
+    let title = p.naming?.title ?? null;
+    let newName = nameWithBrand(p, from.name, target.name);
+    const usedBy = taken.get(newName.toLowerCase());
+    if (usedBy) {
+      for (let n = 2; taken.has(newName.toLowerCase()); n++) {
+        if (p.naming) {
+          title = `${p.naming.title} ${n}`;
+          newName = composeProjectName(target.name, p.naming.type, p.naming.month, title);
+        } else {
+          newName = `${nameWithBrand(p, from.name, target.name)} (${n})`;
+        }
+      }
+      plan.notes.push(`${p.code}: "${nameWithBrand(p, from.name, target.name)}" is already used by ${usedBy} — renamed "${newName}".`);
+    }
+    taken.set(newName.toLowerCase(), p.code);
     plan.items.push({
       projectId: pid,
       code: p.code,
       oldName: p.name,
-      newName: nameWithBrand(p, from.name, target.name),
+      newName,
+      title,
       type: p.naming?.type ?? null,
       month: monthOf(p),
       scope: hasScope ? "replace" : "keep",
@@ -294,7 +320,7 @@ export async function applyBrandMove(
     if (!project) continue;
     const body: Record<string, unknown> = { manpowerRow: item.line.key };
     if (project.naming) {
-      body.naming = { brand: String(target!._id), type: project.naming.type, month: project.naming.month, title: project.naming.title };
+      body.naming = { brand: String(target!._id), type: project.naming.type, month: project.naming.month, title: item.title ?? project.naming.title };
     } else {
       body.brand = String(target!._id);
       if (item.newName !== project.name) body.name = item.newName;
