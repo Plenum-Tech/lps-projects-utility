@@ -3,6 +3,7 @@ import { Brand } from "../../models/Brand.js";
 import { Department } from "../../models/Department.js";
 import { archivedProjectIds, Project } from "../../models/Project.js";
 import { Task } from "../../models/Task.js";
+import { TaskCategory } from "../../models/TaskCategory.js";
 import { User } from "../../models/User.js";
 import { appTimeZone, zonedParts } from "../appTime.js";
 import { deliveryCached } from "./cache.js";
@@ -51,6 +52,8 @@ export interface TaskFact {
   /** Task creator (assignedBy). */
   briefer: string | null;
   project: string | null;
+  /** Task category id (null = none). */
+  category: string | null;
   /** Brand id, null = "No brand". */
   brand: string | null;
   /** Dashboard team keys of the doers (department id or "other"), unique. */
@@ -106,6 +109,7 @@ interface RawFact {
   number?: number | null;
   assignedBy?: mongoose.Types.ObjectId | null;
   project?: mongoose.Types.ObjectId | null;
+  category?: mongoose.Types.ObjectId | null;
   assignees?: mongoose.Types.ObjectId[];
   createdAt: Date;
   createdKey: string;
@@ -228,6 +232,7 @@ async function queryFacts(
         number: 1,
         assignedBy: 1,
         project: 1,
+        category: 1,
         assignees: 1,
         createdAt: 1,
         createdKey: { $dateToString: { format: "%Y-%m-%d", date: "$createdAt", timezone: tz } },
@@ -302,6 +307,7 @@ async function queryFacts(
       doers,
       briefer: r.assignedBy ? String(r.assignedBy) : null,
       project,
+      category: r.category ? String(r.category) : null,
       brand: brand && ref.brands.has(brand) ? brand : null,
       teams,
       createdAt: r.createdAt,
@@ -328,16 +334,19 @@ export interface RefData {
   guests: Set<string>;
   brands: Map<string, { name: string; shortName: string; organisation: string; color: string; active: boolean }>;
   departments: Map<string, string>;
+  /** Task category names. */
+  categories: Map<string, string>;
   projects: Map<string, { code: string; name: string; brand: string | null }>;
 }
 
 export function loadRefData(): Promise<RefData> {
   return deliveryCached("ref", async () => {
-    const [users, brands, departments, projects] = await Promise.all([
+    const [users, brands, departments, projects, categories] = await Promise.all([
       User.find().select("name department role designation isGuest").lean(),
       Brand.find().select("name shortName organisation color active").lean(),
       Department.find().select("name").lean(),
       Project.find().select("code name brand").lean(),
+      TaskCategory.find().select("name").lean(),
     ]);
     return {
       users: new Map(
@@ -350,6 +359,7 @@ export function loadRefData(): Promise<RefData> {
         brands.map((b) => [String(b._id), { name: b.name, shortName: b.shortName ?? "", organisation: b.organisation ?? "", color: b.color, active: b.active }])
       ),
       departments: new Map(departments.map((d) => [String(d._id), d.name])),
+      categories: new Map(categories.map((c) => [String(c._id), c.name])),
       projects: new Map(
         projects.map((p) => [String(p._id), { code: p.code, name: p.name, brand: p.brand ? String(p.brand) : null }])
       ),

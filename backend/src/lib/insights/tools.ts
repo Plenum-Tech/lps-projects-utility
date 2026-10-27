@@ -33,6 +33,7 @@ import {
   sortRows,
   matchName,
   monthLabel,
+  monthRange,
   pctOf,
   periodParams,
   personIdByName,
@@ -98,7 +99,7 @@ async function loadTaskFacts(args: { brand?: string; team?: string; person?: str
   return { ref, facts: team?.kind === "person" ? facts.filter(team.matchFact) : facts, period, today: todayDay(), applied, team };
 }
 
-const GROUPS = ["none", "status", "brand", "project", "person", "team"] as const;
+const GROUPS = ["none", "status", "brand", "project", "person", "team", "category"] as const;
 type GroupBy = (typeof GROUPS)[number];
 
 function groupKeys(f: TaskFact, by: GroupBy): string[] {
@@ -113,13 +114,15 @@ function groupKeys(f: TaskFact, by: GroupBy): string[] {
       return f.doers.length ? f.doers : ["none"];
     case "team":
       return f.teams;
+    case "category":
+      return [f.category ?? "none"];
     default:
       return ["all"];
   }
 }
 
 function groupLabel(ref: RefData, by: GroupBy, key: string): string {
-  if (key === "none") return by === "person" ? "Unassigned" : by === "brand" ? "No brand" : "No project";
+  if (key === "none") return by === "person" ? "Unassigned" : by === "brand" ? "No brand" : by === "category" ? "No category" : "No project";
   switch (by) {
     case "brand":
       return ref.brands.get(key)?.name ?? "Unknown brand";
@@ -131,6 +134,8 @@ function groupLabel(ref: RefData, by: GroupBy, key: string): string {
       return ref.users.get(key)?.name ?? "Unknown";
     case "team":
       return key === OTHER_TEAM ? "Other" : (ref.departments.get(key) ?? "Unknown team");
+    case "category":
+      return ref.categories.get(key) ?? "Unknown category";
     default:
       return key;
   }
@@ -153,12 +158,12 @@ function grouped(c: FactCtx, by: GroupBy) {
 const tasksSummary = defineTool({
   name: "tasksSummary",
   description:
-    "Task counts for a period: created, completed, completed on time vs late (actual end vs due date), open and overdue (as of the period end or today), rework; optionally grouped by status, brand, project, person or team. Default period: last 30 days.",
+    "Task counts for a period: created, completed, completed on time vs late (actual end vs due date), open and overdue (as of the period end or today), rework; optionally grouped by status, brand, project, person, team or task category, or by month for a trend (each month's own created / completed / on-time, in date order). 'Who pulled it down most' = most late completions (sortBy completedLate), not the lowest rate of a small group. Default period: last 30 days.",
   params: z.object({
     ...periodParams,
     ...teamFilterParams,
-    groupBy: z.enum(GROUPS).optional().describe("Group rows by this (default none)."),
-    sortBy: z.enum(["created", "completed", "completedLate", "onTimePct", "open", "overdue", "rework"]).optional().describe("Rank groups by this (default created; onTimePct puts groups with fewer than 5 completed last)."),
+    groupBy: z.enum([...GROUPS, "month"]).optional().describe("Group rows by this (default none); month = a monthly trend over the period."),
+    sortBy: z.enum(["created", "completed", "completedLate", "onTimePct", "open", "overdue", "rework", "month"]).optional().describe("Rank groups by this (default created; onTimePct puts groups with fewer than 5 completed last)."),
     sortDir: sortDirParam,
     limit: limitParam,
   }),
@@ -171,10 +176,23 @@ const tasksSummary = defineTool({
     const byStatus: Record<string, number> = {};
     for (const f of createdInRange) byStatus[f.status] = (byStatus[f.status] ?? 0) + 1;
     const by = args.groupBy ?? "none";
+    // Monthly trend: each month of the period measured on its own (completed in that month, open at its end).
+    const monthly = () => {
+      const out: Array<{ key: string; name: string; stats: ReturnType<typeof statsFor> }> = [];
+      for (let m = keyFromDay(period.start).slice(0, 7); m <= keyFromDay(period.end).slice(0, 7); ) {
+        const r = monthRange(m);
+        const start = Math.max(r.start, period.start);
+        const end = Math.min(r.end, period.end);
+        out.push({ key: m, name: monthLabel(m), stats: statsFor(c.facts, { start, end }, Math.min(end, c.today)) });
+        const [y, mo] = m.split("-").map(Number);
+        m = mo === 12 ? `${y! + 1}-01` : `${y}-${String(mo! + 1).padStart(2, "0")}`;
+      }
+      return out;
+    };
     const groups =
       by === "none"
         ? []
-        : grouped(c, by)
+        : (by === "month" ? monthly() : grouped(c, by))
             .filter((g) => g.stats.created + g.stats.completed + g.stats.open > 0)
             .map((g) => ({
               name: g.name,
@@ -186,10 +204,17 @@ const tasksSummary = defineTool({
               open: g.stats.open,
               overdue: g.stats.overdue,
               rework: g.stats.rework,
+              meanDaysToComplete: g.stats.meanDays,
               lowVolume: g.stats.completed < LOW_VOLUME,
             }));
     const sortBy = args.sortBy ?? "created";
-    const ranked = sortRows(groups, sortBy, args.sortDir, sortBy === "onTimePct");
+    // A trend stays in date order unless a ranking is asked for.
+    const inDateOrder = by === "month" && (!args.sortBy || sortBy === "month");
+    const ranked = inDateOrder
+      ? args.sortDir === "desc"
+        ? [...groups].reverse()
+        : groups
+      : sortRows(groups, sortBy === "month" ? "created" : sortBy, args.sortDir, sortBy === "onTimePct");
     return {
       period: { from: period.from, to: period.to, label: period.label, openAsOf: keyFromDay(asOf) },
       filters: c.applied,
@@ -209,8 +234,8 @@ const tasksSummary = defineTool({
       },
       createdInPeriodByCurrentStatus: byStatus,
       groupBy: by,
-      sortedBy: `${sortBy} ${args.sortDir ?? "desc"}`,
-      groups: take(ranked, args.limit),
+      sortedBy: inDateOrder ? `month ${args.sortDir ?? "asc"}` : `${sortBy} ${args.sortDir ?? "desc"}`,
+      groups: take(ranked, args.limit, by === "month" ? 40 : 25),
       groupCount: groups.length,
     };
   },
@@ -340,15 +365,18 @@ const scopeUsage = defineTool({
     month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("Single month YYYY-MM (default current)."),
     fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("First month YYYY-MM of a range ('from April 2026' → 2026-04)."),
     toMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("Last month YYYY-MM of a range (default: the current month, 'till date')."),
+    quarter: z.string().regex(/^\d{4}-Q[1-4]$/).optional().describe("A quarter like 2026-Q4 (its three months)."),
     brand: filterParams.brand,
     overOnly: z.boolean().optional().describe("Only brands / projects over scope."),
     undeliveredOnly: z.boolean().optional().describe("Only brands / projects / units with scope not delivered yet (remaining > 0)."),
     limit: limitParam,
   }),
   async run(args) {
+    const q = args.quarter ? (Number(args.quarter.slice(6)) - 1) * 3 : null;
+    const qMonth = (offset: number) => `${args.quarter!.slice(0, 4)}-${String(q! + offset + 1).padStart(2, "0")}`;
     const ranged = !!(args.fromMonth || args.toMonth);
-    const from = ranged ? (args.fromMonth ?? args.toMonth!) : (args.month ?? currentMonth());
-    const to = ranged ? (args.toMonth ?? currentMonth()) : from;
+    const from = q !== null ? qMonth(0) : ranged ? (args.fromMonth ?? args.toMonth!) : (args.month ?? currentMonth());
+    const to = q !== null ? qMonth(2) : ranged ? (args.toMonth ?? currentMonth()) : from;
     if (from > to) throw new ToolInputError(`fromMonth ${from} is after toMonth ${to}.`);
     const ref = await loadRefData();
     const brandFilter = args.brand ? brandIdsByName(ref, args.brand) : null;

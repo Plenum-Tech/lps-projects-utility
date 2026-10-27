@@ -71,7 +71,7 @@ function shape(tool: string, r: R, params: R): Shape {
     case "tasksSummary": {
       const t = rec(r.totals);
       const by = String(r.groupBy ?? "none");
-      const cols = [col("name", by === "none" ? "Group" : by[0]!.toUpperCase() + by.slice(1)), col("created", "Created", true), col("completed", "Completed", true), col("completedOnTime", "On time", true), col("completedLate", "Late", true), col("onTimePct", "On time %", true, "%"), col("open", "Open", true), col("overdue", "Overdue", true)];
+      const cols = [col("name", by === "none" ? "Group" : by[0]!.toUpperCase() + by.slice(1)), col("created", "Created", true), col("completed", "Completed", true), col("completedOnTime", "On time", true), col("completedLate", "Late", true), col("onTimePct", "On time %", true, "%"), col("open", "Open", true), col("overdue", "Overdue", true), col("meanDaysToComplete", "Avg days to complete", true)];
       return {
         subtitle: periodLabel(r),
         kpis: [
@@ -81,7 +81,7 @@ function shape(tool: string, r: R, params: R): Shape {
           { label: "Overdue now", value: cell(t.overdue), hint: `of ${t.open ?? 0} open` },
         ],
         lists: {
-          groups: () => ({ columns: cols, rows: rowsOf(list(r.groups), cols, ["lowVolume"]), items: Number(r.groupCount ?? 0), labelKey: "name", series: ["completedOnTime", "completedLate"], stacked: true, ordered: false, drill: GROUP_DRILL[by] ? { kind: GROUP_DRILL[by]!, key: "name" } : null }),
+          groups: () => ({ columns: cols, rows: rowsOf(list(r.groups), cols, ["lowVolume"]), items: Number(r.groupCount ?? 0), labelKey: "name", series: ["completedOnTime", "completedLate"], stacked: true, ordered: by === "month", drill: GROUP_DRILL[by] ? { kind: GROUP_DRILL[by]!, key: "name" } : null }),
         },
         filters: PERIOD_FILTERS,
       };

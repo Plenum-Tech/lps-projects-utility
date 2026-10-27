@@ -80,7 +80,7 @@ function systemPrompt(blocks: BlockSpec[]): string {
     "You are Leadership Insights for LPS, a creative agency, inside its Projects Utility. Leadership asks about delivery (tasks, on-time, late work), scope usage, hours logged, the manpower plan, pitches, rework, Pearity (AI generation tool) usage and approvals.",
     `Today is ${weekday} ${today} (${appTimeZone()}). This month is ${today.slice(0, 7)}. This week started ${keyFromDay(monday)}; last week was ${keyFromDay(monday - 7)} to ${keyFromDay(monday - 1)}. "Last 3 months" means the 3 months up to today unless the user says otherwise. Quarters are calendar quarters (Q4 = Oct–Dec).`,
     "How to work: first call the data tools you need (several in parallel when useful; filters take names, not ids). When you have the data, reply with the final answer in openui-lang as described below — no tool calls in that reply. One round of tool calls is usually enough: tool results are complete for the arguments given (lists say how many rows exist), so never repeat a call or re-ask the same tool for more rows unless a count shows rows were left out.",
-    "Dynamic queries: the fixed tools above come first. When none of them answers the question (other fields, other groupings, comments, task history, approvals detail, counts across collections), work like an analyst: 1) call describeData (no args) to see the collections, 2) describeData with the collections you need for their fields, 3) plan, 4) call runQuery with your plan in purpose and an aggregation that returns a small, grouped result with readable names. If runQuery returns an error, fix the pipeline and call it again. Always run runQuery yourself and put its key numbers in the Text (the answer's DataBlock uses runQuery with the same params); say in the Text that this was a custom query. Use a dynamic query too when a fixed tool can't express the exact question (e.g. status changes such as review → in progress, which live in taskhistories) or returns nothing for a question it doesn't really cover — never answer 'no data' before checking with a query.",
+    "Dynamic queries: the fixed tools above come first. When none of them answers the question (other fields, other groupings, comments, task history, approvals detail, counts across collections), work like an analyst: 1) call describeData (no args) to see the collections, 2) describeData with the collections you need for their fields, 3) plan, 4) call runQuery with your plan in purpose and an aggregation that returns a small, grouped result with readable names. If runQuery returns an error, fix the pipeline and call it again. Always run runQuery yourself and put its key numbers in the Text (the answer's DataBlock uses runQuery with the same params); say in the Text that this was a custom query. Use a dynamic query too when a fixed tool can't express the exact question (e.g. status changes such as review → in progress, which live in taskhistories) or returns nothing for a question it doesn't really cover — never answer 'no data' before checking with a query. Likewise when a fixed tool covers only part of the question (e.g. a breakdown it has no groupBy for, such as task category): answer that part with a dynamic query instead of saying it isn't available.",
     "Workspace: the screen has this chat and the user's Board, a saved workspace of live data blocks (each block = tool + params + view; the numbers are always fetched fresh). Current board:",
     boardSummary(blocks),
     "- To answer a question: call the data tools, then reply with a short Text (1–3 sentences with the key numbers) and usually ONE DataBlock(...) with the same tool and params you used (it shows the live data; the user can pin it to the board), then FollowUps.",
@@ -222,6 +222,14 @@ export async function askInsights(params: {
   let onlyRepeats = false;
   for (let round = 0; ; round++) {
     const allowTools = round < MAX_TOOL_ROUNDS && !onlyRepeats;
+    if (!allowTools) {
+      // Out of tool rounds: the reply must be the answer, never a note about what it would check next.
+      messages.push({
+        role: "user",
+        content:
+          "No more data calls are possible. Write the final answer now from the results above: give what they show (with its DataBlock), and say plainly which part of the question they couldn't answer.",
+      });
+    }
     let streamed = false;
     const turn = await streamTurn(messages, allowTools, signal, (text) => {
       streamed = true;
