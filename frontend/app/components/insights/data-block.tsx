@@ -18,6 +18,7 @@ import { DataChart, KpiTiles, SortableTable } from "@/components/insights/data-v
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Command, CommandEmpty, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { NativeSelect, NativeSelectOption } from "@/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -62,7 +63,9 @@ const pad = (n: number) => String(n).padStart(2, "0");
 const monthKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
 const dayKey = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 const quarterKey = (d: Date) => `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
-const PERIOD_KEYS = ["from", "to", "month", "quarter"];
+const PERIOD_KEYS = ["from", "to", "month", "quarter", "fromMonth", "toMonth"];
+/** Tools whose month filter also takes a range of months. */
+const MONTH_RANGE_TOOLS = new Set(["scopeUsage"]);
 
 /** Period choices for a tool's period kind (computed from today, browser time). */
 function periodChoices(kind: "period" | "month" | "quarter"): Array<{ label: string; params: Record<string, string> }> {
@@ -82,6 +85,85 @@ function periodChoices(kind: "period" | "month" | "quarter"): Array<{ label: str
     { label: "This quarter", params: { quarter: quarter(0) } },
     { label: "Last quarter", params: { quarter: quarter(-1) } },
   ];
+}
+
+/** "Custom dates": any range the user picks — days, months (a range when the tool takes one) or a quarter. */
+function CustomPeriod({
+  kind,
+  tool,
+  params,
+  onApply,
+  onClose,
+}: {
+  kind: "period" | "month" | "quarter";
+  tool: string;
+  params: Record<string, unknown>;
+  onApply: (period: Record<string, string>) => void;
+  onClose: () => void;
+}) {
+  const now = new Date();
+  const str = (k: string) => (typeof params[k] === "string" ? (params[k] as string) : "");
+  const ranged = MONTH_RANGE_TOOLS.has(tool);
+  const [from, setFrom] = useState(() =>
+    kind === "period" ? str("from") || dayKey(new Date(now.getTime() - 29 * 86_400_000)) : str("fromMonth") || str("month") || monthKey(now),
+  );
+  const [to, setTo] = useState(() => (kind === "period" ? str("to") || dayKey(now) : str("toMonth") || str("month") || monthKey(now)));
+  const [year, setYear] = useState(() => str("quarter").slice(0, 4) || String(now.getFullYear()));
+  const [q, setQ] = useState(() => str("quarter").slice(6) || String(Math.floor(now.getMonth() / 3) + 1));
+  const years = Array.from({ length: 5 }, (_, i) => String(now.getFullYear() + 1 - i));
+  const inputClass = "h-7 w-auto px-2 text-xs";
+  const twoEnds = kind === "period" || ranged;
+  const valid = kind === "quarter" || (!!from && (!twoEnds || (!!to && from <= to)));
+
+  const apply = () => {
+    if (kind === "quarter") return onApply({ quarter: `${year}-Q${q}` });
+    if (kind === "period") return onApply({ from, to });
+    if (!ranged || from === to) return onApply({ month: from });
+    onApply({ fromMonth: from, toMonth: to });
+  };
+
+  return (
+    <div className="flex w-full flex-wrap items-center gap-1.5 rounded-lg border border-dashed bg-muted/40 p-2 text-xs">
+      {kind === "quarter" ? (
+        <>
+          <NativeSelect size="sm" aria-label="Year" value={year} onChange={(e) => setYear(e.target.value)}>
+            {years.map((y) => (
+              <NativeSelectOption key={y} value={y}>
+                {y}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+          <NativeSelect size="sm" aria-label="Quarter" value={q} onChange={(e) => setQ(e.target.value)}>
+            {["1", "2", "3", "4"].map((n) => (
+              <NativeSelectOption key={n} value={n}>
+                Q{n}
+              </NativeSelectOption>
+            ))}
+          </NativeSelect>
+        </>
+      ) : (
+        <>
+          <label className="flex items-center gap-1">
+            {kind === "month" && !ranged ? "Month" : "From"}
+            <Input type={kind === "period" ? "date" : "month"} className={inputClass} value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} />
+          </label>
+          {twoEnds && (
+            <label className="flex items-center gap-1">
+              To
+              <Input type={kind === "period" ? "date" : "month"} className={inputClass} value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} />
+            </label>
+          )}
+        </>
+      )}
+      <Button size="xs" className="h-7" disabled={!valid} onClick={apply}>
+        Apply
+      </Button>
+      <Button size="xs" variant="ghost" className="h-7" onClick={onClose}>
+        Cancel
+      </Button>
+      {!valid && <span className="text-destructive">From must be before To.</span>}
+    </div>
+  );
 }
 
 const NAME_FILTER_LABEL: Record<string, string> = { brand: "Brand", team: "Team", person: "Person", lead: "Lead", project: "Project", status: "Status" };
@@ -143,6 +225,11 @@ export function DataBlock({
     else setLocal(next);
   };
   const setParams = (params: Record<string, unknown>) => set({ params });
+  const [customOpen, setCustomOpen] = useState(false);
+  const setPeriod = (period: Record<string, string>) => {
+    const rest = Object.fromEntries(Object.entries(spec.params).filter(([k]) => !PERIOD_KEYS.includes(k)));
+    setParams({ ...rest, ...period });
+  };
 
   const query = useBlockData(spec);
   const options = useInsightOptions();
@@ -232,10 +319,11 @@ export function DataBlock({
               className="[&_select]:h-6 [&_select]:rounded-full [&_select]:py-0 [&_select]:text-[11px]"
               value=""
               onChange={(e) => {
+                if (e.target.value === "custom") return setCustomOpen(true);
                 const choice = periodChoices(periodKind)[Number(e.target.value)];
                 if (!choice) return;
-                const rest = Object.fromEntries(Object.entries(spec.params).filter(([k]) => !PERIOD_KEYS.includes(k)));
-                setParams({ ...rest, ...choice.params });
+                setCustomOpen(false);
+                setPeriod(choice.params);
               }}
             >
               <NativeSelectOption value="">Period: {dataset.subtitle || "default"}</NativeSelectOption>
@@ -244,6 +332,7 @@ export function DataBlock({
                   {c.label}
                 </NativeSelectOption>
               ))}
+              <NativeSelectOption value="custom">Custom dates…</NativeSelectOption>
             </NativeSelect>
           )}
           {nameFilters
@@ -273,6 +362,18 @@ export function DataBlock({
               </button>
             </span>
           ) : null}
+          {periodKind && customOpen && (
+            <CustomPeriod
+              kind={periodKind}
+              tool={spec.tool}
+              params={spec.params}
+              onApply={(period) => {
+                setPeriod(period);
+                setCustomOpen(false);
+              }}
+              onClose={() => setCustomOpen(false)}
+            />
+          )}
           {dataset.teamScope && (
             <NativeSelect
               size="sm"
