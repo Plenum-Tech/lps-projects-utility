@@ -24,6 +24,7 @@ export const TOOL_NAMES = [
   "reworkStats",
   "pearityStats",
   "approvalsWaiting",
+  "runQuery",
 ] as const;
 export const BLOCK_VIEWS = ["table", "bar", "stacked", "line", "pie", "kpis"] as const;
 
