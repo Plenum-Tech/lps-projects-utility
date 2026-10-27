@@ -214,7 +214,7 @@ async function buildImport(req: Request, res: Response, wb: ExcelJS.Workbook): P
 
   const [users, brands] = await Promise.all([
     User.find(STAFF_FILTER).select("name").lean(),
-    Brand.find({ status: { $ne: "rejected" } }).select("name shortName status active").lean(),
+    Brand.find({ status: { $ne: "rejected" } }).select("name shortName status active organisation").lean(),
   ]);
   const userName = new Map(users.map((u) => [String(u._id), u.name]));
   const brandById = new Map(brands.map((b) => [String(b._id), b]));
@@ -262,7 +262,7 @@ async function buildImport(req: Request, res: Response, wb: ExcelJS.Workbook): P
   const used = new Set<string>();
   const finalName = (r: SheetRow) => {
     const b = r.brand ? brandById.get(r.brand) : null;
-    return b ? brandLineName(r.name, b.name) : r.name;
+    return b ? brandLineName(r.name, b.name, (b as { organisation?: string }).organisation ?? "") : r.name;
   };
   const matchOf = new Map<number, IManpowerRow>();
   for (const r of sheetRows) {
@@ -304,7 +304,8 @@ async function buildImport(req: Request, res: Response, wb: ExcelJS.Workbook): P
       section: r.section,
       brand: r.brand,
       type: hit?.type ?? null,
-      name: hit ? hit.name : finalName(r).slice(0, MANPOWER_LIMITS.nameMax),
+      // A matched line keeps its name, tidied by the same brand rule ("AutoPro - ENOC - Autopro" → "AutoPro").
+      name: (hit && r.brand && brandById.get(r.brand) ? brandLineName(hit.name, brandById.get(r.brand)!.name, (brandById.get(r.brand) as { organisation?: string }).organisation ?? "") : hit ? hit.name : finalName(r)).slice(0, MANPOWER_LIMITS.nameMax),
       cells: r.cells.map((c) => ({
         role: c.role,
         users: slice(c.users, MANPOWER_LIMITS.maxUsersPerCell),
@@ -337,7 +338,15 @@ async function buildImport(req: Request, res: Response, wb: ExcelJS.Workbook): P
       if (alike.length) warnings.push({ kind: "brand_lookalike", text: `Possible duplicate brand: ${[brand.name, ...alike].join(" / ")}` });
     }
     const unknown = [...new Set(row.cells.flatMap((c) => c.placeholders).filter((p) => unmatchedKeys.has(personNameKey(p))))];
-    if (unknown.length) warnings.push({ kind: "unknown_names", text: `No user for ${unknown.join(", ")}` });
+    // A name that fits several people ("Nabil": Omar Nabil, Mohamed Nabil) says so — pick one in the names list.
+    for (const name of unknown) {
+      const key = personNameKey(name);
+      const fits = users.filter((u) => personNameKey(u.name).split(" ").includes(key)).map((u) => u.name);
+      warnings.push({
+        kind: "unknown_names",
+        text: fits.length > 1 ? `${name} could be ${fits.join(" or ")} — pick one in the names list` : `No user for ${name}`,
+      });
+    }
     if (row.brand && (sameLine.get(`${String(row.brand)}|${lineNameKey(row.name)}`) ?? 0) > 1) {
       warnings.push({ kind: "same_line", text: "Another line has the same brand and name — only one of them is kept. Pick another brand for one." });
     }

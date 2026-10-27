@@ -32,7 +32,24 @@ const PERSON_ALIASES: Record<string, string> = {
   mazen: "mazin",
   aniaira: "anaira",
   abdalla: "abdallah",
+  yassimin: "yasmine",
+  yasmin: "yasmine",
+  yasmeen: "yasmine",
 };
+
+/** Edit distance (short names). */
+function distance(a: string, b: string): number {
+  let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j]! + 1, cur[j - 1]! + 1, prev[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length]!;
+}
+
+/** Spelling-insensitive form: doubled letters collapsed, ee/ea → i, oo/ou → u, z → s, q → k. */
+const soundKey = (s: string) => s.replace(/(.)\1+/g, "$1").replace(/ee|ea/g, "i").replace(/oo|ou/g, "u").replace(/z/g, "s").replace(/q/g, "k");
 
 export interface PersonRef {
   _id: string;
@@ -87,6 +104,16 @@ export class PersonIndex {
       const ids = map.get(one);
       if (ids?.length === 1) return { kind: "user", id: ids[0]! };
       if (ids && ids.length > 1) return { kind: "ambiguous", ids };
+    }
+    // A misspelt first name ("Yassimin" → Yasmine): one close first name only, never a guess between two.
+    if (one.length >= 4) {
+      const close = [...this.byFirst.entries()].filter(([first]) => {
+        const d = Math.min(distance(soundKey(one), soundKey(first)), distance(one, first));
+        return d <= (one.length >= 7 ? 2 : 1);
+      });
+      const ids = [...new Set(close.flatMap(([, list]) => list))];
+      if (ids.length === 1) return { kind: "user", id: ids[0]! };
+      if (ids.length > 1) return { kind: "ambiguous", ids };
     }
     return { kind: "none" };
   }

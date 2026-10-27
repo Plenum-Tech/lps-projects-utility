@@ -72,10 +72,20 @@ function suffixAfter(name: string, brand: string): string | null {
 }
 
 /** The line name for a brand: the brand's name first, keeping what tells this line apart. */
-export function brandLineName(name: string, brandName: string): string {
+export function brandLineName(name: string, brandName: string, organisation = ""): string {
   const b = brandName.replace(/\s+/g, " ").trim();
-  const n = name.replace(/\s+/g, " ").trim();
+  let n = name.replace(/\s+/g, " ").trim();
   if (!n) return b.slice(0, 120);
+  // "ENOC - Zoom" for brand Zoom (organisation ENOC): the brand is one of the name's parts —
+  // keep the brand first and drop the organisation part ("Zoom"), never "Zoom - ENOC - Zoom".
+  const parts = n.split(/\s+[-–|]\s+/);
+  if (parts.length > 1 && parts.some((p) => squash(p) === squash(b))) {
+    // What comes before the brand is its organisation ("ENOC - EPPCO"); what follows tells lines apart.
+    const at = parts.map((p) => squash(p) === squash(b)).lastIndexOf(true);
+    const org = squash(organisation);
+    const rest = parts.slice(at + 1).filter((p) => squash(p) !== squash(b) && !(org && squash(p) === org));
+    return (rest.length ? `${b} - ${rest.join(" - ")}` : b).slice(0, 120);
+  }
   const suffix = suffixAfter(n, b);
   if (suffix !== null) return `${b}${suffix}`.slice(0, 120);
   // Another spelling of the brand ("HomesRus"), or of its start ("SpontiniUAELaunch").
@@ -120,10 +130,12 @@ export async function nameLinesAfterBrands(rows: IManpowerRow[], _before: IManpo
   }
   const ids = [...new Set(rows.filter((r) => r.brand).map((r) => String(r.brand)))];
   if (ids.length === 0) return rows;
-  const names = new Map((await Brand.find({ _id: { $in: ids } }).select("name").lean()).map((b) => [String(b._id), b.name]));
+  const found = await Brand.find({ _id: { $in: ids } }).select("name organisation").lean();
+  const names = new Map(found.map((b) => [String(b._id), b.name]));
+  const orgs = new Map(found.map((b) => [String(b._id), b.organisation ?? ""]));
   return rows.map((r) => {
     if (!r.brand) return r;
     const brandName = names.get(String(r.brand));
-    return brandName ? { ...r, name: brandLineName(r.name, brandName) } : r;
+    return brandName ? { ...r, name: brandLineName(r.name, brandName, orgs.get(String(r.brand)) ?? "") } : r;
   });
 }
