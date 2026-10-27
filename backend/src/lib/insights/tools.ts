@@ -17,10 +17,12 @@ import { getDeliverySettings } from "../delivery/settings.js";
 import { MANPOWER_ROLES } from "../manpowerRoles.js";
 import { currentQuarter, loadPitchRows, pitchToday, brandLabel } from "../pitches.js";
 import { projectVisibilityFilter } from "../projectAccess.js";
+import { projectMonth } from "../projectExpiry.js";
 import { scopeTotals, scopeUnitOf, type ScopeItem } from "../scopeUnits.js";
 import { resolveTeam, teamInfo, teamScopeParam, type TeamFilter, type TeamScope } from "./people.js";
 import {
   brandIdByName,
+  brandIdsByName,
   currentMonth,
   excerpt,
   filterParams,
@@ -332,26 +334,38 @@ const reworkStats = defineTool({
 const scopeUsage = defineTool({
   name: "scopeUsage",
   description:
-    "Scope usage of a month's projects (project naming month): per brand and project, per scope unit (e.g. Static, Video), the approved scope total and the amount used by new-work tasks (rework excluded, rejected over-scope excluded); 'over' when used > total. Also counts over-scope task requests (pending / approved). Default month: the current one.",
+    "Scope usage of the projects of a month or a range of months (the project's month: naming month, else the month written in its name, else its deadline): per brand and project, per scope unit (e.g. Static, Video), the approved scope total, the amount used by new-work tasks (rework excluded, rejected over-scope excluded), 'remaining' = scope not delivered yet and 'over' = used beyond the total. Also counts over-scope task requests (pending / approved). Use it for 'which scope is not delivered / pending / remaining' (undeliveredOnly) and for over-scope (overOnly). A brand name also covers its sub-brands (Zoom → Zoom, ZOOM TT). Default: the current month.",
   params: z.object({
-    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("Month YYYY-MM (default current)."),
+    month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("Single month YYYY-MM (default current)."),
+    fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("First month YYYY-MM of a range ('from April 2026' → 2026-04)."),
+    toMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional().describe("Last month YYYY-MM of a range (default: the current month, 'till date')."),
     brand: filterParams.brand,
     overOnly: z.boolean().optional().describe("Only brands / projects over scope."),
+    undeliveredOnly: z.boolean().optional().describe("Only brands / projects / units with scope not delivered yet (remaining > 0)."),
     limit: limitParam,
   }),
   async run(args) {
-    const month = args.month ?? currentMonth();
+    const ranged = !!(args.fromMonth || args.toMonth);
+    const from = ranged ? (args.fromMonth ?? args.toMonth!) : (args.month ?? currentMonth());
+    const to = ranged ? (args.toMonth ?? currentMonth()) : from;
+    if (from > to) throw new ToolInputError(`fromMonth ${from} is after toMonth ${to}.`);
     const ref = await loadRefData();
-    const brandFilter = args.brand ? brandIdByName(ref, args.brand) : null;
-    const projects = await Project.find({
-      "naming.month": month,
-      archivedAt: null,
-      ...(brandFilter ? { brand: oid(brandFilter.id) } : {}),
-    })
-      .select("code name brand scopeItems requiresScope")
-      .lean();
+    const brandFilter = args.brand ? brandIdsByName(ref, args.brand) : null;
+    // Projects imported without a naming month carry their month in the name or deadline.
+    const projects = (
+      await Project.find({
+        $or: [{ "naming.month": { $gte: from, $lte: to } }, { "naming.month": null }],
+        archivedAt: null,
+        ...(brandFilter ? { brand: { $in: brandFilter.ids.map(oid) } } : {}),
+      })
+        .select("code name brand naming deadline scopeItems requiresScope")
+        .lean()
+    )
+      .map((p) => ({ ...p, month: projectMonth(p) }))
+      .filter((p): p is typeof p & { month: string } => !!p.month && p.month >= from && p.month <= to)
+      .sort((a, b) => a.month.localeCompare(b.month));
     const ids = projects.map((p) => p._id);
-    const [used, overScope] = await Promise.all([
+    const [used, overScope, taskCounts] = await Promise.all([
       Task.aggregate<{ _id: { project: mongoose.Types.ObjectId; unit: string }; used: number }>([
         {
           $match: {
@@ -367,11 +381,26 @@ const scopeUsage = defineTool({
         { $match: { project: { $in: ids }, "overScope.status": { $in: ["pending", "approved"] } } },
         { $group: { _id: { project: "$project", status: "$overScope.status" }, n: { $sum: 1 } } },
       ]),
+      // New-work tasks per project: done / open, and how many carry no scope unit
+      // (older and imported tasks) — those can't be counted against the scope.
+      Task.aggregate<{ _id: mongoose.Types.ObjectId; tasks: number; done: number; open: number; untagged: number }>([
+        { $match: { project: { $in: ids }, iteration: { $ne: "rework" }, status: { $ne: "rejected" } } },
+        {
+          $group: {
+            _id: "$project",
+            tasks: { $sum: 1 },
+            done: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
+            open: { $sum: { $cond: [{ $ne: ["$status", "completed"] }, 1, 0] } },
+            untagged: { $sum: { $cond: [{ $eq: [{ $type: "$titleParts.unit" }, "string"] }, 0, 1] } },
+          },
+        },
+      ]),
     ]);
     const usedBy = new Map(used.map((u) => [`${u._id.project}:${u._id.unit.trim()}`, u.used]));
     const overBy = new Map(overScope.map((o) => [`${o._id.project}:${o._id.status}`, o.n]));
+    const countsBy = new Map(taskCounts.map((c) => [String(c._id), c]));
 
-    type UnitRow = { unit: string; total: number; used: number; over: number };
+    type UnitRow = { unit: string; total: number; used: number; remaining: number; over: number };
     const projectRows = projects.map((p) => {
       const units: UnitRow[] = [];
       const totals = scopeTotals(p.scopeItems as ScopeItem[]);
@@ -379,7 +408,7 @@ const scopeUsage = defineTool({
       for (const [key, t] of totals) {
         seen.add(key);
         const u = usedBy.get(`${p._id}:${key}`) ?? 0;
-        units.push({ unit: t.unit, total: t.total, used: u, over: Math.max(0, u - t.total) });
+        units.push({ unit: t.unit, total: t.total, used: u, remaining: Math.max(0, t.total - u), over: Math.max(0, u - t.total) });
       }
       // Work on a known scope unit the project has no scope for is all over scope;
       // free-text (legacy) units are only counted.
@@ -390,14 +419,19 @@ const scopeUsage = defineTool({
         const unit = k.slice(prefix.length);
         if (seen.has(unit)) continue;
         const def = scopeUnitOf(unit);
-        if (def && !seen.has(def.name.toLowerCase())) units.push({ unit: def.name, total: 0, used: u, over: u });
+        if (def && !seen.has(def.name.toLowerCase())) units.push({ unit: def.name, total: 0, used: u, remaining: 0, over: u });
         else if (!def) unknownUnits += u;
       }
       return {
         brandId: p.brand ? String(p.brand) : null,
         code: p.code,
         name: p.name,
+        month: monthLabel(p.month),
         hasScope: totals.size > 0,
+        tasks: countsBy.get(String(p._id))?.tasks ?? 0,
+        tasksDone: countsBy.get(String(p._id))?.done ?? 0,
+        tasksOpen: countsBy.get(String(p._id))?.open ?? 0,
+        tasksWithoutScopeUnit: countsBy.get(String(p._id))?.untagged ?? 0,
         tasksOnUnknownUnits: unknownUnits,
         units,
         overScopeTasksPending: overBy.get(`${p._id}:pending`) ?? 0,
@@ -405,7 +439,7 @@ const scopeUsage = defineTool({
       };
     });
 
-    const brands = new Map<string, { brand: string; units: Map<string, UnitRow>; projects: number; projectsOver: number; pending: number; approved: number }>();
+    const brands = new Map<string, { brand: string; units: Map<string, UnitRow>; projects: number; projectsOver: number; pending: number; approved: number; tasks: number; done: number; open: number; untagged: number }>();
     for (const p of projectRows) {
       const key = p.brandId ?? "none";
       const b = brands.get(key) ?? {
@@ -415,15 +449,24 @@ const scopeUsage = defineTool({
         projectsOver: 0,
         pending: 0,
         approved: 0,
+        tasks: 0,
+        done: 0,
+        open: 0,
+        untagged: 0,
       };
       brands.set(key, b);
       b.projects++;
+      b.tasks += p.tasks;
+      b.done += p.tasksDone;
+      b.open += p.tasksOpen;
+      b.untagged += p.tasksWithoutScopeUnit;
       if (p.units.some((u) => u.over > 0)) b.projectsOver++;
       b.pending += p.overScopeTasksPending;
       b.approved += p.overScopeTasksApproved;
       for (const u of p.units) {
         const k = u.unit.toLowerCase();
-        const acc = b.units.get(k) ?? { unit: u.unit, total: 0, used: 0, over: 0 };
+        const acc = b.units.get(k) ?? { unit: u.unit, total: 0, used: 0, remaining: 0, over: 0 };
+        acc.remaining += u.remaining;
         acc.total += u.total;
         acc.used += u.used;
         acc.over += u.over;
@@ -438,8 +481,14 @@ const scopeUsage = defineTool({
         projectsOverScope: b.projectsOver,
         overScopeTasksPending: b.pending,
         overScopeTasksApproved: b.approved,
+        tasks: b.tasks,
+        tasksDone: b.done,
+        tasksOpen: b.open,
+        tasksWithoutScopeUnit: b.untagged,
         totalScope: units.reduce((s, u) => s + u.total, 0),
         totalUsed: units.reduce((s, u) => s + u.used, 0),
+        notDelivered: units.reduce((s, u) => s + u.remaining, 0),
+        notDeliveredUnits: units.filter((u) => u.remaining > 0).map((u) => `${u.remaining} ${u.unit}`),
         overUnits: units.reduce((s, u) => s + u.over, 0),
         overUnitNames: units.filter((u) => u.over > 0).map((u) => u.unit),
         units,
@@ -453,17 +502,28 @@ const scopeUsage = defineTool({
       brandRows = brandRows.filter((b) => b.overUnits > 0 || b.overScopeTasksApproved + b.overScopeTasksPending > 0);
       projectList = projectList.filter((p) => p.units.some((u) => u.over > 0) || p.overScopeTasksApproved + p.overScopeTasksPending > 0);
     }
-    brandRows.sort((a, b) => b.overUnits - a.overUnits || b.totalUsed - a.totalUsed);
-    projectList.sort((a, b) => b.units.reduce((s, u) => s + u.over, 0) - a.units.reduce((s, u) => s + u.over, 0));
+    if (args.undeliveredOnly) {
+      brandRows = brandRows.filter((b) => b.notDelivered > 0);
+      projectList = projectList
+        .map((p) => ({ ...p, units: p.units.filter((u) => u.remaining > 0) }))
+        .filter((p) => p.units.length > 0);
+    }
+    if (args.undeliveredOnly) {
+      brandRows.sort((a, b) => b.notDelivered - a.notDelivered);
+      projectList.sort((a, b) => b.units.reduce((s, u) => s + u.remaining, 0) - a.units.reduce((s, u) => s + u.remaining, 0));
+    } else {
+      brandRows.sort((a, b) => b.overUnits - a.overUnits || b.totalUsed - a.totalUsed);
+      projectList.sort((a, b) => b.units.reduce((s, u) => s + u.over, 0) - a.units.reduce((s, u) => s + u.over, 0));
+    }
     return {
-      month,
-      label: monthLabel(month),
+      month: from === to ? from : `${from}..${to}`,
+      label: from === to ? monthLabel(from) : `${monthLabel(from)} – ${monthLabel(to)}`,
       filters: brandFilter ? { brand: brandFilter.label } : {},
       projectCount: projects.length,
       projectsWithoutScope: projectRows.filter((p) => !p.hasScope).length,
       brands: take(brandRows, args.limit, 40),
       projects: take(projectList, args.limit, 40),
-      note: "used = sum of task quantities (new work, not rework) per scope unit; over = used beyond the approved total. A brand is over scope when work on a scope unit goes beyond its approved total (overUnits > 0). Over-scope task requests (approved = allowed beyond scope, pending = waiting) are counted separately. Describe this in plain words, not field names.",
+      note: "used = sum of task quantities (new work, not rework) per scope unit; remaining = approved scope not delivered yet (total − used); over = used beyond the approved total. Each project shows its month. Tasks without a scope unit (older / imported tasks) are not counted in used, so when tasksWithoutScopeUnit > 0 the remaining figure overstates what is undelivered: say so, and give the task counts (done / open) alongside it — open tasks are work not delivered yet. A brand is over scope when work on a scope unit goes beyond its approved total (overUnits > 0). Over-scope task requests (approved = allowed beyond scope, pending = waiting) are counted separately. Describe this in plain words, not field names.",
     };
   },
 });

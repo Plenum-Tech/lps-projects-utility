@@ -326,7 +326,7 @@ export interface RefData {
   users: Map<string, { name: string; department: string | null; role: string; designation: string }>;
   /** Outside task guests: left out of the doers (never listed as people). */
   guests: Set<string>;
-  brands: Map<string, { name: string; shortName: string; color: string; active: boolean }>;
+  brands: Map<string, { name: string; shortName: string; organisation: string; color: string; active: boolean }>;
   departments: Map<string, string>;
   projects: Map<string, { code: string; name: string; brand: string | null }>;
 }
@@ -335,7 +335,7 @@ export function loadRefData(): Promise<RefData> {
   return deliveryCached("ref", async () => {
     const [users, brands, departments, projects] = await Promise.all([
       User.find().select("name department role designation isGuest").lean(),
-      Brand.find().select("name shortName color active").lean(),
+      Brand.find().select("name shortName organisation color active").lean(),
       Department.find().select("name").lean(),
       Project.find().select("code name brand").lean(),
     ]);
@@ -347,7 +347,7 @@ export function loadRefData(): Promise<RefData> {
       ),
       guests: new Set(users.filter((u) => u.isGuest).map((u) => String(u._id))),
       brands: new Map(
-        brands.map((b) => [String(b._id), { name: b.name, shortName: b.shortName ?? "", color: b.color, active: b.active }])
+        brands.map((b) => [String(b._id), { name: b.name, shortName: b.shortName ?? "", organisation: b.organisation ?? "", color: b.color, active: b.active }])
       ),
       departments: new Map(departments.map((d) => [String(d._id), d.name])),
       projects: new Map(

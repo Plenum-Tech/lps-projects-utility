@@ -101,11 +101,11 @@ function shape(tool: string, r: R, params: R): Shape {
       };
     }
     case "scopeUsage": {
-      const bcols = [col("brand", "Brand"), col("projects", "Projects", true), col("totalScope", "Scope", true), col("totalUsed", "Used", true), col("overUnits", "Over", true), col("overScopeTasksPending", "Over-scope pending", true), col("overScopeTasksApproved", "Over-scope approved", true)];
-      const pcols = [col("brand", "Brand"), col("code", "Project"), col("name", "Name"), col("units", "Units (used / scope)")];
+      const bcols = [col("brand", "Brand"), col("projects", "Projects", true), col("totalScope", "Scope", true), col("totalUsed", "Used", true), col("notDelivered", "Not delivered", true), col("overUnits", "Over", true), col("tasksDone", "Tasks done", true), col("tasksOpen", "Tasks open", true), col("overScopeTasksPending", "Over-scope pending", true), col("overScopeTasksApproved", "Over-scope approved", true)];
+      const pcols = [col("brand", "Brand"), col("month", "Month"), col("code", "Project"), col("name", "Name"), col("units", "Units (used / scope)"), col("tasksDone", "Tasks done", true), col("tasksOpen", "Tasks open", true), col("tasksWithoutScopeUnit", "Tasks without scope unit", true)];
       const projects = list(r.projects).map((p) => ({
         ...p,
-        units: list(p.units).map((u) => `${u.unit} ${u.used}/${u.total}${Number(u.over) > 0 ? ` (+${u.over})` : ""}`).join(", "),
+        units: list(p.units).map((u) => `${u.unit} ${u.used}/${u.total}${Number(u.over) > 0 ? ` (+${u.over})` : Number(u.remaining) > 0 ? ` (${u.remaining} left)` : ""}`).join(", "),
       }));
       return {
         subtitle: String(r.label ?? ""),
@@ -115,11 +115,11 @@ function shape(tool: string, r: R, params: R): Shape {
           { label: "Projects without scope", value: cell(r.projectsWithoutScope) },
         ],
         lists: {
-          brands: () => ({ columns: bcols, rows: rowsOf(list(r.brands), bcols), items: list(r.brands).length, labelKey: "brand", series: ["totalScope", "totalUsed", "overUnits"], stacked: false, ordered: false, drill: { kind: "brand", key: "brand" } }),
+          brands: () => ({ columns: bcols, rows: rowsOf(list(r.brands), bcols), items: list(r.brands).length, labelKey: "brand", series: ["totalScope", "totalUsed", "notDelivered", "overUnits"], stacked: false, ordered: false, drill: { kind: "brand", key: "brand" } }),
           projects: () => ({ columns: pcols, rows: rowsOf(projects, pcols), items: projects.length, labelKey: "code", series: [], stacked: false, ordered: false, drill: { kind: "brand", key: "brand" } }),
         },
         filters: ["month", "brand"],
-        note: "Used = task quantities of new work (rework excluded) per scope unit; over = beyond the approved total.",
+        note: "Used = task quantities of new work (rework excluded) per scope unit; not delivered = scope left; over = beyond the approved total. Tasks without a scope unit (older / imported) are not counted in Used.",
       };
     }
     case "timeLogged": {

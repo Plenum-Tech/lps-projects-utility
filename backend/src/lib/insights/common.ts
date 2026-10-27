@@ -129,19 +129,48 @@ export function matchName<T>(kind: string, query: string, items: Array<{ id: T; 
   if (exact.length === 1) return exact[0]!;
   const partial = exact.length > 1 ? exact : items.filter((i) => i.names.some((n) => norm(n).includes(q)));
   if (partial.length === 1) return partial[0]!;
-  if (partial.length > 1) throw new ToolInputError(`"" matches several s — be more specific.`, partial.slice(0, 10).map((i) => i.label));
+  if (partial.length > 1) throw new ToolInputError(`"${query}" matches several ${kind}s — be more specific.`, partial.slice(0, 10).map((i) => i.label));
   const near = fuzzy ? items.filter((i) => i.names.some((n) => closeness(query, n) <= (q.length >= 5 ? 1 : 0))) : [];
   if (near.length === 1) return near[0]!;
   const suggestions = near.length ? near.slice(0, 10).map((i) => i.label) : closestNames(query, items);
-  throw new ToolInputError(`No  matches "".`, suggestions);
+  throw new ToolInputError(`No ${kind} matches "${query}".`, suggestions);
 }
 
 export function brandIdByName(ref: RefData, query: string): { id: string; label: string } {
+  // "Zoom" / "ENOC Zoom" when only one of the brands they name has projects (ZOOM TT, not an empty Zoom).
+  const used = new Set([...ref.projects.values()].map((p) => p.brand).filter(Boolean));
+  const live = brandWordHits(ref, query).filter(([id]) => used.has(id));
+  if (live.length === 1) return { id: live[0]![0], label: live[0]![1].name };
   return matchName(
     "brand",
     query,
     [...ref.brands].map(([id, b]) => ({ id, names: [b.name, b.shortName].filter(Boolean), label: b.name }))
   );
+}
+
+/** Brands whose organisation + name hold every word of the query. */
+function brandWordHits(ref: RefData, query: string) {
+  const words = (s: string) => norm(s).split(/[^a-z0-9]+/).filter(Boolean);
+  const q = words(query);
+  if (!q.length) return [];
+  return [...ref.brands].filter(([, b]) =>
+    [b.name, b.shortName].filter(Boolean).some((n) => {
+      const have = new Set(words(`${b.organisation} ${n}`));
+      return q.every((w) => have.has(w));
+    })
+  );
+}
+
+/**
+ * Every brand a question about "query" means: each brand whose organisation + name
+ * holds all the query's words, so sub-brands count ("Zoom", "ENOC Zoom" → Zoom and
+ * ZOOM TT of ENOC). Falls back to brandIdByName.
+ */
+export function brandIdsByName(ref: RefData, query: string): { ids: string[]; label: string } {
+  const hits = brandWordHits(ref, query);
+  if (hits.length) return { ids: hits.map(([id]) => id), label: hits.map(([, b]) => b.name).join(", ") };
+  const one = brandIdByName(ref, query);
+  return { ids: [one.id], label: one.label };
 }
 
 export function teamIdByName(ref: RefData, query: string): { id: string; label: string } {
