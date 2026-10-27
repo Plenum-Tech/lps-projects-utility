@@ -41,6 +41,8 @@ export function PlanTable({
   links,
   highlight,
   changedRows,
+  changedCells,
+  newRows,
   scope,
   editing = false,
   onEditCell,
@@ -56,6 +58,10 @@ export function PlanTable({
   highlight?: string | null;
   /** Row keys to mark as changed (approval review). */
   changedRows?: ReadonlySet<string>;
+  /** Cells that differ from the version compared with: row key → role → what it was. */
+  changedCells?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /** Lines that aren't in the version compared with. */
+  newRows?: ReadonlySet<string>;
   /** Each line's scope (its linked projects' scope rows added up). */
   scope?: Record<string, Array<{ unit: string; total: number }>>;
   editing?: boolean;
@@ -170,6 +176,11 @@ export function PlanTable({
                     )}
                   >
                     <RowHeader row={row} links={links?.[row.key]} duplicate={(sameLines.get(lineId(row)) ?? 0) > 1} editing={editing} onEdit={() => onEditRow?.(row.key)} />
+                    {newRows?.has(row.key) && (
+                      <span className="mt-1 inline-block rounded-full bg-emerald-500/15 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:text-emerald-300">
+                        New line
+                      </span>
+                    )}
                     {scope?.[row.key]?.length ? (
                       <p className="mt-0.5 text-xs text-muted-foreground" title="Scope of the linked projects">
                         Scope: {scope[row.key]!.map((t) => `${t.total} ${t.unit}`).join(" · ")}
@@ -179,6 +190,7 @@ export function PlanTable({
                   {roles.map((role) => {
                     const cell = row.cells.find((c) => c.role === role.key);
                     const hit = Boolean(highlight && cell?.users.some((u) => u._id === highlight));
+                    const was = changedCells?.get(row.key)?.get(role.key);
                     const content = <CellContent cell={cell} highlight={highlight} />;
                     return (
                       <td
@@ -186,7 +198,9 @@ export function PlanTable({
                         className={cn(
                           "border-b border-l px-2 py-1.5 align-top group-hover:bg-muted/40",
                           hit && "bg-primary/10 group-hover:bg-primary/15",
+                          was !== undefined && "bg-amber-100 ring-1 ring-inset ring-amber-400 dark:bg-amber-900/40",
                         )}
+                        title={was !== undefined ? `Changed — was: ${was || "empty"}` : undefined}
                       >
                         {editing && activeCell?.rowKey === row.key && activeCell.role === role.key && renderCellEditor ? (
                           renderCellEditor(row, role)

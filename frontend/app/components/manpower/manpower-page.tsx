@@ -184,6 +184,40 @@ export function ManpowerPage() {
   }, [planMonths, thisMonth, month]);
 
   const viewRows = editing ? draft.rows : data ? planRowsToTable(data) : [];
+
+  // Viewing a version other than the live one (an import or a change waiting for approval):
+  // compare it with the latest approved version and highlight what differs.
+  const compareWith = !editing && data && data.latestVersion && data.version !== data.latestVersion ? data.latestVersion : null;
+  const basePlan = useManpowerPlan(month, compareWith, Boolean(compareWith));
+  const versionDiff = useMemo(() => {
+    if (!compareWith || !basePlan.data || basePlan.data.version !== compareWith || !data) return null;
+    const cellText = (c?: TableRow["cells"][number]) =>
+      c ? (c.notNeeded ? "— not needed" : [...c.users.map((u) => u.name.split(" ")[0]), ...c.placeholders].join(", ")) : "";
+    const cellKey = (c?: TableRow["cells"][number]) =>
+      c ? `${c.notNeeded ? 1 : 0}|${c.users.map((u) => u._id).sort().join(",")}|${[...c.placeholders].sort().join(",")}` : "0||";
+    const base = new Map(planRowsToTable(basePlan.data).map((r) => [r.key, r]));
+    const mine = planRowsToTable(data);
+    const cells = new Map<string, Map<string, string>>();
+    const added = new Set<string>();
+    for (const r of mine) {
+      const b = base.get(r.key);
+      if (!b) {
+        added.add(r.key);
+        continue;
+      }
+      for (const role of new Set([...r.cells.map((c) => c.role), ...b.cells.map((c) => c.role)])) {
+        const now = r.cells.find((c) => c.role === role);
+        const before = b.cells.find((c) => c.role === role);
+        if (cellKey(now) !== cellKey(before)) {
+          if (!cells.has(r.key)) cells.set(r.key, new Map());
+          cells.get(r.key)!.set(role, cellText(before));
+        }
+      }
+    }
+    const keys = new Set(mine.map((r) => r.key));
+    const removed = [...base.values()].filter((r) => !keys.has(r.key)).map((r) => r.name);
+    return { cells, added, removed, changedLines: cells.size };
+  }, [compareWith, basePlan.data, data]);
   const q = search.trim().toLowerCase();
   const shownRows = q
     ? viewRows.filter(
@@ -501,12 +535,24 @@ export function ManpowerPage() {
                 {data.version !== data.latestVersion && " · not the latest version"}
               </p>
             )}
+            {versionDiff && (
+              <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-1.5 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+                Compared with version {compareWith} (live): {versionDiff.changedLines} line{versionDiff.changedLines === 1 ? "" : "s"} changed
+                {" · "}
+                {versionDiff.added.size} new line{versionDiff.added.size === 1 ? "" : "s"}
+                {versionDiff.removed.length > 0 && ` · ${versionDiff.removed.length} removed (${versionDiff.removed.join(", ")})`}. Changed cells are highlighted —
+                hover one to see what it was.
+              </p>
+            )}
             <PlanTable
               rows={shownRows}
               roles={roles}
               links={editing ? undefined : data?.links}
               scope={editing ? undefined : data?.scope}
               highlight={editing ? null : highlight}
+              changedCells={versionDiff?.cells}
+              newRows={versionDiff?.added}
+              changedRows={versionDiff ? new Set([...versionDiff.cells.keys(), ...versionDiff.added]) : undefined}
               editing={editing}
               onEditCell={(rowKey, roleKey) => setCellEdit({ rowKey, role: roleKey })}
               activeCell={cellEdit}
