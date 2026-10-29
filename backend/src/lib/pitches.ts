@@ -159,6 +159,7 @@ type LeanPitchProject = Pick<
 
 const PROJECT_FIELDS = "name code naming pitch manager brand status deadline members createdBy departments";
 const PITCH_TYPE = /^pitch$/i;
+const PITCH_IN_NAME = /_pitch_/i;
 const OPEN_STATUSES = ["todo", "in_progress", "in_review"];
 
 /** The three steps of each project, from its tasks (first task of each step) and pitch dates. */
@@ -311,7 +312,12 @@ export async function loadPitchRows(
 ): Promise<PitchRow[]> {
   const range = quarterMonths(quarter);
   if (!range) return [];
-  const filter: Record<string, unknown>[] = [visibility, { archivedAt: null, "naming.type": PITCH_TYPE }];
+  // A pitch: a Pitch-type project, or (whatever its type says) one of a pitch brand or named "…_Pitch_…".
+  const pitchBrands = await Brand.find({ isPitch: true }).distinct("_id");
+  const isPitch = {
+    $or: [{ "naming.type": PITCH_TYPE }, { brand: { $in: pitchBrands } }, { "naming.brand": { $in: pitchBrands } }, { name: PITCH_IN_NAME }],
+  };
+  const filter: Record<string, unknown>[] = [visibility, { archivedAt: null }, isPitch];
   if (onlyId) filter.push({ _id: onlyId });
   const projects = (await Project.find({ $and: filter }).select(PROJECT_FIELDS).lean()) as unknown as LeanPitchProject[];
   if (projects.length === 0) return [];
@@ -322,6 +328,10 @@ export async function loadPitchRows(
     if (onlyId) return true;
     const month = p.naming?.month ?? null;
     if (month && month >= range.from && month <= range.to) return true;
+    if (!month && p.deadline) {
+      const end = dateKey(p.deadline);
+      if (end && end >= range.start && end <= range.end) return true;
+    }
     return (steps.get(String(p._id)) ?? []).some((s) => s.due !== null && s.due >= range.start && s.due <= range.end);
   };
   const chosen = projects.filter(inQuarter);

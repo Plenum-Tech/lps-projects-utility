@@ -109,14 +109,32 @@ export function parseStructuredName(name: string): ParsedStructuredName | null {
   return { brand: parts[0]!, type: parts[1]!, month, title };
 }
 
+/** A name part as a pattern where spaces, "_" and "-" between its words are alike ("ZAJEL 2026" ~ "ZAJEL_2026"). */
+function partPattern(text: string): string {
+  return text
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[\\s_-]*");
+}
+
+/** Matches a leading "Brand_Type_MonYYYY" (any of space / "_" / "-" between parts and words). */
+function composedPrefix(brandName: string, type: string, month: string): RegExp | null {
+  const parts = [brandName, type, formatNamingMonth(month).replace(/(\d{4})$/, " $1")].map(partPattern);
+  if (parts.some((p) => !p)) return null;
+  return new RegExp(`^${parts.join("[\\s_-]+")}(?:[\\s_-]+|$)`, "i");
+}
+
 /**
  * The name part only: when the whole composed name was typed into the name field
- * ("Wasl_Campaign_Oct2026_Launch"), the "Brand_Type_MonYYYY_" start is dropped.
+ * ("Wasl_Campaign_Oct2026_Launch", or "ZAJEL_2026_Pitch_Oct2026_Launch" for the brand
+ * "ZAJEL 2026"), the "Brand_Type_MonYYYY_" start is dropped. A name that is only that
+ * start is kept as it is.
  */
 export function stripComposedPrefix(title: string, brandName: string, type: string, month: string): string {
-  const prefix = `${tidy(brandName)}${NAMING_SEPARATOR}${tidy(type)}${NAMING_SEPARATOR}${formatNamingMonth(month)}${NAMING_SEPARATOR}`.toLowerCase();
+  const prefix = composedPrefix(brandName, type, month);
   let out = tidy(title);
-  while (out.toLowerCase().startsWith(prefix) && out.length > prefix.length) out = tidy(out.slice(prefix.length));
+  for (let m = prefix?.exec(out); m && m[0].length < out.length; m = prefix!.exec(out)) out = tidy(out.slice(m[0].length));
   return out;
 }
 

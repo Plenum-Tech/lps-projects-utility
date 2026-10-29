@@ -78,16 +78,40 @@ export function tidyNamePart(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** A name part as a pattern where spaces, "_" and "-" between its words are alike ("ZAJEL 2026" ~ "ZAJEL_2026"). */
+function partPattern(text: string): string {
+  return text
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("[\\s_-]*");
+}
+
+/** Matches a leading "Brand_Type_MonYYYY" (any of space / "_" / "-" between parts and words). */
+function composedPrefix(brand: string, type: string, month: string): RegExp | null {
+  const parts = [brand, type, formatNamingMonth(month).replace(/(\d{4})$/, " $1")].map(partPattern);
+  if (parts.some((p) => !p)) return null;
+  return new RegExp(`^${parts.join("[\\s_-]+")}(?:[\\s_-]+|$)`, "i");
+}
+
 /**
  * The name part only: a whole composed name typed into the name field
- * ("Wasl_Campaign_Oct2026_Launch") loses its "Brand_Type_MonYYYY_" start. "_" inside
- * the name itself is fine (same rule as the server).
+ * ("Wasl_Campaign_Oct2026_Launch", or "ZAJEL_2026_Pitch_Oct2026_Launch" for the brand
+ * "ZAJEL 2026") loses its "Brand_Type_MonYYYY_" start. "_" inside the name itself is
+ * fine (same rule as the server). A name that is only that start is kept.
  */
 export function stripComposedPrefix(title: string, brand: string, type: string, month: string): string {
-  const prefix = [tidyNamePart(brand), tidyNamePart(type), formatNamingMonth(month), ""].join(NAMING_SEPARATOR).toLowerCase();
+  const prefix = composedPrefix(brand, type, month);
   let out = tidyNamePart(title);
-  while (prefix.length > 3 && out.toLowerCase().startsWith(prefix) && out.length > prefix.length) out = tidyNamePart(out.slice(prefix.length));
+  for (let m = prefix?.exec(out); m && m[0].length < out.length; m = prefix!.exec(out)) out = tidyNamePart(out.slice(m[0].length));
   return out;
+}
+
+/** True when `title` is nothing but "Brand_Type_MonYYYY" (e.g. a file named after the project). */
+export function isComposedPrefixOnly(title: string, brand: string, type: string, month: string): boolean {
+  const out = tidyNamePart(title);
+  const m = composedPrefix(brand, type, month)?.exec(out);
+  return Boolean(m && m[0].length === out.length);
 }
 
 /** The composed project name, with "…" placeholders for missing parts (live preview). */

@@ -32,7 +32,7 @@ import { rolesFromScope } from "@/lib/brand-roles";
 import { MANPOWER_ROLE_FALLBACK } from "@/lib/manpower";
 import { defaultScopeUnit, SCOPE_LANGUAGES, scopeUnitOptions } from "@/lib/scope";
 import { useScopeUnits } from "@/hooks/use-scope-units";
-import { stripComposedPrefix } from "@/lib/projects";
+import { isComposedPrefixOnly, stripComposedPrefix } from "@/lib/projects";
 import { cn } from "@/lib/utils";
 import type { LeadMatch, PitchSheetRow, ScopeExtraction, StatedTotal } from "@/types";
 
@@ -179,7 +179,11 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
           setNotes(data.notes);
           setOtherScope(data.otherScope ?? "");
           setScopeTotal(data.statedTotal ?? null);
-          if (!title.trim() && data.projectName) setTitle(data.projectName);
+          // A document named after the project ("ZAJEL_2026_Pitch_Oct2026") gives no campaign name: only its own part is kept.
+          const docMonth = isPitch && (startDate || data.dates.startDate) ? (startDate || data.dates.startDate)!.slice(0, 7) : month;
+          if (!title.trim() && data.projectName && !isComposedPrefixOnly(data.projectName, name, typeForName, docMonth)) {
+            setTitle(stripComposedPrefix(data.projectName, name, typeForName, docMonth));
+          }
           if (!startDate && data.dates.startDate) setStartDate(data.dates.startDate);
           if (!endDate && data.dates.endDate) setEndDate(data.dates.endDate);
           if (isPitch && !sheetRow && !revenue && data.revenue) setRevenue(String(data.revenue));
@@ -280,7 +284,7 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
       setTried(0);
       setStep(2);
     } else if (step === 2) {
-      if (agreementMissing || !rows.length || (isPitch && !title.trim()) || periodError) return;
+      if (agreementMissing || !rows.length || (isPitch && titleMissing) || periodError) return;
       setTried(0);
       goStep3();
     }
@@ -305,6 +309,8 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
   const typeForName = isPitch ? "Pitch" : "Project";
   // "_" is allowed in the name; a pasted whole name loses its Brand_Type_Month_ start.
   const cleanTitle = stripComposedPrefix(title, name, typeForName, month);
+  // Empty, or only "Brand_Type_MonYYYY" (the project name would repeat it).
+  const titleMissing = !title.trim() || isComposedPrefixOnly(title, name, typeForName, month);
 
   function submit() {
     setTried(3);
@@ -591,9 +597,13 @@ export function BrandFlowDialog({ open, onOpenChange }: { open: boolean; onOpenC
                   {isPitch && (
                     <div className="space-y-1.5">
                       <Label htmlFor="brand-flow-title">Project name<span aria-hidden className="ml-0.5 text-destructive">*</span></Label>
-                      <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && !title.trim()) || undefined} />
+                      <Input id="brand-flow-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={80} aria-invalid={(tried >= 2 && titleMissing) || undefined} />
                       <p className="break-all text-xs text-muted-foreground">Project: {projectName}</p>
-                      {tried >= 2 && !title.trim() && <FieldError>Enter the project name (the tracker's Campaign/Idea).</FieldError>}
+                      {tried >= 2 && titleMissing && (
+                        <FieldError>
+                          {title.trim() ? "Enter just the campaign name — brand, type and month are added to the project name already." : "Enter the project name (the tracker's Campaign/Idea)."}
+                        </FieldError>
+                      )}
                     </div>
                   )}
                   <div className="space-y-1.5">
