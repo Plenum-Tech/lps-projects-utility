@@ -368,7 +368,14 @@ export async function serializeProjects(
     const json = p.toJSON() as Record<string, unknown>;
     const raw = p.toObject({ depopulate: true }) as unknown as IProject;
     const ratesVisible = canViewRates(user, raw);
-    const members = (json.members as Array<Record<string, unknown>>) ?? [];
+    // A member whose user was deleted populates as `user: null`, which crashes every `member.user.name` on the client.
+    const members = ((json.members as Array<Record<string, unknown>>) ?? []).filter((m) => m.user);
+    if (Array.isArray(json.team)) {
+      json.team = (json.team as Array<Record<string, unknown>>).map((t) => ({
+        ...t,
+        users: Array.isArray(t.users) ? t.users.filter(Boolean) : t.users,
+      }));
+    }
     json.members = members.map((m) => {
       const memberUser = m.user as { _id?: unknown } | null;
       const memberId = memberUser && typeof memberUser === "object" && "_id" in memberUser ? String(memberUser._id) : String(m.user);

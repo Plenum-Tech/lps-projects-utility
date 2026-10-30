@@ -85,12 +85,12 @@ export default function App() {
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
-  let message = "Oops!";
-  let details = "An unexpected error occurred.";
+  let message = "Something went wrong";
+  let details = "This page couldn't load. Refresh to get the latest version of the app.";
   let stack: string | undefined;
 
   if (isRouteErrorResponse(error)) {
-    message = error.status === 404 ? "404" : "Error";
+    message = error.status === 404 ? "Page not found" : "Something went wrong";
     details =
       error.status === 404
         ? "The requested page could not be found."
@@ -100,12 +100,25 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
     stack = error.stack;
   }
 
+  // Plain markup and inline handlers: this renders when the app itself failed.
   return (
-    <main className="pt-16 p-4 container mx-auto">
-      <h1>{message}</h1>
-      <p>{details}</p>
+    <main className="mx-auto flex min-h-svh w-full max-w-md flex-col items-center justify-center gap-4 p-6 text-center">
+      <h1 className="text-xl font-semibold">{message}</h1>
+      <p className="text-sm text-muted-foreground">{details}</p>
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
+          Refresh
+        </button>
+        <a href="/" className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted">
+          Go to dashboard
+        </a>
+      </div>
       {stack && (
-        <pre className="w-full p-4 overflow-x-auto">
+        <pre className="w-full overflow-x-auto p-4 text-left text-xs">
           <code>{stack}</code>
         </pre>
       )}

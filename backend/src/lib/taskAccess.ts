@@ -492,6 +492,10 @@ export async function serializeTasks(
         ? ((t as ITask).toJSON() as Record<string, unknown>)
         : leanTaskJson(t as LeanTask);
     if (guest) scrubPeopleForGuest(json);
+    // A null entry (bad write / user gone) would crash every `user.name` on the client.
+    for (const key of ["assignees", "watchers"]) {
+      if (Array.isArray(json[key])) json[key] = (json[key] as unknown[]).filter(Boolean);
+    }
     return {
       ...json,
       number: json.number ?? null,

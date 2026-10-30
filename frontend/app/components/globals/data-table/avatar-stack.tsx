@@ -13,19 +13,21 @@ interface StackUser {
  * name. Renders `empty` (default "--") when there's nobody.
  */
 export function AvatarStack({
-  users,
+  users: allUsers,
   max = 4,
   label = "People",
   empty = "--",
   className,
 }: {
-  users: StackUser[];
+  /** Empty entries (a user who no longer exists) are skipped. */
+  users: (StackUser | null | undefined)[];
   max?: number;
   /** Prefix for the accessible name, e.g. "Assigned to". */
   label?: string;
   empty?: string;
   className?: string;
 }) {
+  const users = allUsers.filter((user): user is StackUser => Boolean(user?.name));
   if (users.length === 0) {
     return <span className="text-xs text-muted-foreground">{empty}</span>;
   }
