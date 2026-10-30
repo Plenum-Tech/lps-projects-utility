@@ -114,8 +114,17 @@ export async function runTaskReminders(now: Date = new Date()): Promise<Reminder
   const tasks = await Task.find({
     status: { $ne: "completed" },
     dueDate: { $in: [...targets.keys()].map((t) => new Date(t)) },
-  }).select("title dueDate priority status assignees assignedBy department");
+  }).select("title dueDate startDate priority status assignees assignedBy department project shortCode number");
   result.checked = tasks.length;
+  // The project's name in the subject: titles like "Client presentation" repeat across pitches.
+  const projectIds = [...new Set(tasks.map((t) => (t.project ? String(t.project) : "")).filter(Boolean))];
+  const projectNames = new Map(
+    (await Project.find({ _id: { $in: projectIds } }).select("name").lean()).map((p) => [String(p._id), p.name])
+  );
+  const withProject = (title: string, project: unknown) => {
+    const name = project ? projectNames.get(String(project)) : undefined;
+    return name ? `${title} — ${name}` : title;
+  };
 
   for (const task of tasks) {
     const kind = task.dueDate ? targets.get(task.dueDate.getTime()) : undefined;
@@ -141,7 +150,7 @@ export async function runTaskReminders(now: Date = new Date()): Promise<Reminder
         title: "Task overdue",
         message: `"${task.title}" is ${settings.reminderAfterDays} day(s) past its due date.`,
         email: {
-          subject: `⏰ Overdue: ${task.title}`,
+          subject: `⏰ Overdue: ${withProject(task.title, task.project)}`,
           heading: "Task Overdue",
           intro: `This task is ${settings.reminderAfterDays} day(s) past its due date and is not completed yet.`,
         },
@@ -158,7 +167,7 @@ export async function runTaskReminders(now: Date = new Date()): Promise<Reminder
         title: kind === "on" ? "Task due today" : "Task due soon",
         message: `"${task.title}" is due ${when}.`,
         email: {
-          subject: `🔔 Due ${when}: ${task.title}`,
+          subject: `🔔 Due ${when}: ${withProject(task.title, task.project)}`,
           heading: kind === "on" ? "Task Due Today" : "Task Due Soon",
           intro: `Reminder: this task is due ${when}.`,
         },
