@@ -19,7 +19,8 @@ import type { MonthMigrationPreview, MonthMigrationResult } from "@/types";
 // ---------------------------------------------------------------------------
 // Brands → Migrate to next month (brand creators — Nazeer — and leadership):
 // pick brands; their lines in the old month's manpower plan and their old-month
-// projects move to the new month in one go, approved at once (no approval).
+// projects move to the next month — or on through several months (Oct → Nov →
+// Dec → Jan), each copied from the one before — approved at once (no approval).
 // ---------------------------------------------------------------------------
 
 type Candidate = MonthMigrationPreview["brands"][number];
@@ -49,13 +50,19 @@ export function MonthMigrationButton() {
 }
 
 export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const [to, setTo] = useState(currentMonth);
-  const from = addMonths(to, -1);
+  const [from, setFrom] = useState(() => addMonths(currentMonth(), -1));
+  // The last month to copy to: one run goes month by month (Oct → Nov → Dec → Jan).
+  const [until, setUntil] = useState(currentMonth);
+  const to = addMonths(from, 1);
+  const last = until > to ? until : to;
+  const multi = last > to;
+  const months = Array.from({ length: 13 }, (_, i) => addMonths(to, i)).filter((m) => m <= last);
+  // The list shows the first step (from → the month after); later months follow from it.
   const preview = useMonthMigrationPreview(from, to, open);
   const run = useRunMonthMigration();
   const [picked, setPicked] = useState<Set<string> | null>(null);
   const [q, setQ] = useState("");
-  const [result, setResult] = useState<MonthMigrationResult | null>(null);
+  const [result, setResult] = useState<MonthMigrationResult[] | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -64,7 +71,7 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
     setQ("");
     run.reset();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, to]);
+  }, [open, from]);
 
   const brands = preview.data?.brands ?? [];
   // Nothing is ticked at first: the brand creator picks the brands (or "Tick all").
@@ -79,27 +86,40 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
     else next.delete(id);
     setPicked(next);
   };
-  const ticked = brands.filter((c) => selected.has(c.brand._id) && hasWork(c));
+  // Over several months a brand already in the first one still moves on to the later ones.
+  const canTick = (c: Candidate) => multi || hasWork(c);
+  const ticked = brands.filter((c) => selected.has(c.brand._id) && canTick(c));
   const projectCount = ticked.reduce((n, c) => n + c.projects.filter((p) => !p.exists).length, 0);
 
   return (
     <Dialog open={open} onOpenChange={(next) => !run.isPending && onOpenChange(next)}>
       <DialogContent className="max-h-[92vh] grid-cols-[minmax(0,1fr)] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
-          <DialogTitle>Migrate brands to {monthLabel(to)}</DialogTitle>
+          <DialogTitle>Migrate brands {multi ? `to ${monthLabel(to)} – ${monthLabel(last)}` : `to ${monthLabel(to)}`}</DialogTitle>
           <DialogDescription>
-            The ticked brands get their {monthLabel(to)} project (same brand, type and name — only the month changes) with the brand&apos;s
-            current scope, documents and team, and their {monthLabel(from)} manpower plan lines are copied to {monthLabel(to)}. Everything is
-            approved at once — no approval needed. Brands already in {monthLabel(to)} are left as they are.
+            The ticked brands get a project for {multi ? "each month" : monthLabel(to)} (same brand, type and name — only the month changes)
+            with the brand&apos;s current scope, documents and team, and their {monthLabel(from)} manpower plan lines are copied
+            {multi ? " month by month" : ` to ${monthLabel(to)}`}. Everything is approved at once — no approval needed. Months a brand is
+            already in are left as they are.
           </DialogDescription>
         </DialogHeader>
 
         {!result && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="rounded-md border px-2 py-1">{monthLabel(from)}</span>
+              <span className="text-muted-foreground">From</span>
+              <Input type="month" value={from} onChange={(e) => e.target.value && setFrom(e.target.value)} className="h-8 w-40" aria-label="Copy from month" />
               <LuArrowRight aria-hidden className="size-4 text-muted-foreground" />
-              <Input type="month" value={to} onChange={(e) => e.target.value && setTo(e.target.value)} className="h-8 w-40" aria-label="New month" />
+              <span className="text-muted-foreground">up to</span>
+              <Input
+                type="month"
+                value={last}
+                min={to}
+                max={addMonths(from, 12)}
+                onChange={(e) => e.target.value && setUntil(e.target.value)}
+                className="h-8 w-40"
+                aria-label="Copy up to month"
+              />
               <div className="relative ml-auto">
                 <LuSearch aria-hidden className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search brands…" className="h-8 w-56 pl-7" aria-label="Search brands" />
@@ -118,9 +138,12 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
               <>
                 <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                   <span>
-                    {ticked.length} of {brands.length} brands ticked · {projectCount} project{projectCount === 1 ? "" : "s"} to create
+                    {ticked.length} of {brands.length} brands ticked
+                    {multi
+                      ? ` · ${months.length} months: ${months.map((m) => monthLabel(m)).join(", ")}`
+                      : ` · ${projectCount} project${projectCount === 1 ? "" : "s"} to create`}
                   </span>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setPicked(new Set(brands.filter(hasWork).map((c) => c.brand._id)))}>
+                  <Button type="button" size="sm" variant="ghost" onClick={() => setPicked(new Set(brands.filter(canTick).map((c) => c.brand._id)))}>
                     Tick all
                   </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={() => setPicked(new Set())}>
@@ -133,7 +156,7 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
                 <ul className="divide-y rounded-lg border">
                   {shown.map((c) => {
                     const work = hasWork(c);
-                    const on = work && selected.has(c.brand._id);
+                    const on = canTick(c) && selected.has(c.brand._id);
                     return (
                       <li key={c.brand._id} className={cn("flex gap-3 px-3 py-2.5", !on && "text-muted-foreground")}>
                         <input
@@ -141,7 +164,7 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
                           aria-label={`Migrate ${c.brand.name}`}
                           className="mt-0.5 size-4 shrink-0 accent-primary"
                           checked={on}
-                          disabled={!work}
+                          disabled={!canTick(c)}
                           onChange={(e) => toggle(c.brand._id, e.target.checked)}
                         />
                         <div className="min-w-0 flex-1 space-y-1">
@@ -151,6 +174,7 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
                               <span className="text-xs">· {c.brand.organisation}</span>
                             )}
                             {!work && <Badge variant="secondary">Already in {monthLabel(to)}</Badge>}
+                            {!work && multi && <Badge variant="outline">Continues to {monthLabel(last)}</Badge>}
                             {c.planLines > 0 &&
                               (c.inTargetPlan ? (
                                 <Badge variant="outline">Plan line already in {monthLabel(to)}</Badge>
@@ -188,42 +212,47 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
         )}
 
         {result && (
-          <div className="space-y-3 text-sm">
-            <p>
-              <span className="font-semibold">{result.created.length}</span> project{result.created.length === 1 ? "" : "s"} created ·{" "}
-              {"version" in result.plan
-                ? `${result.plan.lines} plan line${result.plan.lines === 1 ? "" : "s"} copied (${monthLabel(result.to)} plan v${result.plan.version}, approved)`
-                : `Plan: ${result.plan.skipped}`}
-            </p>
-            {result.created.length > 0 && (
-              <ul className="divide-y rounded-lg border">
-                {result.created.map((c) => (
-                  <li key={c.projectId} className="flex flex-wrap items-center gap-2 px-3 py-2">
-                    <LuCircleCheck aria-hidden className="size-4 text-primary" />
-                    <span className="break-all">{c.name}</span>
-                    <Link to={`/projects/${c.projectId}`} className="ml-auto text-xs text-primary underline-offset-2 hover:underline" onClick={() => onOpenChange(false)}>
-                      Open project
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            )}
-            {result.skipped.length > 0 && (
-              <ul className="divide-y rounded-lg border text-muted-foreground">
-                {result.skipped.map((s, i) => (
-                  <li key={i} className="flex gap-2 px-3 py-2">
-                    {/exists|No .* project/.test(s.reason) ? (
-                      <LuMinus aria-hidden className="mt-0.5 size-4 shrink-0" />
-                    ) : (
-                      <LuTriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                    )}
-                    <span>
-                      <span className="font-medium text-foreground">{s.brand}</span> — {s.reason}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
+          <div className="space-y-4 text-sm">
+            {result.map((step) => (
+              <section key={step.to} className="space-y-2">
+                <h3 className="font-semibold">{monthLabel(step.to)}</h3>
+                <p>
+                  <span className="font-semibold">{step.created.length}</span> project{step.created.length === 1 ? "" : "s"} created ·{" "}
+                  {"version" in step.plan
+                    ? `${step.plan.lines} plan line${step.plan.lines === 1 ? "" : "s"} copied (plan v${step.plan.version}, approved)`
+                    : `Plan: ${step.plan.skipped}`}
+                </p>
+                {step.created.length > 0 && (
+                  <ul className="divide-y rounded-lg border">
+                    {step.created.map((c) => (
+                      <li key={c.projectId} className="flex flex-wrap items-center gap-2 px-3 py-2">
+                        <LuCircleCheck aria-hidden className="size-4 text-primary" />
+                        <span className="break-all">{c.name}</span>
+                        <Link to={`/projects/${c.projectId}`} className="ml-auto text-xs text-primary underline-offset-2 hover:underline" onClick={() => onOpenChange(false)}>
+                          Open project
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {step.skipped.length > 0 && (
+                  <ul className="divide-y rounded-lg border text-muted-foreground">
+                    {step.skipped.map((s, i) => (
+                      <li key={i} className="flex gap-2 px-3 py-2">
+                        {/exists|No .* project/.test(s.reason) ? (
+                          <LuMinus aria-hidden className="mt-0.5 size-4 shrink-0" />
+                        ) : (
+                          <LuTriangleAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600" />
+                        )}
+                        <span>
+                          <span className="font-medium text-foreground">{s.brand}</span> — {s.reason}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            ))}
           </div>
         )}
 
@@ -238,7 +267,7 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
               <Button
                 type="button"
                 disabled={run.isPending || ticked.length === 0}
-                onClick={() => run.mutate({ from, to, brandIds: ticked.map((c) => c.brand._id) }, { onSuccess: setResult })}
+                onClick={() => run.mutate({ from, to: last, brandIds: ticked.map((c) => c.brand._id) }, { onSuccess: (data) => setResult(data.steps) })}
               >
                 {run.isPending && <LuLoaderCircle aria-hidden className="animate-spin" />}
                 {run.isPending ? "Migrating…" : `Migrate ${ticked.length} brand${ticked.length === 1 ? "" : "s"}`}

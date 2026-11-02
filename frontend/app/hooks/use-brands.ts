@@ -227,13 +227,13 @@ export function useMonthMigrationPreview(from: string, to: string, enabled: bool
   });
 }
 
-/** Runs the migration for the picked brands (plan lines + projects, approved at once). */
+/** Runs the migration for the picked brands up to `to`, month by month (plan lines + projects, approved at once). */
 export function useRunMonthMigration() {
   const invalidate = useInvalidateBrands();
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (input: { from: string; to: string; brandIds: string[] }) =>
-      (await api.post<MonthMigrationResult>("/brands/month-migration", input, { timeout: 300_000 })).data,
+      (await api.post<{ steps: MonthMigrationResult[] }>("/brands/month-migration", input, { timeout: 600_000 })).data,
     onSuccess: () => {
       invalidate();
       void queryClient.invalidateQueries({ queryKey: ["manpower"] });
