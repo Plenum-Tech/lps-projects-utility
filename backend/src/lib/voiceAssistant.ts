@@ -1162,7 +1162,9 @@ async function scopeUsageOf(ctx: VoiceContext, projectId: string | null): Promis
         "titleParts.unit": { $type: "string" },
       },
     },
-    { $group: { _id: { $toLower: "$titleParts.unit" }, used: { $sum: "$titleParts.quantity" } } },
+    // Deliverables used: distinct numbers per unit (several tasks can work on Video 3).
+    { $group: { _id: { unit: { $toLower: "$titleParts.unit" }, n: "$titleParts.quantity" } } },
+    { $group: { _id: "$_id.unit", used: { $sum: 1 } } },
   ]);
   const usedBy = new Map(used.map((u) => [u._id.trim(), u.used]));
   return [...totals.entries()].map(([key, t]) => ({ unit: t.unit, total: t.total, used: usedBy.get(key) ?? 0 }));
@@ -1824,23 +1826,12 @@ async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard 
       const totals = scopeTotals(project.scopeItems as never);
       const key = d.unit.trim().toLowerCase();
       const allowed = totals.get(key)?.total ?? 0;
-      const [usage] = await Task.aggregate<{ used: number }>([
-        {
-          $match: {
-            project: new mongoose.Types.ObjectId(project.id),
-            iteration: { $ne: "rework" },
-            "overScope.status": { $ne: "rejected" },
-            "titleParts.unit": { $regex: `^${escapeRe(key)}$`, $options: "i" },
-          },
-        },
-        { $group: { _id: null, used: { $sum: "$titleParts.quantity" } } },
-      ]);
-      const after = (usage?.used ?? 0) + d.quantity;
+      // The number names the deliverable (Video 3 of 15); beyond the approved total it waits for approval.
       rows.push([
         "Scope",
-        after > allowed
-          ? `${d.unit} · ${after} / ${allowed} — over the approved scope; it waits for an admin's approval`
-          : `${d.unit} · ${after} / ${allowed} used after this`,
+        d.quantity > allowed
+          ? `${d.unit} ${d.quantity} of ${allowed} — beyond the approved scope; it waits for an admin's approval`
+          : `${d.unit} ${d.quantity} of ${allowed}`,
       ]);
     }
     return { title: d.iteration === "rework" ? "New rework" : "New task", rows, confirm: "Create task" };

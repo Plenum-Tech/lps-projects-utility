@@ -454,6 +454,7 @@ function TaskDetail({
                   ))}
                 </ul>
               </Fact>
+              {task.project?.brand && <Fact label="Brand">{task.project.brand.name}</Fact>}
               {task.project && (
                 <Fact label="Project">
                   {viewOnly || guest ? (

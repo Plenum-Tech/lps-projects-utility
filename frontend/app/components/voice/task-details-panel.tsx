@@ -91,7 +91,7 @@ export function TaskDetailsPanel({
             <p role="alert" className="flex items-start gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
               <LuCircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
               {task.overScope!.status === "pending"
-                ? `Over the approved scope (${task.overScope!.unit}: ${task.overScope!.used + task.overScope!.requested} of ${task.overScope!.allowed}) — it's blocked until an admin approves it, so it can't be closed yet.`
+                ? `Beyond the approved scope (${task.overScope!.unit} ${task.titleParts?.quantity ?? "?"} of ${task.overScope!.allowed} approved) — it's blocked until an admin approves it, so it can't be closed yet.`
                 : "An admin didn't approve this task beyond the scope, so it can't be worked on or closed."}
             </p>
           )}

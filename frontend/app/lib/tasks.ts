@@ -302,3 +302,50 @@ export function parseMentions(
   if (lastIndex < body.length) parts.push({ type: "text", value: body.slice(lastIndex) });
   return parts;
 }
+
+/** A project's scope unit with its deliverables in use (GET /projects/:id/scope-usage). */
+export interface ScopeUnitUsage {
+  unit: string;
+  total: number;
+  /** Deliverables (1 … total) that have tasks. */
+  used: number;
+  deliverables: Array<{ n: number; tasks: number; names: string[] }>;
+}
+
+export interface DeliverableOption {
+  key: string;
+  unit: string;
+  n: number;
+  /** "Video 3 of 15", or "Video 16 (extra)" beyond the scope. */
+  label: string;
+  /** Beyond the approved total. */
+  extra: boolean;
+  tasks: number;
+  names: string[];
+}
+
+/**
+ * The scope as deliverables for the task form: "15 Video" → Video 1 of 15 … Video 15 of 15,
+ * plus extra ones already in use beyond the total and one new extra (needs an admin's approval).
+ */
+export function deliverableOptions(units: ScopeUnitUsage[]): DeliverableOption[] {
+  const out: DeliverableOption[] = [];
+  for (const u of units) {
+    const inUse = new Map(u.deliverables.map((d) => [d.n, d]));
+    const highest = Math.max(u.total, ...u.deliverables.map((d) => d.n));
+    for (let n = 1; n <= highest + 1; n++) {
+      const extra = n > u.total;
+      const use = inUse.get(n);
+      out.push({
+        key: `${u.unit}|${n}`,
+        unit: u.unit,
+        n,
+        label: extra ? `${u.unit} ${n} (extra — needs approval)` : `${u.unit} ${n} of ${u.total}`,
+        extra,
+        tasks: use?.tasks ?? 0,
+        names: use?.names ?? [],
+      });
+    }
+  }
+  return out;
+}

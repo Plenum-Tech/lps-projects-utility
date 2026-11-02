@@ -3,7 +3,7 @@ import { LuListChecks, LuMessageSquare, LuPaperclip, LuRepeat } from "react-icon
 
 import { ShortCode } from "@/components/projects/project-badges";
 import { LabelChip } from "@/components/tasks/label-chip";
-import { AssigneeStack, DueDateChip, PriorityIndicator } from "@/components/tasks/task-badges";
+import { AssigneeStack, DueDateChip, PriorityIndicator, TaskProjectLine } from "@/components/tasks/task-badges";
 import { cn } from "@/lib/utils";
 import type { Task } from "@/types";
 
@@ -92,6 +92,9 @@ export function TaskCard({
           <span className="line-clamp-2">{task.title}</span>
         </button>
       </div>
+
+      {/* Brand · Project, for tracking. */}
+      <TaskProjectLine task={task} link={task.access !== "read"} className="text-[0.7rem]" />
 
       {(task.shortCode || task.milestone) && (
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">

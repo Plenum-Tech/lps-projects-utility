@@ -404,7 +404,9 @@ const scopeUsage = defineTool({
             "titleParts.unit": { $type: "string" },
           },
         },
-        { $group: { _id: { project: "$project", unit: { $toLower: "$titleParts.unit" } }, used: { $sum: "$titleParts.quantity" } } },
+        // Deliverables used: distinct numbers per unit (several tasks can work on Video 3).
+        { $group: { _id: { project: "$project", unit: { $toLower: "$titleParts.unit" }, n: "$titleParts.quantity" } } },
+        { $group: { _id: { project: "$_id.project", unit: "$_id.unit" }, used: { $sum: 1 } } },
       ]),
       Task.aggregate<{ _id: { project: mongoose.Types.ObjectId; status: string }; n: number }>([
         { $match: { project: { $in: ids }, "overScope.status": { $in: ["pending", "approved"] } } },

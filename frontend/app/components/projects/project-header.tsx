@@ -15,6 +15,7 @@ import {
   LuPencil,
   LuPin,
   LuPinOff,
+  LuTags,
   LuTrash2,
   LuTriangleAlert,
   LuUser,
@@ -176,6 +177,22 @@ export function ProjectHeader({
               {project.name}
             </h1>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+              {/* The brand, for tracking (it opens the brand page). */}
+              {project.brand ? (
+                <Link
+                  to={`/brands/${project.brand._id}`}
+                  className="inline-flex items-center gap-1.5 font-medium text-foreground underline-offset-4 outline-none hover:underline focus-visible:underline"
+                  title="Brand"
+                >
+                  <LuTags aria-hidden className="size-4 text-muted-foreground" />
+                  {project.brand.name}
+                </Link>
+              ) : (
+                <span className="inline-flex items-center gap-1.5">
+                  <LuTags aria-hidden className="size-4" />
+                  No brand
+                </span>
+              )}
               <span className="inline-flex items-center gap-1.5">
                 <LuUser aria-hidden className="size-4" />
                 {project.manager ? project.manager.name : "No manager"}

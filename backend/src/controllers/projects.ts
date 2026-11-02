@@ -9,6 +9,7 @@ import { planTeamForProject, syncProjectTeamToPlan } from "../lib/manpowerSync.j
 import { attachBrandFiles, brandById, brandLocksScope, brandScopeForProject, pickBrandScope } from "../lib/brandFlow.js";
 import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
 import { brandsInPlan, currentMonth, notReadyMessage, readinessOf } from "../lib/brandReadiness.js";
+import { deliverableUsage } from "../lib/scopeDeliverables.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendSheet } from "../lib/csv.js";
@@ -2657,7 +2658,7 @@ export async function monthTeamLoad(month: string): Promise<{ max: number; load:
   };
 }
 
-/** GET /api/projects/:id/scope-usage — per scope unit: approved total and used (new work tasks). */
+/** GET /api/projects/:id/scope-usage — per scope unit: approved total, deliverables used and each deliverable's tasks. */
 export async function scopeUsage(req: Request, res: Response): Promise<void> {
   const id = param(req, "id");
   const project = id && !isInvalidObjectId(id) ? await Project.findById(id).select("scopeItems").lean() : null;
@@ -2666,12 +2667,19 @@ export async function scopeUsage(req: Request, res: Response): Promise<void> {
     return;
   }
   const totals = scopeTotals(project.scopeItems as ScopeItem[]);
-  const used = await Task.aggregate<{ _id: string; used: number }>([
-    { $match: { project: project._id, iteration: { $ne: "rework" }, "overScope.status": { $ne: "rejected" }, "titleParts.unit": { $type: "string" } } },
-    { $group: { _id: { $toLower: "$titleParts.unit" }, used: { $sum: "$titleParts.quantity" } } },
-  ]);
-  const usedBy = new Map(used.map((u) => [u._id.trim(), u.used]));
-  res.json({ units: [...totals.entries()].map(([key, t]) => ({ unit: t.unit, total: t.total, used: usedBy.get(key) ?? 0 })) });
+  // Deliverables (Video 1 of 15 …): `used` = how many have tasks; `deliverables` = the ones in use with their tasks.
+  const rows = await deliverableUsage([project._id as mongoose.Types.ObjectId]);
+  res.json({
+    units: [...totals.entries()].map(([key, t]) => {
+      const mine = rows.filter((r) => r.unit === key).sort((a, b) => a.n - b.n);
+      return {
+        unit: t.unit,
+        total: t.total,
+        used: mine.filter((r) => r.n >= 1 && r.n <= t.total).length,
+        deliverables: mine.map((r) => ({ n: r.n, tasks: r.tasks, names: r.names })),
+      };
+    }),
+  });
 }
 
 /**

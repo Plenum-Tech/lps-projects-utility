@@ -1807,6 +1807,8 @@ export interface TaskProjectRef {
   _id: string;
   name: string;
   code: string;
+  /** The project's brand (task lists show "Brand · Project"). */
+  brand?: { _id: string; name: string } | null;
   archivedAt: string | null;
   requireTaskApproval: boolean;
   /** false = only the timer (and time spent when completing) for non-managers. */

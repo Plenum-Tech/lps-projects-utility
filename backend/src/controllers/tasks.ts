@@ -9,6 +9,7 @@ import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
 import { copyGridFsFile, deleteFromGridFs } from "../lib/gridfs.js";
+import { deliverableUsage, extraDeliverableApproved } from "../lib/scopeDeliverables.js";
 import { scopeTotals } from "../lib/scopeUnits.js";
 import { notifyTask } from "../lib/notifications.js";
 import { csvDate, csvDateTime, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendSheet } from "../lib/csv.js";
@@ -1491,27 +1492,19 @@ export async function createTaskCore(
     }
   }
 
-  // Scoped projects: new work beyond a unit's approved total is flagged and
-  // blocked until an admin approves the extra (reworks don't count).
+  // Scoped projects: the title parts name a deliverable (Video 3 of 15). Any number of tasks
+  // may work on one deliverable; a number beyond the unit's approved total is extra work,
+  // flagged and blocked until an admin approves it (once approved, more tasks on it are fine).
+  // Reworks don't count.
   let overScope: ITask["overScope"] = null;
   if (options.enforceRules && project && project.scopeItems?.length && iteration !== "rework" && titleParts) {
     const totals = scopeTotals(project.scopeItems);
     const key = titleParts.unit.trim().toLowerCase();
     const allowed = totals.get(key)?.total ?? 0;
-    const [usage] = await Task.aggregate<{ used: number }>([
-      {
-        $match: {
-          project: project._id,
-          iteration: { $ne: "rework" },
-          "overScope.status": { $ne: "rejected" },
-          "titleParts.unit": { $regex: `^${key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-        },
-      },
-      { $group: { _id: null, used: { $sum: "$titleParts.quantity" } } },
-    ]);
-    const used = usage?.used ?? 0;
-    if (used + titleParts.quantity > allowed) {
-      overScope = { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: titleParts.quantity };
+    const projectId = project._id as mongoose.Types.ObjectId;
+    if (titleParts.quantity > allowed && !(await extraDeliverableApproved(projectId, titleParts.unit, titleParts.quantity))) {
+      const used = (await deliverableUsage([projectId], titleParts.unit)).filter((r) => r.n >= 1 && r.n <= allowed).length;
+      overScope = { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: 1 };
     }
   }
 
@@ -1598,7 +1591,7 @@ export async function createTaskCore(
       actor,
       type: "task_over_scope",
       title: "Task over the approved scope",
-      message: `${actor.name} added "${task.title}" to ${project.name}: ${task.overScope.used + task.overScope.requested} ${task.overScope.unit} against ${task.overScope.allowed} approved.`,
+      message: `${actor.name} added "${task.title}" to ${project.name}: ${task.overScope.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${task.overScope.allowed} approved.`,
       link: "/approvals",
       email: {
         subject: `Over scope: ${task.title}`,
@@ -1609,8 +1602,8 @@ export async function createTaskCore(
           ["Project", project.name],
           ["Unit", task.overScope.unit],
           ["Approved", String(task.overScope.allowed)],
-          ["Already used", String(task.overScope.used)],
-          ["This task", String(task.overScope.requested)],
+          ["Deliverables with tasks", String(task.overScope.used)],
+          ["This task", `${task.overScope.unit} ${task.titleParts?.quantity ?? "?"} (extra)`],
         ],
         buttonLabel: "Review in Approvals",
       },
@@ -2884,7 +2877,7 @@ function taskCode(task: Pick<ITask, "shortCode" | "number">): string {
 }
 
 type ExportRow = Omit<ITask, "project" | "assignees" | "labels" | "category" | "milestone" | "assignedBy"> & {
-  project?: { name?: string } | null;
+  project?: { name?: string; brand?: { name?: string } | null } | null;
   assignees: Array<{ name?: string }>;
   labels: Array<{ name?: string }>;
   category?: { name?: string } | null;
@@ -2953,7 +2946,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
   ]);
   const docs = await Task.find({ _id: { $in: pageIds } })
     .populate([
-      { path: "project", select: "name code" },
+      { path: "project", select: "name code brand", populate: { path: "brand", select: "name" } },
       { path: "assignees", select: "name" },
       { path: "labels", select: "name" },
       { path: "category", select: "name" },
@@ -2967,6 +2960,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
   const headers = [
     "Code",
     "Task",
+    "Brand",
     "Project",
     "Milestone",
     "Status",
@@ -2994,6 +2988,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
       [
         taskCode(t),
         t.title,
+        t.project?.brand?.name ?? "",
         t.project?.name ?? "",
         t.milestone?.title ?? "",
         STATUS_LABELS[t.status],
@@ -3227,7 +3222,7 @@ export async function overScopeTasks(req: Request, res: Response): Promise<void>
     .populate("project", "name code")
     .populate("assignedBy", "name")
     .populate("assignees", "name")
-    .select("title shortCode project assignedBy assignees overScope createdAt")
+    .select("title shortCode titleParts project assignedBy assignees overScope createdAt")
     .lean();
   res.json({ tasks });
 }

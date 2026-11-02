@@ -1,6 +1,5 @@
 import { SubmitTaskDialog } from "@/components/tasks/task-action-dialogs";
 import { useState, type ReactNode } from "react";
-import { Link } from "react-router";
 import {
   LuBellRing,
   LuCopy,
@@ -27,7 +26,7 @@ import { ApprovalActions } from "@/components/tasks/approval-actions";
 import { LabelChip } from "@/components/tasks/label-chip";
 import { PearityTagCell, usePearityGenerateAction } from "@/components/tasks/pearity";
 import { ReworkSourceBadge } from "@/components/tasks/rework-panel";
-import { PriorityIndicator } from "@/components/tasks/task-badges";
+import { PriorityIndicator, TaskProjectLine } from "@/components/tasks/task-badges";
 import { TaskTimerButton } from "@/components/tasks/task-timer-button";
 import { usePearityStatus } from "@/hooks/use-pearity";
 import type { RowSelection, SortDir } from "@/hooks/use-table-state";
@@ -96,21 +95,11 @@ function TaskCell({ task, onOpen, showProject }: { task: Task; onOpen: (id: stri
           <LuRepeat aria-label="Recurring" className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
         )}
       </div>
+      {/* Brand · Project, for tracking (view-only callers can't open the project). */}
+      {showProject && <TaskProjectLine task={task} link={task.access !== "read"} className="max-w-sm" />}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <PriorityIndicator priority={task.priority} />
-        {showProject &&
-          task.project &&
-          (task.access === "read" ? (
-            // View only: the caller can't open the project itself.
-            <span className="max-w-48 truncate text-xs text-muted-foreground">{task.project.name}</span>
-          ) : (
-            <Link
-              to={`/projects/${task.project._id}`}
-              className="max-w-48 truncate text-xs text-muted-foreground underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:underline"
-            >
-              {task.project.name}
-            </Link>
-          ))}
+
         {task.labels.slice(0, 3).map((label) => (
           <LabelChip key={label._id} name={label.name} color={label.color} />
         ))}

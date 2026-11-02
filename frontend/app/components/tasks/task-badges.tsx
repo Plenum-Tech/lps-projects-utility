@@ -1,4 +1,5 @@
 import { LuCalendar } from "react-icons/lu";
+import { Link } from "react-router";
 
 import { AvatarStack } from "@/components/globals/data-table/avatar-stack";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -98,4 +99,36 @@ export function UserAvatar({
 export function AssigneeStack({ users, max = 3 }: { users: UserRef[]; max?: number }) {
   if (users.length === 0) return null;
   return <AvatarStack users={users} max={max} label="Assignees" />;
+}
+
+/**
+ * "Brand · Project" for tracking where a task belongs. A link to the project unless
+ * `link` is off (view-only callers can't open it). The full text is in the tooltip.
+ */
+export function TaskProjectLine({ task, link = true, className }: { task: Pick<Task, "project">; link?: boolean; className?: string }) {
+  if (!task.project) return null;
+  const brand = task.project.brand?.name;
+  const text = brand ? `${brand} · ${task.project.name}` : task.project.name;
+  const body = (
+    <>
+      {brand && <span className="font-medium text-foreground/80">{brand}</span>}
+      {brand && <span aria-hidden> · </span>}
+      {task.project.name}
+    </>
+  );
+  const cls = cn("block max-w-full truncate text-xs text-muted-foreground", className);
+  return link ? (
+    <Link
+      to={`/projects/${task.project._id}`}
+      title={text}
+      onClick={(event) => event.stopPropagation()}
+      className={cn(cls, "underline-offset-4 outline-none hover:text-foreground hover:underline focus-visible:underline")}
+    >
+      {body}
+    </Link>
+  ) : (
+    <span title={text} className={cls}>
+      {body}
+    </span>
+  );
 }

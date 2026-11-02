@@ -76,7 +76,9 @@ import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -103,14 +105,17 @@ import {
   viewTaskFile,
 } from "@/hooks/use-tasks";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   PRIORITIES,
   PRIORITY_META,
+  deliverableOptions,
   formatDateOnly,
   parseEstimate,
   splitEstimate,
   toDateInput,
   todayKey,
+  type ScopeUnitUsage,
 } from "@/lib/tasks";
 import type {
   MentionableUser,
@@ -283,12 +288,18 @@ export function TaskFormDialog({
   const scopeUsage = useQuery({
     queryKey: ["projects", "scope-usage", scopeProjectId],
     queryFn: async () =>
-      (await api.get<{ units: Array<{ unit: string; total: number; used: number }> }>(`/projects/${scopeProjectId}/scope-usage`)).data
-        .units,
+      (await api.get<{ units: ScopeUnitUsage[] }>(`/projects/${scopeProjectId}/scope-usage`)).data.units,
     enabled: open && Boolean(scopeProjectId),
     staleTime: 15_000,
   });
   const scopeUnits = scopeUsage.data ?? [];
+  // Scoped projects: the task picks a deliverable (Video 3 of 15) — the unit and its number.
+  const deliverables = useMemo(() => deliverableOptions(scopeUnits), [scopeUnits]);
+  const pickedDeliverable = deliverables.find(
+    (d) => d.unit.toLowerCase() === form.unit.trim().toLowerCase() && String(d.n) === form.quantity.trim(),
+  );
+  // Editing a task whose deliverable is no longer in the scope: the free unit / number fields.
+  const usePicker = scopeUnits.length > 0 && (!form.unit.trim() || Boolean(pickedDeliverable));
   const navigate = useNavigate();
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
@@ -508,7 +519,7 @@ export function TaskFormDialog({
     : !form.unit.trim()
       ? "Enter the scope unit (e.g. Video, Post, Banner)."
       : !Number.isInteger(quantityNumber) || quantityNumber < 1
-        ? "Quantity must be a whole number, 1 or more."
+        ? "The deliverable number must be a whole number, 1 or more."
         : !form.shortName.trim()
           ? "Enter a short name."
           : null;
@@ -1002,67 +1013,89 @@ export function TaskFormDialog({
                   {needProjectFirst && (
                     <p className="text-xs text-muted-foreground">Choose the project first — the scope units and the title come from it.</p>
                   )}
-                  <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
-                    {scopeUnits.length > 0 ? (
+                  {usePicker ? (
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                       <Select
-                        value={form.unit || null}
-                        items={Object.fromEntries(scopeUnits.map((u) => [u.unit, u.unit]))}
+                        value={pickedDeliverable?.key ?? null}
+                        items={Object.fromEntries(deliverables.map((d) => [d.key, d.label]))}
                         onValueChange={(value) => {
-                          const unit = scopeUnits.find((u) => u.unit === value);
-                          // The next number of that scope item (e.g. Reel 4 after 3 used).
-                          setForm((current) => ({
-                            ...current,
-                            unit: (value as string) ?? "",
-                            ...(!task && unit ? { quantity: String(Math.min(unit.used + 1, Math.max(unit.total, 1))) } : {}),
-                          }));
+                          const d = deliverables.find((x) => x.key === value);
+                          if (d) setForm((current) => ({ ...current, unit: d.unit, quantity: String(d.n) }));
                         }}
                       >
-                        <SelectTrigger id="task-unit" className="w-full" aria-label="Scope item" aria-invalid={titleInvalid || undefined}>
-                          <SelectValue placeholder="Choose a scope item" />
+                        <SelectTrigger id="task-unit" className="w-full" aria-label="Deliverable" aria-invalid={titleInvalid || undefined}>
+                          <SelectValue placeholder="Choose the deliverable" />
                         </SelectTrigger>
                         <SelectContent>
                           {scopeUnits.map((u) => (
-                            <SelectItem key={u.unit} value={u.unit}>
-                              {u.unit} · {Math.max(u.total - u.used, 0)} of {u.total} left
-                            </SelectItem>
+                            <SelectGroup key={u.unit}>
+                              <SelectLabel>
+                                {u.unit} · {u.used} of {u.total} have tasks
+                              </SelectLabel>
+                              {deliverables
+                                .filter((d) => d.unit === u.unit)
+                                .map((d) => (
+                                  <SelectItem key={d.key} value={d.key}>
+                                    <span className={cn(d.extra && "text-amber-700 dark:text-amber-400")}>{d.label}</span>
+                                    {d.tasks > 0 && (
+                                      <span className="ml-1.5 text-xs text-muted-foreground">
+                                        · {d.tasks} task{d.tasks === 1 ? "" : "s"}
+                                        {d.names.length > 0 && ` (${d.names.join(", ")})`}
+                                      </span>
+                                    )}
+                                  </SelectItem>
+                                ))}
+                            </SelectGroup>
                           ))}
                         </SelectContent>
                       </Select>
-                    ) : (
-                    <Input
-                      id="task-unit"
-                      value={form.unit}
-                      onChange={(event) => set("unit", event.target.value)}
-                      maxLength={40}
-                      placeholder="Scope unit (e.g. Video)"
-                      aria-label="Scope unit"
-                      aria-invalid={titleInvalid || undefined}
-                      disabled={needProjectFirst}
-                    />
-                    )}
-                    <Input
-                      type="number"
-                      min={1}
-                      step={1}
-                      value={form.quantity}
-                      onChange={(event) => set("quantity", event.target.value)}
-                      aria-label="Quantity"
-                      aria-invalid={titleInvalid || undefined}
-                      disabled={needProjectFirst || needScopeItemFirst}
-                    />
-                    <Input
-                      value={form.shortName}
-                      onChange={(event) => set("shortName", event.target.value)}
-                      maxLength={80}
-                      placeholder="Short name (e.g. Launch teaser)"
-                      aria-label="Short name"
-                      aria-invalid={titleInvalid || undefined}
-                      disabled={needProjectFirst || needScopeItemFirst}
-                    />
-                  </div>
+                      <Input
+                        value={form.shortName}
+                        onChange={(event) => set("shortName", event.target.value)}
+                        maxLength={80}
+                        placeholder="What this task does (e.g. Copy, Design, Review)"
+                        aria-label="Short name"
+                        aria-invalid={titleInvalid || undefined}
+                        disabled={needProjectFirst || needScopeItemFirst}
+                      />
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
+                      <Input
+                        id="task-unit"
+                        value={form.unit}
+                        onChange={(event) => set("unit", event.target.value)}
+                        maxLength={40}
+                        placeholder="Scope unit (e.g. Video)"
+                        aria-label="Scope unit"
+                        aria-invalid={titleInvalid || undefined}
+                        disabled={needProjectFirst}
+                      />
+                      <Input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={form.quantity}
+                        onChange={(event) => set("quantity", event.target.value)}
+                        aria-label="Deliverable number"
+                        aria-invalid={titleInvalid || undefined}
+                        disabled={needProjectFirst}
+                      />
+                      <Input
+                        value={form.shortName}
+                        onChange={(event) => set("shortName", event.target.value)}
+                        maxLength={80}
+                        placeholder="Short name (e.g. Launch teaser)"
+                        aria-label="Short name"
+                        aria-invalid={titleInvalid || undefined}
+                        disabled={needProjectFirst}
+                      />
+                    </div>
+                  )}
                   {needScopeItemFirst && (
                     <p className="text-xs text-muted-foreground">
-                      Choose what this task delivers from the project&apos;s scope, then give it a short name.
+                      Choose the deliverable from the project&apos;s scope (e.g. Video 3 of 15), then say what this task does — copy, design,
+                      review… Several tasks can work on the same deliverable.
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
@@ -1072,14 +1105,21 @@ export function TaskFormDialog({
                     </span>{" "}
                     — brand and month come from the project.
                   </p>
-                  {!task && scopeUnits.length > 0 && (() => {
+                  {!task && pickedDeliverable && pickedDeliverable.tasks > 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      {pickedDeliverable.unit} {pickedDeliverable.n} already has {pickedDeliverable.tasks} task
+                      {pickedDeliverable.tasks === 1 ? "" : "s"}
+                      {pickedDeliverable.names.length > 0 && ` (${pickedDeliverable.names.join(", ")})`} — this one is added to it.
+                    </p>
+                  )}
+                  {!task && scopeUnits.length > 0 && form.unit.trim() && (() => {
                     const unit = scopeUnits.find((u) => u.unit.toLowerCase() === form.unit.trim().toLowerCase());
-                    const qty = Number(form.quantity) || 0;
-                    const over = !unit ? Boolean(form.unit.trim()) : unit.used + qty > unit.total;
+                    // Beyond the approved total: a new extra deliverable waits for an admin (one that already has tasks doesn't).
+                    const over = !unit ? true : quantityNumber > unit.total && !(pickedDeliverable && pickedDeliverable.tasks > 0);
                     return over ? (
                       <p className="rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
                         {unit
-                          ? `This goes over the approved scope (${unit.used + qty} of ${unit.total} ${unit.unit}).`
+                          ? `${unit.unit} ${quantityNumber} is beyond the approved scope (${unit.total} ${unit.unit}).`
                           : `${form.unit.trim()} isn't in this project's scope.`}{" "}
                         The task is saved but blocked until an admin approves it.
                       </p>

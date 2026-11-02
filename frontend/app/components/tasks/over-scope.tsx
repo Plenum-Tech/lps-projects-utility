@@ -18,6 +18,7 @@ interface OverScopeRow {
   project?: { _id: string; name: string; code: string } | null;
   assignedBy?: { name: string } | null;
   assignees?: Array<{ name: string }>;
+  titleParts?: Task["titleParts"];
   overScope: NonNullable<Task["overScope"]>;
   createdAt: string;
 }
@@ -78,7 +79,8 @@ export function OverScopeBanner({ task }: { task: Task }) {
   const { data: user } = useCurrentUser();
   const o = task.overScope;
   if (!o) return null;
-  const text = `${o.used + o.requested} ${o.unit} against ${o.allowed} approved in the scope (this task: ${o.requested}).`;
+  // The task names a deliverable (Video 16) beyond the unit's approved total.
+  const text = `${o.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${o.allowed} approved in the scope (${o.used} of ${o.allowed} have tasks).`;
   if (o.status === "approved") {
     return (
       <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -134,9 +136,10 @@ export function OverScopeApprovals() {
                   {t.assignedBy?.name ?? "Someone"} · {formatDateTime(t.createdAt)}
                 </p>
                 <p className="text-sm">
-                  <span className="font-medium">{t.overScope.unit}:</span> {t.overScope.used} used + {t.overScope.requested} new ={" "}
-                  <span className="font-medium text-amber-700 dark:text-amber-400">{t.overScope.used + t.overScope.requested}</span> of{" "}
-                  {t.overScope.allowed} approved
+                  <span className="font-medium text-amber-700 dark:text-amber-400">
+                    {t.overScope.unit} {t.titleParts?.quantity ?? "?"}
+                  </span>{" "}
+                  is beyond the {t.overScope.allowed} approved ({t.overScope.used} of {t.overScope.allowed} have tasks)
                 </p>
               </div>
               <DecideButtons id={t._id} />
