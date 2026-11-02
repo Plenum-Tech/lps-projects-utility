@@ -1807,8 +1807,8 @@ export interface TaskProjectRef {
   _id: string;
   name: string;
   code: string;
-  /** The project's brand (task lists show "Brand · Project"). */
-  brand?: { _id: string; name: string } | null;
+  /** The project's brand and its organisation (task lists show "Org › Brand · Project"). */
+  brand?: { _id: string; name: string; organisation?: string } | null;
   archivedAt: string | null;
   requireTaskApproval: boolean;
   /** false = only the timer (and time spent when completing) for non-managers. */
@@ -3191,7 +3191,11 @@ export interface Brand {
   active: boolean;
   /** Absent on older brands (= approved). Pending / rejected brands can't be used yet. */
   status?: "approved" | "pending" | "rejected";
+  /** Projects using this brand, archived ones too (blocks deletion when > 0). */
   projectCount: number;
+  /** Of those: not archived / archived (Settings → Brands shows them apart). */
+  openProjectCount?: number;
+  archivedProjectCount?: number;
   /** Brand flow: a pitch (has potential revenue) or a direct client. */
   isPitch?: boolean;
   revenue?: number | null;
@@ -3595,6 +3599,8 @@ export interface ProjectBrandRef {
   shortName: string;
   color: BrandColor;
   active: boolean;
+  /** The brand's organisation ("ENOC" for Zoom), "" when none. */
+  organisation?: string;
 }
 
 export interface OutcomeReadiness {

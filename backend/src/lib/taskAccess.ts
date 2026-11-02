@@ -144,7 +144,7 @@ export const TASK_POPULATE = [
   { path: "subtasks.assignee", select: "name email" },
   { path: "reviewedBy", select: "name" },
   // The brand travels with the project so lists show "Brand · Project" for tracking.
-  { path: "project", select: "name code archivedAt requireTaskApproval manualTimeLogs brand", populate: { path: "brand", select: "name" } },
+  { path: "project", select: "name code archivedAt requireTaskApproval manualTimeLogs brand", populate: { path: "brand", select: "name organisation" } },
   { path: "milestone", select: "title endDate status" },
   { path: "reworkOf", select: "title shortCode number status" },
 ];

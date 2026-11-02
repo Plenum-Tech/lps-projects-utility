@@ -326,12 +326,21 @@ export function ProjectsTable({
 
 function ProjectBrandCell({ project }: { project: Project }) {
   if (!project.brand) return <span className="text-sm text-muted-foreground">—</span>;
+  const org = project.brand.organisation?.trim();
   return (
-    <BrandName
-      name={project.brand.name}
-      color={project.brand.color}
-      active={project.brand.active}
-      className="max-w-40 text-sm"
-    />
+    <div className="min-w-0">
+      <BrandName
+        name={project.brand.name}
+        color={project.brand.color}
+        active={project.brand.active}
+        className="max-w-40 text-sm"
+      />
+      {/* The organisation, when it isn't the brand itself (ENOC above Zoom). */}
+      {org && org.toLowerCase() !== project.brand.name.trim().toLowerCase() && (
+        <p className="max-w-40 truncate text-xs text-muted-foreground" title={org}>
+          {org}
+        </p>
+      )}
+    </div>
   );
 }

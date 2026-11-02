@@ -86,6 +86,7 @@ import {
   describeRecurrence,
   formatDateOnly,
   formatEffort,
+  brandWithOrg,
 } from "@/lib/tasks";
 import type { Role, Task, TaskPermissions } from "@/types";
 
@@ -454,7 +455,7 @@ function TaskDetail({
                   ))}
                 </ul>
               </Fact>
-              {task.project?.brand && <Fact label="Brand">{task.project.brand.name}</Fact>}
+              {task.project?.brand && <Fact label="Brand">{brandWithOrg(task.project.brand)}</Fact>}
               {task.project && (
                 <Fact label="Project">
                   {viewOnly || guest ? (

@@ -782,7 +782,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
   type Row = Omit<IProject, "status" | "category" | "brand" | "manager" | "departments" | "members"> & {
     status?: { name?: string } | null;
     category?: { name?: string } | null;
-    brand?: { name?: string } | null;
+    brand?: { name?: string; organisation?: string } | null;
     manager?: { name?: string } | null;
     departments: Array<{ name?: string }>;
     members: Array<{ user?: { name?: string } | null }>;
@@ -791,7 +791,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     .populate([
       { path: "status", select: "name" },
       { path: "category", select: "name" },
-      { path: "brand", select: "name" },
+      { path: "brand", select: "name organisation" },
       { path: "manager", select: "name" },
       { path: "departments", select: "name" },
       { path: "members.user", select: "name" },
@@ -804,6 +804,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
     "Code",
     "Project",
     "Category",
+    "Organisation",
     "Brand",
     "Departments",
     "Manager",
@@ -829,6 +830,7 @@ export async function exportProjects(req: Request, res: Response): Promise<void>
         p.code,
         p.name,
         p.category?.name ?? "",
+        p.brand?.organisation ?? "",
         p.brand?.name ?? "",
         p.departments.map((d) => d.name ?? "").filter(Boolean).join("; "),
         p.manager?.name ?? "",

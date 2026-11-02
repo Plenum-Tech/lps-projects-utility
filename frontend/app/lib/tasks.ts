@@ -349,3 +349,10 @@ export function deliverableOptions(units: ScopeUnitUsage[]): DeliverableOption[]
   }
   return out;
 }
+
+/** "ENOC › Zoom": the brand with its organisation (just the brand when there's none, or it's the same name). */
+export function brandWithOrg(brand: { name: string; organisation?: string | null } | null | undefined): string {
+  if (!brand) return "";
+  const org = brand.organisation?.trim();
+  return org && org.toLowerCase() !== brand.name.trim().toLowerCase() ? `${org} › ${brand.name}` : brand.name;
+}

@@ -120,7 +120,12 @@ function BrandRow({ brand, onEdit, onDelete }: { brand: Brand; onEdit: () => voi
           {brand.shortName && <span className="ml-1.5 font-mono text-xs font-normal text-muted-foreground">{brand.shortName}</span>}
         </p>
         <p className="text-xs text-muted-foreground">
-          {brand.projectCount} {brand.projectCount === 1 ? "project" : "projects"}
+          {/* Open projects; archived ones listed apart (they still keep the brand from being deleted). */}
+          {(() => {
+            const open = brand.openProjectCount ?? brand.projectCount;
+            const archived = brand.archivedProjectCount ?? 0;
+            return `${open} ${open === 1 ? "project" : "projects"}${archived ? ` · ${archived} archived` : ""}`;
+          })()}
           {!brand.active && " · inactive"}
         </p>
       </div>
@@ -283,7 +288,7 @@ function DeleteBrandDialog({ brand, onClose }: { brand: Brand | null; onClose: (
           <AlertDialogTitle>{inUse ? `“${brand?.name}” is in use` : `Delete “${brand?.name}”?`}</AlertDialogTitle>
           <AlertDialogDescription>
             {inUse
-              ? `${brand?.projectCount} ${brand?.projectCount === 1 ? "project uses" : "projects use"} this brand, so it can't be deleted. Deactivate it instead — existing projects keep it, new ones can't pick it.`
+              ? `${brand?.projectCount} ${brand?.projectCount === 1 ? "project uses" : "projects use"} this brand${brand?.archivedProjectCount ? ` (${brand.archivedProjectCount} archived)` : ""}, so it can't be deleted. Deactivate it instead — existing projects keep it, new ones can't pick it.`
               : "This can't be undone. It's also removed from the delivery settings (same-day list and team map)."}
           </AlertDialogDescription>
         </AlertDialogHeader>

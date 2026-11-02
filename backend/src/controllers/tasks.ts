@@ -2877,7 +2877,7 @@ function taskCode(task: Pick<ITask, "shortCode" | "number">): string {
 }
 
 type ExportRow = Omit<ITask, "project" | "assignees" | "labels" | "category" | "milestone" | "assignedBy"> & {
-  project?: { name?: string; brand?: { name?: string } | null } | null;
+  project?: { name?: string; brand?: { name?: string; organisation?: string } | null } | null;
   assignees: Array<{ name?: string }>;
   labels: Array<{ name?: string }>;
   category?: { name?: string } | null;
@@ -2946,7 +2946,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
   ]);
   const docs = await Task.find({ _id: { $in: pageIds } })
     .populate([
-      { path: "project", select: "name code brand", populate: { path: "brand", select: "name" } },
+      { path: "project", select: "name code brand", populate: { path: "brand", select: "name organisation" } },
       { path: "assignees", select: "name" },
       { path: "labels", select: "name" },
       { path: "category", select: "name" },
@@ -2960,6 +2960,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
   const headers = [
     "Code",
     "Task",
+    "Organisation",
     "Brand",
     "Project",
     "Milestone",
@@ -2988,6 +2989,7 @@ export async function exportTasks(req: Request, res: Response): Promise<void> {
       [
         taskCode(t),
         t.title,
+        t.project?.brand?.organisation ?? "",
         t.project?.brand?.name ?? "",
         t.project?.name ?? "",
         t.milestone?.title ?? "",

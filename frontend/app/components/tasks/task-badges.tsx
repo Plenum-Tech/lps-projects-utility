@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import {
   PRIORITY_META,
   STATUS_META,
+  brandWithOrg,
   formatDateOnly,
   initials,
   isDueToday,
@@ -107,7 +108,7 @@ export function AssigneeStack({ users, max = 3 }: { users: UserRef[]; max?: numb
  */
 export function TaskProjectLine({ task, link = true, className }: { task: Pick<Task, "project">; link?: boolean; className?: string }) {
   if (!task.project) return null;
-  const brand = task.project.brand?.name;
+  const brand = brandWithOrg(task.project.brand);
   const text = brand ? `${brand} · ${task.project.name}` : task.project.name;
   const body = (
     <>

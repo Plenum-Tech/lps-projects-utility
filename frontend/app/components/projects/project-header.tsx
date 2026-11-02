@@ -69,7 +69,7 @@ import {
   useTogglePin,
 } from "@/hooks/use-projects";
 import { statusColor } from "@/lib/projects";
-import { formatDateOnly } from "@/lib/tasks";
+import { brandWithOrg, formatDateOnly } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectPermissions } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
@@ -185,7 +185,7 @@ export function ProjectHeader({
                   title="Brand"
                 >
                   <LuTags aria-hidden className="size-4 text-muted-foreground" />
-                  {project.brand.name}
+                  {brandWithOrg(project.brand)}
                 </Link>
               ) : (
                 <span className="inline-flex items-center gap-1.5">

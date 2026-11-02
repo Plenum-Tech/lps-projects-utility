@@ -156,17 +156,27 @@ function parseActive(raw: unknown): boolean {
   return raw;
 }
 
-async function projectCounts(ids: mongoose.Types.ObjectId[]): Promise<Map<string, number>> {
+/** Projects per brand: all of them (they block deleting the brand) and how many are archived. */
+async function projectCounts(ids: mongoose.Types.ObjectId[]): Promise<Map<string, { total: number; archived: number }>> {
   if (ids.length === 0) return new Map();
-  const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId; count: number }>([
+  const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId; count: number; archived: number }>([
     { $match: { brand: { $in: ids } } },
-    { $group: { _id: "$brand", count: { $sum: 1 } } },
+    { $group: { _id: "$brand", count: { $sum: 1 }, archived: { $sum: { $cond: [{ $ifNull: ["$archivedAt", false] }, 1, 0] } } } },
   ]);
-  return new Map(rows.map((r) => [String(r._id), r.count]));
+  return new Map(rows.map((r) => [String(r._id), { total: r.count, archived: r.archived }]));
 }
 
-export function serialize(brand: IBrand, projectCount: number) {
-  return { ...(brand.toJSON() as Record<string, unknown>), projectCount };
+/**
+ * `projectCount`: every project of the brand, archived ones too (they keep it from being
+ * deleted); `openProjectCount` / `archivedProjectCount` split it for display.
+ */
+export function serialize(brand: IBrand, projectCount: number, archived = 0) {
+  return {
+    ...(brand.toJSON() as Record<string, unknown>),
+    projectCount,
+    openProjectCount: Math.max(projectCount - archived, 0),
+    archivedProjectCount: archived,
+  };
 }
 
 export function sendFieldError(res: Response, err: unknown): boolean {
@@ -194,7 +204,13 @@ export async function listBrands(req: Request, res: Response): Promise<void> {
   const filter: Record<string, unknown> = req.query.active === "true" ? { $and: [visible, { active: true }] } : visible;
   const brands = await Brand.find(filter).sort({ nameKey: 1, name: 1, _id: 1 });
   const counts = await projectCounts(brands.map((b) => b._id as mongoose.Types.ObjectId));
-  res.json({ brands: brands.map((b) => serialize(b, counts.get(String(b._id)) ?? 0)), total: brands.length });
+  res.json({
+    brands: brands.map((b) => {
+      const c = counts.get(String(b._id));
+      return serialize(b, c?.total ?? 0, c?.archived ?? 0);
+    }),
+    total: brands.length,
+  });
 }
 
 /**
@@ -427,7 +443,7 @@ export async function updateBrand(req: Request, res: Response): Promise<void> {
     });
   }
   const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
-  res.json({ brand: serialize(brand, counts.get(String(brand._id)) ?? 0), changed: [...directChanged, ...changed], ...(pendingApproval ? { pendingApproval } : {}) });
+  res.json({ brand: serialize(brand, counts.get(String(brand._id))?.total ?? 0, counts.get(String(brand._id))?.archived ?? 0), changed: [...directChanged, ...changed], ...(pendingApproval ? { pendingApproval } : {}) });
 }
 
 // ---------------------------------------------------------------------------
@@ -513,7 +529,7 @@ export async function renameBrand(req: Request, res: Response): Promise<void> {
     });
   const counts = await projectCounts([brand._id as mongoose.Types.ObjectId]);
   res.json({
-    brand: serialize(brand, counts.get(String(brand._id)) ?? 0),
+    brand: serialize(brand, counts.get(String(brand._id))?.total ?? 0, counts.get(String(brand._id))?.archived ?? 0),
     projectsRenamed: follow?.projects ?? 0,
     skipped: follow?.skipped ?? [],
     plans: follow?.plans ?? [],

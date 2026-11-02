@@ -282,7 +282,7 @@ export function pushProjectUpdate(
 export const PROJECT_POPULATE = [
   { path: "status", select: "name color isDefault isCompleted order" },
   { path: "category", select: "name" },
-  { path: "brand", select: "name shortName color active" },
+  { path: "brand", select: "name shortName color active organisation" },
   { path: "departments", select: "name" },
   { path: "manager", select: "name email" },
   { path: "members.user", select: "name email role department" },
