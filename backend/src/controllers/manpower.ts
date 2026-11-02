@@ -652,6 +652,8 @@ export async function writePlanVersion(params: {
   source: "edit" | "copy" | "import";
   actor: IUser;
   ip?: string;
+  /** Live at once without leadership approval (month migration by a brand creator). */
+  autoApprove?: boolean;
 }): Promise<{ version: number; pendingApproval?: string }> {
   const { month, before, actor, ip } = params;
   // Brand-linked lines are named after their brand (new, relinked or renamed lines).
@@ -665,7 +667,7 @@ export async function writePlanVersion(params: {
   const approvedRows = (approved?.rows ?? []) as IManpowerRow[];
   const approvedVersion = approved?.version ?? null;
   const baseVersion = params.baseVersion === undefined ? params.latestVersion : params.baseVersion;
-  const needsApproval = !(await isLeadershipActor(actor));
+  const needsApproval = !params.autoApprove && !(await isLeadershipActor(actor));
   // Where the save lands: the pending version for a non-leader (changes add up), else the approved plan.
   const onto = needsApproval && pending ? { version: pending.version, rows: pending.rows as IManpowerRow[] } : { version: approvedVersion, rows: approvedRows };
   const merged = baseVersion === onto.version ? saved : applyPlanDelta(onto.rows, planDelta(before, saved));

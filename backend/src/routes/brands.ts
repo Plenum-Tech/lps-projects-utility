@@ -3,6 +3,7 @@ import { createBrandFlow, extractBrandScope, readPitchSheet } from "../controlle
 import { previewPitchImport, runPitchImport } from "../controllers/pitchImport.js";
 import { exportPitches, listPitches, recordPitchOutcome, updatePitch } from "../controllers/pitches.js";
 import { brandReadiness } from "../controllers/brandReadiness.js";
+import { previewMonthMigration, runMigration } from "../controllers/monthMigration.js";
 import { createBrand, decideBrand, deleteBrand, listBrands, moveProjects, previewMoveProjects, renameBrand, updateBrand } from "../controllers/brands.js";
 import { brandDetail, brandOverview, deleteBrandFile, downloadBrandFile, splitBrand, uploadBrandFiles } from "../controllers/brandDashboard.js";
 import { requireBrandCreator, requireBrandManager, requireBrandRenamer } from "../lib/brandAccess.js";
@@ -29,6 +30,9 @@ router.get("/pitches/export", exportPitches);
 router.patch("/pitches/:id", updatePitch);
 router.post("/pitches/:id/steps/:step/outcome", recordPitchOutcome);
 router.post("/", requireBrandCreator, createBrand);
+// Month migration: the picked brands' plan lines and projects move to the next month, approved at once.
+router.get("/month-migration", requireBrandCreator, previewMonthMigration);
+router.post("/month-migration", requireBrandCreator, runMigration);
 // Brand flow (Brands → New brand): read the scope from files, read the pitch
 // tracker, then create the brand with its project, lead tasks and team.
 router.post("/scope-extract", requireRole("admin"), scopeExtractRateLimit, uploadTaskFilesMiddleware, extractBrandScope);

@@ -5,7 +5,7 @@ import { projectKeys } from "@/hooks/use-projects";
 import { SettingsFieldError } from "@/hooks/use-settings";
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
-import type { Brand, BrandInput, PitchImportResult, PitchImportRow, PitchSheetRow, ScopeExtraction } from "@/types";
+import type { Brand, BrandInput, MonthMigrationPreview, MonthMigrationResult, PitchImportResult, PitchImportRow, PitchSheetRow, ScopeExtraction } from "@/types";
 
 export const brandKeys = {
   all: ["brands"] as const,
@@ -214,6 +214,29 @@ export function useRunPitchImport() {
     onSuccess: () => {
       invalidate();
       void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+    },
+  });
+}
+
+/** Brands → Migrate to next month: what would roll over from `from` to `to`. */
+export function useMonthMigrationPreview(from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["brands", "month-migration", from, to],
+    queryFn: async () => (await api.get<MonthMigrationPreview>("/brands/month-migration", { params: { from, to } })).data,
+    enabled,
+  });
+}
+
+/** Runs the migration for the picked brands (plan lines + projects, approved at once). */
+export function useRunMonthMigration() {
+  const invalidate = useInvalidateBrands();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { from: string; to: string; brandIds: string[] }) =>
+      (await api.post<MonthMigrationResult>("/brands/month-migration", input, { timeout: 300_000 })).data,
+    onSuccess: () => {
+      invalidate();
+      void queryClient.invalidateQueries({ queryKey: ["manpower"] });
     },
   });
 }

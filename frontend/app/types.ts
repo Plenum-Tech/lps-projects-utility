@@ -4545,3 +4545,27 @@ export interface PitchesResponse {
   today: string;
   totals: { count: number; revenue: number; tbc: number };
 }
+
+/** GET /api/brands/month-migration — brands that can roll over from `from` to `to`. */
+export interface MonthMigrationPreview {
+  from: string;
+  to: string;
+  fromPlanVersion: number | null;
+  brands: Array<{
+    brand: { _id: string; name: string; organisation: string };
+    projects: Array<{ _id: string; name: string; type: string; title: string; newName: string; exists: boolean }>;
+    planLines: number;
+    inTargetPlan: boolean;
+    hasScope: boolean;
+    hasLead: boolean;
+  }>;
+}
+
+/** POST /api/brands/month-migration result. */
+export interface MonthMigrationResult {
+  from: string;
+  to: string;
+  plan: { version: number; lines: number } | { skipped: string };
+  created: Array<{ brand: string; projectId: string; name: string }>;
+  skipped: Array<{ brand: string; reason: string }>;
+}

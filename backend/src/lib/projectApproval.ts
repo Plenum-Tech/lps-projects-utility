@@ -89,13 +89,13 @@ async function projectRows(project: IProject): Promise<Array<[string, string]>> 
 export async function requestProjectApproval(
   projectId: mongoose.Types.ObjectId,
   actor: IUser,
-  options: { sendEmail?: boolean; resubmit?: boolean } = {}
+  options: { sendEmail?: boolean; resubmit?: boolean; autoApproveReason?: string } = {}
 ): Promise<ProjectApprovalStatus> {
   const settings = await getProjectSettings();
   const approvers = await projectApproverIds();
   const now = new Date();
   const selfApproved = approvers.some((id) => id.equals(actor._id as mongoose.Types.ObjectId));
-  if (!settings.projectApprovalRequired || approvers.length === 0 || selfApproved) {
+  if (!settings.projectApprovalRequired || approvers.length === 0 || selfApproved || options.autoApproveReason) {
     await Project.updateOne(
       { _id: projectId },
       {
@@ -106,7 +106,13 @@ export async function requestProjectApproval(
             requestedBy: actor._id,
             decidedAt: now,
             decidedBy: selfApproved ? actor._id : null,
-            reason: selfApproved ? "Created by an approver" : approvers.length === 0 ? "No approver configured" : "Approval not required",
+            reason: options.autoApproveReason
+              ? options.autoApproveReason
+              : selfApproved
+                ? "Created by an approver"
+                : approvers.length === 0
+                  ? "No approver configured"
+                  : "Approval not required",
             tokens: [],
           },
         },

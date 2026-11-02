@@ -1008,6 +1008,8 @@ export interface ProjectWriteOptions {
   exceptions?: ExceptionBatch;
   /** Nobody is told (no "added to a project" notification / email): a quiet plan → project sync. */
   silent?: boolean;
+  /** Create: the project is approved at once with this reason (month migration). */
+  autoApproveReason?: string;
 }
 
 /** The pitch's steps (lib/pitches.ts reads their status from these task titles). */
@@ -1286,7 +1288,7 @@ export async function createProjectCore(
   notifyMembersAdded(project, members.map((m) => m.user), actor, options.sendEmail !== false);
   pushProjectUpdate(project, "created", { actorId: actor._id.toString() });
   scheduleProjectTag(projectId);
-  const approval = await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false });
+  const approval = await requestProjectApproval(projectId, actor, { sendEmail: options.sendEmail !== false, autoApproveReason: options.autoApproveReason });
   // A project waiting for approval reaches the manpower plan only once approved (lib/projectApproval.ts).
   if (approval === "approved" && (project.team ?? []).length && !options.skipPlanSync) {
     await syncProjectTeamToPlan(project, actor);
