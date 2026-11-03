@@ -20,6 +20,8 @@ export const TIMELOG_POPULATE = [
   { path: "user", select: "name email department" },
   { path: "project", select: "name code" },
   { path: "task", select: "title shortCode" },
+  // Brand time (Program / CM / leadership weekly timesheet rows): no project or task.
+  { path: "brand", select: "name organisation" },
   { path: "reviewedBy", select: "name" },
   { path: "addedBy", select: "name" },
   { path: "editedBy", select: "name" },

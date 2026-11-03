@@ -1,4 +1,7 @@
+import { LuTags, LuX } from "react-icons/lu";
+
 import { ShortCode } from "@/components/projects/project-badges";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -13,13 +16,27 @@ import {
 } from "@/components/ui/table";
 import { dateKey, formatDayLabel, formatMinutes } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import type { TimesheetTask } from "@/types";
 
 const DAY_MAX = 24 * 60;
 
+/**
+ * A grid row: a task, or (Program / CM / leadership) a brand as a whole. Brand row ids
+ * are `brand:<brandId>`; brand rows carry an optional note and can be removed.
+ */
+export interface TimesheetGridRow {
+  id: string;
+  title: string;
+  code?: string | null;
+  sublabel?: string | null;
+  brand?: boolean;
+  note?: string;
+  onNoteChange?: (note: string) => void;
+  onRemove?: () => void;
+}
+
 /** Grid cell key. */
-export function cellKey(taskId: string, day: string) {
-  return `${taskId}|${day}`;
+export function cellKey(rowId: string, day: string) {
+  return `${rowId}|${day}`;
 }
 
 /**
@@ -53,18 +70,18 @@ export function minutesToCell(minutes: number): string {
 }
 
 /**
- * Weekly grid: tasks × Mon–Sun with hour inputs, row / day / grand totals.
+ * Weekly grid: rows (tasks, brands) × Mon–Sun with hour inputs, row / day / grand totals.
  * Values are raw strings so the user can type "1:30" freely; invalid cells
  * are flagged and excluded from totals.
  */
 export function TimesheetGrid({
-  tasks,
+  rows,
   days,
   values,
   onChange,
   readOnly,
 }: {
-  tasks: TimesheetTask[];
+  rows: TimesheetGridRow[];
   days: string[];
   values: Record<string, string>;
   onChange: (key: string, value: string) => void;
@@ -72,10 +89,10 @@ export function TimesheetGrid({
 }) {
   const today = dateKey(new Date());
 
-  const minutesOf = (taskId: string, day: string) =>
-    parseHours(values[cellKey(taskId, day)] ?? "") ?? 0;
+  const minutesOf = (rowId: string, day: string) =>
+    parseHours(values[cellKey(rowId, day)] ?? "") ?? 0;
 
-  const dayTotals = days.map((day) => tasks.reduce((sum, task) => sum + minutesOf(task._id, day), 0));
+  const dayTotals = days.map((day) => rows.reduce((sum, row) => sum + minutesOf(row.id, day), 0));
   const grandTotal = dayTotals.reduce((sum, value) => sum + value, 0);
 
   return (
@@ -85,7 +102,7 @@ export function TimesheetGrid({
           <Table className="min-w-[46rem]">
             <TableHeader>
               <TableRow>
-                <TableHead className="sticky left-0 z-10 min-w-52 bg-card">Task</TableHead>
+                <TableHead className="sticky left-0 z-10 min-w-52 bg-card">Task / brand</TableHead>
                 {days.map((day) => {
                   const label = formatDayLabel(day);
                   return (
@@ -104,25 +121,47 @@ export function TimesheetGrid({
               </TableRow>
             </TableHeader>
             <TableBody>
-              {tasks.map((task) => {
-                const rowTotal = days.reduce((sum, day) => sum + minutesOf(task._id, day), 0);
+              {rows.map((row) => {
+                const rowTotal = days.reduce((sum, day) => sum + minutesOf(row.id, day), 0);
                 return (
-                  <TableRow key={task._id}>
+                  <TableRow key={row.id}>
                     <TableCell className="sticky left-0 z-10 max-w-64 bg-card">
                       <div className="flex min-w-0 items-center gap-1.5">
-                        {task.shortCode && <ShortCode code={task.shortCode} />}
-                        <span className="truncate text-sm font-medium" title={task.title}>
-                          {task.title}
+                        {row.brand && <LuTags aria-hidden className="size-3.5 shrink-0 text-primary" />}
+                        {row.code && <ShortCode code={row.code} />}
+                        <span className="truncate text-sm font-medium" title={row.title}>
+                          {row.title}
                         </span>
+                        {row.onRemove && !readOnly && (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-xs"
+                            className="ml-auto shrink-0"
+                            aria-label={`Remove ${row.title}`}
+                            onClick={row.onRemove}
+                          >
+                            <LuX aria-hidden />
+                          </Button>
+                        )}
                       </div>
-                      {task.project && (
-                        <p className="truncate text-xs text-muted-foreground">
-                          {task.project.code} · {task.project.name}
-                        </p>
-                      )}
+                      {row.sublabel && <p className="truncate text-xs text-muted-foreground">{row.sublabel}</p>}
+                      {row.brand &&
+                        (readOnly ? (
+                          row.note ? <p className="truncate text-xs text-muted-foreground" title={row.note}>{row.note}</p> : null
+                        ) : (
+                          <Input
+                            value={row.note ?? ""}
+                            onChange={(event) => row.onNoteChange?.(event.target.value)}
+                            maxLength={300}
+                            placeholder="What for? (optional)"
+                            aria-label={`Note for ${row.title}`}
+                            className="mt-1 h-7 text-xs"
+                          />
+                        ))}
                     </TableCell>
                     {days.map((day) => {
-                      const key = cellKey(task._id, day);
+                      const key = cellKey(row.id, day);
                       const raw = values[key] ?? "";
                       const parsed = parseHours(raw);
                       const label = formatDayLabel(day);
@@ -144,7 +183,7 @@ export function TimesheetGrid({
                               inputMode="decimal"
                               autoComplete="off"
                               placeholder="0"
-                              aria-label={`Hours for ${task.shortCode ?? task.title} on ${label.weekday} ${label.day}`}
+                              aria-label={`Hours for ${row.code ?? row.title} on ${label.weekday} ${label.day}`}
                               aria-invalid={parsed === null || undefined}
                               title={parsed === null ? "Enter hours like 1.5 or 1:30 (max 24h)" : undefined}
                               className="mx-auto h-8 w-16 text-center tabular-nums"

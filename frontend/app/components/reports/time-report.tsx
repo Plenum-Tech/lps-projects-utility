@@ -8,6 +8,7 @@ import {
   LuNetwork,
   LuUser,
   LuWallet,
+  LuTags,
 } from "react-icons/lu";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import type { IconType } from "react-icons";
@@ -91,6 +92,8 @@ const GROUPS: {
 }[] = [
   { value: "user", label: "Employee", icon: LuUser, column: "Employee" },
   { value: "project", label: "Project", icon: LuBriefcase, column: "Project" },
+  // Project hours by their brand, plus time logged on the brand directly (Program / CM / leadership).
+  { value: "brand", label: "Brand", icon: LuTags, column: "Brand" },
   { value: "task", label: "Task", icon: LuListChecks, column: "Task" },
   { value: "day", label: "Day", icon: LuCalendarDays, column: "Date" },
   {

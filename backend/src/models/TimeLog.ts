@@ -19,6 +19,11 @@ export interface ITimeLog extends mongoose.Document {
   task?: mongoose.Types.ObjectId | null;
   /** The rework item (task subtask) this time was spent on, if any. */
   subtask?: mongoose.Types.ObjectId | null;
+  /**
+   * Time spent on a brand as a whole (weekly timesheet brand rows — Program, CM, leadership):
+   * no project or task. Reports count it with the brand's project hours.
+   */
+  brand?: mongoose.Types.ObjectId | null;
   startTime: Date;
   /** null = timer running. */
   endTime?: Date | null;
@@ -56,6 +61,7 @@ const timeLogSchema = new Schema<ITimeLog>(
     project: { type: Schema.Types.ObjectId, ref: "Project", default: null },
     task: { type: Schema.Types.ObjectId, ref: "Task", default: null },
     subtask: { type: Schema.Types.ObjectId, default: null },
+    brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
     startTime: { type: Date, required: true },
     // Always stored explicitly (null while running) — the partial unique index relies on it.
     endTime: { type: Date, default: null },
@@ -81,6 +87,7 @@ const timeLogSchema = new Schema<ITimeLog>(
 timeLogSchema.index({ user: 1, startTime: -1 });
 timeLogSchema.index({ project: 1, startTime: -1 });
 timeLogSchema.index({ task: 1 });
+timeLogSchema.index({ brand: 1, startTime: -1 }, { sparse: true });
 timeLogSchema.index({ status: 1 });
 timeLogSchema.index({ weeklyTimesheet: 1 }, { sparse: true });
 // One running timer per user.

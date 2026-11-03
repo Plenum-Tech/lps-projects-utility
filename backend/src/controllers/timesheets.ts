@@ -25,6 +25,8 @@ import { User } from "../models/User.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import type { IWeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import { markActualStartFromLogs } from "../lib/actualDates.js";
+import { canLogBrandTime } from "../lib/brandTime.js";
+import { Brand } from "../models/Brand.js";
 
 const TIMESHEET_LINK = "/timesheet";
 const REPORT_LINK = "/reports/timesheets";
@@ -78,12 +80,19 @@ async function loggableTasks(userId: mongoose.Types.ObjectId, extraTaskIds: mong
 function sheetTotals(sheet: IWeeklyTimesheet) {
   const byDay: Record<string, number> = {};
   const byTask: Record<string, number> = {};
+  const byBrand: Record<string, number> = {};
   for (const e of sheet.entries) {
     const day = dateKey(e.date);
     byDay[day] = (byDay[day] ?? 0) + e.minutes;
-    byTask[e.task.toString()] = (byTask[e.task.toString()] ?? 0) + e.minutes;
+    if (e.task) byTask[e.task.toString()] = (byTask[e.task.toString()] ?? 0) + e.minutes;
+    if (e.brand) byBrand[e.brand.toString()] = (byBrand[e.brand.toString()] ?? 0) + e.minutes;
   }
-  return { byDay, byTask, total: timesheetTotalMinutes(sheet) };
+  return { byDay, byTask, byBrand, total: timesheetTotalMinutes(sheet) };
+}
+
+/** Task ids on a sheet (brand rows have none). */
+function sheetTaskIds(sheet: Pick<IWeeklyTimesheet, "entries">): mongoose.Types.ObjectId[] {
+  return sheet.entries.flatMap((e) => (e.task ? [e.task] : []));
 }
 
 /** `{ timesheet, tasks, days, totals, permissions }` for the grid. */
@@ -96,10 +105,12 @@ async function sheetResponse(sheet: IWeeklyTimesheet, actor: IUser) {
   const editable = own && (sheet.status === "draft" || sheet.status === "rejected");
   return {
     timesheet: { ...(populated!.toJSON() as unknown as Record<string, unknown>), weekStartKey: dateKey(sheet.weekStart) },
-    tasks: await loggableTasks(sheet.user, sheet.entries.map((e) => e.task)),
+    tasks: await loggableTasks(sheet.user, sheetTaskIds(sheet)),
     days: weekDays(sheet.weekStart),
     totals: sheetTotals(sheet),
     permissions: {
+      /** Program / CM / leadership: rows on a brand as a whole (no approval). */
+      canLogBrands: own && (await canLogBrandTime(actor)),
       canEdit: editable,
       canSubmit: editable && sheet.entries.length > 0,
       canReview: sheet.status === "submitted" && Boolean(owner) && canReviewTimesheet(actor, owner!),
@@ -180,7 +191,11 @@ export async function getTimesheet(req: Request, res: Response): Promise<void> {
   res.json(await sheetResponse(sheet, actor));
 }
 
-/** PUT /api/timesheets/:id/entries — `{ entries: [{ task, date, minutes }] }` replaces the draft's rows. */
+/**
+ * PUT /api/timesheets/:id/entries — `{ entries: [{ task | brand, date, minutes, note? }] }`
+ * replaces the draft's rows. Brand rows (time on a brand as a whole) are for Program / CM /
+ * leadership (lib/brandTime.ts).
+ */
 export async function saveEntries(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
   const sheet = await getSheetOr404(req, res);
@@ -202,11 +217,17 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
   const days = new Set(weekDays(sheet.weekStart));
   const seen = new Set<string>();
   const perDay: Record<string, number> = {};
-  const entries: Array<{ task: mongoose.Types.ObjectId; date: Date; minutes: number }> = [];
+  const entries: Array<{ task: mongoose.Types.ObjectId | null; brand: mongoose.Types.ObjectId | null; note: string; date: Date; minutes: number }> = [];
   for (const item of raw) {
-    const { task, date, minutes } = (item ?? {}) as { task?: unknown; date?: unknown; minutes?: unknown };
-    if (typeof task !== "string" || isInvalidObjectId(task)) {
-      res.status(400).json({ error: "Each entry needs a valid task ID" });
+    const { task, brand, note, date, minutes } = (item ?? {}) as { task?: unknown; brand?: unknown; note?: unknown; date?: unknown; minutes?: unknown };
+    const taskId = typeof task === "string" && task ? task : null;
+    const brandId = typeof brand === "string" && brand ? brand : null;
+    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "")) {
+      res.status(400).json({ error: "Each entry needs a valid task or brand (not both)" });
+      return;
+    }
+    if (note !== undefined && (typeof note !== "string" || note.trim().length > 300)) {
+      res.status(400).json({ error: "A note must be 300 characters or fewer" });
       return;
     }
     const day = parseDateOnly(date);
@@ -218,9 +239,9 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: "minutes must be an integer between 0 and 1440" });
       return;
     }
-    const key = `${task}:${dateKey(day)}`;
+    const key = `${taskId ?? `brand:${brandId}`}:${dateKey(day)}`;
     if (seen.has(key)) {
-      res.status(400).json({ error: "Each task can appear once per day" });
+      res.status(400).json({ error: taskId ? "Each task can appear once per day" : "Each brand can appear once per day" });
       return;
     }
     seen.add(key);
@@ -230,17 +251,42 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: `More than 24 hours logged on ${dateKey(day)}` });
       return;
     }
-    entries.push({ task: new mongoose.Types.ObjectId(task), date: day, minutes });
+    entries.push({
+      task: taskId ? new mongoose.Types.ObjectId(taskId) : null,
+      brand: brandId ? new mongoose.Types.ObjectId(brandId) : null,
+      note: brandId && typeof note === "string" ? note.trim() : "",
+      date: day,
+      minutes,
+    });
   }
 
   // Every task must be loggable by the owner (or already on the sheet).
   const allowed = new Set(
-    (await loggableTasks(actor._id, sheet.entries.map((e) => e.task))).map((t) => String((t as { _id: unknown })._id))
+    (await loggableTasks(actor._id, sheetTaskIds(sheet))).map((t) => String((t as { _id: unknown })._id))
   );
-  const invalid = entries.find((e) => !allowed.has(e.task.toString()));
+  const invalid = entries.find((e) => e.task && !allowed.has(e.task.toString()));
   if (invalid) {
-    res.status(400).json({ error: "You can only log time on open tasks assigned to you", task: invalid.task.toString() });
+    res.status(400).json({ error: "You can only log time on open tasks assigned to you", task: invalid.task!.toString() });
     return;
+  }
+  // Brand rows: Program / CM / leadership, on active approved brands (or brands already on the sheet).
+  const brandIds = [...new Set(entries.flatMap((e) => (e.brand ? [e.brand.toString()] : [])))];
+  if (brandIds.length) {
+    if (!(await canLogBrandTime(actor))) {
+      res.status(403).json({ error: "Only Program, CM and leadership can log time on a brand. Log it on a task instead." });
+      return;
+    }
+    const onSheet = new Set(sheet.entries.flatMap((e) => (e.brand ? [e.brand.toString()] : [])));
+    const usable = await Brand.find({
+      _id: { $in: brandIds },
+      $or: [{ _id: { $in: [...onSheet] } }, { active: true, $or: [{ status: { $exists: false } }, { status: "approved" }] }],
+    })
+      .select("_id")
+      .lean();
+    if (usable.length !== brandIds.length) {
+      res.status(400).json({ error: "Pick an active brand" });
+      return;
+    }
   }
 
   sheet.set("entries", entries);
@@ -282,7 +328,7 @@ export async function submitTimesheet(req: Request, res: Response): Promise<void
 
   const sheetId = claimed._id as mongoose.Types.ObjectId;
   await TimeLog.deleteMany({ weeklyTimesheet: sheetId });
-  const tasks = await Task.find({ _id: { $in: claimed.entries.map((e) => e.task) } }).select("project");
+  const tasks = await Task.find({ _id: { $in: sheetTaskIds(claimed) } }).select("project");
   const projectOf = new Map(tasks.map((t) => [t._id.toString(), t.project ?? null]));
   const projectIds = [...new Set([...projectOf.values()].filter(Boolean).map(String))];
   const projects = await Project.find({ _id: { $in: projectIds } }).select("members");
@@ -297,28 +343,44 @@ export async function submitTimesheet(req: Request, res: Response): Promise<void
     const start = new Date(appTimeOn(day, DAY_START).getTime() + offset * 60_000);
     const end = new Date(start.getTime() + entry.minutes * 60_000);
     offsetByDay.set(day, offset + entry.minutes);
-    const projectId = projectOf.get(entry.task.toString()) ?? null;
+    const projectId = entry.task ? (projectOf.get(entry.task.toString()) ?? null) : null;
     const rate = await resolveHourlyRate(actor._id, projectId ? projectById.get(projectId.toString()) : null);
+    // Brand rows (no project or task) need no approval: they count at once.
+    const onBrand = Boolean(entry.brand);
     docs.push({
       user: actor._id,
       project: projectId,
-      task: entry.task,
+      task: entry.task ?? null,
+      brand: entry.brand ?? null,
       startTime: start,
       endTime: end,
       durationMinutes: entry.minutes,
       breakMinutes: 0,
-      memo: `Weekly timesheet ${dateKey(claimed.weekStart)}`,
+      memo: onBrand && entry.note ? entry.note : `Weekly timesheet ${dateKey(claimed.weekStart)}`,
       source: "timesheet",
       hourlyRate: rate,
       earnings: computeEarnings(rate, entry.minutes),
-      status: "pending",
+      status: onBrand ? "approved" : "pending",
+      ...(onBrand ? { reviewedAt: new Date() } : {}),
       weeklyTimesheet: sheetId,
       addedBy: actor._id,
     });
   }
   await TimeLog.insertMany(docs);
-  await markActualStartFromLogs(docs.map((d) => ({ task: d.task, start: d.startTime })));
+  await markActualStartFromLogs(docs.flatMap((d) => (d.task ? [{ task: d.task, start: d.startTime }] : [])));
   for (const id of projectIds) scheduleProgressRecalc(id);
+
+  // Only brand rows: nothing to approve — the week is approved as it's submitted.
+  if (claimed.entries.every((e) => e.brand)) {
+    const approved = await WeeklyTimesheet.findOneAndUpdate(
+      { _id: sheetId, status: "submitted" },
+      { $set: { status: "approved", reviewedAt: new Date() } },
+      { returnDocument: "after" }
+    );
+    pushTimesheetUpdate(approved ?? claimed, "approved", actor.department);
+    res.json(await sheetResponse(approved ?? claimed, actor));
+    return;
+  }
 
   // Department head(s); admins when the department has no head.
   let approvers = (await departmentHeads(actor.department ?? null)).filter((id) => !id.equals(actor._id));
@@ -471,8 +533,9 @@ export async function rejectTimesheet(req: Request, res: Response): Promise<void
     return;
   }
   const sheetId = updated._id as mongoose.Types.ObjectId;
-  const logs = await TimeLog.find({ weeklyTimesheet: sheetId }).select("user project status");
-  await TimeLog.deleteMany({ weeklyTimesheet: sheetId });
+  // Brand hours need no approval: only the task rows' logs go (a resubmit rebuilds them all).
+  const logs = await TimeLog.find({ weeklyTimesheet: sheetId, brand: null }).select("user project status");
+  await TimeLog.deleteMany({ weeklyTimesheet: sheetId, brand: null });
   for (const log of logs) pushTimeLogUpdate(log, "deleted");
   for (const id of new Set(logs.map((l) => String(l.project ?? "")).filter(Boolean))) scheduleProgressRecalc(id);
 

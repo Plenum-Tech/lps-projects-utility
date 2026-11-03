@@ -13,6 +13,7 @@ import { ProjectCategoriesCard } from "@/components/projects/settings/project-ca
 import { ProjectReminderCard } from "@/components/projects/settings/project-reminder-card";
 import { ProjectStatusesCard } from "@/components/projects/settings/project-statuses-card";
 import { ProjectTypesCard } from "@/components/projects/settings/project-types-card";
+import { BrandTimeCard } from "@/components/projects/settings/brand-time-card";
 import { TimeLogSettingsCard } from "@/components/projects/settings/time-log-settings-card";
 import { ReminderSettingsCard } from "@/components/tasks/settings/reminder-settings-card";
 import { SmtpStatusCard } from "@/components/tasks/settings/smtp-status-card";
@@ -114,9 +115,14 @@ export function ProjectSection() {
   );
 }
 
-/** Settings → Time Logs: who logs time, approvals, auto-stop, reminders, daily report. */
+/** Settings → Time Logs: who logs time, approvals, auto-stop, reminders, daily report; brand time. */
 export function TimeLogSection() {
-  return <TimeLogSettingsCard />;
+  return (
+    <div className="space-y-6">
+      <TimeLogSettingsCard />
+      <BrandTimeCard />
+    </div>
+  );
 }
 
 /** Settings → Leaves: per-type leave policies. */

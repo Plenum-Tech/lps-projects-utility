@@ -388,6 +388,13 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
     const add = (u: string, role: string) => rolesOf.set(u, (rolesOf.get(u) ?? new Set()).add(role));
     for (const [role, list] of Object.entries(summary.roles)) for (const p of list) add(p._id, role);
     for (const p of all.filter(ctx.isCurrent)) for (const t of p.team ?? []) for (const u of t.users) add(String(u), t.role);
+    // People who logged time on the brand as a whole this month (Program / CM / leadership) count too.
+    const brandTimeUsers = await TimeLog.distinct("user", {
+      brand: brand._id,
+      status: { $in: ["approved", "pending"] },
+      startTime: { $gte: monthStart(month), $lt: nextMonthStart(month) },
+    });
+    for (const u of brandTimeUsers) if (!rolesOf.has(String(u))) rolesOf.set(String(u), new Set());
     const ids = [...rolesOf.keys()];
     const brandProjectIds = all.map((p) => p._id);
     const hours = ids.length
@@ -403,15 +410,25 @@ export async function brandDetail(req: Request, res: Response): Promise<void> {
             $group: {
               _id: "$user",
               total: { $sum: "$durationMinutes" },
-              brand: { $sum: { $cond: [{ $in: ["$project", brandProjectIds] }, "$durationMinutes", 0] } },
+              // The brand's projects, or the brand itself (brand time).
+              brand: {
+                $sum: {
+                  $cond: [{ $or: [{ $in: ["$project", brandProjectIds] }, { $eq: ["$brand", brand._id] }] }, "$durationMinutes", 0],
+                },
+              },
             },
           },
         ])
       : [];
     const hoursOf = new Map(hours.map((h) => [String(h._id), h]));
+    // Names of brand-time people who aren't on the plan.
+    const missing = ids.filter((id) => !ctx.people[id]);
+    const extraNames = new Map(
+      (missing.length ? await User.find({ _id: { $in: missing } }).select("name").lean() : []).map((u) => [String(u._id), u.name])
+    );
     utilisation = ids
       .map((id) => ({
-        user: { _id: id, name: ctx.people[id]?.name ?? "Unknown" },
+        user: { _id: id, name: ctx.people[id]?.name ?? extraNames.get(id) ?? "Unknown" },
         roles: [...rolesOf.get(id)!].sort((a, b) => MANPOWER_ROLE_KEYS.indexOf(a) - MANPOWER_ROLE_KEYS.indexOf(b)),
         projects: ctx.people[id]?.projects ?? 0,
         max: ctx.max,

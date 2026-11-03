@@ -1,5 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
+import { brandTimeDepartmentIds } from "../lib/brandTime.js";
+import { Department } from "../models/Department.js";
 import { User } from "../models/User.js";
 import { logActivity } from "../lib/activityLog.js";
 import { parseHhmm } from "../lib/appTime.js";
@@ -279,7 +281,7 @@ export async function deleteCategory(req: Request, res: Response): Promise<void>
 /** GET /api/project-meta/settings — admin. */
 export async function getSettings(_req: Request, res: Response): Promise<void> {
   const settings = await getProjectSettings();
-  res.json({ settings: settings.toJSON() });
+  res.json({ settings: { ...settings.toJSON(), brandTimeDepartmentsInUse: (await brandTimeDepartmentIds()).map(String) } });
 }
 
 /**
@@ -332,6 +334,7 @@ interface SettingsBody {
   deadlineReminderTo?: unknown;
   dailyTimeLogReport?: unknown;
   projectTypes?: unknown;
+  brandTimeDepartments?: unknown;
 }
 
 /** PATCH /api/project-meta/settings — admin. */
@@ -403,6 +406,20 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
     }
     settings.deadlineReminderTo = [...new Set(v as DeadlineReminderTarget[])];
   }
+  // Departments whose people log weekly-timesheet hours on a brand (lib/brandTime.ts); [] = the defaults.
+  if (body.brandTimeDepartments !== undefined) {
+    const raw = body.brandTimeDepartments;
+    if (!Array.isArray(raw) || raw.length > 50 || raw.some((id) => typeof id !== "string" || !mongoose.isValidObjectId(id))) {
+      res.status(400).json({ error: "brandTimeDepartments must be up to 50 department IDs" });
+      return;
+    }
+    const ids = [...new Set(raw as string[])];
+    if (ids.length && (await Department.countDocuments({ _id: { $in: ids } })) !== ids.length) {
+      res.status(404).json({ error: "A department doesn't exist" });
+      return;
+    }
+    settings.brandTimeDepartments = ids.map((id) => new mongoose.Types.ObjectId(id));
+  }
   if (body.projectTypes !== undefined) {
     const types = parseProjectTypes(body.projectTypes);
     if (!Array.isArray(types)) {
@@ -423,5 +440,5 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
     details: { fields: keys },
     ip: req.ip,
   });
-  res.json({ settings: settings.toJSON() });
+  res.json({ settings: { ...settings.toJSON(), brandTimeDepartmentsInUse: (await brandTimeDepartmentIds()).map(String) } });
 }

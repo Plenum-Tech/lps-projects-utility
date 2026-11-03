@@ -8,6 +8,7 @@ import { departmentUserIds, isInvalidObjectId } from "../lib/projectAccess.js";
 import { parseDateOnly } from "../lib/taskAccess.js";
 import { appDateKey, appTimeZone } from "../lib/taskJobs.js";
 import { Department } from "../models/Department.js";
+import { Brand } from "../models/Brand.js";
 import { Project } from "../models/Project.js";
 import { Task, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TimeLog, TIMELOG_STATUSES } from "../models/TimeLog.js";
@@ -102,7 +103,7 @@ function hours(minutes: number): number {
 // Time log report — GET /api/reports/time/summary | /export
 // ---------------------------------------------------------------------------
 
-const GROUP_BY = ["user", "project", "task", "day"] as const;
+const GROUP_BY = ["user", "project", "task", "day", "brand"] as const;
 type GroupBy = (typeof GROUP_BY)[number];
 
 async function timeFilter(req: Request): Promise<{ match: Record<string, unknown>; from: Date | null; to: Date | null } | Invalid> {
@@ -137,11 +138,15 @@ async function timeFilter(req: Request): Promise<{ match: Record<string, unknown
   return { match: { $and: and }, from: range.from, to: range.to };
 }
 
-/** GET /api/reports/time/summary?from&to&groupBy=user|project|task|day&project&user&department&status */
+/**
+ * GET /api/reports/time/summary?from&to&groupBy=user|project|task|day|brand&project&user&department&status
+ * `brand`: a log counts for its own brand (brand time: Program / CM / leadership timesheet rows)
+ * or its project's brand.
+ */
 export async function timeSummary(req: Request, res: Response): Promise<void> {
   const groupBy = (typeof req.query.groupBy === "string" && req.query.groupBy ? req.query.groupBy : "user") as GroupBy;
   if (!GROUP_BY.includes(groupBy)) {
-    res.status(400).json({ error: "groupBy must be one of: user, project, task, day" });
+    res.status(400).json({ error: "groupBy must be one of: user, project, task, day, brand" });
     return;
   }
   const filter = await timeFilter(req);
@@ -154,9 +159,24 @@ export async function timeSummary(req: Request, res: Response): Promise<void> {
     groupBy === "day"
       ? { $dateToString: { format: "%Y-%m-%d", date: "$startTime", timezone: appTimeZone() } }
       : `$${groupBy}`;
-  const rows = await TimeLog.aggregate<{ _id: unknown; minutes: number; earnings: number; count: number }>([
+  const rows = await TimeLog.aggregate<{ _id: unknown; minutes: number; earnings: number; count: number; brandMinutes?: number }>([
     { $match: filter.match },
-    { $group: { _id: groupKey, minutes: { $sum: "$durationMinutes" }, earnings: { $sum: "$earnings" }, count: { $sum: 1 } } },
+    ...(groupBy === "brand"
+      ? [
+          { $lookup: { from: "projects", localField: "project", foreignField: "_id", as: "_p", pipeline: [{ $project: { brand: 1 } }] } },
+          { $addFields: { _brand: { $ifNull: ["$brand", { $arrayElemAt: ["$_p.brand", 0] }] } } },
+          {
+            $group: {
+              _id: "$_brand",
+              minutes: { $sum: "$durationMinutes" },
+              earnings: { $sum: "$earnings" },
+              count: { $sum: 1 },
+              // Of which logged on the brand as a whole (not a task).
+              brandMinutes: { $sum: { $cond: [{ $ifNull: ["$brand", false] }, "$durationMinutes", 0] } },
+            },
+          },
+        ]
+      : [{ $group: { _id: groupKey, minutes: { $sum: "$durationMinutes" }, earnings: { $sum: "$earnings" }, count: { $sum: 1 } } }]),
   ]);
 
   const ids = rows.map((r) => r._id).filter((id): id is mongoose.Types.ObjectId => id instanceof mongoose.Types.ObjectId);
@@ -169,6 +189,11 @@ export async function timeSummary(req: Request, res: Response): Promise<void> {
     for (const p of await Project.find({ _id: { $in: ids } }).select("name code").lean()) {
       labels.set(p._id.toString(), { label: p.name, sublabel: p.code });
     }
+  } else if (groupBy === "brand") {
+    for (const b of await Brand.find({ _id: { $in: ids } }).select("name organisation").lean()) {
+      const org = (b.organisation ?? "").trim();
+      labels.set(b._id.toString(), { label: org && org.toLowerCase() !== b.name.toLowerCase() ? `${org} › ${b.name}` : b.name });
+    }
   } else if (groupBy === "task") {
     for (const t of await Task.find({ _id: { $in: ids } }).select("title shortCode").lean()) {
       labels.set(t._id.toString(), { label: t.title, sublabel: t.shortCode ?? null });
@@ -180,11 +205,15 @@ export async function timeSummary(req: Request, res: Response): Promise<void> {
     const label =
       groupBy === "day"
         ? { label: key ?? "", sublabel: null }
-        : (key && labels.get(key)) || { label: key ? "(deleted)" : groupBy === "project" ? "No project" : "No task", sublabel: null };
+        : (key && labels.get(key)) || {
+            label: key ? "(deleted)" : groupBy === "project" ? "No project (incl. brand time)" : groupBy === "brand" ? "No brand" : "No task",
+            sublabel: null,
+          };
+    const brandTime = groupBy === "brand" && r.brandMinutes ? `${hours(r.brandMinutes)} h logged on the brand directly` : null;
     return {
       key,
       label: label.label,
-      sublabel: label.sublabel ?? null,
+      sublabel: brandTime ?? label.sublabel ?? null,
       minutes: r.minutes,
       hours: hours(r.minutes),
       earnings: Math.round(r.earnings * 100) / 100,
@@ -293,7 +322,7 @@ function dateOrNull(value: Date | null | undefined): string | null {
 /** Hours per employee › project › task for a time-log filter, biggest first at every level. */
 async function loadBreakdown(match: Record<string, unknown>): Promise<{ employees: BreakdownEmployee[]; totals: BreakdownRow }> {
   const rows = await TimeLog.aggregate<{
-    _id: { user: mongoose.Types.ObjectId | null; project: mongoose.Types.ObjectId | null; task: mongoose.Types.ObjectId | null };
+    _id: { user: mongoose.Types.ObjectId | null; project: mongoose.Types.ObjectId | null; task: mongoose.Types.ObjectId | null; brand?: mongoose.Types.ObjectId | null };
     minutes: number;
     earnings: number;
     count: number;
@@ -301,14 +330,14 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     { $match: match },
     {
       $group: {
-        _id: { user: "$user", project: "$project", task: "$task" },
+        _id: { user: "$user", project: "$project", task: "$task", brand: "$brand" },
         minutes: { $sum: "$durationMinutes" },
         earnings: { $sum: "$earnings" },
         count: { $sum: 1 },
       },
     },
   ]);
-  const ids = (pick: "user" | "project" | "task") =>
+  const ids = (pick: "user" | "project" | "task" | "brand") =>
     [...new Set(rows.map((r) => r._id[pick]).filter((id): id is mongoose.Types.ObjectId => id instanceof mongoose.Types.ObjectId).map(String))].map(
       (id) => new mongoose.Types.ObjectId(id)
     );
@@ -324,21 +353,28 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     completedAt?: Date | null;
     estimateMinutes?: number | null;
   };
-  const [users, projects, tasks] = await Promise.all([
+  const [users, projects, tasks, brands] = await Promise.all([
     User.find({ _id: { $in: ids("user") } }).select("name email").lean(),
     Project.find({ _id: { $in: ids("project") } }).select("name code brand").populate("brand", "name").lean<ProjectLean[]>(),
     Task.find({ _id: { $in: ids("task") } })
       .select("title shortCode number status startDate dueDate completedAt estimateMinutes")
       .lean<TaskLean[]>(),
+    Brand.find({ _id: { $in: ids("brand") } }).select("name organisation").lean(),
   ]);
   const userLabel = new Map(users.map((u) => [u._id.toString(), { label: u.name, sublabel: u.email ?? null }]));
   const projectInfo = new Map(projects.map((p) => [p._id.toString(), { label: p.name, sublabel: p.code ?? null, client: p.brand?.name ?? null }]));
   const taskInfo = new Map(tasks.map((t) => [t._id.toString(), t]));
+  // Brand time (no project): its own row per brand, "Brand time · ENOC › Zoom".
+  for (const b of brands) {
+    const org = (b.organisation ?? "").trim();
+    const name = org && org.toLowerCase() !== b.name.toLowerCase() ? `${org} › ${b.name}` : b.name;
+    projectInfo.set(`brand:${b._id.toString()}`, { label: `Brand time · ${name}`, sublabel: null, client: b.name });
+  }
 
   const employees = new Map<string, BreakdownEmployee>();
   for (const r of rows) {
     const uKey = r._id.user ? String(r._id.user) : null;
-    const pKey = r._id.project ? String(r._id.project) : null;
+    const pKey = r._id.project ? String(r._id.project) : r._id.brand ? `brand:${String(r._id.brand)}` : null;
     const tKey = r._id.task ? String(r._id.task) : null;
     const uid = uKey ?? "none";
     let emp = employees.get(uid);

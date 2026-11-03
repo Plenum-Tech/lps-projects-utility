@@ -33,22 +33,51 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { useBrands } from "@/hooks/use-brands";
 import { useSaveTimesheet, useSubmitTimesheet, useTimesheetWeek } from "@/hooks/use-timesheets";
+import { brandWithOrg } from "@/lib/tasks";
 import { addDaysKey, formatLocalDate, formatMinutes, formatWeekRange, mondayOf } from "@/lib/time";
 import type { TimesheetEntry, TimesheetView } from "@/types";
+import type { TimesheetGridRow } from "@/components/timelogs/timesheet-grid";
 
 const MANY_TASKS = 8;
 const DAY_MAX = 24 * 60;
 
+/** Grid row id of a brand row. */
+const brandRowId = (brandId: string) => `brand:${brandId}`;
+
 function valuesFromView(view: TimesheetView): Record<string, string> {
   const values: Record<string, string> = {};
   for (const entry of view.timesheet.entries) {
-    values[cellKey(entry.task, entry.date.slice(0, 10))] = minutesToCell(entry.minutes);
+    const row = entry.brand ? brandRowId(entry.brand) : entry.task;
+    if (row) values[cellKey(row, entry.date.slice(0, 10))] = minutesToCell(entry.minutes);
   }
   return values;
 }
+
+/** Brand rows on the sheet (in order) and each one's note. */
+function brandsFromView(view: TimesheetView): { ids: string[]; notes: Record<string, string> } {
+  const ids: string[] = [];
+  const notes: Record<string, string> = {};
+  for (const entry of view.timesheet.entries) {
+    if (!entry.brand) continue;
+    if (!ids.includes(entry.brand)) ids.push(entry.brand);
+    if (entry.note && !notes[entry.brand]) notes[entry.brand] = entry.note;
+  }
+  return { ids, notes };
+}
+
+type BrandOption = { value: string; label: string };
 
 function isValidWeekParam(value: string | null): value is string {
   return Boolean(value && /^\d{4}-\d{2}-\d{2}$/.test(value));
@@ -76,6 +105,9 @@ export function TimesheetPage() {
   const [dirty, setDirty] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  // Brand rows (Program / CM / leadership): brand ids on the sheet and their notes.
+  const [brandIds, setBrandIds] = useState<string[]>([]);
+  const [notes, setNotes] = useState<Record<string, string>>({});
   const loadedVersion = useRef("");
 
   // Load server values when the sheet changes (new week or fresh save), unless editing.
@@ -88,6 +120,9 @@ export function TimesheetPage() {
     if (sameSheet && dirty) return;
     loadedVersion.current = version;
     setValues(valuesFromView(viewForWeek));
+    const fromSheet = brandsFromView(viewForWeek);
+    setBrandIds(fromSheet.ids);
+    setNotes(fromSheet.notes);
     setDirty(false);
   }, [version, viewForWeek, dirty]);
 
@@ -104,6 +139,21 @@ export function TimesheetPage() {
   const readOnly = !viewForWeek?.permissions.canEdit;
   const tasks = viewForWeek?.tasks ?? [];
   const days = viewForWeek?.days ?? [];
+  const canLogBrands = Boolean(viewForWeek?.permissions.canLogBrands);
+  // Every brand (names for rows already on the sheet, inactive ones too); new rows pick active ones.
+  const allBrands = useBrands(false, canLogBrands || brandIds.length > 0);
+  const brandName = (id: string) => {
+    const b = allBrands.data?.find((x) => x._id === id);
+    return b ? brandWithOrg(b) : "Brand";
+  };
+  const brandOptions: BrandOption[] = useMemo(
+    () =>
+      (allBrands.data ?? [])
+        .filter((b) => b.active && (!b.status || b.status === "approved") && !brandIds.includes(b._id))
+        .map((b) => ({ value: b._id, label: brandWithOrg(b) })),
+    [allBrands.data, brandIds],
+  );
+  const rowIds = [...tasks.map((t) => t._id), ...brandIds.map(brandRowId)];
 
   const invalidCells = useMemo(
     () => Object.values(values).filter((raw) => parseHours(raw) === null).length,
@@ -113,10 +163,11 @@ export function TimesheetPage() {
     () =>
       days.filter(
         (day) =>
-          tasks.reduce((sum, task) => sum + (parseHours(values[cellKey(task._id, day)] ?? "") ?? 0), 0) >
+          rowIds.reduce((sum, id) => sum + (parseHours(values[cellKey(id, day)] ?? "") ?? 0), 0) >
           DAY_MAX
       ),
-    [days, tasks, values]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [days, rowIds.join(), values]
   );
   const hasErrors = invalidCells > 0 || overDays.length > 0;
 
@@ -140,7 +191,25 @@ export function TimesheetPage() {
         if (minutes > 0) out.push({ task: task._id, date: day, minutes });
       }
     }
+    for (const brand of brandIds) {
+      const note = (notes[brand] ?? "").trim();
+      for (const day of days) {
+        const minutes = parseHours(values[cellKey(brandRowId(brand), day)] ?? "") ?? 0;
+        if (minutes > 0) out.push({ brand, date: day, minutes, ...(note ? { note } : {}) });
+      }
+    }
     return out;
+  }
+
+  function addBrand(id: string) {
+    setBrandIds((current) => (current.includes(id) ? current : [...current, id]));
+    setDirty(true);
+  }
+
+  function removeBrand(id: string) {
+    setBrandIds((current) => current.filter((x) => x !== id));
+    setValues((current) => Object.fromEntries(Object.entries(current).filter(([key]) => !key.startsWith(`${brandRowId(id)}|`))));
+    setDirty(true);
   }
 
   function changeCell(key: string, value: string) {
@@ -188,13 +257,39 @@ export function TimesheetPage() {
 
   const status = viewForWeek?.timesheet.status;
   const pendingAction = save.isPending || submit.isPending;
-  const totalMinutes = entries().reduce((sum, entry) => sum + entry.minutes, 0);
+  const allEntries = entries();
+  const totalMinutes = allEntries.reduce((sum, entry) => sum + entry.minutes, 0);
+  // Brand hours need no approval: a week of brand rows only is approved as it's submitted.
+  const brandOnly = allEntries.length > 0 && allEntries.every((e) => e.brand);
+
+  const brandRows: TimesheetGridRow[] = brandIds.map((id) => ({
+    id: brandRowId(id),
+    title: brandName(id),
+    sublabel: "Brand time · no approval needed",
+    brand: true,
+    note: notes[id] ?? "",
+    onNoteChange: (note) => {
+      setNotes((current) => ({ ...current, [id]: note }));
+      setDirty(true);
+    },
+    onRemove: () => removeBrand(id),
+  }));
+  const taskRow = (task: (typeof tasks)[number]): TimesheetGridRow => ({
+    id: task._id,
+    title: task.title,
+    code: task.shortCode,
+    sublabel: task.project ? `${task.project.code} · ${task.project.name}` : null,
+  });
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
       <PageHeader
         title="Timesheet"
-        description="Fill in your hours per task for the week, then submit for approval."
+        description={
+          canLogBrands
+            ? "Fill in your hours per task — or per brand — for the week, then submit. Brand hours need no approval."
+            : "Fill in your hours per task for the week, then submit for approval."
+        }
         actions={<TimeNav current="/timesheet" />}
       />
 
@@ -231,7 +326,7 @@ export function TimesheetPage() {
             {status && <TimesheetStatusBadge status={status} />}
           </div>
 
-          {viewForWeek && tasks.length > 0 && (
+          {viewForWeek && (tasks.length > 0 || brandIds.length > 0 || canLogBrands) && (
             <div className="flex flex-wrap items-center gap-2">
               {viewForWeek.permissions.canEdit && (
                 <Button
@@ -317,7 +412,7 @@ export function TimesheetPage() {
             onRetry={() => void sheet.refetch()}
             retrying={sheet.isFetching}
           />
-        ) : !viewForWeek || tasks.length === 0 ? (
+        ) : !viewForWeek || (tasks.length === 0 && brandIds.length === 0 && !canLogBrands) ? (
           <EmptyState
             icon={LuClipboardList}
             title="No tasks to log time on"
@@ -333,19 +428,56 @@ export function TimesheetPage() {
                 </Label>
               </div>
             )}
-            {visibleTasks.length === 0 ? (
-              <EmptyState
-                icon={LuClipboardList}
-                title="No hours yet this week"
-                description={`You have ${tasks.length} tasks you can log time on.`}
-              >
-                <Button size="sm" variant="outline" onClick={() => setShowAll(true)}>
-                  Show all tasks
-                </Button>
-              </EmptyState>
+            {canLogBrands && !readOnly && (
+              <div className="flex flex-wrap items-center gap-2">
+                <Combobox
+                  items={brandOptions}
+                  value={null}
+                  onValueChange={(option: BrandOption | null) => option && addBrand(option.value)}
+                  isItemEqualToValue={(x: BrandOption, y: BrandOption) => x.value === y.value}
+                >
+                  <ComboboxInput
+                    className="w-72"
+                    placeholder={allBrands.isPending ? "Loading brands…" : "Add brand time — search brands…"}
+                    aria-label="Add a brand row"
+                  />
+                  <ComboboxContent>
+                    <ComboboxEmpty>No brands found.</ComboboxEmpty>
+                    <ComboboxList>
+                      {(option: BrandOption) => (
+                        <ComboboxItem key={option.value} value={option}>
+                          {option.label}
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
+                <span className="text-xs text-muted-foreground">
+                  Time on a brand as a whole (not a task). It counts at once — no approval.
+                </span>
+              </div>
+            )}
+            {visibleTasks.length === 0 && brandRows.length === 0 ? (
+              tasks.length > 0 ? (
+                <EmptyState
+                  icon={LuClipboardList}
+                  title="No hours yet this week"
+                  description={`You have ${tasks.length} tasks you can log time on.`}
+                >
+                  <Button size="sm" variant="outline" onClick={() => setShowAll(true)}>
+                    Show all tasks
+                  </Button>
+                </EmptyState>
+              ) : (
+                <EmptyState
+                  icon={LuClipboardList}
+                  title="No hours yet this week"
+                  description="Add a brand above to log your time on it."
+                />
+              )
             ) : (
               <TimesheetGrid
-                tasks={visibleTasks}
+                rows={[...brandRows, ...visibleTasks.map(taskRow)]}
                 days={days}
                 values={values}
                 onChange={changeCell}
@@ -375,8 +507,9 @@ export function TimesheetPage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Submit this timesheet?</AlertDialogTitle>
             <AlertDialogDescription>
-              {formatMinutes(totalMinutes)} for {formatWeekRange(week)} goes to your approver. You
-              can&apos;t edit it again unless it&apos;s rejected.
+              {brandOnly
+                ? `${formatMinutes(totalMinutes)} of brand time for ${formatWeekRange(week)} is recorded at once — brand hours need no approval. You can't edit the week afterwards.`
+                : `${formatMinutes(totalMinutes)} for ${formatWeekRange(week)} goes to your approver (brand hours count at once). You can't edit it again unless it's rejected.`}
               {dirty ? " Your unsaved changes are saved first." : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

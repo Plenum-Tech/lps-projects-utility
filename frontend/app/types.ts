@@ -2190,6 +2190,10 @@ export interface ProjectSettings {
   projectApprovalRequired: boolean;
   /** Approver user ids (empty = aasim@lps-me.com). */
   projectApprovers: string[];
+  /** Departments whose people log timesheet hours on a brand ([] = the defaults). */
+  brandTimeDepartments?: string[];
+  /** The departments actually used (the defaults while the list above is empty). */
+  brandTimeDepartmentsInUse?: string[];
   autoStopTimerAt: string | null;
   trackerReminderAt: string | null;
   deadlineReminderDays: number;
@@ -2227,6 +2231,8 @@ export interface TimeLog {
   user: { _id: string; name: string; email: string; department: string | null };
   project: { _id: string; name: string; code: string } | null;
   task: { _id: string; title: string; shortCode: string | null } | null;
+  /** Brand time (weekly timesheet brand rows): no project or task. */
+  brand?: { _id: string; name: string; organisation?: string } | null;
   startTime: string;
   /** null = timer still running. */
   endTime: string | null;
@@ -2307,8 +2313,12 @@ export interface TimerUpdatedEvent {
 
 export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
 
+/** A day of a row: on a task, or (Program / CM / leadership) on a brand as a whole. */
 export interface TimesheetEntry {
-  task: string;
+  task?: string | null;
+  brand?: string | null;
+  /** Brand rows: what the time was for (optional). */
+  note?: string;
   /** "YYYY-MM-DD" on input; UTC-midnight ISO on output. */
   date: string;
   minutes: number;
@@ -2345,9 +2355,16 @@ export interface TimesheetView {
   totals: {
     byDay: Record<string, number>;
     byTask: Record<string, number>;
+    byBrand?: Record<string, number>;
     total: number;
   };
-  permissions: { canEdit: boolean; canSubmit: boolean; canReview: boolean };
+  permissions: {
+    canEdit: boolean;
+    canSubmit: boolean;
+    canReview: boolean;
+    /** Program / CM / leadership: rows on a brand as a whole (no approval). */
+    canLogBrands?: boolean;
+  };
 }
 
 export interface PendingTimesheet extends Timesheet {
@@ -2359,7 +2376,7 @@ export interface PendingTimesheet extends Timesheet {
 /* ------------------------------------------------------------------ */
 
 export type TimeReportGroupBy =
-  "user" | "project" | "task" | "day" | "breakdown";
+  "user" | "project" | "task" | "day" | "brand" | "breakdown";
 
 export interface TimeBreakdownRow {
   key: string | null;

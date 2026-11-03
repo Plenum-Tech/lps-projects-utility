@@ -25,6 +25,11 @@ export interface IProjectSettings extends mongoose.Document {
   dailyTimeLogReport: boolean;
   /** Project name Types (`Brand_Type_MonYYYY_Name`); admins manage the list. */
   projectTypes: string[];
+  /**
+   * Departments whose people log weekly-timesheet hours on a brand as a whole (not a task);
+   * leadership always can. Empty = the defaults (360 Program, Community Management, Leadership).
+   */
+  brandTimeDepartments: mongoose.Types.ObjectId[];
   /** "YYYY-MM-DD" idempotency key for the daily report job. */
   lastDailyReportOn?: string | null;
   createdAt: Date;
@@ -48,6 +53,7 @@ const projectSettingsSchema = new Schema<IProjectSettings>(
     },
     dailyTimeLogReport: { type: Boolean, default: false },
     projectTypes: { type: [{ type: String, trim: true }], default: () => [...DEFAULT_PROJECT_TYPES] },
+    brandTimeDepartments: { type: [{ type: Schema.Types.ObjectId, ref: "Department" }], default: [] },
     lastDailyReportOn: { type: String, default: null },
   },
   { timestamps: true }

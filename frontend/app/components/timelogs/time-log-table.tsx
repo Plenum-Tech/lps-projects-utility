@@ -47,6 +47,7 @@ import {
   useStopOtherTimer,
 } from "@/hooks/use-timelogs";
 import { formatMinutes, formatMoney, formatTime } from "@/lib/time";
+import { brandWithOrg } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { TimeLog, TimeLogSource } from "@/types";
 
@@ -321,6 +322,14 @@ function WorkCell({ log }: { log: TimeLog }) {
         <ShortCode code={log.project.code} />
         <span className="truncate font-medium">{log.project.name}</span>
       </p>
+    );
+  }
+  if (log.brand) {
+    return (
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">{brandWithOrg(log.brand)}</p>
+        <p className="truncate text-xs text-muted-foreground">Brand time</p>
+      </div>
     );
   }
   return <span className="text-sm text-muted-foreground">No project</span>;

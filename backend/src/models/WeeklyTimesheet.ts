@@ -3,8 +3,12 @@ import mongoose, { Schema } from "mongoose";
 export const TIMESHEET_STATUSES = ["draft", "submitted", "approved", "rejected"] as const;
 export type TimesheetStatus = (typeof TIMESHEET_STATUSES)[number];
 
+/** A row's day: time on a task, or (Program / CM / leadership) on a brand as a whole. */
 export interface ITimesheetEntry {
-  task: mongoose.Types.ObjectId;
+  task?: mongoose.Types.ObjectId | null;
+  brand?: mongoose.Types.ObjectId | null;
+  /** Brand rows: what the time was for (optional). */
+  note?: string;
   /** Date-only (UTC midnight), within the week. */
   date: Date;
   minutes: number;
@@ -26,7 +30,9 @@ export interface IWeeklyTimesheet extends mongoose.Document {
 
 const entrySchema = new Schema<ITimesheetEntry>(
   {
-    task: { type: Schema.Types.ObjectId, ref: "Task", required: true },
+    task: { type: Schema.Types.ObjectId, ref: "Task", default: null },
+    brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
+    note: { type: String, default: "", trim: true, maxlength: 300 },
     date: { type: Date, required: true },
     minutes: { type: Number, required: true, min: 1, max: 1440 },
   },
