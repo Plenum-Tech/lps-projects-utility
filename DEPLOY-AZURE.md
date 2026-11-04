@@ -177,7 +177,7 @@ referenced with `secretref:`.
 | `CROSS_SITE_COOKIES` | env | Leave unset. `true` only if UI and API are on different sites (cookie becomes `SameSite=None`) |
 | `ENTRA_SSO_ENABLED` | env | `false` by default. `true` shows Sign in with Microsoft (password login stays). Invite-only — no JIT users. |
 | `ENTRA_SSO_CLIENT_ID` / `ENTRA_SSO_CLIENT_SECRET` | **secret** | Same Pearity Web SSO Entra app (`d5cd55d7-…`). Secret in ACA only. |
-| `ENTRA_SSO_REDIRECT_URI` | env | `https://lps.plenum-tech.com/auth/sso/callback` (must be registered on the Entra app) |
+| `ENTRA_SSO_REDIRECT_URI` | env | `https://app.lps-me.com/auth/sso/callback` (must be registered on the Entra app) |
 | `ENTRA_SSO_ALLOWED_TENANT_IDS` | env | LPS + Plenum tenant IDs (comma-separated) |
 | `ENTRA_SSO_ALLOWED_DOMAINS` | env | Optional extra check, e.g. `lps-me.com,plenum-tech.com,hoistra.ai` |
 | `NODE_ENV`, `PORT`, `STATIC_DIR` | image | `production`, `8080`, `/app/public` — do not override |
