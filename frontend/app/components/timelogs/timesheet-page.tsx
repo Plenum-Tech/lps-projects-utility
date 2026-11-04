@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   LuCalendarDays,
+  LuCalendarRange,
   LuChevronLeft,
   LuChevronRight,
   LuCircleAlert,
@@ -15,6 +16,7 @@ import { useSearchParams } from "react-router";
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { TimesheetStatusBadge } from "@/components/projects/project-badges";
 import { TimeNav } from "@/components/timelogs/time-nav";
+import { TimesheetMonthDialog } from "@/components/timelogs/timesheet-month-dialog";
 import {
   TimesheetGrid,
   TimesheetGridSkeleton,
@@ -94,6 +96,10 @@ export function TimesheetPage() {
   const thisWeek = mondayOf();
 
   const sheet = useTimesheetWeek(week);
+  const [monthOpen, setMonthOpen] = useState(false);
+  const lastMonthName = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1).toLocaleDateString("en-GB", {
+    month: "long",
+  });
   const save = useSaveTimesheet();
   const submit = useSubmitTimesheet();
 
@@ -324,6 +330,15 @@ export function TimesheetPage() {
               </Button>
             )}
             {status && <TimesheetStatusBadge status={status} />}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setMonthOpen(true)}
+              title={`Enter ${lastMonthName}'s total hours per task — spread over its working days`}
+            >
+              <LuCalendarRange aria-hidden />
+              Log all of {lastMonthName}
+            </Button>
           </div>
 
           {viewForWeek && (tasks.length > 0 || brandIds.length > 0 || canLogBrands) && (
@@ -526,6 +541,7 @@ export function TimesheetPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      <TimesheetMonthDialog open={monthOpen} onOpenChange={setMonthOpen} />
     </div>
   );
 }

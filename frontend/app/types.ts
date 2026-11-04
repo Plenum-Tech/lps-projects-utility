@@ -214,6 +214,7 @@ export type ActivityAction =
   | "project_deleted"
   | "timelog_reviewed"
   | "timesheet_reviewed"
+  | "timesheet_month_logged"
   | "project_settings_updated"
   | "user_invited"
   | "invitation_resent"
@@ -2365,6 +2366,22 @@ export interface TimesheetView {
     /** Program / CM / leadership: rows on a brand as a whole (no approval). */
     canLogBrands?: boolean;
   };
+}
+
+/** GET /timesheets/month — the previous month in one go (totals per task / brand). */
+export interface TimesheetMonthView {
+  /** "YYYY-MM". */
+  month: string;
+  label: string;
+  /** Mon–Fri days in the month, and how many are in weeks still editable. */
+  workdays: number;
+  editableWorkdays: number;
+  weeks: Array<{ _id: string; weekStart: string; status: TimesheetStatus }>;
+  tasks: TimesheetTask[];
+  brands: Array<{ _id: string; name: string; organisation: string }>;
+  rows: Array<{ task: string | null; brand: string | null; note: string; minutes: number; lockedMinutes: number }>;
+  canLogBrands: boolean;
+  submittedWeeks?: number;
 }
 
 export interface PendingTimesheet extends Timesheet {

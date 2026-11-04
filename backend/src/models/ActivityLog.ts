@@ -47,6 +47,7 @@ export const ACTIVITY_ACTIONS = [
   "project_deleted",
   "timelog_reviewed",
   "timesheet_reviewed",
+  "timesheet_month_logged",
   "project_settings_updated",
   "ai_insight_deleted",
   "user_invited",

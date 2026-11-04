@@ -1,11 +1,13 @@
 import { Router } from "express";
 import {
   approveTimesheet,
+  getMonth,
   getTimesheet,
   getWeek,
   listPending,
   rejectTimesheet,
   saveEntries,
+  saveMonth,
   submitTimesheet,
 } from "../controllers/timesheets.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
@@ -17,6 +19,8 @@ router.use(requireAuth);
 
 // Fixed paths before "/:id".
 router.get("/week", getWeek);
+router.get("/month", getMonth);
+router.put("/month", saveMonth);
 router.get("/pending", requireRole("head", "admin"), listPending);
 
 router.get("/:id", getTimesheet);

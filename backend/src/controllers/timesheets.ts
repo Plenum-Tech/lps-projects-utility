@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { addDays, appTimeOn, currentWeekStart, mondayOf } from "../lib/appTime.js";
+import { addDays, appTimeOn, appToday, currentWeekStart, mondayOf } from "../lib/appTime.js";
 import { formatDueDate, notifyUsers } from "../lib/notifications.js";
 import { parsePagination } from "../lib/pagination.js";
 import {
@@ -314,17 +314,27 @@ export async function submitTimesheet(req: Request, res: Response): Promise<void
     res.status(400).json({ error: "Add at least one entry before submitting" });
     return;
   }
+  const submitted = await submitSheet(sheet, actor);
+  if (!submitted) {
+    res.status(409).json({ error: "This timesheet was already submitted" });
+    return;
+  }
+  if (submitted.status === "submitted") notifySubmitted(actor, [submitted]);
+  res.json(await sheetResponse(submitted, actor));
+}
 
+/**
+ * Submits an editable sheet with entries: one TimeLog per entry, back-to-back from 09:00
+ * each day. Brand-only weeks are approved at once. Null when it was already submitted.
+ */
+async function submitSheet(sheet: IWeeklyTimesheet, actor: IUser): Promise<IWeeklyTimesheet | null> {
   // Claim the transition atomically so a double-submit creates logs once.
   const claimed = await WeeklyTimesheet.findOneAndUpdate(
     { _id: sheet._id, status: { $in: ["draft", "rejected"] } },
     { $set: { status: "submitted", submittedAt: new Date(), reviewedBy: null, reviewedAt: null }, $unset: { rejectReason: 1 } },
     { returnDocument: "after" }
   );
-  if (!claimed) {
-    res.status(409).json({ error: "This timesheet was already submitted" });
-    return;
-  }
+  if (!claimed) return null;
 
   const sheetId = claimed._id as mongoose.Types.ObjectId;
   await TimeLog.deleteMany({ weeklyTimesheet: sheetId });
@@ -378,33 +388,326 @@ export async function submitTimesheet(req: Request, res: Response): Promise<void
       { returnDocument: "after" }
     );
     pushTimesheetUpdate(approved ?? claimed, "approved", actor.department);
-    res.json(await sheetResponse(approved ?? claimed, actor));
+    return approved ?? claimed;
+  }
+  pushTimesheetUpdate(claimed, "submitted", actor.department);
+  return claimed;
+}
+
+/** One "timesheet submitted" notification to the approvers for these submitted weeks. */
+function notifySubmitted(actor: IUser, sheets: IWeeklyTimesheet[]): void {
+  if (sheets.length === 0) return;
+  void (async () => {
+    // Department head(s); admins when the department has no head.
+    let approvers = (await departmentHeads(actor.department ?? null)).filter((id) => !id.equals(actor._id));
+    if (approvers.length === 0) approvers = await adminIds();
+    const sorted = [...sheets].sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
+    const total = formatMinutes(sorted.reduce((sum, s) => sum + timesheetTotalMinutes(s), 0));
+    const weekOf = (s: IWeeklyTimesheet) => formatDueDate(s.weekStart) ?? dateKey(s.weekStart);
+    const first = weekOf(sorted[0]!);
+    const last = weekOf(sorted[sorted.length - 1]!);
+    const several = sorted.length > 1;
+    notifyUsers({
+      recipients: approvers,
+      actor,
+      type: "timesheet_submitted",
+      title: several ? "Timesheets submitted" : "Timesheet submitted",
+      message: several
+        ? `${actor.name} submitted timesheets for ${sorted.length} weeks (${first} – ${last}, ${total}).`
+        : `${actor.name} submitted the timesheet for the week of ${first} (${total}).`,
+      link: `${REPORT_LINK}?status=submitted`,
+      email: {
+        subject: `🗓️ Timesheet submitted: ${actor.name} (${several ? `${sorted.length} weeks` : first})`,
+        heading: several ? "Weekly Timesheets Submitted" : "Weekly Timesheet Submitted",
+        intro: several
+          ? `${actor.name} submitted ${sorted.length} weekly timesheets for your approval.`
+          : `${actor.name} submitted a weekly timesheet for your approval.`,
+        cardTitle: several ? `Weeks of ${first} – ${last}` : `Week of ${first}`,
+        rows: [["Total", total]],
+        buttonLabel: "Review Timesheets",
+      },
+    });
+  })().catch(() => undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Month catch-up: the whole previous month at once — a total per task / brand,
+// spread evenly over the month's working days (Mon–Fri) in its weekly sheets.
+// Weeks already submitted or approved keep their hours; the rest is spread over
+// the editable days.
+// ---------------------------------------------------------------------------
+
+const MONTH_MAX_MINUTES = 31 * 24 * 60;
+/** Spread in 15-minute steps. */
+const STEP = 15;
+
+/** "YYYY-MM" of the previous month (app timezone) — the month that can be logged in one go. */
+function catchUpMonth(): string {
+  const today = appToday();
+  return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+}
+
+function monthLabel(month: string): string {
+  return new Date(`${month}-01T00:00:00.000Z`).toLocaleDateString("en-GB", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+/** The user's sheet for a week, created as a draft when missing. */
+async function ensureSheet(userId: mongoose.Types.ObjectId, weekStart: Date): Promise<IWeeklyTimesheet> {
+  const found = await WeeklyTimesheet.findOne({ user: userId, weekStart });
+  if (found) return found;
+  try {
+    return (await WeeklyTimesheet.findOneAndUpdate(
+      { user: userId, weekStart },
+      { $setOnInsert: { user: userId, weekStart, status: "draft", entries: [] } },
+      { upsert: true, returnDocument: "after" }
+    ))!;
+  } catch {
+    return (await WeeklyTimesheet.findOne({ user: userId, weekStart }))!;
+  }
+}
+
+function isEditable(sheet: IWeeklyTimesheet): boolean {
+  return sheet.status === "draft" || sheet.status === "rejected";
+}
+
+function rowKey(e: { task?: mongoose.Types.ObjectId | null; brand?: mongoose.Types.ObjectId | null }): string {
+  return e.task ? `task:${String(e.task)}` : `brand:${String(e.brand)}`;
+}
+
+interface MonthContext {
+  month: string;
+  days: Set<string>;
+  /** Mon–Fri days of the month whose week is still editable, in order. */
+  editableWorkdays: string[];
+  workdays: number;
+  sheets: IWeeklyTimesheet[];
+}
+
+async function monthContext(userId: mongoose.Types.ObjectId, month: string): Promise<MonthContext> {
+  const first = new Date(`${month}-01T00:00:00.000Z`);
+  const last = addDays(new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 1)), -1);
+  const days: string[] = [];
+  for (let d = first; d <= last; d = addDays(d, 1)) days.push(dateKey(d));
+  const sheets: IWeeklyTimesheet[] = [];
+  for (let w = mondayOf(first); w <= last; w = addDays(w, 7)) sheets.push(await ensureSheet(userId, w));
+  const editableDays = new Set(sheets.filter(isEditable).flatMap((s) => weekDays(s.weekStart)));
+  const isWorkday = (day: string) => {
+    const dow = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+    return dow !== 0 && dow !== 6;
+  };
+  return {
+    month,
+    days: new Set(days),
+    editableWorkdays: days.filter((d) => isWorkday(d) && editableDays.has(d)),
+    workdays: days.filter(isWorkday).length,
+    sheets,
+  };
+}
+
+/** `{ month, label, weeks, tasks, brands, rows, … }` for the month form. */
+async function monthResponse(ctx: MonthContext, actor: IUser) {
+  const rows = new Map<string, { task: string | null; brand: string | null; note: string; minutes: number; lockedMinutes: number }>();
+  for (const sheet of ctx.sheets) {
+    for (const e of sheet.entries) {
+      if (!ctx.days.has(dateKey(e.date))) continue;
+      const key = rowKey(e);
+      const row = rows.get(key) ?? { task: e.task ? String(e.task) : null, brand: e.brand ? String(e.brand) : null, note: "", minutes: 0, lockedMinutes: 0 };
+      row.minutes += e.minutes;
+      if (!isEditable(sheet)) row.lockedMinutes += e.minutes;
+      if (e.note && !row.note) row.note = e.note;
+      rows.set(key, row);
+    }
+  }
+  const brandIds = [...rows.values()].flatMap((r) => (r.brand ? [r.brand] : []));
+  const brands = brandIds.length ? await Brand.find({ _id: { $in: brandIds } }).select("name organisation").lean() : [];
+  return {
+    month: ctx.month,
+    label: monthLabel(ctx.month),
+    workdays: ctx.workdays,
+    editableWorkdays: ctx.editableWorkdays.length,
+    weeks: ctx.sheets.map((s) => ({ _id: s._id, weekStart: dateKey(s.weekStart), status: s.status })),
+    tasks: await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds)),
+    brands: brands.map((b) => ({ _id: b._id, name: b.name, organisation: (b as { organisation?: string }).organisation ?? "" })),
+    rows: [...rows.values()],
+    canLogBrands: await canLogBrandTime(actor),
+  };
+}
+
+function parseMonth(raw: unknown): string | null {
+  return typeof raw === "string" && /^\d{4}-(0[1-9]|1[0-2])$/.test(raw) ? raw : null;
+}
+
+/** GET /api/timesheets/month?month=YYYY-MM — my hours for the catch-up month, per task / brand. */
+export async function getMonth(req: Request, res: Response): Promise<void> {
+  const actor = req.user!;
+  const month = req.query.month === undefined || req.query.month === "" ? catchUpMonth() : parseMonth(req.query.month);
+  if (!month || month !== catchUpMonth()) {
+    res.status(400).json({ error: `Only ${monthLabel(catchUpMonth())} can be logged as a whole month` });
+    return;
+  }
+  res.json(await monthResponse(await monthContext(actor._id, month), actor));
+}
+
+/**
+ * PUT /api/timesheets/month — `{ month, rows: [{ task | brand, minutes, note? }], submit? }`:
+ * each row's month total is spread over the editable working days (rows not sent are left
+ * as they are). With `submit`, every ended week of the month that has hours is submitted.
+ */
+export async function saveMonth(req: Request, res: Response): Promise<void> {
+  const actor = req.user!;
+  const body = (req.body ?? {}) as { month?: unknown; rows?: unknown; submit?: unknown };
+  const month = parseMonth(body.month);
+  if (!month || month !== catchUpMonth()) {
+    res.status(400).json({ error: `Only ${monthLabel(catchUpMonth())} can be logged as a whole month` });
+    return;
+  }
+  if (!Array.isArray(body.rows) || body.rows.length > 100) {
+    res.status(400).json({ error: "rows must be an array of at most 100 rows" });
     return;
   }
 
-  // Department head(s); admins when the department has no head.
-  let approvers = (await departmentHeads(actor.department ?? null)).filter((id) => !id.equals(actor._id));
-  if (approvers.length === 0) approvers = await adminIds();
-  const total = formatMinutes(timesheetTotalMinutes(claimed));
-  const week = formatDueDate(claimed.weekStart) ?? dateKey(claimed.weekStart);
-  notifyUsers({
-    recipients: approvers,
+  const rows: Array<{ key: string; task: mongoose.Types.ObjectId | null; brand: mongoose.Types.ObjectId | null; note: string; minutes: number }> = [];
+  for (const item of body.rows) {
+    const { task, brand, note, minutes } = (item ?? {}) as { task?: unknown; brand?: unknown; note?: unknown; minutes?: unknown };
+    const taskId = typeof task === "string" && task ? task : null;
+    const brandId = typeof brand === "string" && brand ? brand : null;
+    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "")) {
+      res.status(400).json({ error: "Each row needs a valid task or brand (not both)" });
+      return;
+    }
+    if (note !== undefined && (typeof note !== "string" || note.trim().length > 300)) {
+      res.status(400).json({ error: "A note must be 300 characters or fewer" });
+      return;
+    }
+    if (typeof minutes !== "number" || !Number.isInteger(minutes) || minutes < 0 || minutes > MONTH_MAX_MINUTES) {
+      res.status(400).json({ error: "minutes must be a whole number of minutes for the month" });
+      return;
+    }
+    const ids = {
+      task: taskId ? new mongoose.Types.ObjectId(taskId) : null,
+      brand: brandId ? new mongoose.Types.ObjectId(brandId) : null,
+    };
+    const key = rowKey(ids);
+    if (rows.some((r) => r.key === key)) {
+      res.status(400).json({ error: "Each task or brand can appear once" });
+      return;
+    }
+    rows.push({ ...ids, key, note: brandId && typeof note === "string" ? note.trim() : "", minutes });
+  }
+
+  const ctx = await monthContext(actor._id, month);
+
+  // Tasks: open tasks assigned to the user (or already on these weeks).
+  const allowed = new Set(
+    (await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds))).map((t) => String((t as { _id: unknown })._id))
+  );
+  const invalid = rows.find((r) => r.task && r.minutes > 0 && !allowed.has(r.task.toString()));
+  if (invalid) {
+    res.status(400).json({ error: "You can only log time on open tasks assigned to you", task: invalid.task!.toString() });
+    return;
+  }
+  // Brands: Program / CM / leadership, on active approved brands (or brands already on these weeks).
+  const brandIds = [...new Set(rows.flatMap((r) => (r.brand && r.minutes > 0 ? [r.brand.toString()] : [])))];
+  if (brandIds.length) {
+    if (!(await canLogBrandTime(actor))) {
+      res.status(403).json({ error: "Only Program, CM and leadership can log time on a brand. Log it on a task instead." });
+      return;
+    }
+    const known = [...new Set(ctx.sheets.flatMap((s) => s.entries.flatMap((e) => (e.brand ? [e.brand.toString()] : []))))];
+    const usable = await Brand.find({
+      _id: { $in: brandIds },
+      $or: [{ _id: { $in: known } }, { active: true, $or: [{ status: { $exists: false } }, { status: "approved" }] }],
+    })
+      .select("_id")
+      .lean();
+    if (usable.length !== brandIds.length) {
+      res.status(400).json({ error: "Pick an active brand" });
+      return;
+    }
+  }
+
+  // Hours already in submitted / approved weeks stay; the rest is spread over the editable working days.
+  const workdays = ctx.editableWorkdays;
+  const lockedEntries = ctx.sheets.filter((s) => !isEditable(s)).flatMap((s) => s.entries);
+  const perDay = new Map<string, Map<string, number>>(); // row key → day → minutes
+  for (const row of rows) {
+    const locked = lockedEntries
+      .filter((e) => rowKey(e) === row.key && ctx.days.has(dateKey(e.date)))
+      .reduce((sum, e) => sum + e.minutes, 0);
+    const remaining = row.minutes - locked;
+    if (remaining < 0) {
+      res.status(400).json({ error: `A row already has ${formatMinutes(locked)} in submitted weeks — its month total can't be lower` });
+      return;
+    }
+    if (remaining > 0 && workdays.length === 0) {
+      res.status(409).json({ error: `Every week of ${monthLabel(month)} is already submitted` });
+      return;
+    }
+    const steps = Math.floor(remaining / STEP);
+    const days = new Map<string, number>();
+    workdays.forEach((day, i) => {
+      const minutes =
+        Math.floor(steps / workdays.length) * STEP + (i < steps % workdays.length ? STEP : 0) + (i === 0 ? remaining % STEP : 0);
+      if (minutes > 0) days.set(day, minutes);
+    });
+    perDay.set(row.key, days);
+  }
+
+  // Rebuild the editable weeks: the sent rows' month days are replaced, everything else stays.
+  const changed: IWeeklyTimesheet[] = [];
+  for (const sheet of ctx.sheets.filter(isEditable)) {
+    const kept = sheet.entries
+      .filter((e) => !(perDay.has(rowKey(e)) && ctx.days.has(dateKey(e.date))))
+      .map((e) => ({ task: e.task ?? null, brand: e.brand ?? null, note: e.note ?? "", date: e.date, minutes: e.minutes }));
+    const added = weekDays(sheet.weekStart).flatMap((day) =>
+      rows.flatMap((row) => {
+        const minutes = perDay.get(row.key)?.get(day) ?? 0;
+        return minutes > 0 ? [{ task: row.task, brand: row.brand, note: row.note, date: new Date(`${day}T00:00:00.000Z`), minutes }] : [];
+      })
+    );
+    const entries = [...kept, ...added];
+    const dayTotals = new Map<string, number>();
+    for (const e of entries) dayTotals.set(dateKey(e.date), (dayTotals.get(dateKey(e.date)) ?? 0) + e.minutes);
+    const over = [...dayTotals].find(([, minutes]) => minutes > 1440);
+    if (over) {
+      const day = formatDueDate(new Date(`${over[0]}T00:00:00.000Z`)) ?? over[0];
+      res.status(400).json({ error: `That's more than 24 hours on ${day} — lower the totals` });
+      return;
+    }
+    if (entries.length > MAX_ENTRIES) {
+      res.status(400).json({ error: "Too many rows in one week" });
+      return;
+    }
+    sheet.set("entries", entries);
+    changed.push(sheet);
+  }
+  for (const sheet of changed) await sheet.save();
+
+  let submittedWeeks = 0;
+  if (body.submit === true) {
+    const today = appToday();
+    const toApprove: IWeeklyTimesheet[] = [];
+    for (const sheet of changed) {
+      // Only weeks that have ended, with hours on them.
+      if (sheet.entries.length === 0 || addDays(sheet.weekStart, 7) > today) continue;
+      const submitted = await submitSheet(sheet, actor);
+      if (!submitted) continue;
+      submittedWeeks++;
+      if (submitted.status === "submitted") toApprove.push(submitted);
+    }
+    notifySubmitted(actor, toApprove);
+  }
+
+  logActivity({
+    action: "timesheet_month_logged",
     actor,
-    type: "timesheet_submitted",
-    title: "Timesheet submitted",
-    message: `${actor.name} submitted the timesheet for the week of ${week} (${total}).`,
-    link: `${REPORT_LINK}?status=submitted`,
-    email: {
-      subject: `🗓️ Timesheet submitted: ${actor.name} (${week})`,
-      heading: "Weekly Timesheet Submitted",
-      intro: `${actor.name} submitted a weekly timesheet for your approval.`,
-      cardTitle: `Week of ${week}`,
-      rows: [["Total", total]],
-      buttonLabel: "Review Timesheets",
-    },
+    targetType: "timesheet",
+    targetId: actor._id,
+    targetName: `${actor.name} · ${monthLabel(month)}`,
+    details: { rows: rows.length, minutes: rows.reduce((sum, r) => sum + r.minutes, 0), submittedWeeks },
+    ip: req.ip,
   });
-  pushTimesheetUpdate(claimed, "submitted", actor.department);
-  res.json(await sheetResponse(claimed, actor));
+  res.json({ ...(await monthResponse(await monthContext(actor._id, month), actor)), submittedWeeks });
 }
 
 // ---------------------------------------------------------------------------

@@ -99,6 +99,7 @@ const ACTION_META: Record<
   project_deleted: { label: "Deleted project", badge: "destructive" },
   timelog_reviewed: { label: "Reviewed time log", badge: "secondary" },
   timesheet_reviewed: { label: "Reviewed timesheet", badge: "secondary" },
+  timesheet_month_logged: { label: "Logged a month of hours", badge: "secondary" },
   project_settings_updated: { label: "Updated project settings", badge: "secondary" },
   user_invited: { label: "Invited user", badge: "default" },
   invitation_resent: { label: "Resent invitation", badge: "secondary" },
