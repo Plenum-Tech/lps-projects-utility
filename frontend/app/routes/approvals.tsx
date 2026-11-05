@@ -12,6 +12,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useApprovalQueue, useDecideBrand, useDecideProjectApproval } from "@/hooks/use-project-approval";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDateTime } from "@/lib/format";
+import { brandWithOrg } from "@/lib/tasks";
 import type { BrandApprovalItem, ProjectApprovalLinkResponse } from "@/types";
 
 import type { Route } from "./+types/approvals";
@@ -46,7 +47,9 @@ export default function ApprovalsRoute() {
       {/* Admins: tasks over their project's approved scope. */}
       <OverScopeApprovals />
 
-      {queue.data && !queue.data.isApprover && (
+      {(queue.data?.mine?.brands.length ?? 0) > 0 && <MyBrandRequests brands={queue.data!.mine!.brands} />}
+
+      {queue.data && !queue.data.isApprover && (queue.data.mine?.brands.length ?? 0) === 0 && (
         <EmptyState
           icon={LuClipboardCheck}
           title="You're not in leadership"
@@ -185,7 +188,7 @@ function BrandApprovals({ pending, recent }: { pending: BrandApprovalItem[]; rec
               <li key={brand._id} className="rounded-xl border bg-card p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 space-y-1">
-                    <p className="font-medium break-words text-foreground">{brand.name}</p>
+                    <p className="font-medium break-words text-foreground">{brandWithOrg(brand)}</p>
                     <p className="text-xs text-muted-foreground">
                       {brand.shortName ? `Short name ${brand.shortName} · ` : ""}
                       Proposed by {brand.requestedBy?.name ?? "someone"} · {formatDateTime(brand.createdAt)}
@@ -252,14 +255,15 @@ function BrandApprovals({ pending, recent }: { pending: BrandApprovalItem[]; rec
           <ul className="divide-y rounded-xl border bg-card text-sm">
             {recent.map((brand) => (
               <li key={brand._id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2">
-                <span className="font-medium">{brand.name}</span>
+                <span className="font-medium">{brandWithOrg(brand)}</span>
                 {brand.status === "approved" ? (
                   <Badge variant="secondary">Approved</Badge>
                 ) : (
                   <Badge variant="destructive">Rejected</Badge>
                 )}
                 <span className="text-xs text-muted-foreground">
-                  {brand.decidedBy?.name ?? ""} · {formatDateTime(brand.decidedAt)}
+                  Proposed by {brand.requestedBy?.name ?? "someone"} · {brand.status === "approved" ? "approved" : "rejected"} by{" "}
+                  {brand.decidedBy?.name ?? "leadership"} · {formatDateTime(brand.decidedAt)}
                   {brand.rejectReason ? ` · ${brand.rejectReason}` : ""}
                 </span>
               </li>
@@ -268,5 +272,67 @@ function BrandApprovals({ pending, recent }: { pending: BrandApprovalItem[]; rec
         </section>
       )}
     </>
+  );
+}
+
+/** Brands I proposed: waiting for leadership, or approved / rejected (with who, when and why). */
+function MyBrandRequests({ brands }: { brands: BrandApprovalItem[] }) {
+  const waiting = brands.filter((b) => b.status === "pending").length;
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-sm font-medium text-foreground">Your brand requests ({brands.length})</h2>
+        <p className="text-xs text-muted-foreground">
+          {waiting > 0
+            ? `${waiting} waiting for leadership approval. You'll get a notification when it's decided.`
+            : "Brands you proposed in the last 90 days and what leadership decided."}
+        </p>
+      </div>
+      <ul className="divide-y rounded-xl border bg-card text-sm">
+        {brands.map((brand) => (
+          <li key={brand._id} className="flex flex-wrap items-start justify-between gap-3 px-4 py-3">
+            <div className="min-w-0 space-y-0.5">
+              <p className="font-medium break-words text-foreground">
+                {brand.status === "approved" ? (
+                  <Link to={`/brands/${brand._id}`} className="hover:underline">
+                    {brandWithOrg(brand)}
+                  </Link>
+                ) : (
+                  brandWithOrg(brand)
+                )}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {brand.shortName ? `Short name ${brand.shortName} · ` : ""}
+                Submitted {formatDateTime(brand.createdAt)}
+              </p>
+              {brand.status === "pending" ? (
+                <p className="text-xs text-muted-foreground">Not reviewed yet — waiting for leadership.</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {brand.status === "approved" ? "Approved" : "Rejected"} by {brand.decidedBy?.name ?? "leadership"} ·{" "}
+                  {formatDateTime(brand.decidedAt)}
+                </p>
+              )}
+              {brand.status === "rejected" && (
+                <p className="text-xs text-destructive">Reason: {brand.rejectReason || "no reason given"}</p>
+              )}
+            </div>
+            {brand.status === "pending" ? (
+              <Badge variant="outline">Waiting for approval</Badge>
+            ) : brand.status === "approved" ? (
+              <Badge variant="secondary">
+                <LuCircleCheck aria-hidden />
+                Approved
+              </Badge>
+            ) : (
+              <Badge variant="destructive">
+                <LuCircleX aria-hidden />
+                Rejected
+              </Badge>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

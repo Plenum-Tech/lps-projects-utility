@@ -4406,6 +4406,7 @@ export interface BrandApprovalItem {
   _id: string;
   name: string;
   shortName: string;
+  organisation?: string;
   status: "approved" | "pending" | "rejected";
   requestedBy: { _id: string; name: string; email?: string } | null;
   decidedBy: { _id: string; name: string } | null;
@@ -4422,6 +4423,8 @@ export interface ProjectApprovalQueue {
   brands?: { pending: BrandApprovalItem[]; recent: BrandApprovalItem[] };
   /** Scope / team, brand and manpower plan changes waiting for leadership. */
   changes?: { pending: ChangeRequestItem[]; recent: ChangeRequestItem[] };
+  /** Everyone: brands I proposed — waiting, or decided in the last 90 days. */
+  mine?: { brands: BrandApprovalItem[] };
 }
 
 /** A change waiting for (or decided by) leadership. */

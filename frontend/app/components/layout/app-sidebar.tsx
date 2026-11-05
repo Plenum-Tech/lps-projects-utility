@@ -279,7 +279,9 @@ export function AppSidebar() {
   const groups = guest ? GUEST_GROUPS : resolveGroups(
     user.role,
     {
-      isApprover: Boolean(approvals.data?.isApprover) || user.role === "admin",
+      // Anyone who proposed a brand also sees Approvals, to follow its status.
+      isApprover:
+        Boolean(approvals.data?.isApprover) || user.role === "admin" || (approvals.data?.mine?.brands.length ?? 0) > 0,
       // Leadership: projects, brands and changes; admins: tasks over scope.
       pending:
         (approvals.data?.pending.length ?? 0) +

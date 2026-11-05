@@ -162,8 +162,9 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
  * `isApprover: false` and empty lists (the sidebar uses this to hide the menu).
  */
 export async function listApprovals(req: Request, res: Response): Promise<void> {
+  const mine = { brands: await myBrandRequests(req.user!._id as mongoose.Types.ObjectId) };
   if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
-    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] }, changes: { pending: [], recent: [] } });
+    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] }, changes: { pending: [], recent: [] }, mine });
     return;
   }
   const since = new Date(Date.now() - 30 * 86_400_000);
@@ -188,23 +189,47 @@ export async function listApprovals(req: Request, res: Response): Promise<void> 
       .limit(30)
       .lean(),
   ]);
-  const brandRow = (b: (typeof brandPending)[number]) => ({
-    _id: String(b._id),
-    name: b.name,
-    shortName: b.shortName ?? "",
-    status: b.status,
-    requestedBy: b.requestedBy ?? null,
-    decidedBy: (b as { decidedBy?: unknown }).decidedBy ?? null,
-    decidedAt: b.decidedAt ?? null,
-    rejectReason: b.rejectReason ?? "",
-    createdAt: b.createdAt,
-  });
   res.json({
     isApprover: true,
     pending: await Promise.all(pending.map(summary)),
     recent: await Promise.all(recent.map(summary)),
-    brands: { pending: brandPending.map(brandRow), recent: brandRecent.map(brandRow) },
+    brands: {
+      pending: brandPending.map((b) => brandRow(b as unknown as Parameters<typeof brandRow>[0])),
+      recent: brandRecent.map((b) => brandRow(b as unknown as Parameters<typeof brandRow>[0])),
+    },
     // Scope / team, brand and manpower plan changes waiting for leadership.
     changes: await changeRequestsForApprovals(),
+    mine,
   });
+}
+
+function brandRow(b: Record<string, unknown> & { _id: unknown; name: string; status: string; createdAt: Date }) {
+  return {
+    _id: String(b._id),
+    name: b.name,
+    shortName: (b.shortName as string | undefined) ?? "",
+    organisation: (b.organisation as string | undefined) ?? "",
+    status: b.status,
+    requestedBy: b.requestedBy ?? null,
+    decidedBy: b.decidedBy ?? null,
+    decidedAt: b.decidedAt ?? null,
+    rejectReason: (b.rejectReason as string | undefined) ?? "",
+    createdAt: b.createdAt,
+  };
+}
+
+/** Brands the user proposed: still waiting, or decided in the last 90 days — so they can see the outcome. */
+async function myBrandRequests(userId: mongoose.Types.ObjectId) {
+  const since = new Date(Date.now() - 90 * 86_400_000);
+  const rows = await Brand.find({
+    requestedBy: userId,
+    // Decided by someone else: a leader's own brand is approved as it's created, not a request.
+    $or: [{ status: "pending" }, { status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since }, decidedBy: { $nin: [null, userId] } }],
+  })
+    .sort({ createdAt: -1 })
+    .populate("requestedBy", "name email")
+    .populate("decidedBy", "name")
+    .limit(50)
+    .lean();
+  return rows.map((b) => brandRow(b as unknown as Parameters<typeof brandRow>[0]));
 }
