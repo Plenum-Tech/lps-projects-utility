@@ -252,7 +252,13 @@ app.use("/api/insights/ask", insightsRateLimit);
 // its own, so it is exempt — a 429 there would trigger a reconnect loop.
 app.use("/api", (req, res, next) =>
   // The Pearity server-to-server API has its own per-key limit (routes/integrations.ts).
-  req.path === "/notifications/stream" || req.path.startsWith("/integrations/pearity/v1/")
+  // Signing in (and the session check / sign-out around it) is never blocked by the general
+  // limit: a runaway tab could otherwise lock its user out. Login keeps its own strict limit.
+  req.path === "/notifications/stream" ||
+  req.path.startsWith("/integrations/pearity/v1/") ||
+  req.path === "/auth/login" ||
+  req.path === "/auth/me" ||
+  req.path === "/auth/logout"
     ? next()
     : standardRateLimit(req, res, next),
 );
