@@ -13,6 +13,7 @@ import type { Route } from "./+types/root";
 import "./app.css";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Toaster } from "@/components/ui/toast";
+import { UpdateBanner } from "@/components/globals/update-banner";
 import { createQueryClient } from "./lib/query-client";
 import { PRODUCT_DESCRIPTION, PRODUCT_NAME, PRODUCT_SHORT_NAME } from "./lib/brand";
 import { THEME_BOOT_SCRIPT } from "./lib/theme";
@@ -80,6 +81,8 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <Outlet />
+      {/* Every page, the login page too: after a deploy, ask to refresh. */}
+      <UpdateBanner />
     </QueryClientProvider>
   );
 }

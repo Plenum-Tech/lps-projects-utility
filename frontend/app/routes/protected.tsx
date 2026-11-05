@@ -2,7 +2,6 @@ import { AppShell } from "@/components/layout/app-shell";
 import { RequireAuth } from "@/components/auth/require-auth";
 import { MandatoryTrainingPrompt } from "@/components/training/mandatory-training-prompt";
 import { BrandMappingPrompt } from "@/components/projects/brand-mapping-prompt";
-import { UpdateBanner } from "@/components/globals/update-banner";
 import { useCurrentUser } from "@/hooks/use-auth";
 
 /**
@@ -18,7 +17,6 @@ export default function ProtectedLayout() {
       <AppShell />
       {staff && <MandatoryTrainingPrompt />}
       {staff && <BrandMappingPrompt />}
-      <UpdateBanner />
     </RequireAuth>
   );
 }

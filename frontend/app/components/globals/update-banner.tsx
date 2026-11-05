@@ -3,7 +3,7 @@ import { LuRefreshCw } from "react-icons/lu";
 
 import { Button } from "@/components/ui/button";
 
-const CHECK_EVERY_MS = 3 * 60_000;
+const CHECK_EVERY_MS = 60_000;
 const MANIFEST = /\/assets\/manifest-[A-Za-z0-9_-]+\.js/;
 
 /**
