@@ -11,6 +11,7 @@ import {
 } from "../lib/projectApproval.js";
 import { formatNamingMonth } from "../lib/projectNaming.js";
 import { Brand } from "../models/Brand.js";
+import { ChangeRequest } from "../models/ChangeRequest.js";
 import { Project, type IProject } from "../models/Project.js";
 import { User } from "../models/User.js";
 
@@ -162,7 +163,7 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
  * `isApprover: false` and empty lists (the sidebar uses this to hide the menu).
  */
 export async function listApprovals(req: Request, res: Response): Promise<void> {
-  const mine = { brands: await myBrandRequests(req.user!._id as mongoose.Types.ObjectId) };
+  const mine = { requests: await myRequests(req.user!._id as mongoose.Types.ObjectId) };
   if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
     res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] }, changes: { pending: [], recent: [] }, mine });
     return;
@@ -218,18 +219,107 @@ function brandRow(b: Record<string, unknown> & { _id: unknown; name: string; sta
   };
 }
 
-/** Brands the user proposed: still waiting, or decided in the last 90 days — so they can see the outcome. */
-async function myBrandRequests(userId: mongoose.Types.ObjectId) {
+const CHANGE_KIND_LABEL: Record<string, string> = {
+  project_change: "Scope / team change",
+  brand_edit: "Brand change",
+  manpower_plan: "Manpower plan",
+  project_move: "Move projects",
+};
+
+interface MyRequest {
+  _id: string;
+  type: "brand" | "project" | "change";
+  /** "New brand", "New project", "Brand change" … */
+  kindLabel: string;
+  title: string;
+  status: string;
+  submittedAt: Date | null;
+  decidedBy: { _id: string; name: string } | null;
+  decidedAt: Date | null;
+  reason: string;
+  link: string | null;
+}
+
+/**
+ * What the user sent to leadership — new brands, new projects and changes (scope / team, brand,
+ * manpower plan, moves) — still waiting, or decided by someone else in the last 90 days.
+ * Read-only: only leadership decides.
+ */
+async function myRequests(userId: mongoose.Types.ObjectId): Promise<MyRequest[]> {
   const since = new Date(Date.now() - 90 * 86_400_000);
-  const rows = await Brand.find({
-    requestedBy: userId,
-    // Decided by someone else: a leader's own brand is approved as it's created, not a request.
-    $or: [{ status: "pending" }, { status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since }, decidedBy: { $nin: [null, userId] } }],
-  })
-    .sort({ createdAt: -1 })
-    .populate("requestedBy", "name email")
-    .populate("decidedBy", "name")
-    .limit(50)
-    .lean();
-  return rows.map((b) => brandRow(b as unknown as Parameters<typeof brandRow>[0]));
+  // Decided by someone else: a leader's own work is approved as it's created, not a request.
+  const decided = { $gte: since };
+  const others = { $nin: [null, userId] };
+  const [brands, projects, changes] = await Promise.all([
+    Brand.find({ requestedBy: userId, $or: [{ status: "pending" }, { status: { $in: ["approved", "rejected"] }, decidedAt: decided, decidedBy: others }] })
+      .select("name organisation status decidedBy decidedAt rejectReason createdAt")
+      .populate("decidedBy", "name")
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean(),
+    Project.find({
+      "approval.requestedBy": userId,
+      $or: [
+        { "approval.status": "pending", archivedAt: null },
+        { "approval.status": { $in: ["approved", "rejected"] }, "approval.decidedAt": decided, "approval.decidedBy": others },
+      ],
+    })
+      .select("name code approval")
+      .populate("approval.decidedBy", "name")
+      .sort({ "approval.requestedAt": -1 })
+      .limit(50)
+      .lean(),
+    ChangeRequest.find({
+      requestedBy: userId,
+      draft: { $ne: true },
+      $or: [{ status: "pending" }, { status: { $in: ["approved", "rejected"] }, decidedAt: decided, decidedBy: others }],
+    })
+      .select("kind title status brand project decidedBy decidedAt reason createdAt")
+      .populate("decidedBy", "name")
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean(),
+  ]);
+  const person = (p: unknown) => (p && typeof p === "object" && "name" in p ? { _id: String((p as unknown as { _id: unknown })._id), name: String((p as { name: unknown }).name) } : null);
+  const rows: MyRequest[] = [
+    ...brands.map((b) => ({
+      _id: String(b._id),
+      type: "brand" as const,
+      kindLabel: "New brand",
+      title: b.organisation && b.organisation.trim().toLowerCase() !== b.name.trim().toLowerCase() ? `${b.organisation} › ${b.name}` : b.name,
+      status: b.status,
+      submittedAt: b.createdAt ?? null,
+      decidedBy: person(b.decidedBy),
+      decidedAt: b.decidedAt ?? null,
+      reason: b.rejectReason ?? "",
+      link: b.status === "approved" ? `/brands/${String(b._id)}` : null,
+    })),
+    ...projects.map((p) => ({
+      _id: String(p._id),
+      type: "project" as const,
+      kindLabel: "New project",
+      title: p.name,
+      status: p.approval?.status ?? "pending",
+      submittedAt: p.approval?.requestedAt ?? null,
+      decidedBy: person(p.approval?.decidedBy),
+      decidedAt: p.approval?.decidedAt ?? null,
+      reason: p.approval?.status === "rejected" ? (p.approval?.reason ?? "") : "",
+      link: `/projects/${String(p._id)}`,
+    })),
+    ...changes.map((c) => ({
+      _id: String(c._id),
+      type: "change" as const,
+      kindLabel: CHANGE_KIND_LABEL[c.kind] ?? "Change",
+      title: c.title,
+      status: c.status,
+      submittedAt: (c as { createdAt?: Date }).createdAt ?? null,
+      decidedBy: person(c.decidedBy),
+      decidedAt: c.decidedAt ?? null,
+      reason: c.status === "rejected" ? (c.reason ?? "") : "",
+      link: c.project ? `/projects/${String(c.project)}` : c.brand ? `/brands/${String(c.brand)}` : null,
+    })),
+  ];
+  // Waiting first (newest first), then decided (latest decision first).
+  const time = (r: MyRequest) => new Date(r.status === "pending" ? (r.submittedAt ?? 0) : (r.decidedAt ?? 0)).getTime();
+  return rows.sort((a, b) => Number(b.status === "pending") - Number(a.status === "pending") || time(b) - time(a)).slice(0, 60);
 }

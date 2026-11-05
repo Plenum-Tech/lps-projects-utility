@@ -279,9 +279,8 @@ export function AppSidebar() {
   const groups = guest ? GUEST_GROUPS : resolveGroups(
     user.role,
     {
-      // Anyone who proposed a brand also sees Approvals, to follow its status.
-      isApprover:
-        Boolean(approvals.data?.isApprover) || user.role === "admin" || (approvals.data?.mine?.brands.length ?? 0) > 0,
+      // Everyone sees Approvals: leadership decides there, the rest follow what they sent.
+      isApprover: true,
       // Leadership: projects, brands and changes; admins: tasks over scope.
       pending:
         (approvals.data?.pending.length ?? 0) +

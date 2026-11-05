@@ -4423,8 +4423,22 @@ export interface ProjectApprovalQueue {
   brands?: { pending: BrandApprovalItem[]; recent: BrandApprovalItem[] };
   /** Scope / team, brand and manpower plan changes waiting for leadership. */
   changes?: { pending: ChangeRequestItem[]; recent: ChangeRequestItem[] };
-  /** Everyone: brands I proposed — waiting, or decided in the last 90 days. */
-  mine?: { brands: BrandApprovalItem[] };
+  /** Everyone: what I sent to leadership — waiting, or decided in the last 90 days. */
+  mine?: { requests: MyApprovalRequest[] };
+}
+
+/** Something I sent to leadership: a new brand / project, or a change. */
+export interface MyApprovalRequest {
+  _id: string;
+  type: "brand" | "project" | "change";
+  kindLabel: string;
+  title: string;
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string | null;
+  decidedBy: { _id: string; name: string } | null;
+  decidedAt: string | null;
+  reason: string;
+  link: string | null;
 }
 
 /** A change waiting for (or decided by) leadership. */
