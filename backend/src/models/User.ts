@@ -106,6 +106,15 @@ export interface IUser extends mongoose.Document {
   guestInvitedBy?: mongoose.Types.ObjectId | null;
   /** Guests: set when an admin removed their access — sign-in and sessions are refused. */
   guestRevokedAt?: Date | null;
+  /**
+   * Entra object id (oid). Set on first successful Microsoft SSO; used for
+   * stable matching. Password login is unchanged.
+   */
+  entraOid?: string | null;
+  /** Entra tenant id (tid) from the last successful Microsoft SSO. */
+  entraTid?: string | null;
+  /** How this account can sign in. Default local; SSO sets both (password still works). */
+  authProvider?: "local" | "entra" | "both";
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidate: string): Promise<boolean>;
@@ -165,6 +174,13 @@ const userSchema = new Schema<IUser>(
     isGuest: { type: Boolean, default: false },
     guestInvitedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     guestRevokedAt: { type: Date, default: null },
+    entraOid: { type: String, default: null, trim: true },
+    entraTid: { type: String, default: null, trim: true },
+    authProvider: {
+      type: String,
+      enum: ["local", "entra", "both"],
+      default: "local",
+    },
   },
   { timestamps: true }
 );
@@ -173,6 +189,11 @@ const userSchema = new Schema<IUser>(
 userSchema.index(
   { employeeId: 1 },
   { unique: true, partialFilterExpression: { employeeId: { $type: "string" } }, name: "employeeId_unique" }
+);
+// Entra oid — unique once linked (partial so local-only users don't collide on null).
+userSchema.index(
+  { entraOid: 1 },
+  { unique: true, partialFilterExpression: { entraOid: { $type: "string" } }, name: "entraOid_unique" }
 );
 // HR reminder job: upcoming end dates.
 userSchema.index({ probationEndDate: 1 });

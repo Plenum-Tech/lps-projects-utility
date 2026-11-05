@@ -237,6 +237,8 @@ if (!spa) {
 // Strict: auth endpoints (login brute-force protection)
 // (login only — /auth/me runs on every page load and falls under the standard limit)
 app.use("/api/auth/login", strictRateLimit);
+app.use("/api/auth/sso/entra/start", strictRateLimit);
+app.use("/api/auth/sso/entra/callback", strictRateLimit);
 // Strict: public invitation preview/accept (token guessing + password set).
 app.use("/api/invitations/accept", inviteAcceptRateLimit);
 app.use("/api/password-setup", passwordSetupRateLimit);

@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import axios from "axios";
 import { AlertCircle, Eye, EyeOff, LoaderCircle, LogIn } from "lucide-react";
 import { Link, useNavigate } from "react-router";
@@ -7,8 +7,10 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
 import { useLogin } from "@/hooks/use-auth";
 import { getErrorMessage } from "@/lib/api";
+import { entraStartUrl, fetchSsoConfig } from "@/lib/sso";
 
 /**
  * Wrong credentials (401) or too many attempts (429): the way in is Forgot
@@ -27,6 +29,8 @@ function suggestsPasswordReset(error: unknown): boolean {
  * `me` cache — the token never touches localStorage/JS — then we navigate to
  * the dashboard.
  */
+const LOGIN_NEXT_KEY = "utility.login-next";
+
 export function LoginForm() {
   const login = useLogin();
   const navigate = useNavigate();
@@ -34,9 +38,21 @@ export function LoginForm() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [ssoEnabled, setSsoEnabled] = useState(false);
+  const [ssoStarting, setSsoStarting] = useState(false);
 
   const emailInvalid = submitted && email.trim() === "";
   const passwordInvalid = submitted && password === "";
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchSsoConfig().then((cfg) => {
+      if (!cancelled) setSsoEnabled(cfg.enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -50,8 +66,37 @@ export function LoginForm() {
     );
   }
 
+  function handleMicrosoftSignIn() {
+    setSsoStarting(true);
+    try {
+      sessionStorage.setItem(LOGIN_NEXT_KEY, "/dashboard");
+    } catch {
+      /* ignore */
+    }
+    window.location.assign(entraStartUrl("/dashboard"));
+  }
+
   return (
     <form onSubmit={handleSubmit} noValidate className="space-y-4">
+      {ssoEnabled && (
+        <div className="space-y-3">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            disabled={ssoStarting || login.isPending}
+            onClick={handleMicrosoftSignIn}
+          >
+            {ssoStarting ? <LoaderCircle className="animate-spin" /> : <MicrosoftMark />}
+            {ssoStarting ? "Redirecting…" : "Sign in with Microsoft"}
+          </Button>
+          <div className="flex items-center gap-3">
+            <Separator className="flex-1" />
+            <span className="text-xs text-muted-foreground">or continue with email</span>
+            <Separator className="flex-1" />
+          </div>
+        </div>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="login-email">Email</Label>
         <Input
@@ -151,5 +196,16 @@ export function LoginForm() {
         Accounts are created by administrators — there is no public registration.
       </p>
     </form>
+  );
+}
+
+function MicrosoftMark() {
+  return (
+    <svg aria-hidden viewBox="0 0 21 21" className="size-4" xmlns="http://www.w3.org/2000/svg">
+      <rect x="1" y="1" width="9" height="9" fill="#f25022" />
+      <rect x="11" y="1" width="9" height="9" fill="#7fba00" />
+      <rect x="1" y="11" width="9" height="9" fill="#00a4ef" />
+      <rect x="11" y="11" width="9" height="9" fill="#ffb900" />
+    </svg>
   );
 }
