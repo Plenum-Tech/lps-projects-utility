@@ -2412,9 +2412,16 @@ export interface TimeBreakdownTask extends TimeBreakdownRow {
   completedAt: string | null;
   estimateMinutes: number | null;
   client: string | null;
+  /** First / last day hours were logged on this row in the period. */
+  firstLog: string | null;
+  lastLog: string | null;
 }
 export interface TimeBreakdownProject extends TimeBreakdownRow {
   client: string | null;
+  /** "Org › Brand" of the project (or of the brand time row). */
+  brand: string | null;
+  /** Hours logged on the brand itself: no project or task. */
+  brandTime: boolean;
   tasks: TimeBreakdownTask[];
 }
 export interface TimeBreakdownEmployee extends TimeBreakdownRow {

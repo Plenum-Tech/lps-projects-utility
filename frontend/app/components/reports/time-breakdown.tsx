@@ -28,9 +28,8 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { STATUS_META, formatDateOnly } from "@/lib/tasks";
-import { formatMinutes, formatMoney } from "@/lib/time";
-import { cn } from "@/lib/utils";
+import { formatDateOnly } from "@/lib/tasks";
+import { formatMinutes } from "@/lib/time";
 import type { TimeBreakdownEmployee, TimeBreakdownResponse } from "@/types";
 
 const MAX_EMPLOYEES = 20;
@@ -147,259 +146,163 @@ export function TimeBreakdownChart({
   );
 }
 
-function statusLabel(status: string | null): string {
-  if (!status) return "—";
-  return (
-    (STATUS_META as Record<string, { label: string }>)[status]?.label ??
-    status.replace(/_/g, " ")
-  );
-}
-
 function date(value: string | null): string {
   return value ? formatDateOnly(value, true) : "—";
 }
 
-/** Employee › project › task rows with the task's details and the hours logged. */
+/**
+ * One row per employee × brand × project × task: Employee, Brand, Project, Task,
+ * first and last day logged in the period, and the hours. Brand time (weekly
+ * timesheet hours on a brand, no project or task) has its own rows.
+ */
 export function TimeBreakdownTable({ data }: { data: TimeBreakdownResponse }) {
-  const [collapsedEmployees, setCollapsedEmployees] = useState<Set<string>>(
-    new Set(),
-  );
-  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(
-    new Set(),
-  );
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const employeeKeys = data.employees.map((e) => e.key ?? "none");
   const allCollapsed =
-    employeeKeys.length > 0 &&
-    employeeKeys.every((k) => collapsedEmployees.has(k));
+    employeeKeys.length > 0 && employeeKeys.every((k) => collapsed.has(k));
 
-  const toggle = (
-    set: Set<string>,
-    key: string,
-    update: (next: Set<string>) => void,
-  ) => {
-    const next = new Set(set);
+  const toggle = (key: string) => {
+    const next = new Set(collapsed);
     if (next.has(key)) next.delete(key);
     else next.add(key);
-    update(next);
+    setCollapsed(next);
   };
 
   return (
     <Card>
       <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3">
         <div>
-          <CardTitle>Employee › Project › Task</CardTitle>
+          <CardTitle>Breakdown</CardTitle>
           <CardDescription>
-            Hours each employee logged on each task, with the task's dates and
-            status. Sorted by hours.
+            Hours per employee, brand, project and task — brand time included.
+            Start and end are the first and last day logged in the period.
           </CardDescription>
         </div>
         <Button
           variant="outline"
           size="sm"
-          onClick={() => {
-            setCollapsedEmployees(
-              allCollapsed ? new Set() : new Set(employeeKeys),
-            );
-            if (!allCollapsed) setCollapsedProjects(new Set());
-          }}
+          onClick={() =>
+            setCollapsed(allCollapsed ? new Set() : new Set(employeeKeys))
+          }
         >
           {allCollapsed ? "Expand all" : "Collapse all"}
         </Button>
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto rounded-lg border">
-          <Table className="min-w-[1100px]">
+          <Table className="min-w-[1000px]">
             <TableHeader>
               <TableRow>
-                <TableHead className="min-w-64">Employee / Task</TableHead>
-                <TableHead className="min-w-48">Project</TableHead>
-                <TableHead>Client</TableHead>
-                <TableHead>Start date</TableHead>
-                <TableHead>Due date</TableHead>
-                <TableHead>Completed on</TableHead>
-                <TableHead className="text-right">Estimated</TableHead>
-                <TableHead className="text-right">Hours logged</TableHead>
-                <TableHead>Task status</TableHead>
+                <TableHead className="min-w-44">Employee Name</TableHead>
+                <TableHead className="min-w-40">Brand Name</TableHead>
+                <TableHead className="min-w-56">Project Name</TableHead>
+                <TableHead className="min-w-64">Task Name</TableHead>
+                <TableHead>Start Date</TableHead>
+                <TableHead>End Date</TableHead>
+                <TableHead className="text-right">Total Hours</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {data.employees.map((emp) => {
                 const eKey = emp.key ?? "none";
-                const eOpen = !collapsedEmployees.has(eKey);
+                const open = !collapsed.has(eKey);
+                const rows = emp.projects.flatMap((proj) =>
+                  proj.tasks.map((task, index) => ({ proj, task, index })),
+                );
                 return (
                   <Fragment key={eKey}>
                     <TableRow className="bg-muted/40">
-                      <TableCell colSpan={7}>
+                      <TableCell colSpan={6}>
                         <button
                           type="button"
                           className="flex items-center gap-2 font-semibold text-foreground"
-                          onClick={() =>
-                            toggle(
-                              collapsedEmployees,
-                              eKey,
-                              setCollapsedEmployees,
-                            )
-                          }
-                          aria-expanded={eOpen}
+                          onClick={() => toggle(eKey)}
+                          aria-expanded={open}
                         >
-                          {eOpen ? (
+                          {open ? (
                             <LuChevronDown aria-hidden className="size-4" />
                           ) : (
                             <LuChevronRight aria-hidden className="size-4" />
                           )}
                           {emp.label}
                           <span className="font-normal text-muted-foreground">
-                            · {emp.projects.length} project
-                            {emp.projects.length === 1 ? "" : "s"} · {emp.count}{" "}
-                            log{emp.count === 1 ? "" : "s"}
-                            {emp.earnings > 0 &&
-                              ` · ${formatMoney(emp.earnings)}`}
+                            · {rows.length} row{rows.length === 1 ? "" : "s"}
                           </span>
                         </button>
                       </TableCell>
                       <TableCell className="text-right font-semibold whitespace-nowrap tabular-nums">
                         {formatMinutes(emp.minutes)}
                       </TableCell>
-                      <TableCell />
                     </TableRow>
-                    {eOpen &&
-                      emp.projects.map((proj) => {
-                        const pKey = `${eKey}:${proj.key ?? "none"}`;
-                        const pOpen = !collapsedProjects.has(pKey);
-                        return (
-                          <Fragment key={pKey}>
-                            <TableRow>
-                              <TableCell colSpan={7} className="pl-8">
-                                <button
-                                  type="button"
-                                  className="flex items-center gap-2 text-foreground"
-                                  onClick={() =>
-                                    toggle(
-                                      collapsedProjects,
-                                      pKey,
-                                      setCollapsedProjects,
-                                    )
-                                  }
-                                  aria-expanded={pOpen}
-                                >
-                                  {pOpen ? (
-                                    <LuChevronDown
-                                      aria-hidden
-                                      className="size-3.5"
-                                    />
-                                  ) : (
-                                    <LuChevronRight
-                                      aria-hidden
-                                      className="size-3.5"
-                                    />
-                                  )}
-                                  <span className="font-medium">
-                                    {proj.label}
+                    {open &&
+                      rows.map(({ proj, task, index }) => (
+                        <TableRow
+                          key={`${proj.key ?? "none"}:${task.key ?? `none-${index}`}`}
+                          className="text-sm"
+                        >
+                          <TableCell className="pl-8 text-muted-foreground">
+                            {emp.label}
+                          </TableCell>
+                          <TableCell
+                            className="max-w-56 truncate"
+                            title={proj.brand ?? undefined}
+                          >
+                            {proj.brand ?? "—"}
+                          </TableCell>
+                          <TableCell
+                            className="max-w-72 truncate"
+                            title={proj.brandTime ? undefined : proj.label}
+                          >
+                            {proj.brandTime ? (
+                              <span className="text-muted-foreground">
+                                — Brand time
+                              </span>
+                            ) : (
+                              proj.label
+                            )}
+                          </TableCell>
+                          <TableCell
+                            className="max-w-80 truncate"
+                            title={proj.brandTime ? undefined : task.label}
+                          >
+                            {proj.brandTime ? (
+                              <span className="text-muted-foreground">—</span>
+                            ) : (
+                              <>
+                                {task.sublabel && (
+                                  <span className="mr-1.5 text-xs text-muted-foreground">
+                                    {task.sublabel}
                                   </span>
-                                  {proj.sublabel && (
-                                    <span className="text-xs text-muted-foreground">
-                                      {proj.sublabel}
-                                    </span>
-                                  )}
-                                  {proj.client && (
-                                    <span className="text-xs text-muted-foreground">
-                                      · {proj.client}
-                                    </span>
-                                  )}
-                                  <span className="text-xs text-muted-foreground">
-                                    · {proj.tasks.length} task
-                                    {proj.tasks.length === 1 ? "" : "s"}
-                                  </span>
-                                </button>
-                              </TableCell>
-                              <TableCell className="text-right whitespace-nowrap tabular-nums">
-                                {formatMinutes(proj.minutes)}
-                              </TableCell>
-                              <TableCell />
-                            </TableRow>
-                            {pOpen &&
-                              proj.tasks.map((task, index) => (
-                                <TableRow
-                                  key={task.key ?? `none-${index}`}
-                                  className="text-sm"
-                                >
-                                  <TableCell className="pl-14">
-                                    <p
-                                      className="max-w-80 truncate text-foreground"
-                                      title={task.label}
-                                    >
-                                      {task.label}
-                                    </p>
-                                    {task.sublabel && (
-                                      <p className="text-xs text-muted-foreground">
-                                        {task.sublabel}
-                                      </p>
-                                    )}
-                                  </TableCell>
-                                  <TableCell
-                                    className="max-w-56 truncate text-muted-foreground"
-                                    title={proj.label}
-                                  >
-                                    {proj.label}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap text-muted-foreground">
-                                    {task.client ?? "—"}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {date(task.startDate)}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {date(task.dueDate)}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {date(task.completedAt)}
-                                  </TableCell>
-                                  <TableCell className="text-right whitespace-nowrap tabular-nums">
-                                    {task.estimateMinutes
-                                      ? formatMinutes(task.estimateMinutes)
-                                      : "—"}
-                                  </TableCell>
-                                  <TableCell
-                                    className={cn(
-                                      "text-right whitespace-nowrap tabular-nums",
-                                      task.estimateMinutes &&
-                                        task.minutes > task.estimateMinutes &&
-                                        "text-destructive",
-                                    )}
-                                    title={
-                                      task.estimateMinutes &&
-                                      task.minutes > task.estimateMinutes
-                                        ? "Over the estimate"
-                                        : undefined
-                                    }
-                                  >
-                                    {formatMinutes(task.minutes)}
-                                  </TableCell>
-                                  <TableCell className="whitespace-nowrap">
-                                    {statusLabel(task.status)}
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                          </Fragment>
-                        );
-                      })}
+                                )}
+                                {task.label}
+                              </>
+                            )}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {date(task.firstLog)}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            {date(task.lastLog)}
+                          </TableCell>
+                          <TableCell className="text-right whitespace-nowrap tabular-nums">
+                            {formatMinutes(task.minutes)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
                   </Fragment>
                 );
               })}
             </TableBody>
             <TableFooter>
               <TableRow>
-                <TableCell colSpan={7} className="font-semibold">
+                <TableCell colSpan={6} className="font-semibold">
                   Total · {data.totals.employees} employee
                   {data.totals.employees === 1 ? "" : "s"} · {data.totals.count}{" "}
                   logs
-                  {data.totals.earnings > 0 &&
-                    ` · ${formatMoney(data.totals.earnings)}`}
                 </TableCell>
                 <TableCell className="text-right font-semibold whitespace-nowrap tabular-nums">
                   {formatMinutes(data.totals.minutes)}
                 </TableCell>
-                <TableCell />
               </TableRow>
             </TableFooter>
           </Table>

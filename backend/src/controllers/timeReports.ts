@@ -300,9 +300,16 @@ interface BreakdownTask extends BreakdownRow {
   completedAt: string | null;
   estimateMinutes: number | null;
   client: string | null;
+  /** First / last day hours were logged on this row in the period (app timezone). */
+  firstLog: string | null;
+  lastLog: string | null;
 }
 interface BreakdownProject extends BreakdownRow {
   client: string | null;
+  /** "Org › Brand" of the project, or of the brand time row. */
+  brand: string | null;
+  /** Hours logged on the brand itself (weekly timesheet brand rows): no project or task. */
+  brandTime: boolean;
   tasks: BreakdownTask[];
 }
 interface BreakdownEmployee extends BreakdownRow {
@@ -326,6 +333,8 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     minutes: number;
     earnings: number;
     count: number;
+    firstLog: Date | null;
+    lastLog: Date | null;
   }>([
     { $match: match },
     {
@@ -334,6 +343,8 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
         minutes: { $sum: "$durationMinutes" },
         earnings: { $sum: "$earnings" },
         count: { $sum: 1 },
+        firstLog: { $min: "$startTime" },
+        lastLog: { $max: "$startTime" },
       },
     },
   ]);
@@ -341,7 +352,7 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     [...new Set(rows.map((r) => r._id[pick]).filter((id): id is mongoose.Types.ObjectId => id instanceof mongoose.Types.ObjectId).map(String))].map(
       (id) => new mongoose.Types.ObjectId(id)
     );
-  type ProjectLean = { _id: mongoose.Types.ObjectId; name: string; code?: string; brand?: { name?: string } | null };
+  type ProjectLean = { _id: mongoose.Types.ObjectId; name: string; code?: string; brand?: { name?: string; organisation?: string } | null };
   type TaskLean = {
     _id: mongoose.Types.ObjectId;
     title: string;
@@ -355,20 +366,27 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
   };
   const [users, projects, tasks, brands] = await Promise.all([
     User.find({ _id: { $in: ids("user") } }).select("name email").lean(),
-    Project.find({ _id: { $in: ids("project") } }).select("name code brand").populate("brand", "name").lean<ProjectLean[]>(),
+    Project.find({ _id: { $in: ids("project") } }).select("name code brand").populate("brand", "name organisation").lean<ProjectLean[]>(),
     Task.find({ _id: { $in: ids("task") } })
       .select("title shortCode number status startDate dueDate completedAt estimateMinutes")
       .lean<TaskLean[]>(),
     Brand.find({ _id: { $in: ids("brand") } }).select("name organisation").lean(),
   ]);
   const userLabel = new Map(users.map((u) => [u._id.toString(), { label: u.name, sublabel: u.email ?? null }]));
-  const projectInfo = new Map(projects.map((p) => [p._id.toString(), { label: p.name, sublabel: p.code ?? null, client: p.brand?.name ?? null }]));
+  const withOrg = (b: { name?: string; organisation?: string } | null | undefined): string | null => {
+    if (!b?.name) return null;
+    const org = (b.organisation ?? "").trim();
+    return org && org.toLowerCase() !== b.name.toLowerCase() ? `${org} › ${b.name}` : b.name;
+  };
+  type ProjectInfo = { label: string; sublabel: string | null; client: string | null; brand: string | null; brandTime: boolean };
+  const projectInfo = new Map<string, ProjectInfo>(
+    projects.map((p) => [p._id.toString(), { label: p.name, sublabel: p.code ?? null, client: p.brand?.name ?? null, brand: withOrg(p.brand), brandTime: false }])
+  );
   const taskInfo = new Map(tasks.map((t) => [t._id.toString(), t]));
   // Brand time (no project): its own row per brand, "Brand time · ENOC › Zoom".
   for (const b of brands) {
-    const org = (b.organisation ?? "").trim();
-    const name = org && org.toLowerCase() !== b.name.toLowerCase() ? `${org} › ${b.name}` : b.name;
-    projectInfo.set(`brand:${b._id.toString()}`, { label: `Brand time · ${name}`, sublabel: null, client: b.name });
+    const name = withOrg(b) ?? b.name;
+    projectInfo.set(`brand:${b._id.toString()}`, { label: `Brand time · ${name}`, sublabel: null, client: b.name, brand: name, brandTime: true });
   }
 
   const employees = new Map<string, BreakdownEmployee>();
@@ -385,14 +403,20 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     }
     let proj = emp.projects.find((p) => p.key === pKey);
     if (!proj) {
-      const info = (pKey && projectInfo.get(pKey)) || { label: pKey ? "(deleted project)" : "No project", sublabel: null, client: null };
-      proj = { key: pKey, label: info.label, sublabel: info.sublabel, client: info.client, minutes: 0, hours: 0, earnings: 0, count: 0, tasks: [] };
+      const info: ProjectInfo = (pKey && projectInfo.get(pKey)) || {
+        label: pKey ? "(deleted project)" : "No project",
+        sublabel: null,
+        client: null,
+        brand: null,
+        brandTime: false,
+      };
+      proj = { key: pKey, label: info.label, sublabel: info.sublabel, client: info.client, brand: info.brand, brandTime: info.brandTime, minutes: 0, hours: 0, earnings: 0, count: 0, tasks: [] };
       emp.projects.push(proj);
     }
     const t = tKey ? taskInfo.get(tKey) : undefined;
     const task: BreakdownTask = {
       key: tKey,
-      label: t ? t.title : tKey ? "(deleted task)" : "No task",
+      label: t ? t.title : tKey ? "(deleted task)" : proj.brandTime ? "Brand time" : "No task",
       sublabel: t ? (t.shortCode ?? (t.number ? `#${t.number}` : null)) : null,
       minutes: r.minutes,
       hours: hours(r.minutes),
@@ -404,6 +428,8 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
       completedAt: t?.completedAt ? appDateKey(t.completedAt) : null,
       estimateMinutes: t?.estimateMinutes ?? null,
       client: proj.client,
+      firstLog: r.firstLog ? appDateKey(r.firstLog) : null,
+      lastLog: r.lastLog ? appDateKey(r.lastLog) : null,
     };
     proj.tasks.push(task);
     sumInto(proj, task);
@@ -531,33 +557,35 @@ export async function timeExportXlsx(req: Request, res: Response): Promise<void>
   put("Employees", employees.length);
   if (logs.length >= EXPORT_LIMIT) put("Note", `Time logs sheet capped at ${EXPORT_LIMIT} rows`);
 
-  // --- Breakdown (outline: employee › project › task) ------------------------
-  const bd = wb.addWorksheet("Breakdown", { properties: { outlineLevelRow: 2 } });
+  // --- Breakdown: one row per employee x brand x project x task (brand time included) ---
+  const bd = wb.addWorksheet("Breakdown");
   bd.columns = [
-    { header: "Employee", width: 26 },
-    { header: "Project", width: 34 },
-    { header: "Task", width: 48 },
-    { header: "Hours", width: 10, style: { numFmt: "0.00" } },
-    { header: "Earnings", width: 12, style: { numFmt: "#,##0.00" } },
-    { header: "Entries", width: 9 },
+    { header: "Employee Name", width: 26 },
+    { header: "Brand Name", width: 30 },
+    { header: "Project Name", width: 40 },
+    { header: "Task Name", width: 48 },
+    { header: "Start Date", width: 12 },
+    { header: "End Date", width: 12 },
+    { header: "Total Hours", width: 12, style: { numFmt: "0.00" } },
   ];
   for (const emp of employees) {
-    const er = bd.addRow([emp.label, "", "", emp.hours, emp.earnings, emp.count]);
-    er.font = { bold: true };
-    er.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF3F4F6" } };
     for (const proj of emp.projects) {
-      const pr = bd.addRow(["", proj.sublabel ? `${proj.sublabel} - ${proj.label}` : proj.label, "", proj.hours, proj.earnings, proj.count]);
-      pr.font = { italic: true };
-      pr.outlineLevel = 1;
       for (const task of proj.tasks) {
-        const tr = bd.addRow(["", "", task.sublabel ? `${task.sublabel} - ${task.label}` : task.label, task.hours, task.earnings, task.count]);
-        tr.outlineLevel = 2;
+        bd.addRow([
+          emp.label,
+          proj.brand ?? "",
+          proj.brandTime ? "— (brand time)" : proj.sublabel ? `${proj.sublabel} - ${proj.label}` : proj.label,
+          proj.brandTime ? "— (brand time)" : task.sublabel ? `${task.sublabel} - ${task.label}` : task.label,
+          task.firstLog ?? "",
+          task.lastLog ?? "",
+          task.hours,
+        ]);
       }
     }
   }
-  totalRow(bd, ["Total", "", "", totals.hours, totals.earnings, totals.count]);
+  totalRow(bd, ["Total", "", "", "", "", "", totals.hours]);
   styleHeader(bd);
-  dataBars(bd, "D", bd.rowCount - 1);
+  dataBars(bd, "G", bd.rowCount - 1);
 
   // --- Tasks: one row per employee x task, with the task's details ----------
   const tasksSheet = wb.addWorksheet("Tasks");
