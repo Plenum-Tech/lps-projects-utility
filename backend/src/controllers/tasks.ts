@@ -1219,7 +1219,11 @@ interface SubmitTaskBody {
   finalFileId?: unknown;
   /** Or a link to the final deliverable (http/https). */
   finalUrl?: unknown;
+  /** Or several links (up to MAX_FINAL_LINKS); takes the place of finalUrl. */
+  finalUrls?: unknown;
 }
+
+const MAX_FINAL_LINKS = 10;
 
 interface ReviewTaskBody {
   decision?: unknown;
@@ -1890,7 +1894,7 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const { submissionNotes, finalFileId, finalUrl, parity } = (req.body ?? {}) as SubmitTaskBody;
+  const { submissionNotes, finalFileId, finalUrl, finalUrls, parity } = (req.body ?? {}) as SubmitTaskBody;
   if (parity !== undefined && parity !== "on" && parity !== "off") {
     res.status(400).json({ error: "Choose On Pearity or Off Pearity" });
     return;
@@ -1899,7 +1903,23 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "submissionNotes must be 2000 characters or fewer" });
     return;
   }
-  let finalFile: { fileId: mongoose.Types.ObjectId | null; url: string | null; addedAt: Date } | null = null;
+  let finalFile: { fileId: mongoose.Types.ObjectId | null; url: string | null; links?: string[]; addedAt: Date } | null = null;
+  // Several links: finalUrls; one link: finalUrl (kept for older clients).
+  let links: string[] = [];
+  if (Array.isArray(finalUrls)) {
+    links = [...new Set(finalUrls.map((u) => (typeof u === "string" ? u.trim() : "")).filter(Boolean))];
+    if (links.length > MAX_FINAL_LINKS) {
+      res.status(400).json({ error: `Add up to ${MAX_FINAL_LINKS} final links` });
+      return;
+    }
+    if (links.some((u) => !/^https?:\/\/\S+$/i.test(u) || u.length > 2000)) {
+      res.status(400).json({ error: "Each final link must start with http:// or https://" });
+      return;
+    }
+  } else if (finalUrls !== undefined && finalUrls !== null) {
+    res.status(400).json({ error: "finalUrls must be a list of links" });
+    return;
+  }
   if (finalFileId !== undefined && finalFileId !== null && finalFileId !== "") {
     if (typeof finalFileId !== "string" || isInvalidObjectId(finalFileId)) {
       res.status(400).json({ error: "finalFileId must be a valid file ID" });
@@ -1917,6 +1937,8 @@ export async function submitTask(req: Request, res: Response): Promise<void> {
       return;
     }
     finalFile = { fileId: null, url: finalUrl.trim(), addedAt: new Date() };
+  } else if (links.length > 0) {
+    finalFile = { fileId: null, url: links[0]!, links, addedAt: new Date() };
   }
   if (finalFile) task.finalFile = finalFile;
   if (parity !== undefined) task.parity = parity;

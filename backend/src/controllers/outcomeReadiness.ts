@@ -24,7 +24,7 @@ export async function checkOutcomeReadiness(req: Request, res: Response): Promis
     res.json({ enabled: false, result: null });
     return;
   }
-  const body = (req.body ?? {}) as { notes?: unknown; finalUrl?: unknown; hasFile?: unknown };
+  const body = (req.body ?? {}) as { notes?: unknown; finalUrl?: unknown; finalUrls?: unknown; hasFile?: unknown };
   if (body.notes !== undefined && (typeof body.notes !== "string" || body.notes.length > 2000)) {
     res.status(400).json({ error: "notes must be 2000 characters or fewer" });
     return;
@@ -34,14 +34,19 @@ export async function checkOutcomeReadiness(req: Request, res: Response): Promis
     return;
   }
   const notes = typeof body.notes === "string" ? body.notes : (task.submissionNotes ?? "");
-  const url = typeof body.finalUrl === "string" ? body.finalUrl.trim() : (task.finalFile?.url ?? "");
-  const hasFile = body.hasFile === true || (body.finalUrl === undefined && Boolean(task.finalFile?.fileId));
+  const urls = Array.isArray(body.finalUrls)
+    ? body.finalUrls.filter((u): u is string => typeof u === "string" && u.trim() !== "" && u.length <= 2000).slice(0, 10)
+    : null;
+  const url = urls ? (urls[0] ?? "") : typeof body.finalUrl === "string" ? body.finalUrl.trim() : (task.finalFile?.url ?? "");
+  const links = urls ?? (typeof body.finalUrl === "string" ? undefined : task.finalFile?.links);
+  const hasFile =
+    body.hasFile === true || (body.finalUrl === undefined && !urls && Boolean(task.finalFile?.fileId));
   const draft: OutcomeTaskInput = {
     title: task.title,
     description: task.description,
     titleParts: task.titleParts ?? null,
     submissionNotes: notes,
-    finalFile: url ? { url } : hasFile ? { fileId: true, url: null } : null,
+    finalFile: url ? { url, links } : hasFile ? { fileId: true, url: null } : null,
   };
   const project = task.project
     ? await Project.findById(task.project).select("name summary scopeItems").lean<OutcomeProjectInput>()

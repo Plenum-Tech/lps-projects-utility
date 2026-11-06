@@ -67,12 +67,12 @@ function OutcomeResult({ result }: { result: OutcomeReadiness }) {
 export function OutcomeReadinessBox({
   taskId,
   notes,
-  finalUrl,
+  finalUrls,
   hasFile,
 }: {
   taskId: string;
   notes: string;
-  finalUrl: string;
+  finalUrls: string[];
   hasFile: boolean;
 }) {
   const [result, setResult] = useState<OutcomeReadiness | null>(null);
@@ -82,7 +82,7 @@ export function OutcomeReadinessBox({
   const seq = useRef(0);
   const lastKey = useRef("");
 
-  const key = `${notes.trim()}\u0000${finalUrl.trim()}\u0000${hasFile}`;
+  const key = `${notes.trim()}\u0000${finalUrls.join(" ")}\u0000${hasFile}`;
 
   async function run() {
     const id = ++seq.current;
@@ -92,7 +92,7 @@ export function OutcomeReadinessBox({
     try {
       const { data } = await api.post<{ enabled: boolean; result: OutcomeReadiness | null }>(
         `/tasks/${taskId}/outcome-readiness`,
-        { notes, finalUrl: finalUrl.trim(), hasFile },
+        { notes, finalUrls, hasFile },
       );
       if (id !== seq.current) return;
       if (!data.enabled) setDisabled(true);

@@ -992,7 +992,8 @@ export interface Task {
   /** Rules-era tasks: the parts the title is composed from. */
   titleParts?: TaskTitleParts | null;
   /** Final deliverable recorded at completion. */
-  finalFile?: { fileId?: string | null; url?: string | null; addedAt?: string | null } | null;
+  /** `links` holds every final link (several allowed); `url` is the first. */
+  finalFile?: { fileId?: string | null; url?: string | null; links?: string[]; addedAt?: string | null } | null;
   /** How well the outcome note answers the brief and scope (scored on submit / completion). Advice only. */
   outcomeReadiness?: (OutcomeReadiness & { at: string }) | null;
   submittedAt: string | null;
@@ -1348,6 +1349,8 @@ export interface TaskSubmitInput {
   finalFileId?: string;
   /** Or a link to it. */
   finalUrl?: string;
+  /** Or several links. */
+  finalUrls?: string[];
   submissionNotes?: string;
   /** Mandatory when closing. */
   parity?: "on" | "off";

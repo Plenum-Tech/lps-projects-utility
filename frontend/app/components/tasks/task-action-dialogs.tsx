@@ -4,8 +4,10 @@ import {
   LuCircleCheck,
   LuCircleX,
   LuLoaderCircle,
+  LuPlus,
   LuSend,
   LuTrash2,
+  LuX,
 } from "react-icons/lu";
 
 import {
@@ -46,6 +48,15 @@ import { api, getErrorMessage } from "@/lib/api";
 import { Input } from "@/components/ui/input";
 import type { Task } from "@/types";
 
+const LINK_RE = /^https?:\/\/\S+$/i;
+const MAX_FINAL_LINKS = 10;
+
+/** The task's recorded final links (several, or the single url). */
+function finalLinksOf(task: Task): string[] {
+  if (task.finalFile?.links?.length) return task.finalFile.links;
+  return task.finalFile?.url ? [task.finalFile.url] : [];
+}
+
 /**
  * Complete the task (or send it for review). Both are mandatory: an outcome —
  * a note, the final file or link (or a file already on the task) — and the time
@@ -73,13 +84,14 @@ export function SubmitTaskDialog({
   const [logging, setLogging] = useState(false);
   const [mode, setMode] = useState<"file" | "link">("file");
   const [file, setFile] = useState<File | null>(null);
-  const [link, setLink] = useState("");
+  const [links, setLinks] = useState<string[]>([""]);
   const [submitted, setSubmitted] = useState(false);
 
   useEffect(() => {
     if (open) {
       setNotes(task.submissionNotes ?? "");
-      setLink(task.finalFile?.url ?? "");
+      const recorded = finalLinksOf(task);
+      setLinks(recorded.length ? recorded : [""]);
       setMode(task.finalFile?.url ? "link" : "file");
       setFile(null);
       setHours("");
@@ -90,14 +102,14 @@ export function SubmitTaskDialog({
       setActualEnd(both ? toDateTimeInput(task.actualEndAt!) : "");
       setSubmitted(false);
     }
-  }, [open, task.submissionNotes, task.finalFile?.url, task.actualStartAt, task.actualEndAt]);
+  }, [open, task.submissionNotes, task.finalFile?.url, task.finalFile?.links, task.actualStartAt, task.actualEndAt]);
 
   const direct = task.project?.requireTaskApproval === false;
   // Logged time is optional for completion.
   const noTime = false;
-  const linkValue = link.trim();
-  const linkInvalid =
-    mode === "link" && linkValue !== "" && !/^https?:\/\/\S+$/i.test(linkValue);
+  const linkValues = [...new Set(links.map((l) => l.trim()).filter(Boolean))];
+  const badLink = (value: string) => value.trim() !== "" && !LINK_RE.test(value.trim());
+  const linkInvalid = mode === "link" && links.some(badLink);
   const h = hours.trim() === "" ? 0 : Number(hours);
   const m = minutes.trim() === "" ? 0 : Number(minutes);
   const timeInvalid = !Number.isInteger(h) || !Number.isInteger(m) || h < 0 || m < 0 || m > 59 || h > 23;
@@ -126,7 +138,7 @@ export function SubmitTaskDialog({
   // Closing needs the final deliverable (a link, or a file / image) AND an outcome note.
   const deliverableMissing =
     !(mode === "file" && file) &&
-    !(mode === "link" && linkValue && !linkInvalid) &&
+    !(mode === "link" && linkValues.length > 0 && !linkInvalid) &&
     !task.finalFile?.fileId &&
     !task.finalFile?.url;
   const notesMissing = !notes.trim();
@@ -179,7 +191,7 @@ export function SubmitTaskDialog({
         input: {
           submissionNotes: notes.trim() || undefined,
           ...(finalFileId ? { finalFileId } : {}),
-          ...(mode === "link" && linkValue ? { finalUrl: linkValue } : {}),
+          ...(mode === "link" && linkValues.length ? { finalUrls: linkValues } : {}),
         },
       },
       { onSuccess: () => onOpenChange(false) },
@@ -249,25 +261,56 @@ export function SubmitTaskDialog({
                 aria-label="Final file"
               />
             ) : (
-              <Input
-                type="url"
-                value={link}
-                onChange={(event) => setLink(event.target.value)}
-                placeholder="https://… (Drive, SharePoint, Figma, YouTube…)"
-                aria-label="Final link"
-                aria-invalid={(submitted && linkInvalid) || undefined}
-              />
+              <div className="space-y-2">
+                {links.map((value, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <Input
+                      type="url"
+                      value={value}
+                      onChange={(event) =>
+                        setLinks(links.map((l, i) => (i === index ? event.target.value : l)))
+                      }
+                      placeholder="https://… (Drive, SharePoint, Figma, YouTube…)"
+                      aria-label={`Final link ${index + 1}`}
+                      aria-invalid={(submitted && badLink(value)) || undefined}
+                    />
+                    {links.length > 1 && (
+                      <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="shrink-0"
+                        onClick={() => setLinks(links.filter((_, i) => i !== index))}
+                        aria-label={`Remove link ${index + 1}`}
+                      >
+                        <LuX aria-hidden />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+                {links.length < MAX_FINAL_LINKS && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setLinks([...links, ""])}
+                  >
+                    <LuPlus aria-hidden />
+                    Add another link
+                  </Button>
+                )}
+              </div>
             )}
             {(task.finalFile?.fileId || task.finalFile?.url) &&
               !file &&
-              !linkValue && (
+              linkValues.length === 0 && (
                 <p className="text-xs text-muted-foreground">
                   A final deliverable is already recorded for this task.
                 </p>
               )}
             {submitted && linkInvalid && (
               <p className="text-xs text-destructive">
-                The link must start with http:// or https://.
+                Each link must start with http:// or https://.
               </p>
             )}
             {fileTooBig && (
@@ -302,7 +345,9 @@ export function SubmitTaskDialog({
           <OutcomeReadinessBox
             taskId={task._id}
             notes={notes}
-            finalUrl={mode === "link" && !linkInvalid ? linkValue : !file ? (task.finalFile?.url ?? "") : ""}
+            finalUrls={
+              mode === "link" ? linkValues.filter((l) => LINK_RE.test(l)) : !file ? finalLinksOf(task) : []
+            }
             hasFile={(mode === "file" && Boolean(file)) || Boolean(task.finalFile?.fileId)}
           />
 

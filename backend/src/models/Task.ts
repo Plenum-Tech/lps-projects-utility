@@ -193,8 +193,16 @@ export interface ITask extends mongoose.Document {
     by: mongoose.Types.ObjectId;
     from?: Date | null;
   } | null;
-  /** Final deliverable recorded at completion: an uploaded file (TaskFile id) or a link. */
-  finalFile?: { fileId?: mongoose.Types.ObjectId | null; url?: string | null; addedAt?: Date | null } | null;
+  /**
+   * Final deliverable recorded at completion: an uploaded file (TaskFile id) or
+   * links (`links` holds every link; `url` is the first).
+   */
+  finalFile?: {
+    fileId?: mongoose.Types.ObjectId | null;
+    url?: string | null;
+    links?: string[];
+    addedAt?: Date | null;
+  } | null;
   submittedAt?: Date | null;
   /** Reviewer's notes on approval/rejection. */
   reviewNotes?: string;
@@ -393,6 +401,7 @@ const taskSchema = new Schema<ITask>(
         {
           fileId: { type: Schema.Types.ObjectId, ref: "TaskFile", default: null },
           url: { type: String, trim: true, maxlength: 2000, default: null },
+          links: { type: [{ type: String, trim: true, maxlength: 2000 }], default: undefined },
           addedAt: { type: Date, default: null },
         },
         { _id: false }

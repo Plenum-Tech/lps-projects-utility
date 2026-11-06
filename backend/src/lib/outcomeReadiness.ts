@@ -28,7 +28,7 @@ export interface OutcomeTaskInput {
   description?: string | null;
   titleParts?: { unit?: string | null; quantity?: number | null } | null;
   submissionNotes?: string | null;
-  finalFile?: { fileId?: unknown; url?: string | null } | null;
+  finalFile?: { fileId?: unknown; url?: string | null; links?: string[] | null } | null;
 }
 
 export interface OutcomeProjectInput {
@@ -119,11 +119,16 @@ export function statedCounts(note: string, unit: string): number[] {
   return out;
 }
 
+/** Every final link of the task (several when `links` is set, else the one url). */
+export function finalLinks(task: OutcomeTaskInput): string[] {
+  const links = task.finalFile?.links?.length ? task.finalFile.links : [task.finalFile?.url ?? ""];
+  return links.map((u) => u.trim()).filter(Boolean);
+}
+
 /** Deliverables handed in: the final file / link plus other links in the note. */
 export function deliveredItems(task: OutcomeTaskInput): number {
   const urls = new Set<string>();
-  const finalUrl = (task.finalFile?.url ?? "").trim();
-  if (finalUrl) urls.add(finalUrl.replace(/\/+$/, ""));
+  for (const link of finalLinks(task)) urls.add(link.replace(/\/+$/, ""));
   for (const m of (task.submissionNotes ?? "").matchAll(URL_RE)) urls.add(m[0].replace(/[.,;)]+$/, "").replace(/\/+$/, ""));
   return urls.size + (task.finalFile?.fileId ? 1 : 0);
 }
@@ -173,7 +178,7 @@ export function evaluateOutcomeRules(task: OutcomeTaskInput, project: OutcomePro
   // 2. Files / links handed in vs the count (20).
   max += 20;
   const items = deliveredItems(task);
-  const folder = FOLDER_LINK.test(`${task.finalFile?.url ?? ""} ${note}`);
+  const folder = FOLDER_LINK.test(`${finalLinks(task).join(" ")} ${note}`);
   const need = expected.quantity ?? 1;
   if (items === 0) {
     missing.push("No final file or link");
@@ -271,7 +276,7 @@ async function evaluateOutcomeAI(task: OutcomeTaskInput, project: OutcomeProject
         .map((r) => `- ${r.quantity} × ${r.unit}${r.languageList?.length ? `, languages: ${r.languageList.join(", ")}` : r.languages && r.languages > 1 ? `, ${r.languages} languages` : ""}${r.sizes && r.sizes > 1 ? `, ${r.sizes} sizes` : ""}`)
         .join("\n")
     : "(no scope rows)";
-  const link = (task.finalFile?.url ?? "").trim() || (task.finalFile?.fileId ? "(a file was uploaded)" : "(none)");
+  const link = finalLinks(task).join("\n") || (task.finalFile?.fileId ? "(a file was uploaded)" : "(none)");
   const content = [
     `Project: ${project?.name ?? "(none)"}`,
     `Task title: ${task.title ?? ""}`,

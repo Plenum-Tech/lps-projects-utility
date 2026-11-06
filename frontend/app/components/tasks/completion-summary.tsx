@@ -14,13 +14,17 @@ import type { Task } from "@/types";
  */
 export function CompletionSummary({ task }: { task: Task }) {
   const finalFileId = task.finalFile?.fileId ?? null;
-  const finalUrl = task.finalFile?.url ?? null;
+  const finalUrls = task.finalFile?.links?.length
+    ? task.finalFile.links
+    : task.finalFile?.url
+      ? [task.finalFile.url]
+      : [];
   const files = useTaskFiles(finalFileId ? task._id : null);
   const finalFile = finalFileId ? files.data?.files.find((f) => f._id === finalFileId) : undefined;
   const [downloading, setDownloading] = useState(false);
 
   const completed = task.status === "completed";
-  if (!completed && !finalFileId && !finalUrl && !task.submissionNotes) return null;
+  if (!completed && !finalFileId && finalUrls.length === 0 && !task.submissionNotes) return null;
 
   return (
     <section
@@ -43,18 +47,26 @@ export function CompletionSummary({ task }: { task: Task }) {
 
       <dl className="grid gap-3 text-sm sm:grid-cols-2">
         <div className="space-y-0.5">
-          <dt className="text-xs text-muted-foreground">Final file / link</dt>
+          <dt className="text-xs text-muted-foreground">
+            {finalUrls.length > 1 ? `Final links (${finalUrls.length})` : "Final file / link"}
+          </dt>
           <dd className="min-w-0">
-            {finalUrl ? (
-              <a
-                href={finalUrl}
-                target="_blank"
-                rel="noopener noreferrer nofollow"
-                className="inline-flex max-w-full items-center gap-1 break-all text-primary underline underline-offset-2"
-              >
-                {finalUrl}
-                <LuExternalLink aria-hidden className="size-3.5 shrink-0" />
-              </a>
+            {finalUrls.length > 0 ? (
+              <ul className="space-y-1">
+                {finalUrls.map((url) => (
+                  <li key={url}>
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      className="inline-flex max-w-full items-center gap-1 break-all text-primary underline underline-offset-2"
+                    >
+                      {url}
+                      <LuExternalLink aria-hidden className="size-3.5 shrink-0" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
             ) : finalFileId ? (
               finalFile ? (
                 <button
