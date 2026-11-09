@@ -2327,6 +2327,8 @@ export type TimesheetStatus = "draft" | "submitted" | "approved" | "rejected";
 export interface TimesheetEntry {
   task?: string | null;
   brand?: string | null;
+  /** Brand rows: the brand's project (of the month); null = the brand as a whole. */
+  project?: string | null;
   /** Brand rows: what the time was for (optional). */
   note?: string;
   /** "YYYY-MM-DD" on input; UTC-midnight ISO on output. */
@@ -2368,13 +2370,25 @@ export interface TimesheetView {
     byBrand?: Record<string, number>;
     total: number;
   };
+  /** Brand rows: the brands' projects of the week's month(s) to pick from. */
+  brandProjects?: TimesheetBrandProject[];
   permissions: {
     canEdit: boolean;
     canSubmit: boolean;
     canReview: boolean;
-    /** Program / CM / leadership: rows on a brand as a whole (no approval). */
+    /** Program / CM / leadership: rows on a brand (no approval). */
     canLogBrands?: boolean;
   };
+}
+
+/** A brand's project a brand row can be logged on. */
+export interface TimesheetBrandProject {
+  _id: string;
+  name: string;
+  code: string;
+  brand: string | null;
+  /** "YYYY-MM". */
+  month: string | null;
 }
 
 /** GET /timesheets/month — the previous month in one go (totals per task / brand). */
@@ -2388,7 +2402,8 @@ export interface TimesheetMonthView {
   weeks: Array<{ _id: string; weekStart: string; status: TimesheetStatus }>;
   tasks: TimesheetTask[];
   brands: Array<{ _id: string; name: string; organisation: string }>;
-  rows: Array<{ task: string | null; brand: string | null; note: string; minutes: number; lockedMinutes: number }>;
+  rows: Array<{ task: string | null; brand: string | null; project: string | null; note: string; minutes: number; lockedMinutes: number }>;
+  brandProjects?: TimesheetBrandProject[];
   canLogBrands: boolean;
   submittedWeeks?: number;
 }

@@ -7,6 +7,8 @@ export type TimesheetStatus = (typeof TIMESHEET_STATUSES)[number];
 export interface ITimesheetEntry {
   task?: mongoose.Types.ObjectId | null;
   brand?: mongoose.Types.ObjectId | null;
+  /** Brand rows: the brand's project (of the month) the time was on; null = the brand as a whole. */
+  project?: mongoose.Types.ObjectId | null;
   /** Brand rows: what the time was for (optional). */
   note?: string;
   /** Date-only (UTC midnight), within the week. */
@@ -32,6 +34,7 @@ const entrySchema = new Schema<ITimesheetEntry>(
   {
     task: { type: Schema.Types.ObjectId, ref: "Task", default: null },
     brand: { type: Schema.Types.ObjectId, ref: "Brand", default: null },
+    project: { type: Schema.Types.ObjectId, ref: "Project", default: null },
     note: { type: String, default: "", trim: true, maxlength: 300 },
     date: { type: Date, required: true },
     minutes: { type: Number, required: true, min: 1, max: 1440 },

@@ -14,6 +14,12 @@ import {
 import { useSearchParams } from "react-router";
 
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
+import {
+  BrandProjectPicker,
+  brandProjectLabel,
+  brandRowKey,
+  splitBrandRowKey,
+} from "@/components/timelogs/brand-project-picker";
 import { TimesheetStatusBadge } from "@/components/projects/project-badges";
 import { TimeNav } from "@/components/timelogs/time-nav";
 import { TimesheetMonthDialog } from "@/components/timelogs/timesheet-month-dialog";
@@ -35,14 +41,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useBrands } from "@/hooks/use-brands";
@@ -55,26 +53,27 @@ import type { TimesheetGridRow } from "@/components/timelogs/timesheet-grid";
 const MANY_TASKS = 8;
 const DAY_MAX = 24 * 60;
 
-/** Grid row id of a brand row. */
-const brandRowId = (brandId: string) => `brand:${brandId}`;
+/** Grid row id of a brand row (key: `<brandId>:<projectId>`, see brandRowKey). */
+const brandRowId = (key: string) => `brand:${key}`;
 
 function valuesFromView(view: TimesheetView): Record<string, string> {
   const values: Record<string, string> = {};
   for (const entry of view.timesheet.entries) {
-    const row = entry.brand ? brandRowId(entry.brand) : entry.task;
+    const row = entry.brand ? brandRowId(brandRowKey(entry.brand, entry.project)) : entry.task;
     if (row) values[cellKey(row, entry.date.slice(0, 10))] = minutesToCell(entry.minutes);
   }
   return values;
 }
 
-/** Brand rows on the sheet (in order) and each one's note. */
+/** Brand rows on the sheet (in order, by brand row key) and each one's note. */
 function brandsFromView(view: TimesheetView): { ids: string[]; notes: Record<string, string> } {
   const ids: string[] = [];
   const notes: Record<string, string> = {};
   for (const entry of view.timesheet.entries) {
     if (!entry.brand) continue;
-    if (!ids.includes(entry.brand)) ids.push(entry.brand);
-    if (entry.note && !notes[entry.brand]) notes[entry.brand] = entry.note;
+    const key = brandRowKey(entry.brand, entry.project);
+    if (!ids.includes(key)) ids.push(key);
+    if (entry.note && !notes[key]) notes[key] = entry.note;
   }
   return { ids, notes };
 }
@@ -111,7 +110,7 @@ export function TimesheetPage() {
   const [dirty, setDirty] = useState(false);
   const [showAll, setShowAll] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  // Brand rows (Program / CM / leadership): brand ids on the sheet and their notes.
+  // Brand rows (Program / CM / leadership): brand row keys (brand + project) on the sheet and their notes.
   const [brandIds, setBrandIds] = useState<string[]>([]);
   const [notes, setNotes] = useState<Record<string, string>>({});
   const loadedVersion = useRef("");
@@ -155,10 +154,11 @@ export function TimesheetPage() {
   const brandOptions: BrandOption[] = useMemo(
     () =>
       (allBrands.data ?? [])
-        .filter((b) => b.active && (!b.status || b.status === "approved") && !brandIds.includes(b._id))
+        .filter((b) => b.active && (!b.status || b.status === "approved"))
         .map((b) => ({ value: b._id, label: brandWithOrg(b) })),
-    [allBrands.data, brandIds],
+    [allBrands.data],
   );
+  const brandProjects = viewForWeek?.brandProjects ?? [];
   const rowIds = [...tasks.map((t) => t._id), ...brandIds.map(brandRowId)];
 
   const invalidCells = useMemo(
@@ -197,17 +197,19 @@ export function TimesheetPage() {
         if (minutes > 0) out.push({ task: task._id, date: day, minutes });
       }
     }
-    for (const brand of brandIds) {
-      const note = (notes[brand] ?? "").trim();
+    for (const key of brandIds) {
+      const { brand, project } = splitBrandRowKey(key);
+      const note = (notes[key] ?? "").trim();
       for (const day of days) {
-        const minutes = parseHours(values[cellKey(brandRowId(brand), day)] ?? "") ?? 0;
-        if (minutes > 0) out.push({ brand, date: day, minutes, ...(note ? { note } : {}) });
+        const minutes = parseHours(values[cellKey(brandRowId(key), day)] ?? "") ?? 0;
+        if (minutes > 0) out.push({ brand, ...(project ? { project } : {}), date: day, minutes, ...(note ? { note } : {}) });
       }
     }
     return out;
   }
 
-  function addBrand(id: string) {
+  function addBrand(brand: string, project: string | null) {
+    const id = brandRowKey(brand, project);
     setBrandIds((current) => (current.includes(id) ? current : [...current, id]));
     setDirty(true);
   }
@@ -268,18 +270,23 @@ export function TimesheetPage() {
   // Brand hours need no approval: a week of brand rows only is approved as it's submitted.
   const brandOnly = allEntries.length > 0 && allEntries.every((e) => e.brand);
 
-  const brandRows: TimesheetGridRow[] = brandIds.map((id) => ({
-    id: brandRowId(id),
-    title: brandName(id),
-    sublabel: "Brand time · no approval needed",
-    brand: true,
-    note: notes[id] ?? "",
-    onNoteChange: (note) => {
-      setNotes((current) => ({ ...current, [id]: note }));
-      setDirty(true);
-    },
-    onRemove: () => removeBrand(id),
-  }));
+  const brandRows: TimesheetGridRow[] = brandIds.map((id) => {
+    const { brand, project } = splitBrandRowKey(id);
+    return {
+      id: brandRowId(id),
+      title: brandName(brand),
+      sublabel: project
+        ? `${brandProjectLabel(brandProjects.find((p) => p._id === project))} · no approval needed`
+        : "Brand as a whole · no approval needed",
+      brand: true,
+      note: notes[id] ?? "",
+      onNoteChange: (note) => {
+        setNotes((current) => ({ ...current, [id]: note }));
+        setDirty(true);
+      },
+      onRemove: () => removeBrand(id),
+    };
+  });
   const taskRow = (task: (typeof tasks)[number]): TimesheetGridRow => ({
     id: task._id,
     title: task.title,
@@ -445,30 +452,15 @@ export function TimesheetPage() {
             )}
             {canLogBrands && !readOnly && (
               <div className="flex flex-wrap items-center gap-2">
-                <Combobox
-                  items={brandOptions}
-                  value={null}
-                  onValueChange={(option: BrandOption | null) => option && addBrand(option.value)}
-                  isItemEqualToValue={(x: BrandOption, y: BrandOption) => x.value === y.value}
-                >
-                  <ComboboxInput
-                    className="w-72"
-                    placeholder={allBrands.isPending ? "Loading brands…" : "Add brand time — search brands…"}
-                    aria-label="Add a brand row"
-                  />
-                  <ComboboxContent>
-                    <ComboboxEmpty>No brands found.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(option: BrandOption) => (
-                        <ComboboxItem key={option.value} value={option}>
-                          {option.label}
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
+                <BrandProjectPicker
+                  brands={brandOptions}
+                  projects={brandProjects}
+                  used={new Set(brandIds)}
+                  loading={allBrands.isPending}
+                  onAdd={addBrand}
+                />
                 <span className="text-xs text-muted-foreground">
-                  Time on a brand as a whole (not a task). It counts at once — no approval.
+                  Pick the brand, then the project of the month you worked on (or the brand as a whole). It counts at once — no approval.
                 </span>
               </div>
             )}

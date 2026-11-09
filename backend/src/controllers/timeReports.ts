@@ -416,7 +416,7 @@ async function loadBreakdown(match: Record<string, unknown>): Promise<{ employee
     const t = tKey ? taskInfo.get(tKey) : undefined;
     const task: BreakdownTask = {
       key: tKey,
-      label: t ? t.title : tKey ? "(deleted task)" : proj.brandTime ? "Brand time" : "No task",
+      label: t ? t.title : tKey ? "(deleted task)" : proj.brandTime || r._id.brand ? "Brand time" : "No task",
       sublabel: t ? (t.shortCode ?? (t.number ? `#${t.number}` : null)) : null,
       minutes: r.minutes,
       hours: hours(r.minutes),

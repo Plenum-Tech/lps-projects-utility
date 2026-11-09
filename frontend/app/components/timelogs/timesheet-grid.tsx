@@ -20,8 +20,9 @@ import { cn } from "@/lib/utils";
 const DAY_MAX = 24 * 60;
 
 /**
- * A grid row: a task, or (Program / CM / leadership) a brand as a whole. Brand row ids
- * are `brand:<brandId>`; brand rows carry an optional note and can be removed.
+ * A grid row: a task, or (Program / CM / leadership) a brand — as a whole or one of its
+ * projects. Brand row ids are `brand:<brandId>:<projectId>`; brand rows carry an optional
+ * note and can be removed.
  */
 export interface TimesheetGridRow {
   id: string;

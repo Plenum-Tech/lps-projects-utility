@@ -20,8 +20,8 @@ export interface ITimeLog extends mongoose.Document {
   /** The rework item (task subtask) this time was spent on, if any. */
   subtask?: mongoose.Types.ObjectId | null;
   /**
-   * Time spent on a brand as a whole (weekly timesheet brand rows — Program, CM, leadership):
-   * no project or task. Reports count it with the brand's project hours.
+   * Time spent on a brand (weekly timesheet brand rows — Program, CM, leadership): no task, and
+   * the brand's project when one was picked. Reports count it with the brand's project hours.
    */
   brand?: mongoose.Types.ObjectId | null;
   startTime: Date;

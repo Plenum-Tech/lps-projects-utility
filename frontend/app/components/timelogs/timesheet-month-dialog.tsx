@@ -2,6 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import { LuCalendarRange, LuLoaderCircle, LuSave, LuSend, LuTags, LuX } from "react-icons/lu";
 
 import { TimesheetStatusBadge } from "@/components/projects/project-badges";
+import {
+  BrandProjectPicker,
+  brandProjectLabel,
+  brandRowKey,
+  splitBrandRowKey,
+} from "@/components/timelogs/brand-project-picker";
 import { Button } from "@/components/ui/button";
 import {
   Combobox,
@@ -29,7 +35,7 @@ import { minutesToCell } from "@/components/timelogs/timesheet-grid";
 type Option = { value: string; label: string };
 
 interface Row {
-  /** "task:<id>" or "brand:<id>". */
+  /** "task:<id>" or "brand:<brandId>:<projectId>" (see brandRowKey). */
   key: string;
   label: string;
   sub: string;
@@ -65,6 +71,14 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
   const [rows, setRows] = useState<Row[]>([]);
   const [loadedFor, setLoadedFor] = useState<string | null>(null);
 
+  const brandProjects = view?.brandProjects ?? [];
+  const brandSub = (project: string | null) =>
+    project
+      ? `${brandProjectLabel(brandProjects.find((p) => p._id === project))} · no approval needed`
+      : "Brand as a whole · no approval needed";
+  const rowKeyOf = (r: { task: string | null; brand: string | null; project: string | null }) =>
+    r.task ? `task:${r.task}` : `brand:${brandRowKey(r.brand ?? "", r.project)}`;
+
   const taskLabel = useMemo(() => {
     const map = new Map<string, { label: string; sub: string }>();
     for (const t of view?.tasks ?? []) {
@@ -88,9 +102,9 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
         const brand = r.brand ? view.brands.find((b) => b._id === r.brand) : null;
         const task = r.task ? taskLabel.get(r.task) : null;
         return {
-          key: r.task ? `task:${r.task}` : `brand:${r.brand}`,
+          key: rowKeyOf(r),
           label: r.task ? (task?.label ?? "Task") : brandWithOrg(brand) || "Brand",
-          sub: r.task ? (task?.sub ?? "") : "Brand time · no approval needed",
+          sub: r.task ? (task?.sub ?? "") : brandSub(r.project),
           hours: minutesToCell(r.minutes),
           note: r.note,
           lockedMinutes: r.lockedMinutes,
@@ -98,6 +112,7 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
       })
     );
     setLoadedFor(view.month);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, view, loadedFor, taskLabel]);
 
   const used = new Set(rows.map((r) => r.key));
@@ -105,8 +120,9 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     .filter((t) => !used.has(`task:${t._id}`))
     .map((t) => ({ value: t._id, label: `${taskLabel.get(t._id)?.label ?? t.title}${t.project ? ` — ${t.project.name}` : ""}` }));
   const brandOptions: Option[] = (allBrands.data ?? [])
-    .filter((b) => b.active && (!b.status || b.status === "approved") && !used.has(`brand:${b._id}`))
+    .filter((b) => b.active && (!b.status || b.status === "approved"))
     .map((b) => ({ value: b._id, label: brandWithOrg(b) }));
+  const usedBrandRows = new Set([...used].flatMap((key) => (key.startsWith("brand:") ? [key.slice(6)] : [])));
 
   const parsed = rows.map((r) => parseMonthHours(r.hours));
   const invalid = parsed.some((m) => m === null);
@@ -129,15 +145,14 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     if (!view || invalid || tooLow) return;
     // Removed rows are sent as 0 so their month hours are cleared too.
     const sent = new Set(rows.map((r) => r.key));
-    const removed = view.rows
-      .map((r) => (r.task ? `task:${r.task}` : `brand:${r.brand}`))
-      .filter((key) => !sent.has(key));
+    const removed = view.rows.map(rowKeyOf).filter((key) => !sent.has(key));
     const payload = [
       ...rows.map((r, i) => ({ key: r.key, minutes: parsed[i] ?? 0, note: r.note })),
       ...removed.map((key) => ({ key, minutes: 0, note: "" })),
     ].map(({ key, minutes, note }) => {
-      const [kind, id] = key.split(":") as ["task" | "brand", string];
-      return kind === "task" ? { task: id, minutes } : { brand: id, minutes, note };
+      if (key.startsWith("task:")) return { task: key.slice(5), minutes };
+      const { brand, project } = splitBrandRowKey(key.slice(6));
+      return { brand, ...(project ? { project } : {}), minutes, note };
     });
     save.mutate(
       { month: view.month, rows: payload, submit },
@@ -268,30 +283,19 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                   </ComboboxContent>
                 </Combobox>
                 {view.canLogBrands && (
-                  <Combobox
-                    items={brandOptions}
-                    value={null}
-                    onValueChange={(option: Option | null) =>
-                      option && addRow(`brand:${option.value}`, option.label, "Brand time · no approval needed")
+                  <BrandProjectPicker
+                    brands={brandOptions}
+                    projects={brandProjects}
+                    used={usedBrandRows}
+                    loading={allBrands.isPending}
+                    onAdd={(brand, project) =>
+                      addRow(
+                        `brand:${brandRowKey(brand, project)}`,
+                        brandOptions.find((o) => o.value === brand)?.label ?? "Brand",
+                        brandSub(project),
+                      )
                     }
-                    isItemEqualToValue={(x: Option, y: Option) => x.value === y.value}
-                  >
-                    <ComboboxInput
-                      className="w-72"
-                      placeholder={allBrands.isPending ? "Loading brands…" : "Add brand time — search brands…"}
-                      aria-label="Add a brand row"
-                    />
-                    <ComboboxContent>
-                      <ComboboxEmpty>No brands found.</ComboboxEmpty>
-                      <ComboboxList>
-                        {(option: Option) => (
-                          <ComboboxItem key={option.value} value={option}>
-                            {option.label}
-                          </ComboboxItem>
-                        )}
-                      </ComboboxList>
-                    </ComboboxContent>
-                  </Combobox>
+                  />
                 )}
               </div>
             )}

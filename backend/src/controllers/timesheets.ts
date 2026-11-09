@@ -90,6 +90,53 @@ function sheetTotals(sheet: IWeeklyTimesheet) {
   return { byDay, byTask, byBrand, total: timesheetTotalMinutes(sheet) };
 }
 
+/** "YYYY-MM" of each day, once. */
+function monthsOf(days: string[]): string[] {
+  return [...new Set(days.map((d) => d.slice(0, 7)))];
+}
+
+/** Projects picked on brand rows. */
+function entryProjectIds(entries: Array<{ project?: mongoose.Types.ObjectId | null }>): mongoose.Types.ObjectId[] {
+  return entries.flatMap((e) => (e.project ? [e.project] : []));
+}
+
+/**
+ * Projects a brand row can be on: each brand's projects of these months (not archived), plus
+ * the ones already on the rows. The grid filters them by the row's brand.
+ */
+async function brandProjects(months: string[], extraIds: mongoose.Types.ObjectId[]) {
+  if (months.length === 0 && extraIds.length === 0) return [];
+  const projects = await Project.find({
+    $or: [{ "naming.month": { $in: months }, archivedAt: null, brand: { $ne: null } }, { _id: { $in: extraIds } }],
+  })
+    .select("name code brand naming.month")
+    .sort({ name: 1 })
+    .lean();
+  return projects.map((p) => ({
+    _id: String(p._id),
+    name: p.name,
+    code: p.code ?? "",
+    brand: p.brand ? String(p.brand) : null,
+    month: p.naming?.month ?? null,
+  }));
+}
+
+/**
+ * Brand rows' projects must be one of their brand's projects for these months (or already on
+ * the rows). Returns the error message, or null.
+ */
+async function checkBrandProjects(
+  rows: Array<{ brand: mongoose.Types.ObjectId | null; project: mongoose.Types.ObjectId | null }>,
+  months: string[],
+  known: mongoose.Types.ObjectId[]
+): Promise<string | null> {
+  const picked = rows.filter((r) => r.brand && r.project);
+  if (picked.length === 0) return null;
+  const usable = new Map((await brandProjects(months, known)).map((p) => [p._id, p.brand]));
+  const bad = picked.find((r) => usable.get(String(r.project)) !== String(r.brand));
+  return bad ? "Pick one of the brand's projects for this month" : null;
+}
+
 /** Task ids on a sheet (brand rows have none). */
 function sheetTaskIds(sheet: Pick<IWeeklyTimesheet, "entries">): mongoose.Types.ObjectId[] {
   return sheet.entries.flatMap((e) => (e.task ? [e.task] : []));
@@ -103,14 +150,17 @@ async function sheetResponse(sheet: IWeeklyTimesheet, actor: IUser) {
     .populate("reviewedBy", "name");
   const own = sheet.user.equals(actor._id);
   const editable = own && (sheet.status === "draft" || sheet.status === "rejected");
+  const canLogBrands = own && (await canLogBrandTime(actor));
   return {
     timesheet: { ...(populated!.toJSON() as unknown as Record<string, unknown>), weekStartKey: dateKey(sheet.weekStart) },
     tasks: await loggableTasks(sheet.user, sheetTaskIds(sheet)),
     days: weekDays(sheet.weekStart),
     totals: sheetTotals(sheet),
+    // Brand rows: the brands' projects of the week's month(s) to pick from.
+    brandProjects: await brandProjects(canLogBrands ? monthsOf(weekDays(sheet.weekStart)) : [], entryProjectIds(sheet.entries)),
     permissions: {
-      /** Program / CM / leadership: rows on a brand as a whole (no approval). */
-      canLogBrands: own && (await canLogBrandTime(actor)),
+      /** Program / CM / leadership: rows on a brand (no approval). */
+      canLogBrands,
       canEdit: editable,
       canSubmit: editable && sheet.entries.length > 0,
       canReview: sheet.status === "submitted" && Boolean(owner) && canReviewTimesheet(actor, owner!),
@@ -192,9 +242,9 @@ export async function getTimesheet(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * PUT /api/timesheets/:id/entries — `{ entries: [{ task | brand, date, minutes, note? }] }`
- * replaces the draft's rows. Brand rows (time on a brand as a whole) are for Program / CM /
- * leadership (lib/brandTime.ts).
+ * PUT /api/timesheets/:id/entries — `{ entries: [{ task | brand, project?, date, minutes, note? }] }`
+ * replaces the draft's rows. Brand rows (time on a brand, or on one of its projects of the
+ * month) are for Program / CM / leadership (lib/brandTime.ts).
  */
 export async function saveEntries(req: Request, res: Response): Promise<void> {
   const actor = req.user!;
@@ -217,12 +267,27 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
   const days = new Set(weekDays(sheet.weekStart));
   const seen = new Set<string>();
   const perDay: Record<string, number> = {};
-  const entries: Array<{ task: mongoose.Types.ObjectId | null; brand: mongoose.Types.ObjectId | null; note: string; date: Date; minutes: number }> = [];
+  const entries: Array<{
+    task: mongoose.Types.ObjectId | null;
+    brand: mongoose.Types.ObjectId | null;
+    project: mongoose.Types.ObjectId | null;
+    note: string;
+    date: Date;
+    minutes: number;
+  }> = [];
   for (const item of raw) {
-    const { task, brand, note, date, minutes } = (item ?? {}) as { task?: unknown; brand?: unknown; note?: unknown; date?: unknown; minutes?: unknown };
+    const { task, brand, project, note, date, minutes } = (item ?? {}) as {
+      task?: unknown;
+      brand?: unknown;
+      project?: unknown;
+      note?: unknown;
+      date?: unknown;
+      minutes?: unknown;
+    };
     const taskId = typeof task === "string" && task ? task : null;
     const brandId = typeof brand === "string" && brand ? brand : null;
-    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "")) {
+    const projectId = brandId && typeof project === "string" && project ? project : null;
+    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "") || (projectId && isInvalidObjectId(projectId))) {
       res.status(400).json({ error: "Each entry needs a valid task or brand (not both)" });
       return;
     }
@@ -239,9 +304,9 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: "minutes must be an integer between 0 and 1440" });
       return;
     }
-    const key = `${taskId ?? `brand:${brandId}`}:${dateKey(day)}`;
+    const key = `${taskId ?? `brand:${brandId}:${projectId ?? ""}`}:${dateKey(day)}`;
     if (seen.has(key)) {
-      res.status(400).json({ error: taskId ? "Each task can appear once per day" : "Each brand can appear once per day" });
+      res.status(400).json({ error: taskId ? "Each task can appear once per day" : "Each brand / project can appear once per day" });
       return;
     }
     seen.add(key);
@@ -254,6 +319,7 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
     entries.push({
       task: taskId ? new mongoose.Types.ObjectId(taskId) : null,
       brand: brandId ? new mongoose.Types.ObjectId(brandId) : null,
+      project: projectId ? new mongoose.Types.ObjectId(projectId) : null,
       note: brandId && typeof note === "string" ? note.trim() : "",
       date: day,
       minutes,
@@ -285,6 +351,11 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
       .lean();
     if (usable.length !== brandIds.length) {
       res.status(400).json({ error: "Pick an active brand" });
+      return;
+    }
+    const projectError = await checkBrandProjects(entries, monthsOf([...days]), entryProjectIds(sheet.entries));
+    if (projectError) {
+      res.status(400).json({ error: projectError });
       return;
     }
   }
@@ -341,7 +412,7 @@ async function submitSheet(sheet: IWeeklyTimesheet, actor: IUser): Promise<IWeek
   const tasks = await Task.find({ _id: { $in: sheetTaskIds(claimed) } }).select("project");
   const projectOf = new Map(tasks.map((t) => [t._id.toString(), t.project ?? null]));
   const projectIds = [...new Set([...projectOf.values()].filter(Boolean).map(String))];
-  const projects = await Project.find({ _id: { $in: projectIds } }).select("members");
+  const projects = await Project.find({ _id: { $in: [...projectIds, ...entryProjectIds(claimed.entries).map(String)] } }).select("members");
   const projectById = new Map(projects.map((p) => [p._id.toString(), p]));
 
   const sorted = [...claimed.entries].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -353,9 +424,10 @@ async function submitSheet(sheet: IWeeklyTimesheet, actor: IUser): Promise<IWeek
     const start = new Date(appTimeOn(day, DAY_START).getTime() + offset * 60_000);
     const end = new Date(start.getTime() + entry.minutes * 60_000);
     offsetByDay.set(day, offset + entry.minutes);
-    const projectId = entry.task ? (projectOf.get(entry.task.toString()) ?? null) : null;
+    // Brand rows: the brand's project when one was picked.
+    const projectId = entry.task ? (projectOf.get(entry.task.toString()) ?? null) : (entry.project ?? null);
     const rate = await resolveHourlyRate(actor._id, projectId ? projectById.get(projectId.toString()) : null);
-    // Brand rows (no project or task) need no approval: they count at once.
+    // Brand rows (no task) need no approval: they count at once.
     const onBrand = Boolean(entry.brand);
     docs.push({
       user: actor._id,
@@ -470,8 +542,8 @@ function isEditable(sheet: IWeeklyTimesheet): boolean {
   return sheet.status === "draft" || sheet.status === "rejected";
 }
 
-function rowKey(e: { task?: mongoose.Types.ObjectId | null; brand?: mongoose.Types.ObjectId | null }): string {
-  return e.task ? `task:${String(e.task)}` : `brand:${String(e.brand)}`;
+function rowKey(e: { task?: mongoose.Types.ObjectId | null; brand?: mongoose.Types.ObjectId | null; project?: mongoose.Types.ObjectId | null }): string {
+  return e.task ? `task:${String(e.task)}` : `brand:${String(e.brand)}:${e.project ? String(e.project) : ""}`;
 }
 
 interface MonthContext {
@@ -506,12 +578,22 @@ async function monthContext(userId: mongoose.Types.ObjectId, month: string): Pro
 
 /** `{ month, label, weeks, tasks, brands, rows, … }` for the month form. */
 async function monthResponse(ctx: MonthContext, actor: IUser) {
-  const rows = new Map<string, { task: string | null; brand: string | null; note: string; minutes: number; lockedMinutes: number }>();
+  const rows = new Map<
+    string,
+    { task: string | null; brand: string | null; project: string | null; note: string; minutes: number; lockedMinutes: number }
+  >();
   for (const sheet of ctx.sheets) {
     for (const e of sheet.entries) {
       if (!ctx.days.has(dateKey(e.date))) continue;
       const key = rowKey(e);
-      const row = rows.get(key) ?? { task: e.task ? String(e.task) : null, brand: e.brand ? String(e.brand) : null, note: "", minutes: 0, lockedMinutes: 0 };
+      const row = rows.get(key) ?? {
+        task: e.task ? String(e.task) : null,
+        brand: e.brand ? String(e.brand) : null,
+        project: e.project ? String(e.project) : null,
+        note: "",
+        minutes: 0,
+        lockedMinutes: 0,
+      };
       row.minutes += e.minutes;
       if (!isEditable(sheet)) row.lockedMinutes += e.minutes;
       if (e.note && !row.note) row.note = e.note;
@@ -520,6 +602,7 @@ async function monthResponse(ctx: MonthContext, actor: IUser) {
   }
   const brandIds = [...rows.values()].flatMap((r) => (r.brand ? [r.brand] : []));
   const brands = brandIds.length ? await Brand.find({ _id: { $in: brandIds } }).select("name organisation").lean() : [];
+  const canLogBrands = await canLogBrandTime(actor);
   return {
     month: ctx.month,
     label: monthLabel(ctx.month),
@@ -529,7 +612,8 @@ async function monthResponse(ctx: MonthContext, actor: IUser) {
     tasks: await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds)),
     brands: brands.map((b) => ({ _id: b._id, name: b.name, organisation: (b as { organisation?: string }).organisation ?? "" })),
     rows: [...rows.values()],
-    canLogBrands: await canLogBrandTime(actor),
+    brandProjects: await brandProjects(canLogBrands ? [ctx.month] : [], ctx.sheets.flatMap((s) => entryProjectIds(s.entries))),
+    canLogBrands,
   };
 }
 
@@ -549,7 +633,7 @@ export async function getMonth(req: Request, res: Response): Promise<void> {
 }
 
 /**
- * PUT /api/timesheets/month — `{ month, rows: [{ task | brand, minutes, note? }], submit? }`:
+ * PUT /api/timesheets/month — `{ month, rows: [{ task | brand, project?, minutes, note? }], submit? }`:
  * each row's month total is spread over the editable working days (rows not sent are left
  * as they are). With `submit`, every ended week of the month that has hours is submitted.
  */
@@ -566,12 +650,26 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  const rows: Array<{ key: string; task: mongoose.Types.ObjectId | null; brand: mongoose.Types.ObjectId | null; note: string; minutes: number }> = [];
+  const rows: Array<{
+    key: string;
+    task: mongoose.Types.ObjectId | null;
+    brand: mongoose.Types.ObjectId | null;
+    project: mongoose.Types.ObjectId | null;
+    note: string;
+    minutes: number;
+  }> = [];
   for (const item of body.rows) {
-    const { task, brand, note, minutes } = (item ?? {}) as { task?: unknown; brand?: unknown; note?: unknown; minutes?: unknown };
+    const { task, brand, project, note, minutes } = (item ?? {}) as {
+      task?: unknown;
+      brand?: unknown;
+      project?: unknown;
+      note?: unknown;
+      minutes?: unknown;
+    };
     const taskId = typeof task === "string" && task ? task : null;
     const brandId = typeof brand === "string" && brand ? brand : null;
-    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "")) {
+    const projectId = brandId && typeof project === "string" && project ? project : null;
+    if ((taskId ? 1 : 0) + (brandId ? 1 : 0) !== 1 || isInvalidObjectId(taskId ?? brandId ?? "") || (projectId && isInvalidObjectId(projectId))) {
       res.status(400).json({ error: "Each row needs a valid task or brand (not both)" });
       return;
     }
@@ -586,10 +684,11 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
     const ids = {
       task: taskId ? new mongoose.Types.ObjectId(taskId) : null,
       brand: brandId ? new mongoose.Types.ObjectId(brandId) : null,
+      project: projectId ? new mongoose.Types.ObjectId(projectId) : null,
     };
     const key = rowKey(ids);
     if (rows.some((r) => r.key === key)) {
-      res.status(400).json({ error: "Each task or brand can appear once" });
+      res.status(400).json({ error: "Each task or brand / project can appear once" });
       return;
     }
     rows.push({ ...ids, key, note: brandId && typeof note === "string" ? note.trim() : "", minutes });
@@ -622,6 +721,15 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
       .lean();
     if (usable.length !== brandIds.length) {
       res.status(400).json({ error: "Pick an active brand" });
+      return;
+    }
+    const projectError = await checkBrandProjects(
+      rows.filter((r) => r.minutes > 0),
+      [month],
+      ctx.sheets.flatMap((s) => entryProjectIds(s.entries))
+    );
+    if (projectError) {
+      res.status(400).json({ error: projectError });
       return;
     }
   }
@@ -658,11 +766,13 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
   for (const sheet of ctx.sheets.filter(isEditable)) {
     const kept = sheet.entries
       .filter((e) => !(perDay.has(rowKey(e)) && ctx.days.has(dateKey(e.date))))
-      .map((e) => ({ task: e.task ?? null, brand: e.brand ?? null, note: e.note ?? "", date: e.date, minutes: e.minutes }));
+      .map((e) => ({ task: e.task ?? null, brand: e.brand ?? null, project: e.project ?? null, note: e.note ?? "", date: e.date, minutes: e.minutes }));
     const added = weekDays(sheet.weekStart).flatMap((day) =>
       rows.flatMap((row) => {
         const minutes = perDay.get(row.key)?.get(day) ?? 0;
-        return minutes > 0 ? [{ task: row.task, brand: row.brand, note: row.note, date: new Date(`${day}T00:00:00.000Z`), minutes }] : [];
+        return minutes > 0
+          ? [{ task: row.task, brand: row.brand, project: row.project, note: row.note, date: new Date(`${day}T00:00:00.000Z`), minutes }]
+          : [];
       })
     );
     const entries = [...kept, ...added];
