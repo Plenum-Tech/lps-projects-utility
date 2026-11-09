@@ -5,6 +5,7 @@ import { LuCircleCheck, LuCircleX, LuClipboardCheck, LuEye, LuLoaderCircle } fro
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { RejectDialog } from "@/components/projects/project-approval";
 import { ChangeApprovals } from "@/components/approvals/change-approvals";
+import { WaitingOverview } from "@/components/approvals/waiting-overview";
 import { OverScopeApprovals } from "@/components/tasks/over-scope";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,23 +45,32 @@ export default function ApprovalsRoute() {
 
       {queue.isPending && <Skeleton className="h-60 w-full rounded-xl" />}
       {queue.isError && <QueryError title="Couldn't load approvals" error={queue.error} onRetry={() => void queue.refetch()} />}
+      {/* Leadership: everything waiting, in one list. */}
+      {queue.data?.isApprover && <WaitingOverview queue={queue.data} />}
+
       {/* Admins: tasks over their project's approved scope. */}
-      <OverScopeApprovals />
+      <div id="approvals-over-scope" className="scroll-mt-4">
+        <OverScopeApprovals />
+      </div>
 
       {queue.data && (!queue.data.isApprover || (queue.data.mine?.requests.length ?? 0) > 0) && (
         <MyRequests requests={queue.data.mine?.requests ?? []} />
       )}
 
       {queue.data?.isApprover && (
-        <ChangeApprovals pending={queue.data.changes?.pending ?? []} recent={queue.data.changes?.recent ?? []} />
+        <div id="approvals-changes" className="scroll-mt-4">
+          <ChangeApprovals pending={queue.data.changes?.pending ?? []} recent={queue.data.changes?.recent ?? []} />
+        </div>
       )}
 
       {queue.data?.isApprover && (
-        <BrandApprovals pending={queue.data.brands?.pending ?? []} recent={queue.data.brands?.recent ?? []} />
+        <div id="approvals-brands" className="scroll-mt-4 space-y-6">
+          <BrandApprovals pending={queue.data.brands?.pending ?? []} recent={queue.data.brands?.recent ?? []} />
+        </div>
       )}
 
       {queue.data?.isApprover && queue.data.pending.length + queue.data.recent.length > 0 && (
-        <>
+        <div id="approvals-projects" className="scroll-mt-4 space-y-6">
           <section className="space-y-3">
             <h2 className="text-sm font-medium text-foreground">Projects waiting for you ({queue.data.pending.length})</h2>
             {queue.data.pending.length === 0 ? (
@@ -149,7 +159,7 @@ export default function ApprovalsRoute() {
               </div>
             </section>
           )}
-        </>
+        </div>
       )}
 
       <RejectDialog
