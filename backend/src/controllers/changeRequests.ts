@@ -1,9 +1,8 @@
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
-import { isLeadershipActor, isScopeChange, notifyDecision } from "../lib/changeRequests.js";
+import { canDecideChange, isLeadershipActor, isScopeChange, notifyDecision } from "../lib/changeRequests.js";
 import { canManageBrand } from "../lib/brandAccess.js";
-import { isProjectApprover } from "../lib/projectApproval.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { Brand } from "../models/Brand.js";
 import { ChangeRequest, type IChangeRequest } from "../models/ChangeRequest.js";
@@ -28,8 +27,12 @@ function row(r: IChangeRequest & { requestedBy?: unknown; decidedBy?: unknown; b
   return json;
 }
 
-/** Pending requests (oldest first; plan changes saved but not sent yet are left out) and the last 30 days' decisions. */
-export async function changeRequestsForApprovals(): Promise<{ pending: Row[]; recent: Row[] }> {
+/**
+ * Pending requests (oldest first; plan changes saved but not sent yet are left out) and the last
+ * 30 days' decisions. `approver`: only the ones that user decides as a department approver.
+ */
+export async function changeRequestsForApprovals(approver?: mongoose.Types.ObjectId): Promise<{ pending: Row[]; recent: Row[] }> {
+  const mine = approver ? { approvers: approver } : {};
   const since = new Date(Date.now() - 30 * 86_400_000);
   const populate = [
     { path: "requestedBy", select: "name email" },
@@ -38,8 +41,8 @@ export async function changeRequestsForApprovals(): Promise<{ pending: Row[]; re
     { path: "project", select: "name code" },
   ];
   const [pending, recent] = await Promise.all([
-    ChangeRequest.find({ status: "pending", draft: { $ne: true } }).sort({ createdAt: 1 }).limit(200).populate(populate),
-    ChangeRequest.find({ status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since } })
+    ChangeRequest.find({ status: "pending", draft: { $ne: true }, ...mine }).sort({ createdAt: 1 }).limit(200).populate(populate),
+    ChangeRequest.find({ status: { $in: ["approved", "rejected"] }, decidedAt: { $gte: since }, ...mine })
       .sort({ decidedAt: -1 })
       .limit(50)
       .populate(populate),
@@ -137,17 +140,20 @@ async function apply(request: IChangeRequest, decider: Parameters<typeof updateP
   return null;
 }
 
-/** POST /api/projects/approvals/changes/:id — leadership; `{ decision: "approve" | "reject", reason? }`. */
+/**
+ * POST /api/projects/approvals/changes/:id — leadership or the request's department approvers;
+ * `{ decision: "approve" | "reject", reason? }`.
+ */
 export async function decideChangeRequest(req: Request, res: Response): Promise<void> {
   const user = req.user!;
-  if (!(await isProjectApprover(user._id as mongoose.Types.ObjectId))) {
-    res.status(403).json({ error: "Only leadership can approve changes" });
-    return;
-  }
   const id = param(req, "id");
   const request = id && !isInvalidObjectId(id) ? await ChangeRequest.findById(id) : null;
   if (!request) {
     res.status(404).json({ error: "Change request not found" });
+    return;
+  }
+  if (!(await canDecideChange(user, request))) {
+    res.status(403).json({ error: "Only the department head or leadership can approve this change" });
     return;
   }
   const body = (req.body ?? {}) as { decision?: unknown; reason?: unknown };
@@ -212,7 +218,7 @@ async function viewerOf(request: IChangeRequest, user: NonNullable<Request["user
   const scope = request.kind === "brand_edit" && Boolean(request.brand) && isScopeChange(request);
   return {
     isRequester,
-    canDecide: await isProjectApprover(user._id as mongoose.Types.ObjectId),
+    canDecide: await canDecideChange(user, request),
     canWithdraw: request.status === "pending" && (isRequester || leadership),
     // A brand scope change waiting or rejected: edit it on the brand page and send it again.
     canResend: scope && (request.status === "pending" || request.status === "rejected") && (isRequester || canManageBrand(user)),
@@ -304,7 +310,7 @@ export async function getChangeRequest(req: Request, res: Response): Promise<voi
   }
   const viewer = await viewerOf(request, user);
   if (!viewer.canDecide && !viewer.isRequester) {
-    res.status(403).json({ error: "Only leadership can review changes" });
+    res.status(403).json({ error: "Only the department head or leadership can review this change" });
     return;
   }
   const payload = (request.payload ?? {}) as Record<string, unknown>;

@@ -12,6 +12,7 @@ import {
 
 import { DataTablePagination } from "@/components/globals/data-table-pagination";
 import { DataTableSearch } from "@/components/globals/data-table-search";
+import { MultiSelect } from "@/components/globals/multi-select";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -153,6 +154,7 @@ export default function AdminDepartments() {
                         <TableRow>
                           <TableHead>Department</TableHead>
                           <TableHead>Members</TableHead>
+                          <TableHead>Approvers</TableHead>
                           <TableHead className="text-right">Actions</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -179,6 +181,13 @@ export default function AdminDepartments() {
                                 <Users className="size-3.5" />
                                 {department.memberCount ?? 0}
                               </span>
+                            </TableCell>
+                            <TableCell className="text-sm">
+                              {department.approvers?.length || department.heads?.length ? (
+                                [...new Set([...(department.approvers ?? []), ...(department.heads ?? [])].map((a) => a.name))].join(", ")
+                              ) : (
+                                <span className="text-muted-foreground">All admins</span>
+                              )}
                             </TableCell>
                             <TableCell>
                               <div className="flex justify-end gap-1">
@@ -322,12 +331,19 @@ function DepartmentFormDialog({
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [approvers, setApprovers] = useState<string[]>([]);
   const [submitted, setSubmitted] = useState(false);
+  // Approvers: admins and heads (they can approve anyone's timesheets / time).
+  const users = useUsers();
+  const approverOptions = (users.data?.users ?? [])
+    .filter((u) => u.role === "admin" || u.role === "head")
+    .map((u) => ({ value: u._id, label: u.name, description: u.email }));
 
   useEffect(() => {
     if (open) {
       setName(department?.name ?? "");
       setDescription(department?.description ?? "");
+      setApprovers(department?.approvers?.map((a) => a._id) ?? []);
       setSubmitted(false);
     }
   }, [open, department]);
@@ -342,6 +358,7 @@ function DepartmentFormDialog({
     const input: DepartmentInput = {
       name: name.trim(),
       description: description.trim() || undefined,
+      ...(isEdit ? { approvers } : {}),
     };
 
     if (isEdit && department) {
@@ -395,6 +412,26 @@ function DepartmentFormDialog({
               rows={3}
             />
           </div>
+
+          {isEdit && (
+            <div className="space-y-1.5">
+              <Label htmlFor="department-approvers">Approvers</Label>
+              <MultiSelect
+                id="department-approvers"
+                options={approverOptions}
+                value={approvers}
+                onValueChange={setApprovers}
+                max={10}
+                placeholder={users.isPending ? "Loading people…" : "Add approvers…"}
+                aria-describedby="department-approvers-hint"
+              />
+              <p id="department-approvers-hint" className="text-xs text-muted-foreground">
+                This department&apos;s timesheets, time logs and project / brand scope changes go to
+                these people for approval (empty: timesheets and time logs go to every admin, scope
+                changes to leadership). Admins and heads only.
+              </p>
+            </div>
+          )}
 
           {Boolean(error) && (
             <Alert variant="destructive">

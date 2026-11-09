@@ -41,6 +41,11 @@ export interface IChangeRequest extends mongoose.Document {
   /** What is applied on approval (kind-specific). */
   payload: Record<string, unknown>;
   requestedBy: mongoose.Types.ObjectId;
+  /**
+   * Who decides it besides leadership: the requester's department approvers (project scope /
+   * team and brand changes). Empty = leadership only.
+   */
+  approvers: mongoose.Types.ObjectId[];
   decidedBy: mongoose.Types.ObjectId | null;
   decidedAt: Date | null;
   reason: string;
@@ -77,6 +82,7 @@ const changeRequestSchema = new Schema<IChangeRequest>(
     changes: { type: [changeLineSchema], default: [] },
     payload: { type: Schema.Types.Mixed, default: {} },
     requestedBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    approvers: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
     decidedBy: { type: Schema.Types.ObjectId, ref: "User", default: null },
     decidedAt: { type: Date, default: null },
     reason: { type: String, default: "", maxlength: 500 },

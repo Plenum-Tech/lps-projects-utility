@@ -4,12 +4,18 @@ import { addLegacyRef } from "./legacy.js";
 export interface IDepartment extends mongoose.Document {
   name: string;
   description?: string;
+  /**
+   * Who approves this department's timesheets and time logs (admins or heads). Requests go
+   * to them (and to anyone with the head role in the department) instead of to every admin.
+   */
+  approvers: mongoose.Types.ObjectId[];
 }
 
 const departmentSchema = new Schema<IDepartment>(
   {
     name: { type: String, required: true, unique: true, trim: true },
     description: { type: String, trim: true },
+    approvers: { type: [{ type: Schema.Types.ObjectId, ref: "User" }], default: [] },
   },
   { timestamps: true }
 );

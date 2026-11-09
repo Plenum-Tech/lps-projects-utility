@@ -53,6 +53,10 @@ export interface Department {
   updatedAt: string;
   /** Present on the admin list response. */
   memberCount?: number;
+  /** Who approves the department's timesheets and time logs (list response). */
+  approvers?: Array<{ _id: string; name: string }>;
+  /** People with the head role in it (they get its requests too). */
+  heads?: Array<{ _id: string; name: string }>;
   /** Present on the detail response. */
   members?: DepartmentMember[];
 }
@@ -69,6 +73,8 @@ export interface DepartmentMember {
 export interface DepartmentInput {
   name: string;
   description?: string;
+  /** User ids (admins or heads); editing only. */
+  approvers?: string[];
 }
 
 /** PUT /api/departments/:id/employees body. */
@@ -4427,6 +4433,8 @@ export interface BrandApprovalItem {
 
 export interface ProjectApprovalQueue {
   isApprover: boolean;
+  /** Department approver: has scope / team or brand changes to decide (not leadership). */
+  isChangeApprover?: boolean;
   pending: ProjectApprovalLinkResponse["project"][];
   recent: ProjectApprovalLinkResponse["project"][];
   /** New brands waiting for leadership (same approvers). */

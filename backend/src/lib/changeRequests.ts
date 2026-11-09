@@ -5,6 +5,7 @@ import type { IUser } from "../models/User.js";
 import { logActivity } from "./activityLog.js";
 import { isLeadershipUser } from "./leadership.js";
 import { notifyUsers, notifyUsersAsync } from "./notifications.js";
+import { departmentHeads } from "./projectAccess.js";
 import { isProjectApprover, projectApproverIds } from "./projectApproval.js";
 
 // ---------------------------------------------------------------------------
@@ -17,6 +18,23 @@ import { isProjectApprover, projectApproverIds } from "./projectApproval.js";
 /** Leadership changes apply directly (marked by requireAuth, or an approver). */
 export async function isLeadershipActor(user: IUser): Promise<boolean> {
   return isLeadershipUser(user) || (await isProjectApprover(user._id as mongoose.Types.ObjectId));
+}
+
+/**
+ * Who decides a change besides leadership: project scope / team and brand changes go to the
+ * requester's department approvers (Settings → Departments). Empty (other kinds, no approver,
+ * or the requester is the approver) = leadership.
+ */
+export async function changeApproversFor(kind: ChangeKind, requester: IUser): Promise<mongoose.Types.ObjectId[]> {
+  if (kind !== "project_change" && kind !== "brand_edit") return [];
+  return (await departmentHeads(requester.department ?? null)).filter((id) => !id.equals(requester._id as mongoose.Types.ObjectId));
+}
+
+/** Leadership, or one of the request's department approvers. */
+export async function canDecideChange(user: IUser, request: Pick<IChangeRequest, "approvers">): Promise<boolean> {
+  const id = String(user._id);
+  if ((request.approvers ?? []).some((a) => String((a as { _id?: unknown })._id ?? a) === id)) return true;
+  return isProjectApprover(user._id as mongoose.Types.ObjectId);
 }
 
 const KIND_LABEL: Record<ChangeKind, string> = {
@@ -107,6 +125,7 @@ export async function requestChange(params: {
     changes: changes.slice(0, 300),
     payload,
     requestedBy: params.actor._id,
+    approvers: await changeApproversFor(params.kind, params.actor),
     // Sent now, or (a quiet save) as sent as the request it replaces.
     draft: send ? false : previous ? previous.draft : true,
     ...(send ? { sentAt: new Date(), sentBy: params.actor._id, sentChanges: changes.slice(0, 300) } : sentState(previous)),
@@ -182,7 +201,8 @@ async function notifyApprovalRequested(
   const shown = changes.slice(0, 40);
   const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
   notifyUsers({
-    recipients: await projectApproverIds(),
+    // The department approvers when set, else leadership.
+    recipients: request.approvers?.length ? request.approvers : await projectApproverIds(),
     actor,
     includeActor: Boolean(opts.notifyActor),
     type: "change_approval_requested",

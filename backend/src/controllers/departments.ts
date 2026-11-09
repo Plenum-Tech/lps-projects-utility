@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { isDuplicateKeyError } from "../lib/errors.js";
 import { parsePagination, searchRegex } from "../lib/pagination.js";
+import { invalidate } from "../lib/refCache.js";
 import { Announcement } from "../models/Announcement.js";
 import { Department } from "../models/Department.js";
 import { STAFF_FILTER, User } from "../models/User.js";
@@ -12,6 +13,8 @@ const MEMBER_SELECT = "name email role";
 interface DepartmentBody {
   name?: string;
   description?: string;
+  /** User ids (admins or heads) who approve this department's timesheets and time logs. */
+  approvers?: unknown;
 }
 
 function isInvalidObjectId(id: string): boolean {
@@ -89,8 +92,18 @@ export async function listDepartments(req: Request, res: Response): Promise<void
   const result = await Promise.all(
     departments.map(async (department) => {
       const json = department.toJSON() as unknown as Record<string, unknown>;
-      const memberCount = await User.countDocuments({ department: department._id });
-      return { ...json, memberCount };
+      const [memberCount, approvers, heads] = await Promise.all([
+        User.countDocuments({ department: department._id }),
+        User.find({ _id: { $in: department.approvers ?? [] } }).select("name").sort({ name: 1 }).lean(),
+        User.find({ role: "head", department: department._id }).select("name").sort({ name: 1 }).lean(),
+      ]);
+      return {
+        ...json,
+        memberCount,
+        approvers: approvers.map((a) => ({ _id: String(a._id), name: a.name })),
+        // People with the head role in it: they get its requests too.
+        heads: heads.map((h) => ({ _id: String(h._id), name: h.name })),
+      };
     })
   );
 
@@ -125,11 +138,24 @@ export async function updateDepartment(req: Request, res: Response): Promise<voi
   const id = getParamIdOr404(req, res);
   if (!id) return;
 
-  const { name, description } = (req.body ?? {}) as DepartmentBody;
+  const { name, description, approvers } = (req.body ?? {}) as DepartmentBody;
 
   if (name !== undefined && !name.trim()) {
     res.status(400).json({ error: "name is required" });
     return;
+  }
+  let approverIds: string[] | null = null;
+  if (approvers !== undefined) {
+    if (!Array.isArray(approvers) || approvers.length > 10 || approvers.some((a) => typeof a !== "string" || isInvalidObjectId(a))) {
+      res.status(400).json({ error: "approvers must be up to 10 user IDs" });
+      return;
+    }
+    approverIds = [...new Set(approvers as string[])];
+    const valid = await User.countDocuments({ _id: { $in: approverIds }, role: { $in: ["admin", "head"] } });
+    if (valid !== approverIds.length) {
+      res.status(400).json({ error: "Approvers must be admins or heads of department" });
+      return;
+    }
   }
 
   const department = await Department.findById(id);
@@ -146,6 +172,10 @@ export async function updateDepartment(req: Request, res: Response): Promise<voi
   if (description !== undefined) {
     department.description = description.trim() || undefined;
     changed.push("description");
+  }
+  if (approverIds) {
+    department.approvers = approverIds.map((a) => new mongoose.Types.ObjectId(a));
+    changed.push("approvers");
   }
 
   try {
@@ -167,6 +197,7 @@ export async function updateDepartment(req: Request, res: Response): Promise<voi
     details: { changed },
     ip: req.ip,
   });
+  if (approverIds) invalidate(`user:dept-heads:${String(department._id)}`);
 
   res.json({ department: department.toJSON() });
 }

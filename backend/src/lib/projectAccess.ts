@@ -8,6 +8,7 @@ import { Project } from "../models/Project.js";
 import type { IProject } from "../models/Project.js";
 import { ProjectActivity } from "../models/ProjectActivity.js";
 import type { ProjectActivityAction } from "../models/ProjectActivity.js";
+import { Department } from "../models/Department.js";
 import { completedStatusIds, ProjectStatus } from "../models/ProjectStatus.js";
 import { Task, TASK_STATUSES } from "../models/Task.js";
 import { TimeLog } from "../models/TimeLog.js";
@@ -410,8 +411,14 @@ export async function serializeProjects(
 export async function departmentHeads(departmentId: mongoose.Types.ObjectId | null | undefined): Promise<mongoose.Types.ObjectId[]> {
   if (!departmentId) return [];
   const ids = await cached(`user:dept-heads:${String(departmentId)}`, 15_000, async () => {
-    const heads = await User.find({ role: "head", department: departmentId }).select("_id").lean();
-    return heads.map((h) => h._id);
+    // The department's approvers (Settings → Departments) plus anyone with the head role in it.
+    const [heads, department] = await Promise.all([
+      User.find({ role: "head", department: departmentId }).select("_id").lean(),
+      Department.findById(departmentId).select("approvers").lean(),
+    ]);
+    const unique = new Map<string, mongoose.Types.ObjectId>();
+    for (const id of [...heads.map((h) => h._id), ...(department?.approvers ?? [])]) unique.set(String(id), id);
+    return [...unique.values()];
   });
   return [...ids];
 }
