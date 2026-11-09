@@ -4433,8 +4433,6 @@ export interface BrandApprovalItem {
 
 export interface ProjectApprovalQueue {
   isApprover: boolean;
-  /** Department approver: has scope / team or brand changes to decide (not leadership). */
-  isChangeApprover?: boolean;
   pending: ProjectApprovalLinkResponse["project"][];
   recent: ProjectApprovalLinkResponse["project"][];
   /** New brands waiting for leadership (same approvers). */

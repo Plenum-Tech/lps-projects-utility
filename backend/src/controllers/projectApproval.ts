@@ -165,10 +165,7 @@ export async function requestAgain(req: Request, res: Response): Promise<void> {
 export async function listApprovals(req: Request, res: Response): Promise<void> {
   const mine = { requests: await myRequests(req.user!._id as mongoose.Types.ObjectId) };
   if (!(await isProjectApprover(req.user!._id as mongoose.Types.ObjectId))) {
-    // Department approvers: the scope / team and brand changes they decide.
-    const changes = await changeRequestsForApprovals(req.user!._id as mongoose.Types.ObjectId);
-    const isChangeApprover = changes.pending.length + changes.recent.length > 0;
-    res.json({ isApprover: false, isChangeApprover, pending: [], recent: [], brands: { pending: [], recent: [] }, changes, mine });
+    res.json({ isApprover: false, pending: [], recent: [], brands: { pending: [], recent: [] }, changes: { pending: [], recent: [] }, mine });
     return;
   }
   const since = new Date(Date.now() - 30 * 86_400_000);

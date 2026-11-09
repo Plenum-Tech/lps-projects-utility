@@ -46,7 +46,7 @@ export default function ApprovalsRoute() {
       {queue.isPending && <Skeleton className="h-60 w-full rounded-xl" />}
       {queue.isError && <QueryError title="Couldn't load approvals" error={queue.error} onRetry={() => void queue.refetch()} />}
       {/* Leadership: everything waiting, in one list. */}
-      {(queue.data?.isApprover || queue.data?.isChangeApprover) && <WaitingOverview queue={queue.data} />}
+      {queue.data?.isApprover && <WaitingOverview queue={queue.data} />}
 
       {/* Admins: tasks over their project's approved scope. */}
       <div id="approvals-over-scope" className="scroll-mt-4">
@@ -57,7 +57,7 @@ export default function ApprovalsRoute() {
         <MyRequests requests={queue.data.mine?.requests ?? []} />
       )}
 
-      {(queue.data?.isApprover || queue.data?.isChangeApprover) && (
+      {queue.data?.isApprover && (
         <div id="approvals-changes" className="scroll-mt-4">
           <ChangeApprovals pending={queue.data.changes?.pending ?? []} recent={queue.data.changes?.recent ?? []} />
         </div>

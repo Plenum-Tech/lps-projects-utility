@@ -426,9 +426,9 @@ function DepartmentFormDialog({
                 aria-describedby="department-approvers-hint"
               />
               <p id="department-approvers-hint" className="text-xs text-muted-foreground">
-                This department&apos;s timesheets, time logs and project / brand scope changes go to
-                these people for approval (empty: timesheets and time logs go to every admin, scope
-                changes to leadership). Admins and heads only.
+                This department&apos;s timesheets and time logs go to these people for approval
+                (empty: every admin). Scope changes and new brands stay with leadership. Admins and
+                heads only.
               </p>
             </div>
           )}
