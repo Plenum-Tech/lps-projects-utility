@@ -1021,6 +1021,7 @@ export function BrandPage({ id, month, onMonth }: { id: string; month: string; o
           <p className="mt-1 text-sm text-muted-foreground">
             {b.organisation && <span className="mr-2 font-medium text-foreground">{b.organisation}</span>}
             {b.projectCount} open project{b.projectCount === 1 ? "" : "s"} · {b.current.length} current in {monthLabel(month)}
+            {b.createdAt ? ` · created ${new Date(b.createdAt).toLocaleDateString("en-GB", { month: "long", year: "numeric" })}` : ""}
           </p>
           <div className="mt-2 flex flex-wrap gap-3 text-xs">
             {([["scope", "Scope"], ["docs", "Documents"], ["plan", "Manpower plan"], ["lead", "Lead"]] as const).map(([k, l]) => (

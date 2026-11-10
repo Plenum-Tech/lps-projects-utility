@@ -11,7 +11,7 @@ import { canEditManpower } from "../lib/manpowerAccess.js";
 import { MANPOWER_ROLE_KEYS, MANPOWER_ROLES } from "../lib/manpowerRoles.js";
 import { isInvalidObjectId, param } from "../lib/projectAccess.js";
 import { isProjectApprover } from "../lib/projectApproval.js";
-import { currentAppMonth, projectMonth } from "../lib/projectExpiry.js";
+import { currentAppMonth, projectMonth, projectRunsIn } from "../lib/projectExpiry.js";
 import { scopeText, type ScopeItem } from "../lib/scopeUnits.js";
 import { Brand, brandNameKey, BRAND_LIMITS, type IBrand } from "../models/Brand.js";
 import { latestPlan, ManpowerPlan, type IManpowerRow } from "../models/ManpowerPlan.js";
@@ -127,7 +127,7 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
     latestPlan(month),
     pendingPlanOf(month),
     Project.find({ archivedAt: null })
-      .select("name code brand naming startDate deadline manpowerRow scopeItems team")
+      .select("name code brand naming startDate deadline manpowerRow activeThrough scopeItems team")
       .lean<LeanProject[]>(),
     Brand.find({}).select("name").lean(),
     monthTeamLoad(month),
@@ -144,14 +144,16 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
       naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
       deadline: p.deadline ?? null,
       manpowerRow: p.manpowerRow ?? null,
+      activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
     })),
     brandNames
   );
   const start = monthStart(month);
-  // Current: the month's projects, and earlier monthly projects still running into it.
+  // Current: the month's projects, projects carried into it (open tasks), and earlier ones whose deadline runs into it.
   const isCurrent = (p: LeanProject) => {
-    const m = projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null });
-    return m === month || Boolean(m && m < month && p.deadline && p.deadline >= start);
+    const fields = { name: p.name, naming: p.naming as never, deadline: p.deadline ?? null, activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null };
+    const m = projectMonth(fields);
+    return projectRunsIn(fields, month) || Boolean(m && m < month && p.deadline && p.deadline >= start);
   };
   const projectsByBrand = new Map<string, LeanProject[]>();
   for (const p of projects) {
@@ -220,7 +222,10 @@ async function monthContext(month: string, user: IUser, onlyBrand?: mongoose.Typ
       status: b.status ?? "approved",
       isPitch: Boolean(b.isPitch),
       monthlyRetainer: Boolean(b.monthlyRetainer),
-      active: current.length > 0 || lines.length > 0,
+      // The month the brand was created (brands carry over; no month tag of their own).
+      createdAt: (b as { createdAt?: Date }).createdAt ?? null,
+      // Brands carry over month to month: every active brand counts (no month tagging).
+      active: b.active !== false,
       checks: { scope: scopeItems.length > 0, docs: (b.scopeFiles ?? []).length > 0, plan: lines.length > 0, lead: leads.length > 0 },
       scopeItems,
       // How close the scope is to its agreement (advice only; null = not compared yet).

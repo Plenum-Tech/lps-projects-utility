@@ -11,7 +11,7 @@ import { settingsTimeZone } from "./companySettings.js";
  * Retainer", "C4 | Sep 2026", "Abbott | September 26"), else their deadline's
  * month; projects with none of these never close.
  */
-type ExpiryFields = Pick<IProject, "naming" | "deadline"> & { name?: string };
+type ExpiryFields = Pick<IProject, "naming" | "deadline"> & { name?: string; activeThrough?: string | null };
 
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
@@ -66,7 +66,8 @@ function currentAppDay(now: Date = new Date()): string {
  * running for a whole contract term).
  */
 export function projectClosesOn(project: ExpiryFields): string | null {
-  const month = projectMonth(project);
+  // A project carried on (open tasks at month end) runs through its activeThrough month.
+  const month = project.activeThrough ?? projectMonth(project);
   if (!month) return null;
   const [y, m] = month.split("-").map(Number);
   const monthEnd = new Date(Date.UTC(y!, m!, 0)).toISOString().slice(0, 10);
@@ -78,4 +79,11 @@ export function projectClosesOn(project: ExpiryFields): string | null {
 export function isProjectExpired(project: ExpiryFields, now: Date = new Date()): boolean {
   const closes = projectClosesOn(project);
   return closes !== null && closes < currentAppDay(now);
+}
+
+/** True when the project runs in `month`: from its own month through the last month it was carried into. */
+export function projectRunsIn(project: ExpiryFields, month: string): boolean {
+  const start = projectMonth(project);
+  if (!start || start > month) return false;
+  return (project.activeThrough ?? start) >= month;
 }

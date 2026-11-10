@@ -51,7 +51,7 @@ export async function runBrandSplit(brand: IBrand, setup: BrandSplitSetup, actor
     archivedAt: null,
     $or: [{ brand: fromId }, { "naming.brand": fromId }],
   })
-    .select("name brand naming deadline manpowerRow")
+    .select("name brand naming deadline manpowerRow activeThrough")
     .lean();
   const result: SplitResult = { moved: 0, plans: [], notes: [] };
   if (projects.length === 0) {
@@ -66,7 +66,7 @@ export async function runBrandSplit(brand: IBrand, setup: BrandSplitSetup, actor
   const planWrites: Array<{ month: string; before: IManpowerRow[]; latestVersion: number; rows: IManpowerRow[]; max: number }> = [];
   if (months.size) {
     const [all, brands] = await Promise.all([
-      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow").lean(),
+      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow activeThrough").lean(),
       Brand.find({}).select("name").lean(),
     ]);
     const brandNames = new Map(brands.map((b) => [String(b._id), b.name]));
@@ -84,6 +84,7 @@ export async function runBrandSplit(brand: IBrand, setup: BrandSplitSetup, actor
           naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
           deadline: p.deadline ?? null,
           manpowerRow: p.manpowerRow ?? null,
+          activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
         })),
         brandNames
       );

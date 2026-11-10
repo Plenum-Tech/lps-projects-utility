@@ -182,7 +182,7 @@ function peopleChanges(before: IManpowerRow[], after: IManpowerRow[]) {
 /** Line key → the names of the projects linked to it (this month). */
 async function projectsByLine(month: string, rows: IManpowerRow[]): Promise<Map<string, string[]>> {
   const [projects, brands] = await Promise.all([
-    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow").lean(),
+    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow activeThrough").lean(),
     Brand.find({}).select("name").lean(),
   ]);
   const links = linkProjectsToRows(
@@ -195,6 +195,7 @@ async function projectsByLine(month: string, rows: IManpowerRow[]): Promise<Map<
       naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
       deadline: p.deadline ?? null,
       manpowerRow: p.manpowerRow ?? null,
+      activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
     })),
     new Map(brands.map((b) => [String(b._id), b.name]))
   );

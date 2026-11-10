@@ -115,7 +115,7 @@ async function rowLinks(
   plan: IManpowerPlan
 ): Promise<{ links: Record<string, ProjectLink[]>; unlinked: ProjectLink[]; scope: Record<string, Array<{ unit: string; total: number }>> }> {
   const [projects, brands] = await Promise.all([
-    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow scopeItems").lean(),
+    Project.find({ archivedAt: null }).select("name code brand naming deadline manpowerRow activeThrough scopeItems").lean(),
     Brand.find({}).select("name").lean(),
   ]);
   const links = linkProjectsToRows(
@@ -128,6 +128,7 @@ async function rowLinks(
       naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
       deadline: p.deadline ?? null,
       manpowerRow: p.manpowerRow ?? null,
+      activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
     })),
     new Map(brands.map((b) => [String(b._id), b.name]))
   );
@@ -890,7 +891,7 @@ export async function syncPlanToProjects(
     const changed = new Map(after.filter((r) => old.get(r.key) !== rowPeopleKey(r.cells)).map((r) => [r.key, r]));
     if (changed.size === 0) return 0;
     const [projects, brands] = await Promise.all([
-      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow team"),
+      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow activeThrough team"),
       Brand.find({}).select("name").lean(),
     ]);
     const links = linkProjectsToRows(
@@ -903,6 +904,7 @@ export async function syncPlanToProjects(
         naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
         deadline: p.deadline ?? null,
         manpowerRow: p.manpowerRow ?? null,
+        activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
       })),
       new Map(brands.map((b) => [String(b._id), b.name]))
     );

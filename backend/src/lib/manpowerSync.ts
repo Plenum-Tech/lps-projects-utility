@@ -99,7 +99,8 @@ export function rowPeopleKey(cells: IManpowerCell[]): string {
  */
 export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Promise<void> {
   try {
-    const month = project.naming?.month ?? projectMonth({ name: project.name, naming: project.naming ?? undefined, deadline: project.deadline ?? null } as never);
+    // A carried project's team belongs to the latest month it runs in (activeThrough).
+    const month = project.activeThrough ?? project.naming?.month ?? projectMonth({ name: project.name, naming: project.naming ?? undefined, deadline: project.deadline ?? null } as never);
     if (!month) return;
     const [plan, highest] = await Promise.all([
       ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).lean(),
@@ -121,6 +122,7 @@ export async function syncProjectTeamToPlan(project: IProject, actor: IUser): Pr
           brand: brand ? String(brand) : null,
           naming: project.naming ? { type: project.naming.type, month: project.naming.month, title: project.naming.title } : null,
           deadline: project.deadline ?? null,
+          activeThrough: project.activeThrough ?? null,
         }],
         new Map(brands.map((b) => [String(b._id), b.name]))
       );

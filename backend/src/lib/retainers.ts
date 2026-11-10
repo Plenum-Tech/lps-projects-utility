@@ -58,6 +58,8 @@ export interface RetainerRunResult {
   ran: boolean;
   plan: { copiedFrom: string; version: number; lines: number } | { skipped: string };
   created: Array<{ brand: string; projectId: string; name: string; teamFrom: "plan" | "leads" | "none" }>;
+  /** Projects carried into the month (open tasks). */
+  carried?: string[];
   skipped: Array<{ brand: string; reason: string }>;
 }
 
@@ -76,32 +78,24 @@ async function copyPlan(month: string, actor: IUser): Promise<RetainerRunResult[
       month,
       version,
       rows,
-      note: `Copied from ${monthLabel(from)} v${prev.version} for the new month — waiting for approval`,
+      note: `Copied from ${monthLabel(from)} v${prev.version} for the new month (brands carry over)`,
       maxProjectsPerPerson: prev.maxProjectsPerPerson,
       source: "copy",
-      status: "pending",
+      status: "approved",
       createdBy: actor._id,
     });
   } catch (err) {
     if ((err as { code?: number }).code === 11000) return { skipped: "The month already has a plan" };
     throw err;
   }
-  await requestChange({
-    kind: "manpower_plan",
-    actor,
-    title: `Manpower plan ${month} — version ${version} (copied from ${from})`,
-    changes: [{ label: "Plan", before: "—", after: `Copy of ${monthLabel(from)} v${prev.version} (${rows.length} lines), made automatically for the new month` }],
-    payload: { month, version },
-    month,
-    version,
-    notifyActor: true,
-  });
+  // Live at once: the plan carries over (later changes go through draft → approval).
+  void requestChange;
   logActivity({
     action: "settings_updated",
     actor,
     targetType: "manpower_plan",
     targetName: `Manpower plan ${month} v${version}`,
-    details: { month, version, source: "copy", from: `${from} v${prev.version}`, via: "monthly_retainer", status: "pending" },
+    details: { month, version, source: "copy", from: `${from} v${prev.version}`, via: "monthly_retainer", status: "approved" },
   });
   return { copiedFrom: `${from} v${prev.version}`, version, lines: rows.length };
 }
@@ -120,6 +114,9 @@ async function sourceProjects(brand: IBrand, from: string): Promise<IProject[]> 
   return recent;
 }
 
+/** Off since projects carry on (Nov 2026): a project with open tasks continues instead of being copied. */
+const CREATE_MONTHLY_PROJECTS = false as boolean;
+
 /**
  * Runs the monthly retainer step. Scheduled daily; acts only on the 1st (Dubai date)
  * unless `month` is given (manual run: `bun src/scripts/runJobs.ts retainers 2026-11`).
@@ -136,6 +133,12 @@ export async function runMonthlyRetainers(now: Date = new Date(), options: { mon
   }
   result.ran = true;
   result.plan = await copyPlan(month, actor);
+  // Projects aren't copied any more: last month's projects with open tasks carry on into this
+  // month (same project and name, old and new tasks together); finished ones stay in their month.
+  const { carryOpenProjects } = await import("./projectCarry.js");
+  const carry = await carryOpenProjects(month, actor);
+  result.carried = carry.carried;
+  if (!CREATE_MONTHLY_PROJECTS) return result;
 
   const from = previousMonth(month);
   const brands = await Brand.find({

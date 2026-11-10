@@ -8,6 +8,7 @@ import { logActivity } from "./activityLog.js";
 import { brandLocksScope, pickBrandScope } from "./brandFlow.js";
 import { MANPOWER_LIMITS } from "./manpowerRoles.js";
 import { composeProjectName } from "./projectNaming.js";
+import { carryProject, openTaskCounts, throughMonth } from "./projectCarry.js";
 
 // ---------------------------------------------------------------------------
 // Month migration (Brands → "Migrate to next month"): a brand creator (Nazeer) or
@@ -48,10 +49,10 @@ export function retitle(title: string, from: string, to: string): string {
     .replace(new RegExp(`\\b${fromLong!.slice(0, 3)}\\b`, "gi"), (w) => swap(w, toLong!.slice(0, 3)));
 }
 
-/** The `from` month's projects of the brands that roll over: structured, not pitches, not archived. */
+/** Projects running in the `from` month (their own month, or carried into it) of the brands that roll over: structured, not pitches, not archived. */
 async function sourceProjects(from: string, brandIds?: mongoose.Types.ObjectId[]): Promise<IProject[]> {
   return Project.find({
-    "naming.month": from,
+    $or: [{ "naming.month": from }, { "naming.month": { $lt: from }, activeThrough: { $gte: from } }],
     "naming.type": { $not: /^pitch$/i },
     archivedAt: null,
     ...(brandIds ? { "naming.brand": { $in: brandIds } } : { "naming.brand": { $ne: null } }),
@@ -83,8 +84,8 @@ async function existsInMonth(brand: mongoose.Types.ObjectId, type: string, title
 
 export interface MigrationCandidate {
   brand: { _id: string; name: string; organisation: string };
-  /** `from` projects that roll over, and whether `to` already has each. */
-  projects: Array<{ _id: string; name: string; type: string; title: string; newName: string; exists: boolean }>;
+  /** `from` projects: those with open tasks carry on into `to` (same project and name); `exists` = already runs in `to`. */
+  projects: Array<{ _id: string; name: string; type: string; title: string; newName: string; exists: boolean; openTasks: number }>;
   /** Lines of the brand in the `from` plan / already in the `to` plan. */
   planLines: number;
   inTargetPlan: boolean;
@@ -111,6 +112,7 @@ export async function migrationCandidates(from: string, to: string): Promise<{ f
     const key = String(p.naming!.brand);
     byBrand.set(key, [...(byBrand.get(key) ?? []), p]);
   }
+  const open = await openTaskCounts(projects.map((p) => p._id as mongoose.Types.ObjectId));
   const out: MigrationCandidate[] = [];
   for (const brand of brands) {
     const id = String(brand._id);
@@ -123,8 +125,10 @@ export async function migrationCandidates(from: string, to: string): Promise<{ f
           name: p.name,
           type: p.naming!.type,
           title: p.naming!.title,
-          newName: composeProjectName(brand.name, p.naming!.type, to, retitle(p.naming!.title, from, to)),
-          exists: await existsInMonth(brand._id as mongoose.Types.ObjectId, p.naming!.type, retitle(p.naming!.title, from, to), to),
+          // Projects carry on with their name unchanged.
+          newName: p.name,
+          exists: (throughMonth(p) ?? "") >= to,
+          openTasks: open.get(String(p._id)) ?? 0,
         }))
       ),
       planLines: fromRows.filter((r) => r.brand && String(r.brand) === id).length,
@@ -197,6 +201,9 @@ function scopeFor(brand: IBrand, src: IProject): unknown[] | undefined {
   return rows;
 }
 
+/** Off since projects carry on (Nov 2026): migration moves the plan lines and carries projects with open tasks. */
+const COPY_PROJECTS = false as boolean;
+
 /** POST run: plan lines first (the new projects take their team from them), then the projects. */
 export async function runMonthMigration(params: { from: string; to: string; brandIds: string[]; actor: IUser; ip?: string }): Promise<MigrationResult> {
   const { from, to, actor, ip } = params;
@@ -206,6 +213,30 @@ export async function runMonthMigration(params: { from: string; to: string; bran
   if (brands.length === 0) return result;
 
   result.plan = await copyPlanLines(from, to, brands, actor, ip);
+  // Projects aren't copied (Nov 2026): a project with open tasks carries on into `to` — same
+  // project and name, its closed and open tasks together. Finished projects stay in `from`.
+  if (!COPY_PROJECTS) {
+    const sources = await sourceProjects(from, ids);
+    const open = await openTaskCounts(sources.map((p) => p._id as mongoose.Types.ObjectId));
+    const brandName = new Map(brands.map((b) => [String(b._id), b.name]));
+    for (const p of sources) {
+      const brand = brandName.get(String(p.naming!.brand)) ?? "";
+      if (!open.get(String(p._id))) {
+        result.skipped.push({ brand, reason: `${p.name}: no open tasks — stays in ${from}` });
+        continue;
+      }
+      if (await carryProject(p, to, actor, "month_migration")) result.created.push({ brand, projectId: String(p._id), name: p.name });
+    }
+    logActivity({
+      action: "settings_updated",
+      actor,
+      targetType: "manpower_plan",
+      targetName: `Month migration ${from} → ${to}`,
+      details: { from, to, brands: brands.map((b) => b.name), plan: result.plan, carried: result.created.map((c) => c.name), skipped: result.skipped },
+      ip,
+    });
+    return result;
+  }
 
   const { createProjectCore } = await import("../controllers/projects.js");
   const byBrand = new Map<string, IProject[]>();

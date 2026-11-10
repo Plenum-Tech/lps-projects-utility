@@ -1,5 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { api, getErrorMessage } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
 import {
   LuArchive,
   LuLock,
@@ -94,6 +97,18 @@ export function ProjectHeader({
   const archived = Boolean(project.archivedAt);
   // Closed at the end of its month: offer a project for the next month.
   const canContinue = Boolean(project.expired) && !archived;
+  // Continue: the same project carries on into this month (name, tasks and team kept).
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  const thisMonthLabel = new Date().toLocaleDateString("en-GB", { month: "long", year: "numeric" });
+  const continueProject = useMutation({
+    mutationFn: async () => (await api.post(`/projects/${project._id}/continue`)).data,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["projects"] });
+      toast.success(`${project.name} continues into ${thisMonthLabel} — same project, its tasks kept.`);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
 
   const statusTargets = (statuses.data ?? []).filter(
     (status) => status.active && status._id !== project.status._id
@@ -154,7 +169,7 @@ export function ProjectHeader({
                 <Badge
                   variant="outline"
                   className="gap-1"
-                  title="The project's month has ended. Open tasks can still be closed; new work needs a project for the new month."
+                  title="No open tasks were left when its month ended, so it didn't carry on into the new month. Open tasks can still be closed; use Continue to add new work."
                 >
                   <LuLock aria-hidden className="size-3" />
                   Closed{project.closesOn ? ` ${formatDateOnly(project.closesOn, true)}` : ""}
@@ -266,9 +281,9 @@ export function ProjectHeader({
           )}
 
           {canContinue && (
-            <Button size="sm" onClick={() => setDialog("continue")}>
+            <Button size="sm" onClick={() => continueProject.mutate()} disabled={continueProject.isPending}>
               <LuCalendarPlus aria-hidden />
-              Continue in next month
+              Continue into {thisMonthLabel}
             </Button>
           )}
 

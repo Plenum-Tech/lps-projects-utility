@@ -3318,8 +3318,10 @@ export interface BrandSummary {
   isPitch: boolean;
   /** On the 1st of each month the brand gets that month's project automatically. */
   monthlyRetainer?: boolean;
-  /** Has current projects or a line in the month's plan. */
+  /** Active brand (brands carry over month to month). */
   active: boolean;
+  /** When the brand was created. */
+  createdAt?: string | null;
   checks: BrandChecks;
   scopeItems: Array<BrandScopeItem & { what: string; languageList: string[] }>;
   /** How close the scope is to its agreement (advice only); null = not compared yet. */
@@ -4645,7 +4647,7 @@ export interface MonthMigrationPreview {
   fromPlanVersion: number | null;
   brands: Array<{
     brand: { _id: string; name: string; organisation: string };
-    projects: Array<{ _id: string; name: string; type: string; title: string; newName: string; exists: boolean }>;
+    projects: Array<{ _id: string; name: string; type: string; title: string; newName: string; exists: boolean; openTasks?: number }>;
     planLines: number;
     inTargetPlan: boolean;
     hasScope: boolean;

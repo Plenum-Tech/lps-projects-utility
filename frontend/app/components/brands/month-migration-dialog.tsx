@@ -97,10 +97,9 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
         <DialogHeader>
           <DialogTitle>Migrate brands {multi ? `to ${monthLabel(to)} – ${monthLabel(last)}` : `to ${monthLabel(to)}`}</DialogTitle>
           <DialogDescription>
-            The ticked brands get a project for {multi ? "each month" : monthLabel(to)} (same brand, type and name — only the month changes)
-            with the brand&apos;s current scope, documents and team, and their {monthLabel(from)} manpower plan lines are copied
-            {multi ? " month by month" : ` to ${monthLabel(to)}`}. Everything is approved at once — no approval needed. Months a brand is
-            already in are left as they are.
+            The ticked brands&apos; {monthLabel(from)} manpower plan lines are copied {multi ? "month by month" : `to ${monthLabel(to)}`}, and their
+            projects that still have open tasks carry on into {multi ? "each month" : monthLabel(to)} — the same project and name, with its closed
+            and open tasks, ready for new ones. Projects with every task done stay in {monthLabel(from)}. No approval needed.
           </DialogDescription>
         </DialogHeader>
 
@@ -192,10 +191,15 @@ export function MonthMigrationDialog({ open, onOpenChange }: { open: boolean; on
                             <ul className="space-y-0.5 text-xs">
                               {c.projects.map((p) => (
                                 <li key={p._id} className="flex flex-wrap items-center gap-1">
-                                  <span className="break-all">{p.name}</span>
+                                  <span className={cn("break-all", !p.exists && on && (p.openTasks ?? 0) > 0 && "font-medium text-foreground")}>{p.name}</span>
                                   <LuArrowRight aria-hidden className="size-3 shrink-0" />
-                                  <span className={cn("break-all", !p.exists && on && "font-medium text-foreground")}>{p.newName}</span>
-                                  {p.exists && <span className="text-muted-foreground">(exists)</span>}
+                                  <span className="text-muted-foreground">
+                                    {p.exists
+                                      ? `already runs in ${monthLabel(to)}`
+                                      : (p.openTasks ?? 0) > 0
+                                        ? `continues (${p.openTasks} open task${p.openTasks === 1 ? "" : "s"})`
+                                        : `no open tasks — stays in ${monthLabel(from)}`}
+                                  </span>
                                 </li>
                               ))}
                             </ul>

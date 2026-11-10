@@ -118,6 +118,8 @@ export interface IProject extends mongoose.Document {
   pearityGeneratedAt?: Date | null;
   pearityGeneratedBy?: mongoose.Types.ObjectId | null;
   createdBy: mongoose.Types.ObjectId;
+  /** Last month ("YYYY-MM") the project runs in: a project with open tasks carries on month to month (lib/projectCarry.ts); null = its own month. */
+  activeThrough?: string | null;
   /** Copied from last month's project by the month migration (Brands → Migrate to next month); null = created new. */
   migratedFrom?: mongoose.Types.ObjectId | null;
   archivedAt?: Date | null;
@@ -255,6 +257,7 @@ const projectSchema = new Schema<IProject>(
     },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
     migratedFrom: { type: Schema.Types.ObjectId, ref: "Project", default: null },
+    activeThrough: { type: String, default: null, match: /^\d{4}-(0[1-9]|1[0-2])$/ },
     archivedAt: { type: Date, default: null },
     lastDeadlineReminderOn: { type: String, default: null },
   },

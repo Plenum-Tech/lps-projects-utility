@@ -159,16 +159,14 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   const count = (k: keyof BrandChecks) => base.filter((b) => b.checks[k]).length;
   const pick = (f: Filter) => setFilter(filter === f && f !== "all" ? "all" : f);
 
-  // Brands (not pitches) that aren't ready for new projects: a scope, a line in the month's plan and a lead are all needed.
+  // Brands (not pitches) that aren't ready for new projects: a scope and a lead are needed
+  // (brands carry over month to month; the plan is copied on the 1st).
   const blockable = base.filter((b) => !b.isPitch && b.status !== "rejected");
   const noScope = blockable.filter((b) => !b.checks.scope).length;
-  const noPlan = blockable.filter((b) => !b.checks.plan).length;
   const noLead = blockable.filter((b) => !b.checks.lead).length;
-  const monthLong = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-GB", { month: "long", timeZone: "UTC" });
-  const notReady = blockable.filter((b) => !b.checks.scope || !b.checks.plan || !b.checks.lead).length;
+  const notReady = blockable.filter((b) => !b.checks.scope || !b.checks.lead).length;
   const fix: Array<{ n: number; text: string; filter: Filter }> = [
     { n: noScope, text: "no scope", filter: "noscope" },
-    { n: noPlan, text: `not in ${monthLong}'s plan`, filter: "noplan" },
     { n: noLead, text: "no lead", filter: "nolead" },
   ];
 
@@ -181,8 +179,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
             <span className="font-semibold">
               {notReady} brand{notReady === 1 ? " isn't" : "s aren't"} ready for new projects.
             </span>{" "}
-            A brand needs a scope, a line in the month&apos;s manpower plan and a lead. Upload the scope on the brand page (.docx, PDF, image or Excel; it&apos;s read
-            automatically), add the line in Allocation, and set the lead.
+            A brand needs a scope and a lead. Upload the scope on the brand page (.docx, PDF, image or Excel; it&apos;s read automatically) and set the
+            lead.
           </p>
           <div className="flex flex-wrap gap-2">
             {fix

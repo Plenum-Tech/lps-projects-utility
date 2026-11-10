@@ -107,7 +107,14 @@ function entryProjectIds(entries: Array<{ project?: mongoose.Types.ObjectId | nu
 async function brandProjects(months: string[], extraIds: mongoose.Types.ObjectId[]) {
   if (months.length === 0 && extraIds.length === 0) return [];
   const projects = await Project.find({
-    $or: [{ "naming.month": { $in: months }, archivedAt: null, brand: { $ne: null } }, { _id: { $in: extraIds } }],
+    $or: [
+      { "naming.month": { $in: months }, archivedAt: null, brand: { $ne: null } },
+      // Projects carried into these months (open tasks carry a project on).
+      ...(months.length
+        ? [{ "naming.month": { $lt: [...months].sort()[0]! }, activeThrough: { $gte: [...months].sort()[0]! }, archivedAt: null, brand: { $ne: null } }]
+        : []),
+      { _id: { $in: extraIds } },
+    ],
   })
     .select("name code brand naming.month")
     .sort({ name: 1 })

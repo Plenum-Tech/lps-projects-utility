@@ -43,7 +43,8 @@ export async function brandsInPlan(month: string, options: { includePending?: bo
 export function readinessOf(brand: Pick<IBrand, "scopeItems" | "leads"> & { _id: unknown }, inPlan: Set<string>): BrandReadiness {
   const reasons: BrandNotReadyReason[] = [];
   if (!brandLocksScope(brand)) reasons.push("no_scope");
-  if (!inPlan.has(String(brand._id))) reasons.push("not_in_plan");
+  // Brands carry over month to month (the plan is copied on the 1st): a plan line isn't required.
+  void inPlan;
   if (!(brand.leads ?? []).length) reasons.push("no_lead");
   return { ready: reasons.length === 0, reasons };
 }

@@ -84,7 +84,7 @@ export async function moveCandidates(fromId: mongoose.Types.ObjectId, ids: strin
     archivedAt: null,
     $or: [{ brand: fromId }, { "naming.brand": fromId }],
   })
-    .select("name code brand naming deadline manpowerRow team")
+    .select("name code brand naming deadline manpowerRow activeThrough team")
     .lean<LeanProject[]>();
   if (projects.length !== unique.length) return { error: "Some of those projects aren't open projects of this brand" };
   return projects;
@@ -117,7 +117,7 @@ export async function planBrandMove(from: IBrand, target: IBrand, projects: Lean
   const lineOf = new Map<string, MoveItem["line"]>();
   if (byMonth.size) {
     const [all, brands] = await Promise.all([
-      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow").lean(),
+      Project.find({ archivedAt: null }).select("name brand naming deadline manpowerRow activeThrough").lean(),
       Brand.find({}).select("name").lean(),
     ]);
     const brandNames = new Map(brands.map((b) => [String(b._id), b.name]));
@@ -140,6 +140,7 @@ export async function planBrandMove(from: IBrand, target: IBrand, projects: Lean
           naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
           deadline: p.deadline ?? null,
           manpowerRow: p.manpowerRow ?? null,
+          activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
         })),
         brandNames
       );

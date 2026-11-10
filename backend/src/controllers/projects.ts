@@ -1241,6 +1241,7 @@ export async function createProjectCore(
   let project: IProject;
   try {
     project = await Project.create({
+      activeThrough: naming?.month ?? null,
       name,
       naming,
       code,
@@ -2023,6 +2024,21 @@ export async function archiveProject(req: Request, res: Response): Promise<void>
   await respondDetail(res, project._id as mongoose.Types.ObjectId, req.user!);
 }
 
+/**
+ * POST /:id/continue — a closed project carries on into the current month (same project and
+ * name, its tasks kept): for work that goes on after the 1st without an open task carrying it.
+ */
+export async function continueProject(req: Request, res: Response): Promise<void> {
+  const project = await getProjectOr404(req, res);
+  if (!project) return;
+  if (!canManageProject(req.user!, project)) return send(res, bad("Only the project manager, its creator or an admin can continue this project", 403));
+  if (project.archivedAt) return send(res, bad("Restore the project first", 409));
+  const { carryProject } = await import("../lib/projectCarry.js");
+  const { currentAppMonth } = await import("../lib/projectExpiry.js");
+  await carryProject(project, currentAppMonth(), req.user!, "continued_by_hand");
+  await respondDetail(res, project._id as mongoose.Types.ObjectId, req.user!);
+}
+
 /** Restores an archived project (POST /:id/restore and bulk "restore"). */
 async function applyRestore(actor: IUser, project: IProject, ip: string | undefined): Promise<Invalid | null> {
   if (!canManageProject(actor, project)) {
@@ -2647,10 +2663,15 @@ export async function teamLoad(req: Request, res: Response): Promise<void> {
   res.json({ month, ...(await monthTeamLoad(month)) });
 }
 
-/** Per person: how many of the month's projects (naming month) they are on, and the plan's max. */
+/** Per person: how many projects running in the month (its own, or carried into it) they are on, and the plan's max. */
 export async function monthTeamLoad(month: string): Promise<{ max: number; load: Record<string, number> }> {
   const rows = await Project.aggregate<{ _id: mongoose.Types.ObjectId; projects: number }>([
-    { $match: { "naming.month": month, archivedAt: null } },
+    {
+      $match: {
+        archivedAt: null,
+        $or: [{ "naming.month": month }, { "naming.month": { $lt: month }, activeThrough: { $gte: month } }],
+      },
+    },
     { $project: { users: { $setUnion: [{ $reduce: { input: "$team.users", initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } }, []] } } },
     { $unwind: "$users" },
     { $group: { _id: "$users", projects: { $sum: 1 } } },

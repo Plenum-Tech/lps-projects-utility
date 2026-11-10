@@ -33,6 +33,7 @@ import { listUnbrandedProjects,
   pinProject,
   removeMember,
   restoreProject,
+  continueProject,
   unpinProject,
   updateMember,
   updateProject,
@@ -80,6 +81,7 @@ router.post("/:id/pearity/generate", generateProjectPearity);
 router.post("/:id/approval/request", requestAgain);
 router.post("/:id/archive", archiveProject);
 router.post("/:id/restore", restoreProject);
+router.post("/:id/continue", continueProject);
 router.post("/:id/duplicate", duplicateProject);
 
 // Members

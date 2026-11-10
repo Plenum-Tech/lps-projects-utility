@@ -949,6 +949,7 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
     naming: p.naming ? { type: p.naming.type, month: p.naming.month, title: p.naming.title } : null,
     deadline: p.deadline ?? null,
     manpowerRow: p.manpowerRow ?? null,
+    activeThrough: (p as { activeThrough?: string | null }).activeThrough ?? null,
   }));
   for (const plan of plans) {
     const rowUsers = new Map<string, Set<string>>();
@@ -981,7 +982,7 @@ async function planMapsFor(fromMonth: string, toMonth: string, projects: PlanPro
  * one derived from the brand's project members and managers (flagged `derived`).
  */
 function loadPlanProjects(): Promise<PlanProject[]> {
-  return Project.find({}).select("brand members.user manager name naming deadline manpowerRow").lean<PlanProject[]>();
+  return Project.find({}).select("brand members.user manager name naming deadline manpowerRow activeThrough").lean<PlanProject[]>();
 }
 
 /**

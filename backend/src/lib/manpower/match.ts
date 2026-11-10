@@ -243,6 +243,8 @@ export interface LinkProject {
   deadline?: Date | null;
   /** Row chosen on the project (wins over the automatic match). */
   manpowerRow?: string | null;
+  /** Last month the project runs in (carried projects); null = its own month. */
+  activeThrough?: string | null;
 }
 
 const STOP = new Set([
@@ -287,7 +289,9 @@ export function linkProjectsToRows(
     rowsByBrand.set(r.brand, [...(rowsByBrand.get(r.brand) ?? []), r]);
   }
   for (const p of projects) {
-    if (projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null }) !== month) continue;
+    // Its own month, or a later one it was carried into (open tasks carry a project on).
+    const started = projectMonth({ name: p.name, naming: p.naming as never, deadline: p.deadline ?? null });
+    if (!started || started > month || (p.activeThrough ?? started) < month) continue;
     // Chosen on the project: always that row.
     if (p.manpowerRow && rowKeys.has(p.manpowerRow)) {
       links.set(p._id, p.manpowerRow);
