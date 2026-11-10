@@ -13,8 +13,11 @@ import { scopeTotals, scopeUnitOf, type ScopeItem } from "../lib/scopeUnits.js";
 //
 //   Extra units          deliverables numbered beyond the project's scope total for
 //                        their unit (Video 16 when the scope is 15 Video), or on a
-//                        scope unit the project has no scope for. Approved and waiting
-//                        extras count; rejected over-scope tasks don't.
+//                        unit the project has no scope for (a free-text unit only when
+//                        it carries an over-scope request). Approved and waiting extras
+//                        count; rejected over-scope tasks don't. Requests approved under
+//                        the old task-count rule on a deliverable within the scope
+//                        (Video 1 of 1, several tasks) are not extra.
 //   Iterations beyond 2  rework tasks on one deliverable after the second (4 reworks
 //                        on Video 4 → +2), split by who asked: client / internal.
 //   Creep %              (extra units + iterations beyond 2) ÷ scope units.
@@ -198,11 +201,11 @@ async function projectRows(projects: Array<ProjectDoc & { month: string }>): Pro
       const key = d._id.unit;
       usedBy.set(key, (usedBy.get(key) ?? 0) + 1);
       const total = totals.get(key)?.total;
-      // Beyond the unit's total, or a known scope unit the project has no scope for;
-      // free-text (legacy) units can't be judged.
-      const beyond = total !== undefined ? d._id.n > total : hasScope && !!scopeUnitOf(key);
-      if (!hasScope || !beyond) continue;
       const flags = d.flags.filter((f): f is NonNullable<typeof f> => !!f);
+      // Beyond the unit's total, or on a unit the project has no scope for: a known
+      // scope unit, or a free-text (legacy) one an admin approved / is asked to approve.
+      const beyond = total !== undefined ? d._id.n > total : !!scopeUnitOf(key) || flags.length > 0;
+      if (!hasScope || !beyond) continue;
       const approved = flags.find((f) => f.status === "approved");
       const status: ExtraRow["status"] = approved ? "approved" : flags.some((f) => f.status === "pending") ? "pending" : "unflagged";
       const unit = totals.get(key)?.unit ?? scopeUnitOf(key)?.name ?? d.label;
