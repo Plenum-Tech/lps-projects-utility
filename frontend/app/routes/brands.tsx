@@ -1,7 +1,6 @@
 import { Navigate, useSearchParams } from "react-router";
 
 import { BrandsAllocation, BrandsOverview, MonthPicker, NewBrandButton, thisMonth, useBrandsMonth } from "@/components/brands/brands-dashboard";
-import { MonthMigrationButton } from "@/components/brands/month-migration-dialog";
 import { PageHeader } from "@/components/globals/query-states";
 import { ManpowerPage } from "@/components/manpower/manpower-page";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -66,7 +65,6 @@ export default function Brands() {
             actions={
               <>
                 <MonthPicker month={month} onChange={(m) => setParam("month", m === thisMonth() ? null : m)} />
-                <MonthMigrationButton />
                 <NewBrandButton />
               </>
             }
