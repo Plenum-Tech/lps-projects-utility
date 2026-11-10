@@ -613,6 +613,9 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
       source,
       actor: req.user!,
       ip: req.ip,
+      // Drafts from the plan page always go through approval (leadership too): the live plan
+      // changes only when a version is approved.
+      requireApproval: (req.body as { forApproval?: unknown })?.forApproval === true,
     });
     res.status(201).json({ month, version: saved.version, ...(saved.pendingApproval ? { pendingApproval: saved.pendingApproval } : {}) });
   } catch (err) {
@@ -660,6 +663,8 @@ export async function writePlanVersion(params: {
   ip?: string;
   /** Live at once without leadership approval (month migration by a brand creator). */
   autoApprove?: boolean;
+  /** Waits for approval even when leadership saves it (a draft sent from the plan page). */
+  requireApproval?: boolean;
 }): Promise<{ version: number; pendingApproval?: string }> {
   const { month, before, actor, ip } = params;
   // Brand-linked lines are named after their brand (new, relinked or renamed lines).
@@ -673,7 +678,7 @@ export async function writePlanVersion(params: {
   const approvedRows = (approved?.rows ?? []) as IManpowerRow[];
   const approvedVersion = approved?.version ?? null;
   const baseVersion = params.baseVersion === undefined ? params.latestVersion : params.baseVersion;
-  const needsApproval = !params.autoApprove && !(await isLeadershipActor(actor));
+  const needsApproval = !params.autoApprove && (params.requireApproval === true || !(await isLeadershipActor(actor)));
   // Where the save lands: the pending version for a non-leader (changes add up), else the approved plan.
   const onto = needsApproval && pending ? { version: pending.version, rows: pending.rows as IManpowerRow[] } : { version: approvedVersion, rows: approvedRows };
   const merged = baseVersion === onto.version ? saved : applyPlanDelta(onto.rows, planDelta(before, saved));

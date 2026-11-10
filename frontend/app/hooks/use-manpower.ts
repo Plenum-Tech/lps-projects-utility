@@ -67,16 +67,16 @@ export function useSaveManpowerPlan() {
 }
 
 /**
- * A draft (kept on the editor's computer) leaves it: saved as the next version and, when it
- * needs approval, sent to leadership in the same step. Leadership's goes live at once.
+ * A draft (kept on the editor's computer) leaves it: saved as the next version, waiting for
+ * approval (leadership's too), and sent to leadership in the same step. The live plan
+ * changes only when it's approved.
  */
 export function useSubmitManpowerDraft() {
   const queryClient = useQueryClient();
   const toast = useToast();
   return useMutation({
     mutationFn: async ({ month, approvalNote, ...body }: ManpowerSaveInput & { approvalNote?: string }) => {
-      const saved = (await api.post<{ month: string; version: number; pendingApproval?: string }>(`/manpower/${month}`, body)).data;
-      if (!saved.pendingApproval) return { saved, message: `Version ${saved.version} is live — not emailed yet. Use "Send email" when you're ready.` };
+      const saved = (await api.post<{ month: string; version: number; pendingApproval?: string }>(`/manpower/${month}`, { ...body, forApproval: true })).data;
       const sent = (await api.post<{ message: string }>(`/manpower/${month}/send`, { note: approvalNote })).data;
       return { saved, message: `${sent.message}. The live plan stays as it is until it's approved.` };
     },

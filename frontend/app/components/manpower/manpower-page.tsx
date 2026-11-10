@@ -7,6 +7,8 @@ import type { MultiSelectOption } from "@/components/globals/multi-select";
 import { EmptyState, PageHeader, QueryError } from "@/components/globals/query-states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -93,7 +95,7 @@ function versionSuffix(v: { version: number; status?: string }, latest: number |
  *
  * Editing has three states: a draft (kept on the editor's computer, saved with every change,
  * visible only to them), sent for approval (a new version, waiting), and approved (live).
- * The live plan doesn't change while a version waits. Leadership publishes instead of sending.
+ * The live plan doesn't change while a version waits — for leadership's drafts too (any leader approves).
  */
 export function ManpowerPage() {
   const [params, setParams] = useSearchParams();
@@ -150,6 +152,16 @@ export function ManpowerPage() {
   // The draft kept on this computer for the month (shown when not editing).
   const [stored, setStored] = useState<StoredPlanDraft | null>(null);
   const [storageOk, setStorageOk] = useState(true);
+  // "Send for approval" asks first: the draft to send, the note for leadership and the tick.
+  const [sendAsk, setSendAsk] = useState<StoredPlanDraft | null>(null);
+  const [sendNote, setSendNote] = useState("");
+  const [sendSure, setSendSure] = useState(false);
+
+  function askSend(kept: StoredPlanDraft) {
+    setSendNote(kept.note);
+    setSendSure(false);
+    setSendAsk(kept);
+  }
 
   // Reset when switching month or version; pick up this month's draft.
   useEffect(() => {
@@ -298,7 +310,7 @@ export function ManpowerPage() {
   }
 
   /** Sends the draft for approval (leadership: publishes it). */
-  function submitDraft(kept: StoredPlanDraft) {
+  function submitDraft(kept: StoredPlanDraft, approvalNote: string) {
     const max = Number(kept.maxProjects);
     submit.mutate(
       {
@@ -306,7 +318,7 @@ export function ManpowerPage() {
         baseVersion: kept.baseVersion,
         rows: tableToInput(kept.rows),
         note: kept.note.trim(),
-        approvalNote: kept.note.trim() || undefined,
+        approvalNote: approvalNote.trim() || undefined,
         maxProjectsPerPerson: Number.isInteger(max) && max >= 1 ? max : undefined,
         source: kept.source,
       },
@@ -315,6 +327,7 @@ export function ManpowerPage() {
           if (userId) clearPlanDraft(userId, month);
           setStored(null);
           setDraft(null);
+          setSendAsk(null);
           setParam({ v: null });
         },
       },
@@ -376,15 +389,23 @@ export function ManpowerPage() {
               {data && (
                 <Select
                   value={String(data.version)}
-                  onValueChange={(v) => setParam({ v: Number(v) === data.latestVersion ? null : String(v) })}
-                  items={Object.fromEntries(
-                    data.versions.map((v) => [String(v.version), `Version ${v.version}${versionSuffix(v, data.latestVersion)}`]),
-                  )}
+                  onValueChange={(v) => {
+                    if (v === "draft") {
+                      if (stored) resumeDraft(stored);
+                      return;
+                    }
+                    setParam({ v: Number(v) === data.latestVersion ? null : String(v) });
+                  }}
+                  items={{
+                    ...(stored && canEdit ? { draft: "Your draft · only you" } : {}),
+                    ...Object.fromEntries(data.versions.map((v) => [String(v.version), `Version ${v.version}${versionSuffix(v, data.latestVersion)}`])),
+                  }}
                 >
                   <SelectTrigger size="sm" aria-label="Version" className="min-w-40">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    {stored && canEdit && <SelectItem value="draft">Your draft · only you</SelectItem>}
                     {data.versions.map((v) => (
                       <SelectItem key={v.version} value={String(v.version)}>
                         Version {v.version}
@@ -475,7 +496,7 @@ export function ManpowerPage() {
                 : storageOk
                   ? `Draft · saved on this computer${stored ? ` at ${formatTimeOfDay(stored.savedAt)}` : ""} · only you can see it.`
                   : "This browser can't keep a draft — send it before leaving the page."}{" "}
-              {data?.savesApproved ? "Publish makes it live." : "The live plan doesn't change until leadership approves."}
+              The live plan doesn't change until leadership approves.
             </span>
             <Button
               variant="ghost"
@@ -490,9 +511,9 @@ export function ManpowerPage() {
               <LuSave aria-hidden />
               {draft.dirty ? "Save as draft" : "Close"}
             </Button>
-            <Button size="sm" onClick={() => stored && submitDraft(stored)} disabled={submit.isPending || !draft.dirty || !stored}>
+            <Button size="sm" onClick={() => stored && askSend(stored)} disabled={submit.isPending || !draft.dirty || !stored}>
               {submit.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
-              {data?.savesApproved ? "Publish" : "Send for approval"}
+              Send for approval
             </Button>
           </div>
         </div>
@@ -508,7 +529,7 @@ export function ManpowerPage() {
               {stored.baseVersion != null && data?.latestVersion != null && stored.baseVersion !== data.latestVersion && stored.baseVersion !== data.pendingVersion
                 ? ` (version ${data.latestVersion} is live now — your changes are added onto it when you send)`
                 : ""}
-              . {data?.savesApproved ? "Nothing changes until you publish it." : "Nothing changes until you send it and leadership approves."}
+              . Nothing changes until you send it and leadership approves.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -520,9 +541,9 @@ export function ManpowerPage() {
               <LuFilePen aria-hidden />
               Continue editing
             </Button>
-            <Button size="sm" onClick={() => submitDraft(stored)} disabled={submit.isPending}>
+            <Button size="sm" onClick={() => askSend(stored)} disabled={submit.isPending}>
               {submit.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
-              {data?.savesApproved ? "Publish" : "Send for approval"}
+              Send for approval
             </Button>
           </div>
         </div>
@@ -725,6 +746,31 @@ export function ManpowerPage() {
                     </tr>
                   </thead>
                   <tbody>
+                    {stored && canEdit && (
+                      <tr className="border-t bg-violet-500/5">
+                        <td className="px-3 py-2 font-medium">
+                          Draft
+                          <Badge variant="outline" className="ml-2">
+                            Only you
+                          </Badge>
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">{formatDateTime(stored.savedAt)}</td>
+                        <td className="px-3 py-2">{me?.name ?? "You"}</td>
+                        <td className="px-3 py-2">On this computer</td>
+                        <td className="px-3 py-2 text-right tabular-nums">{stored.rows.length}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{stored.note || "—"}</td>
+                        <td className="px-3 py-2 text-right">
+                          <Button variant="ghost" size="sm" onClick={() => resumeDraft(stored)}>
+                            <LuFilePen aria-hidden />
+                            Continue
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => askSend(stored)} disabled={submit.isPending}>
+                            <LuSend aria-hidden />
+                            Send
+                          </Button>
+                        </td>
+                      </tr>
+                    )}
                     {data.versions.map((v) => (
                       <tr key={v.version} className="border-t">
                         <td className="px-3 py-2 font-medium">
@@ -791,6 +837,41 @@ export function ManpowerPage() {
           />
         </>
       )}
+      <Dialog open={sendAsk !== null} onOpenChange={(open) => !open && !submit.isPending && setSendAsk(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Send your draft for approval?</DialogTitle>
+            <DialogDescription>
+              Leadership gets your changes for {namingMonthLabel(month)}. The live plan stays as it is until they approve; until then it shows as waiting
+              for approval.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+                <Label htmlFor="mp-send-note" className="text-xs">
+                  Note for leadership (optional)
+                </Label>
+                <Input id="mp-send-note" value={sendNote} onChange={(e) => setSendNote(e.target.value)} maxLength={300} placeholder="What changed and why" />
+            </div>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox checked={sendSure} onCheckedChange={(v) => setSendSure(v === true)} className="mt-0.5" />
+              I want to send it for approval
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSendAsk(null)} disabled={submit.isPending}>
+              Not yet
+            </Button>
+            <Button
+              onClick={() => sendAsk && submitDraft({ ...sendAsk, note: sendAsk.note || sendNote }, sendNote)}
+              disabled={!sendSure || submit.isPending}
+            >
+              {submit.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
+              Send for approval
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <ConfirmDialog
         open={confirmDiscard}
         onOpenChange={setConfirmDiscard}
