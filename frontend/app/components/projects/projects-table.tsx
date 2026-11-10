@@ -19,12 +19,11 @@ import {
   MobileField,
   type DataTableColumn,
 } from "@/components/globals/data-table/table";
-import { BrandName } from "@/components/delivery/brand-dot";
 import { LegacyNameBadge, ShortCode } from "@/components/projects/project-badges";
 import { useChangeProjectStatus, useTogglePin } from "@/hooks/use-projects";
 import type { RowSelection, SortDir } from "@/hooks/use-table-state";
 import { canManageProjectClient, progressTone, statusColor } from "@/lib/projects";
-import { formatDMY } from "@/lib/tasks";
+import { brandWithOrg, formatDMY } from "@/lib/tasks";
 import { cn } from "@/lib/utils";
 import type { Project, ProjectStatus, Role } from "@/types";
 import { ProjectApprovalBadge } from "@/components/projects/project-approval";
@@ -205,16 +204,10 @@ export function ProjectsTable({
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {project.tag && <span className="font-mono">{project.tag} · </span>}
-            {project.category?.name ?? "Uncategorised"}
+            {project.brand ? brandWithOrg(project.brand) : "No brand"} · {project.migratedFrom ? "Migrated" : "New"}
           </p>
         </div>
       ),
-    },
-    {
-      id: "brand",
-      header: "Brand",
-      className: "max-w-40 pt-3",
-      cell: (project) => <ProjectBrandCell project={project} />,
     },
     {
       id: "members",
@@ -300,15 +293,14 @@ export function ProjectsTable({
               >
                 {project.name}
               </Link>
-              <p className="text-xs text-muted-foreground">{project.category?.name ?? "Uncategorised"}</p>
+              <p className="text-xs text-muted-foreground">
+                {project.brand ? brandWithOrg(project.brand) : "No brand"} · {project.migratedFrom ? "Migrated" : "New"}
+              </p>
             </div>
             <RowActions label={`Actions for ${project.code}`} actions={actions(project)} />
           </div>
           <ProjectProgressBar value={project.progress} />
           <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
-            <MobileField label="Brand">
-              <ProjectBrandCell project={project} />
-            </MobileField>
             <MobileField label="Start date">{formatDMY(project.startDate)}</MobileField>
             <MobileField label="Deadline">
               <DeadlineCell project={project} />
@@ -321,26 +313,5 @@ export function ProjectsTable({
         </div>
       )}
     />
-  );
-}
-
-function ProjectBrandCell({ project }: { project: Project }) {
-  if (!project.brand) return <span className="text-sm text-muted-foreground">—</span>;
-  const org = project.brand.organisation?.trim();
-  return (
-    <div className="min-w-0">
-      <BrandName
-        name={project.brand.name}
-        color={project.brand.color}
-        active={project.brand.active}
-        className="max-w-40 text-sm"
-      />
-      {/* The organisation, when it isn't the brand itself (ENOC above Zoom). */}
-      {org && org.toLowerCase() !== project.brand.name.trim().toLowerCase() && (
-        <p className="max-w-40 truncate text-xs text-muted-foreground" title={org}>
-          {org}
-        </p>
-      )}
-    </div>
   );
 }

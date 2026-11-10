@@ -118,6 +118,8 @@ export interface IProject extends mongoose.Document {
   pearityGeneratedAt?: Date | null;
   pearityGeneratedBy?: mongoose.Types.ObjectId | null;
   createdBy: mongoose.Types.ObjectId;
+  /** Copied from last month's project by the month migration (Brands → Migrate to next month); null = created new. */
+  migratedFrom?: mongoose.Types.ObjectId | null;
   archivedAt?: Date | null;
   /** "YYYY-MM-DD" idempotency key for the deadline reminder job. */
   lastDeadlineReminderOn?: string | null;
@@ -252,6 +254,7 @@ const projectSchema = new Schema<IProject>(
       default: undefined,
     },
     createdBy: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    migratedFrom: { type: Schema.Types.ObjectId, ref: "Project", default: null },
     archivedAt: { type: Date, default: null },
     lastDeadlineReminderOn: { type: String, default: null },
   },

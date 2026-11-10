@@ -1969,6 +1969,8 @@ export interface Project {
   requireTaskApproval: boolean;
   taskCounter: number;
   createdBy: UserRef;
+  /** Copied from last month's project by the month migration; null = created new. */
+  migratedFrom?: string | null;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;

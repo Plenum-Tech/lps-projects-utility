@@ -235,6 +235,8 @@ export async function runMonthMigration(params: { from: string; to: string; bran
             naming: { brand: String(brand._id), type: n.type, month: to, title },
             ...(withScope && scopeItems ? { scopeItems } : {}),
             ...(src.summary ? { summary: src.summary } : {}),
+            // Last month's manager keeps managing (else the person migrating would).
+            ...(src.manager ? { manager: String(src.manager) } : {}),
             departments: (src.departments ?? []).map(String),
             ...(src.category ? { category: String(src.category) } : {}),
             progressMode: src.progressMode,
@@ -261,8 +263,9 @@ export async function runMonthMigration(params: { from: string; to: string; bran
         result.skipped.push({ brand: brand.name, reason: `${name}: ${created.error}` });
         continue;
       }
-      // The old project's scope text / platforms / notes, where the brand has none of its own.
-      const carry: Record<string, unknown> = {};
+      // Where it came from (shown as "Migrated"), and the old project's scope text /
+      // platforms / notes where the brand has none of its own.
+      const carry: Record<string, unknown> = { migratedFrom: src._id };
       if (!brand.scopeText && src.scopeText) carry.scopeText = src.scopeText;
       if (!brand.platforms?.length && src.platforms?.length) carry.platforms = [...src.platforms];
       if (!brand.scopeNotes?.length && src.scopeNotes?.length) carry.scopeNotes = [...src.scopeNotes];

@@ -1155,6 +1155,8 @@ export async function createProjectCore(
     if (isInvalid(parsed)) return parsed;
     manager = parsed;
   }
+  // No manager picked: whoever creates the project manages it.
+  if (!manager) manager = actor._id as mongoose.Types.ObjectId;
 
   let members: MemberInput[] = [];
   if (body.members !== undefined) {

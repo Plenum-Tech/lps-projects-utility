@@ -433,7 +433,8 @@ export function ProjectFormDialog({
 
   const managerOptions = useMemo<OptionItem[]>(() => {
     const options = new Map<string, OptionItem>();
-    options.set(NONE, { value: NONE, label: "No manager" });
+    // A new project without a pick is managed by its creator (the server sets it).
+    options.set(NONE, { value: NONE, label: isEdit ? "No manager" : "You (the creator) — default" });
     if (user)
       options.set(user._id, { value: user._id, label: `${user.name} (you)` });
     for (const member of project?.members ?? []) {
@@ -460,7 +461,7 @@ export function ProjectFormDialog({
       });
     }
     return [...options.values()];
-  }, [assignable.data, project, user]);
+  }, [assignable.data, project, user, isEdit]);
 
   const categoryOptions = useMemo<OptionItem[]>(
     () => [
