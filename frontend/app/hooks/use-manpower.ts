@@ -66,6 +66,31 @@ export function useSaveManpowerPlan() {
   });
 }
 
+/**
+ * A draft (kept on the editor's computer) leaves it: saved as the next version and, when it
+ * needs approval, sent to leadership in the same step. Leadership's goes live at once.
+ */
+export function useSubmitManpowerDraft() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ month, approvalNote, ...body }: ManpowerSaveInput & { approvalNote?: string }) => {
+      const saved = (await api.post<{ month: string; version: number; pendingApproval?: string }>(`/manpower/${month}`, body)).data;
+      if (!saved.pendingApproval) return { saved, message: `Version ${saved.version} is live — not emailed yet. Use "Send email" when you're ready.` };
+      const sent = (await api.post<{ message: string }>(`/manpower/${month}/send`, { note: approvalNote })).data;
+      return { saved, message: `${sent.message}. The live plan stays as it is until it's approved.` };
+    },
+    onSuccess: ({ message }) => {
+      void queryClient.invalidateQueries({ queryKey: manpowerKeys.all });
+      void queryClient.invalidateQueries({ queryKey: deliveryKeys.all });
+      void queryClient.invalidateQueries({ queryKey: brandKeys.all });
+      void queryClient.invalidateQueries({ queryKey: ["project-approvals"] });
+      toast.success(message);
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
 /** Leadership: emails the plan's live changes since the last email (approvers + the people affected). */
 export function useSendPlanEmail() {
   const queryClient = useQueryClient();

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router";
-import { LuCopy, LuFilePlus, LuFileSpreadsheet, LuHistory, LuLoaderCircle, LuPencil, LuSave, LuUsers } from "react-icons/lu";
+import { LuCopy, LuFilePen, LuFilePlus, LuFileSpreadsheet, LuHistory, LuLoaderCircle, LuPencil, LuSave, LuSend, LuTrash2, LuUsers } from "react-icons/lu";
 
 import { ConfirmDialog } from "@/components/globals/confirm-dialog";
 import type { MultiSelectOption } from "@/components/globals/multi-select";
@@ -13,10 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBrands } from "@/hooks/use-brands";
-import { useManpowerMonths, useManpowerPlan, useSaveManpowerPlan } from "@/hooks/use-manpower";
+import { useCurrentUser } from "@/hooks/use-auth";
+import { useManpowerMonths, useManpowerPlan, useSaveManpowerPlan, useSubmitManpowerDraft } from "@/hooks/use-manpower";
 import { useProjectTypes } from "@/hooks/use-project-meta";
 import { useAssignableUsers } from "@/hooks/use-task-meta";
-import { formatDateTime } from "@/lib/format";
+import { useToast } from "@/hooks/use-toast";
+import { formatDateTime, formatTimeOfDay } from "@/lib/format";
+import { clearPlanDraft, readPlanDraft, writePlanDraft, type StoredPlanDraft } from "@/lib/manpower-draft";
 import { MANPOWER_ROLE_FALLBACK, newRowKey, shiftMonth } from "@/lib/manpower";
 import { namingMonthLabel } from "@/lib/projects";
 import { todayKey } from "@/lib/tasks";
@@ -86,8 +89,11 @@ function versionSuffix(v: { version: number; status?: string }, latest: number |
 
 /**
  * Manpower plan: all brands × roles for a month, each person's allocation
- * (clashes and availability), and the version history. Admins and heads read; leadership and Nazeer edit,
- * and every save becomes a new version.
+ * (clashes and availability), and the version history. Admins and heads read; leadership and Nazeer edit.
+ *
+ * Editing has three states: a draft (kept on the editor's computer, saved with every change,
+ * visible only to them), sent for approval (a new version, waiting), and approved (live).
+ * The live plan doesn't change while a version waits. Leadership publishes instead of sending.
  */
 export function ManpowerPage() {
   const [params, setParams] = useSearchParams();
@@ -137,12 +143,37 @@ export function ManpowerPage() {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const save = useSaveManpowerPlan();
+  const submit = useSubmitManpowerDraft();
+  const toast = useToast();
+  const { data: me } = useCurrentUser();
+  const userId = me?._id ?? null;
+  // The draft kept on this computer for the month (shown when not editing).
+  const [stored, setStored] = useState<StoredPlanDraft | null>(null);
+  const [storageOk, setStorageOk] = useState(true);
 
-  // Reset when switching month or version.
+  // Reset when switching month or version; pick up this month's draft.
   useEffect(() => {
     setDraft(null);
     setHighlight(null);
   }, [month, version]);
+  useEffect(() => {
+    setStored(userId ? readPlanDraft(userId, month) : null);
+  }, [userId, month]);
+
+  // Every change is kept on this computer at once (nothing is lost before it's sent).
+  useEffect(() => {
+    if (!draft?.dirty || !userId) return;
+    const kept: StoredPlanDraft = {
+      rows: draft.rows,
+      baseVersion: draft.baseVersion,
+      source: draft.source,
+      note: draft.note,
+      maxProjects: draft.maxProjects,
+      savedAt: new Date().toISOString(),
+    };
+    setStorageOk(writePlanDraft(userId, month, kept));
+    setStored(kept);
+  }, [draft, userId, month]);
 
   // A non-leader's "Edit plan" while a version waits for approval: open that version, then edit
   // from it (their earlier changes show; the save adds to them).
@@ -153,13 +184,13 @@ export function ManpowerPage() {
     startEdit(planRowsToTable(data), data.pendingVersion, "edit");
   }, [editPending, data]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Warn before leaving with unsaved edits.
+  // Warn before leaving only when this browser couldn't keep the draft.
   useEffect(() => {
-    if (!draft?.dirty) return;
+    if (!draft?.dirty || storageOk) return;
     const handler = (e: BeforeUnloadEvent) => e.preventDefault();
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [draft?.dirty]);
+  }, [draft?.dirty, storageOk]);
 
   const editing = draft !== null;
   const brands = useBrands(false, canEdit && editing);
@@ -249,29 +280,49 @@ export function ManpowerPage() {
     setParam({ tab: "plan" });
   }
 
-  function updateRows(fn: (rows: TableRow[]) => TableRow[]) {
-    setDraft((d) => (d ? { ...d, rows: fn(d.rows), dirty: true } : d));
+  function resumeDraft(kept: StoredPlanDraft) {
+    setDraft({ rows: kept.rows, baseVersion: kept.baseVersion, source: kept.source, note: kept.note, maxProjects: kept.maxProjects, dirty: true });
+    setParam({ tab: "plan", v: null });
   }
 
-  function saveDraft() {
-    if (!draft) return;
-    const max = Number(draft.maxProjects);
-    save.mutate(
+  /** "Save as draft": the edits stay on this computer only; the editor closes. */
+  function keepDraft() {
+    setDraft(null);
+    toast.success(storageOk ? "Draft saved on this computer — only you can see it." : "This browser couldn't keep the draft — send it now or keep the page open.");
+  }
+
+  function discardDraft() {
+    if (userId) clearPlanDraft(userId, month);
+    setStored(null);
+    setDraft(null);
+  }
+
+  /** Sends the draft for approval (leadership: publishes it). */
+  function submitDraft(kept: StoredPlanDraft) {
+    const max = Number(kept.maxProjects);
+    submit.mutate(
       {
         month,
-        baseVersion: draft.baseVersion,
-        rows: tableToInput(draft.rows),
-        note: draft.note.trim(),
+        baseVersion: kept.baseVersion,
+        rows: tableToInput(kept.rows),
+        note: kept.note.trim(),
+        approvalNote: kept.note.trim() || undefined,
         maxProjectsPerPerson: Number.isInteger(max) && max >= 1 ? max : undefined,
-        source: draft.source,
+        source: kept.source,
       },
       {
         onSuccess: () => {
+          if (userId) clearPlanDraft(userId, month);
+          setStored(null);
           setDraft(null);
           setParam({ v: null });
         },
       },
     );
+  }
+
+  function updateRows(fn: (rows: TableRow[]) => TableRow[]) {
+    setDraft((d) => (d ? { ...d, rows: fn(d.rows), dirty: true } : d));
   }
 
   // Cell edits apply to the draft at once (the cell's inline editor; no pop-up).
@@ -347,6 +398,14 @@ export function ManpowerPage() {
                 // Edits from the waiting version use it as their base (the server adds them to it).
                 const onPending = data.pendingVersion != null && data.version === data.pendingVersion;
                 const pendingFirst = !data.savesApproved && data.pendingVersion != null && !onPending && data.version === data.latestVersion;
+                if (stored) {
+                  return (
+                    <Button size="sm" onClick={() => resumeDraft(stored)}>
+                      <LuFilePen aria-hidden />
+                      Continue your draft
+                    </Button>
+                  );
+                }
                 return (
                   <Button
                     size="sm"
@@ -410,15 +469,60 @@ export function ManpowerPage() {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              {data?.savesApproved ? "Saved quietly — email the changes when ready" : "Saved quietly — send for approval when ready"}
+            <span className="max-w-72 text-xs text-muted-foreground">
+              {!draft.dirty
+                ? "No changes yet."
+                : storageOk
+                  ? `Draft · saved on this computer${stored ? ` at ${formatTimeOfDay(stored.savedAt)}` : ""} · only you can see it.`
+                  : "This browser can't keep a draft — send it before leaving the page."}{" "}
+              {data?.savesApproved ? "Publish makes it live." : "The live plan doesn't change until leadership approves."}
             </span>
-            <Button variant="outline" size="sm" onClick={() => (draft.dirty ? setConfirmDiscard(true) : setDraft(null))} disabled={save.isPending}>
-              Cancel
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => (draft.dirty ? setConfirmDiscard(true) : discardDraft())}
+              disabled={submit.isPending}
+            >
+              <LuTrash2 aria-hidden />
+              Discard
             </Button>
-            <Button size="sm" onClick={saveDraft} disabled={save.isPending}>
-              {save.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSave aria-hidden />}
-              Save
+            <Button variant="outline" size="sm" onClick={() => (draft.dirty ? keepDraft() : setDraft(null))} disabled={submit.isPending}>
+              <LuSave aria-hidden />
+              {draft.dirty ? "Save as draft" : "Close"}
+            </Button>
+            <Button size="sm" onClick={() => stored && submitDraft(stored)} disabled={submit.isPending || !draft.dirty || !stored}>
+              {submit.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
+              {data?.savesApproved ? "Publish" : "Send for approval"}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {stored && !editing && canEdit && (
+        <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-sm text-foreground">
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Your draft for {namingMonthLabel(month)} — only you can see it</p>
+            <p className="text-xs text-muted-foreground">
+              Saved on this computer, {formatDateTime(stored.savedAt)} · started from{" "}
+              {stored.baseVersion != null ? `version ${stored.baseVersion}` : "a blank plan"}
+              {stored.baseVersion != null && data?.latestVersion != null && stored.baseVersion !== data.latestVersion && stored.baseVersion !== data.pendingVersion
+                ? ` (version ${data.latestVersion} is live now — your changes are added onto it when you send)`
+                : ""}
+              . {data?.savesApproved ? "Nothing changes until you publish it." : "Nothing changes until you send it and leadership approves."}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setConfirmDiscard(true)} disabled={submit.isPending}>
+              <LuTrash2 aria-hidden />
+              Discard
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => resumeDraft(stored)} disabled={submit.isPending}>
+              <LuFilePen aria-hidden />
+              Continue editing
+            </Button>
+            <Button size="sm" onClick={() => submitDraft(stored)} disabled={submit.isPending}>
+              {submit.isPending ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
+              {data?.savesApproved ? "Publish" : "Send for approval"}
             </Button>
           </div>
         </div>
@@ -685,20 +789,20 @@ export function ManpowerPage() {
             }}
             onDelete={editingRow ? () => updateRows((rows) => rows.filter((r) => r.key !== editingRow.key)) : undefined}
           />
-          <ConfirmDialog
-            open={confirmDiscard}
-            onOpenChange={setConfirmDiscard}
-            title="Discard your changes?"
-            description="Nothing is saved until you press Save. Saving sends no email — use Send for approval when you are ready."
-            confirmLabel="Discard"
-            destructive
-            onConfirm={() => {
-              setConfirmDiscard(false);
-              setDraft(null);
-            }}
-          />
         </>
       )}
+      <ConfirmDialog
+        open={confirmDiscard}
+        onOpenChange={setConfirmDiscard}
+        title="Discard your draft?"
+        description="Your changes are deleted from this computer. The plan itself doesn't change."
+        confirmLabel="Discard draft"
+        destructive
+        onConfirm={() => {
+          setConfirmDiscard(false);
+          discardDraft();
+        }}
+      />
       {canEdit && (
         <ManpowerImportDialog
           open={importOpen}

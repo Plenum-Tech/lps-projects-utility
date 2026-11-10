@@ -566,9 +566,10 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "Version note is too long" });
     return;
   }
-  // The base check: edits start from the latest approved version, or from the version waiting
-  // for approval (a non-leader editing further from what is already pending, so their earlier
-  // changes show). Any other base means someone saved in between: 409, reload. The save is
+  // The base: edits start from the latest approved version, or from the version waiting for
+  // approval (a non-leader editing further from what is already pending, so their earlier
+  // changes show). A draft kept on the editor's computer may start from an older version
+  // (someone saved since): versions never change, so its changes are still known. The save is
   // turned into a delta against its base and laid onto the right version (writePlanVersion).
   const [latest, pending] = await Promise.all([
     ManpowerPlan.findOne({ month, ...APPROVED_PLAN }).sort({ version: -1 }).select("version maxProjectsPerPerson rows").lean(),
@@ -576,14 +577,19 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
   ]);
   const base = body.baseVersion === null || body.baseVersion === undefined ? null : Number(body.baseVersion);
   const fromPending = Boolean(pending) && base === pending!.version;
+  let olderBase: IManpowerRow[] | null = null;
   if (!fromPending && (latest?.version ?? null) !== base) {
-    res.status(409).json({
-      error: latest
-        ? `Someone saved version ${latest.version} while you were editing. Reload to see it, then make your change again.`
-        : "This month has no plan yet. Reload and start again.",
-      latestVersion: latest?.version ?? null,
-    });
-    return;
+    const older = base !== null && Number.isInteger(base) ? await ManpowerPlan.findOne({ month, version: base }).select("rows").lean() : null;
+    if (!older) {
+      res.status(409).json({
+        error: latest
+          ? `Someone saved version ${latest.version} while you were editing. Reload to see it, then make your change again.`
+          : "This month has no plan yet. Reload and start again.",
+        latestVersion: latest?.version ?? null,
+      });
+      return;
+    }
+    olderBase = older.rows as IManpowerRow[];
   }
   let maxProjects = (fromPending ? pending!.maxProjectsPerPerson : latest?.maxProjectsPerPerson) ?? MANPOWER_LIMITS.defaultMaxProjectsPerPerson;
   if (body.maxProjectsPerPerson !== undefined) {
@@ -598,7 +604,7 @@ export async function savePlan(req: Request, res: Response): Promise<void> {
   try {
     const saved = await writePlanVersion({
       month,
-      before: ((fromPending ? pending!.rows : latest?.rows) ?? []) as IManpowerRow[],
+      before: (olderBase ?? (fromPending ? pending!.rows : latest?.rows) ?? []) as IManpowerRow[],
       latestVersion: latest?.version ?? null,
       baseVersion: base,
       rows,
