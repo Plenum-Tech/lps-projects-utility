@@ -2378,6 +2378,8 @@ export interface TimesheetView {
   };
   /** Brand rows: the brands' projects of the week's month(s) to pick from. */
   brandProjects?: TimesheetBrandProject[];
+  /** Brands from the user's manpower allocation (or that they lead): rows with 0 hours on an editable sheet. */
+  assignedBrands?: Array<{ _id: string; name: string; organisation: string }>;
   permissions: {
     canEdit: boolean;
     canSubmit: boolean;
@@ -2410,6 +2412,8 @@ export interface TimesheetMonthView {
   brands: Array<{ _id: string; name: string; organisation: string }>;
   rows: Array<{ task: string | null; brand: string | null; project: string | null; note: string; minutes: number; lockedMinutes: number }>;
   brandProjects?: TimesheetBrandProject[];
+  /** Brands from the user's manpower allocation (or that they lead): listed with 0 hours. */
+  assignedBrands?: Array<{ _id: string; name: string; organisation: string }>;
   canLogBrands: boolean;
   submittedWeeks?: number;
 }

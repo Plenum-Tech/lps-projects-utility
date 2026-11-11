@@ -126,7 +126,11 @@ export function TimesheetPage() {
     loadedVersion.current = version;
     setValues(valuesFromView(viewForWeek));
     const fromSheet = brandsFromView(viewForWeek);
-    setBrandIds(fromSheet.ids);
+    // Brands from the manpower allocation show as rows (brand as a whole) with 0 hours.
+    const assigned = (viewForWeek.assignedBrands ?? [])
+      .filter((b) => !fromSheet.ids.some((key) => splitBrandRowKey(key).brand === b._id))
+      .map((b) => brandRowKey(b._id, null));
+    setBrandIds([...fromSheet.ids, ...assigned]);
     setNotes(fromSheet.notes);
     setDirty(false);
   }, [version, viewForWeek, dirty]);
@@ -147,8 +151,9 @@ export function TimesheetPage() {
   const canLogBrands = Boolean(viewForWeek?.permissions.canLogBrands);
   // Every brand (names for rows already on the sheet, inactive ones too); new rows pick active ones.
   const allBrands = useBrands(false, canLogBrands || brandIds.length > 0);
+  const assignedIds = new Set((viewForWeek?.assignedBrands ?? []).map((b) => b._id));
   const brandName = (id: string) => {
-    const b = allBrands.data?.find((x) => x._id === id);
+    const b = allBrands.data?.find((x) => x._id === id) ?? viewForWeek?.assignedBrands?.find((x) => x._id === id);
     return b ? brandWithOrg(b) : "Brand";
   };
   const brandOptions: BrandOption[] = useMemo(
@@ -277,7 +282,7 @@ export function TimesheetPage() {
       title: brandName(brand),
       sublabel: project
         ? `${brandProjectLabel(brandProjects.find((p) => p._id === project))} · no approval needed`
-        : "Brand as a whole · no approval needed",
+        : `Brand as a whole${assignedIds.has(brand) ? " · from your manpower allocation" : ""} · no approval needed`,
       brand: true,
       note: notes[id] ?? "",
       onNoteChange: (note) => {

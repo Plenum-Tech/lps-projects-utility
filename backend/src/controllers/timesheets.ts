@@ -25,7 +25,7 @@ import { User } from "../models/User.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import type { IWeeklyTimesheet } from "../models/WeeklyTimesheet.js";
 import { markActualStartFromLogs } from "../lib/actualDates.js";
-import { canLogBrandTime } from "../lib/brandTime.js";
+import { assignedBrands, canLogBrandTime } from "../lib/brandTime.js";
 import { Brand } from "../models/Brand.js";
 
 const TIMESHEET_LINK = "/timesheet";
@@ -165,6 +165,8 @@ async function sheetResponse(sheet: IWeeklyTimesheet, actor: IUser) {
     totals: sheetTotals(sheet),
     // Brand rows: the brands' projects of the week's month(s) to pick from.
     brandProjects: await brandProjects(canLogBrands ? monthsOf(weekDays(sheet.weekStart)) : [], entryProjectIds(sheet.entries)),
+    // Brands from the user's manpower allocation: shown as rows with 0 hours on an editable sheet.
+    assignedBrands: editable && canLogBrands ? await assignedBrands(sheet.user, monthsOf(weekDays(sheet.weekStart))) : [],
     permissions: {
       /** Program / CM / leadership: rows on a brand (no approval). */
       canLogBrands,
@@ -723,6 +725,8 @@ async function monthResponse(ctx: MonthContext, actor: IUser) {
     brands: brands.map((b) => ({ _id: b._id, name: b.name, organisation: (b as { organisation?: string }).organisation ?? "" })),
     rows: [...rows.values()],
     brandProjects: await brandProjects(canLogBrands ? [ctx.month] : [], ctx.sheets.flatMap((s) => entryProjectIds(s.entries))),
+    // Brands from the user's manpower allocation: listed with 0 hours.
+    assignedBrands: canLogBrands ? await assignedBrands(actor._id, [ctx.month]) : [],
     canLogBrands,
   };
 }

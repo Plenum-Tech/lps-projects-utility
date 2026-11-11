@@ -194,7 +194,7 @@ export function TimesheetGrid({
                       );
                     })}
                     <TableCell className="text-right text-sm font-medium tabular-nums">
-                      {rowTotal ? formatMinutes(rowTotal) : "—"}
+                      {rowTotal ? formatMinutes(rowTotal) : row.brand ? "0h" : "—"}
                     </TableCell>
                   </TableRow>
                 );

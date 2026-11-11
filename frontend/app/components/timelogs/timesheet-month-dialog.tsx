@@ -121,8 +121,7 @@ export function TimesheetMonthDialog({
       return;
     }
     if (!view || loadedFor === view.month) return;
-    setRows(
-      view.rows.map((r) => {
+    const fromRows = view.rows.map((r) => {
         const brand = r.brand
           ? view.brands.find((b) => b._id === r.brand)
           : null;
@@ -137,8 +136,19 @@ export function TimesheetMonthDialog({
           note: r.note,
           lockedMinutes: r.lockedMinutes,
         };
-      }),
-    );
+      });
+    // Brands from the manpower allocation are listed too, with 0 hours.
+    const assigned = (view.assignedBrands ?? [])
+      .filter((b) => !view.rows.some((r) => r.brand === b._id))
+      .map((b) => ({
+        key: `brand:${brandRowKey(b._id, null)}`,
+        label: brandWithOrg(b),
+        sub: "Brand as a whole · from your manpower allocation · no approval needed",
+        hours: "0",
+        note: "",
+        lockedMinutes: 0,
+      }));
+    setRows([...fromRows, ...assigned]);
     setLoadedFor(view.month);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, view, loadedFor, taskLabel]);
