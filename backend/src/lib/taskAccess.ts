@@ -14,6 +14,7 @@ import type { TaskHistoryAction } from "../models/TaskHistory.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { guestTaskFilter, isGuestUser } from "./guests.js";
+import { isLeadershipUser } from "./leadership.js";
 import { canCreateProjectTasks, canManageProject, canViewProject, departmentUserIds } from "./projectAccess.js";
 import { pearitySettings, pearityTagsByTask, readOnlyTagRef } from "./pearity.js";
 import type { PearityTagRefJson, TaskLike } from "./pearity.js";
@@ -548,8 +549,8 @@ export function taskPermissions(
     /** Start a timer / log time on this task (server re-checks project rules). */
     // Comments, files and time stay editable after completion.
     canLogTime: manage || assignee,
-    /** Change the due date: only the task's creator. */
-    canChangeDueDate: !guest && !flags.archived && String(task.assignedBy) === String(user._id),
+    /** Change the due date: the task's creator and leadership. */
+    canChangeDueDate: !guest && !flags.archived && (String(task.assignedBy) === String(user._id) || isLeadershipUser(user)),
     /** Edit Actual start / end (filled from the time logs): the task's managers and assignees. */
     canEditActualDates: manageSubtasks || assignee,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */

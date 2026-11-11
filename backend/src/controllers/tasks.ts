@@ -8,6 +8,7 @@ import { notifyNoScopeTask } from "../lib/changeRequests.js";
 import { scheduleTaskTag } from "../lib/tagAssign.js";
 import { isProjectExpired, PROJECT_CLOSED_MESSAGE } from "../lib/projectExpiry.js";
 import { logActivity } from "../lib/activityLog.js";
+import { isLeadershipUser } from "../lib/leadership.js";
 import { copyGridFsFile, deleteFromGridFs } from "../lib/gridfs.js";
 import { deliverableUsage, extraDeliverableApproved } from "../lib/scopeDeliverables.js";
 import { scopeTotals } from "../lib/scopeUnits.js";
@@ -2214,10 +2215,10 @@ async function applyTaskUpdate(
     notable.push("startDate");
   }
   if (dueDate !== undefined && (task.dueDate?.getTime() ?? null) !== (dueDate?.getTime() ?? null)) {
-    // Only the person who created the task changes its due date.
-    if (String(task.assignedBy) !== String(user._id)) {
+    // Only the person who created the task (or leadership) changes its due date.
+    if (String(task.assignedBy) !== String(user._id) && !isLeadershipUser(user)) {
       const creator = await User.findById(task.assignedBy).select("name").lean();
-      return { status: 403, error: `Only ${creator?.name ?? "the task's creator"} (who created the task) can change its due date` };
+      return { status: 403, error: `Only ${creator?.name ?? "the task's creator"} (who created the task) or leadership can change its due date` };
     }
     task.dueDateChanges = [...(task.dueDateChanges ?? []), { from: task.dueDate ?? null, to: dueDate, by: user._id, byName: user.name, at: new Date() }];
     task.dueDate = dueDate;

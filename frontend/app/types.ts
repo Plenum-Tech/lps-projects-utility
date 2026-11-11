@@ -1198,7 +1198,7 @@ export interface TaskPermissions {
   canLogTime?: boolean;
   /** Edit Actual start / end (managers, the department head and assignees). */
   canEditActualDates?: boolean;
-  /** Change the due date: only the task's creator. */
+  /** Change the due date: the task's creator and leadership. */
   canChangeDueDate?: boolean;
   /** Project has requireTaskApproval: false — submitting completes directly. */
   skipsReview?: boolean;

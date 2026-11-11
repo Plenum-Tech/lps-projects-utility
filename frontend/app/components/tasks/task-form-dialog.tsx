@@ -1364,7 +1364,7 @@ export function TaskFormDialog({
                     disabled={isEdit && permissions?.canChangeDueDate === false}
                     title={
                       isEdit && permissions?.canChangeDueDate === false
-                        ? `Only ${task?.assignedBy?.name ?? "the task's creator"} (who created the task) can change the due date`
+                        ? `Only ${task?.assignedBy?.name ?? "the task's creator"} (who created the task) or leadership can change the due date`
                         : undefined
                     }
                     aria-invalid={datesInvalid || undefined}
