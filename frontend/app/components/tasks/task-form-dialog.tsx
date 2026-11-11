@@ -1361,6 +1361,12 @@ export function TaskFormDialog({
                     value={form.dueDate}
                     min={form.startDate || undefined}
                     onChange={(event) => set("dueDate", event.target.value)}
+                    disabled={isEdit && permissions?.canChangeDueDate === false}
+                    title={
+                      isEdit && permissions?.canChangeDueDate === false
+                        ? `Only ${task?.assignedBy?.name ?? "the task's creator"} (who created the task) can change the due date`
+                        : undefined
+                    }
                     aria-invalid={datesInvalid || undefined}
                     aria-describedby={
                       datesInvalid ? "task-dates-error" : undefined

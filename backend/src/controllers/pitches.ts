@@ -396,6 +396,7 @@ export async function recordPitchOutcome(req: Request, res: Response): Promise<v
     if (raw === oldDue) return void res.status(400).json({ error: "That's the current date. Pick a new one." });
     newDue = raw;
     const date = new Date(`${raw}T00:00:00.000Z`);
+    task.dueDateChanges = [...(task.dueDateChanges ?? []), { from: task.dueDate ?? null, to: date, by: user._id, byName: user.name, at: now }];
     task.dueDate = date;
     task.pitchOutcome = { outcome: "rescheduled", note: notes, at: now, by, from: oldDue ? new Date(`${oldDue}T00:00:00.000Z`) : null };
     await task.save();

@@ -535,6 +535,7 @@ function TaskDetail({
               </Fact>
               <Fact label="Due date">
                 {task.dueDate ? <DueDateChip task={task} /> : "—"}
+                <DueDateChanges changes={task.dueDateChanges} />
               </Fact>
               <Fact label="Estimated time">
                 <EstimateEditor
@@ -818,5 +819,23 @@ function DetailSkeleton() {
       <Skeleton className="h-8 w-full" />
       <Skeleton className="h-32 w-full" />
     </div>
+  );
+}
+
+/** The last three due date changes (newest first) under the due date; older ones are counted. */
+function DueDateChanges({ changes }: { changes?: Task["dueDateChanges"] }) {
+  if (!changes?.length) return null;
+  const recent = [...changes].reverse().slice(0, 3);
+  const older = changes.length - recent.length;
+  return (
+    <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+      {recent.map((c, i) => (
+        <li key={`${c.at}-${i}`}>
+          {i === 0 ? "Changed" : "Before that"} from {formatDateOnly(c.from)} to {formatDateOnly(c.to)} by {c.byName || "someone"},{" "}
+          {formatDistanceToNow(new Date(c.at), { addSuffix: true })}
+        </li>
+      ))}
+      {older > 0 && <li>…and {older} earlier change{older === 1 ? "" : "s"}</li>}
+    </ul>
   );
 }

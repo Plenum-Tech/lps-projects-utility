@@ -2214,6 +2214,12 @@ async function applyTaskUpdate(
     notable.push("startDate");
   }
   if (dueDate !== undefined && (task.dueDate?.getTime() ?? null) !== (dueDate?.getTime() ?? null)) {
+    // Only the person who created the task changes its due date.
+    if (String(task.assignedBy) !== String(user._id)) {
+      const creator = await User.findById(task.assignedBy).select("name").lean();
+      return { status: 403, error: `Only ${creator?.name ?? "the task's creator"} (who created the task) can change its due date` };
+    }
+    task.dueDateChanges = [...(task.dueDateChanges ?? []), { from: task.dueDate ?? null, to: dueDate, by: user._id, byName: user.name, at: new Date() }];
     task.dueDate = dueDate;
     // A new due date re-arms the reminders
     task.lastReminderSentOn = null;

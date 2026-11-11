@@ -977,6 +977,8 @@ export interface Task {
   /** Date-only fields come back as UTC midnight ISO strings — render as UTC. */
   startDate: string | null;
   dueDate: string | null;
+  /** Due date changes after creation, oldest first. */
+  dueDateChanges?: Array<{ from: string | null; to: string | null; by: string | null; byName: string; at: string }>;
   /** Order within a board column, ascending. */
   position: number;
   subtasks: Subtask[];
@@ -1196,6 +1198,8 @@ export interface TaskPermissions {
   canLogTime?: boolean;
   /** Edit Actual start / end (managers, the department head and assignees). */
   canEditActualDates?: boolean;
+  /** Change the due date: only the task's creator. */
+  canChangeDueDate?: boolean;
   /** Project has requireTaskApproval: false — submitting completes directly. */
   skipsReview?: boolean;
   /** Task of an archived project — everything is read-only. */

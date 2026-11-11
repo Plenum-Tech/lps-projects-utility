@@ -133,6 +133,8 @@ export interface ITask extends mongoose.Document {
   priority: TaskPriority;
   startDate?: Date | null;
   dueDate?: Date | null;
+  /** Every change of the due date after creation, oldest first (shown in the task details). */
+  dueDateChanges?: Array<{ from: Date | null; to: Date | null; by: mongoose.Types.ObjectId | null; byName: string; at: Date }>;
   /** Order within a kanban column (fractional index). */
   position: number;
   subtasks: mongoose.Types.DocumentArray<ISubtask>;
@@ -322,6 +324,19 @@ const taskSchema = new Schema<ITask>(
     },
     startDate: { type: Date, default: null },
     dueDate: { type: Date, default: null },
+    dueDateChanges: {
+      type: [
+        {
+          _id: false,
+          from: { type: Date, default: null },
+          to: { type: Date, default: null },
+          by: { type: Schema.Types.ObjectId, ref: "User", default: null },
+          byName: { type: String, default: "" },
+          at: { type: Date, default: () => new Date() },
+        },
+      ],
+      default: [],
+    },
     position: { type: Number, default: () => Date.now() },
     subtasks: {
       type: [subtaskSchema],

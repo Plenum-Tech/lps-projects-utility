@@ -548,6 +548,8 @@ export function taskPermissions(
     /** Start a timer / log time on this task (server re-checks project rules). */
     // Comments, files and time stay editable after completion.
     canLogTime: manage || assignee,
+    /** Change the due date: only the task's creator. */
+    canChangeDueDate: !guest && !flags.archived && String(task.assignedBy) === String(user._id),
     /** Edit Actual start / end (filled from the time logs): the task's managers and assignees. */
     canEditActualDates: manageSubtasks || assignee,
     /** Submitting completes the task directly (project.requireTaskApproval = false). */
@@ -573,6 +575,7 @@ function readOnlyPermissions(flags: { skipReview?: boolean; archived?: boolean }
     canInviteGuests: false,
     canLogTime: false,
     canEditActualDates: false,
+    canChangeDueDate: false,
     skipsReview: Boolean(flags.skipReview),
     readOnly: Boolean(flags.archived),
   };
