@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
-import { LuCalendarRange, LuLoaderCircle, LuSave, LuSend, LuTags, LuX } from "react-icons/lu";
+import {
+  LuCalendarRange,
+  LuLoaderCircle,
+  LuSave,
+  LuSend,
+  LuTags,
+  LuX,
+} from "react-icons/lu";
 
 import { TimesheetStatusBadge } from "@/components/projects/project-badges";
 import {
@@ -27,7 +34,10 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { useBrands } from "@/hooks/use-brands";
-import { useSaveTimesheetMonth, useTimesheetMonth } from "@/hooks/use-timesheets";
+import {
+  useSaveTimesheetMonth,
+  useTimesheetMonth,
+} from "@/hooks/use-timesheets";
 import { brandWithOrg } from "@/lib/tasks";
 import { formatLocalDate, formatMinutes } from "@/lib/time";
 import { minutesToCell } from "@/components/timelogs/timesheet-grid";
@@ -54,7 +64,9 @@ function parseMonthHours(raw: string): number | null {
     : /^\d*\.?\d+$/.test(value)
       ? Math.round(Number(value) * 60)
       : NaN;
-  return Number.isFinite(minutes) && minutes >= 0 && minutes <= 744 * 60 ? minutes : null;
+  return Number.isFinite(minutes) && minutes >= 0 && minutes <= 744 * 60
+    ? minutes
+    : null;
 }
 
 /**
@@ -62,7 +74,13 @@ function parseMonthHours(raw: string): number | null {
  * over its working days (Mon–Fri) in the weekly timesheets. Weeks already submitted keep
  * their hours; the rest is spread over the weeks still open.
  */
-export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+export function TimesheetMonthDialog({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const month = useTimesheetMonth(open);
   const save = useSaveTimesheetMonth();
   const view = month.data;
@@ -76,8 +94,14 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     project
       ? `${brandProjectLabel(brandProjects.find((p) => p._id === project))} · no approval needed`
       : "Brand as a whole · no approval needed";
-  const rowKeyOf = (r: { task: string | null; brand: string | null; project: string | null }) =>
-    r.task ? `task:${r.task}` : `brand:${brandRowKey(r.brand ?? "", r.project)}`;
+  const rowKeyOf = (r: {
+    task: string | null;
+    brand: string | null;
+    project: string | null;
+  }) =>
+    r.task
+      ? `task:${r.task}`
+      : `brand:${brandRowKey(r.brand ?? "", r.project)}`;
 
   const taskLabel = useMemo(() => {
     const map = new Map<string, { label: string; sub: string }>();
@@ -99,17 +123,21 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     if (!view || loadedFor === view.month) return;
     setRows(
       view.rows.map((r) => {
-        const brand = r.brand ? view.brands.find((b) => b._id === r.brand) : null;
+        const brand = r.brand
+          ? view.brands.find((b) => b._id === r.brand)
+          : null;
         const task = r.task ? taskLabel.get(r.task) : null;
         return {
           key: rowKeyOf(r),
-          label: r.task ? (task?.label ?? "Task") : brandWithOrg(brand) || "Brand",
+          label: r.task
+            ? (task?.label ?? "Task")
+            : brandWithOrg(brand) || "Brand",
           sub: r.task ? (task?.sub ?? "") : brandSub(r.project),
           hours: minutesToCell(r.minutes),
           note: r.note,
           lockedMinutes: r.lockedMinutes,
         };
-      })
+      }),
     );
     setLoadedFor(view.month);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,11 +146,18 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
   const used = new Set(rows.map((r) => r.key));
   const taskOptions: Option[] = (view?.tasks ?? [])
     .filter((t) => !used.has(`task:${t._id}`))
-    .map((t) => ({ value: t._id, label: `${taskLabel.get(t._id)?.label ?? t.title}${t.project ? ` — ${t.project.name}` : ""}` }));
+    .map((t) => ({
+      value: t._id,
+      label: `${taskLabel.get(t._id)?.label ?? t.title}${t.project ? ` — ${t.project.name}` : ""}`,
+    }));
   const brandOptions: Option[] = (allBrands.data ?? [])
     .filter((b) => b.active && (!b.status || b.status === "approved"))
     .map((b) => ({ value: b._id, label: brandWithOrg(b) }));
-  const usedBrandRows = new Set([...used].flatMap((key) => (key.startsWith("brand:") ? [key.slice(6)] : [])));
+  const usedBrandRows = new Set(
+    [...used].flatMap((key) =>
+      key.startsWith("brand:") ? [key.slice(6)] : [],
+    ),
+  );
 
   const parsed = rows.map((r) => parseMonthHours(r.hours));
   const invalid = parsed.some((m) => m === null);
@@ -130,15 +165,29 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
   const totalMinutes = parsed.reduce<number>((sum, m) => sum + (m ?? 0), 0);
   const editableDays = view?.editableWorkdays ?? 0;
   const lockedTotal = rows.reduce((sum, r) => sum + r.lockedMinutes, 0);
-  const perDay = editableDays > 0 ? Math.max(0, totalMinutes - lockedTotal) / editableDays : 0;
-  const openWeeks = (view?.weeks ?? []).filter((w) => w.status === "draft" || w.status === "rejected");
+  const perDay =
+    editableDays > 0
+      ? Math.max(0, totalMinutes - lockedTotal) / editableDays
+      : 0;
+  const openWeeks = (view?.weeks ?? []).filter(
+    (w) => w.status === "draft" || w.status === "rejected",
+  );
+  // Every week submitted: brand hours can still be added (straight onto those weeks, no approval).
+  const lateBrands =
+    Boolean(view) && openWeeks.length === 0 && Boolean(view?.canLogBrands);
+  const lateAdded = lateBrands ? Math.max(0, totalMinutes - lockedTotal) : 0;
 
   function addRow(key: string, label: string, sub: string) {
-    setRows((prev) => [...prev, { key, label, sub, hours: "", note: "", lockedMinutes: 0 }]);
+    setRows((prev) => [
+      ...prev,
+      { key, label, sub, hours: "", note: "", lockedMinutes: 0 },
+    ]);
   }
 
   function update(key: string, patch: Partial<Row>) {
-    setRows((prev) => prev.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+    setRows((prev) =>
+      prev.map((r) => (r.key === key ? { ...r, ...patch } : r)),
+    );
   }
 
   function run(submit: boolean) {
@@ -147,7 +196,11 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     const sent = new Set(rows.map((r) => r.key));
     const removed = view.rows.map(rowKeyOf).filter((key) => !sent.has(key));
     const payload = [
-      ...rows.map((r, i) => ({ key: r.key, minutes: parsed[i] ?? 0, note: r.note })),
+      ...rows.map((r, i) => ({
+        key: r.key,
+        minutes: parsed[i] ?? 0,
+        note: r.note,
+      })),
       ...removed.map((key) => ({ key, minutes: 0, note: "" })),
     ].map(({ key, minutes, note }) => {
       if (key.startsWith("task:")) return { task: key.slice(5), minutes };
@@ -156,7 +209,7 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
     });
     save.mutate(
       { month: view.month, rows: payload, submit },
-      { onSuccess: () => onOpenChange(false) }
+      { onSuccess: () => onOpenChange(false) },
     );
   }
 
@@ -169,23 +222,30 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
             Log {view?.label ?? "last month"}
           </DialogTitle>
           <DialogDescription>
-            Enter your total hours for the month per task{view?.canLogBrands ? " or brand" : ""}. They're spread
-            evenly over the month's working days (Mon–Fri) in your weekly timesheets.
+            Enter your total hours for the month per task
+            {view?.canLogBrands ? " or brand" : ""}. They're spread evenly over
+            the month's working days (Mon–Fri) in your weekly timesheets.
           </DialogDescription>
         </DialogHeader>
 
         {month.isPending ? (
           <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-            <LuLoaderCircle aria-hidden className="animate-spin" /> Loading your month…
+            <LuLoaderCircle aria-hidden className="animate-spin" /> Loading your
+            month…
           </div>
         ) : month.isError || !view ? (
-          <p className="py-6 text-sm text-destructive">Couldn't load the month. Close this and try again.</p>
+          <p className="py-6 text-sm text-destructive">
+            Couldn't load the month. Close this and try again.
+          </p>
         ) : (
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
               <span>Weeks:</span>
               {view.weeks.map((w) => (
-                <span key={w.weekStart} className="inline-flex items-center gap-1">
+                <span
+                  key={w.weekStart}
+                  className="inline-flex items-center gap-1"
+                >
                   {formatLocalDate(w.weekStart)}
                   <TimesheetStatusBadge status={w.status} />
                 </span>
@@ -193,14 +253,17 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
             </div>
             {openWeeks.length === 0 && (
               <p className="rounded-md bg-muted px-3 py-2 text-sm">
-                Every week of {view.label} is already submitted — nothing left to log here.
+                {lateBrands
+                  ? `Every week of ${view.label} is already submitted. You can still add brand hours — a new brand, or more hours on a brand. They're added to the submitted weeks at once (brand time needs no approval). Task hours can't change any more.`
+                  : `Every week of ${view.label} is already submitted — nothing left to log here.`}
               </p>
             )}
 
             <div className="divide-y rounded-md border">
               {rows.length === 0 && (
                 <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  Add the tasks{view.canLogBrands ? " and brands" : ""} you worked on in {view.label}.
+                  Add the tasks{view.canLogBrands ? " and brands" : ""} you
+                  worked on in {view.label}.
                 </p>
               )}
               {rows.map((row, i) => {
@@ -208,16 +271,29 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                 const low = !bad && (parsed[i] ?? 0) < row.lockedMinutes;
                 const isBrand = row.key.startsWith("brand:");
                 return (
-                  <div key={row.key} className="flex flex-wrap items-start gap-3 px-3 py-2.5">
+                  <div
+                    key={row.key}
+                    className="flex flex-wrap items-start gap-3 px-3 py-2.5"
+                  >
                     <div className="min-w-0 flex-1">
                       <p className="flex items-center gap-1.5 truncate text-sm font-medium">
-                        {isBrand && <LuTags aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />}
+                        {isBrand && (
+                          <LuTags
+                            aria-hidden
+                            className="size-3.5 shrink-0 text-muted-foreground"
+                          />
+                        )}
                         {row.label}
                       </p>
-                      {row.sub && <p className="truncate text-xs text-muted-foreground">{row.sub}</p>}
+                      {row.sub && (
+                        <p className="truncate text-xs text-muted-foreground">
+                          {row.sub}
+                        </p>
+                      )}
                       {row.lockedMinutes > 0 && (
                         <p className="text-xs text-muted-foreground">
-                          {formatMinutes(row.lockedMinutes)} already in submitted weeks (included in the total)
+                          {formatMinutes(row.lockedMinutes)} already in
+                          submitted weeks (included in the total)
                         </p>
                       )}
                       {isBrand && (
@@ -226,7 +302,9 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                           placeholder="What for? (optional)"
                           maxLength={300}
                           value={row.note}
-                          onChange={(e) => update(row.key, { note: e.target.value })}
+                          onChange={(e) =>
+                            update(row.key, { note: e.target.value })
+                          }
                         />
                       )}
                     </div>
@@ -237,11 +315,23 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                         placeholder="0"
                         aria-label={`Hours in ${view.label} for ${row.label}`}
                         aria-invalid={bad || low}
+                        disabled={
+                          openWeeks.length === 0 &&
+                          (!isBrand || !view.canLogBrands)
+                        }
                         value={row.hours}
-                        onChange={(e) => update(row.key, { hours: e.target.value })}
+                        onChange={(e) =>
+                          update(row.key, { hours: e.target.value })
+                        }
                       />
-                      <p className={`mt-0.5 text-right text-xs ${bad || low ? "text-destructive" : "text-muted-foreground"}`}>
-                        {bad ? "e.g. 37.5" : low ? `min ${formatMinutes(row.lockedMinutes)}` : "hours"}
+                      <p
+                        className={`mt-0.5 text-right text-xs ${bad || low ? "text-destructive" : "text-muted-foreground"}`}
+                      >
+                        {bad
+                          ? "e.g. 37.5"
+                          : low
+                            ? `min ${formatMinutes(row.lockedMinutes)}`
+                            : "hours"}
                       </p>
                     </div>
                     <Button
@@ -249,7 +339,9 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                       size="icon-sm"
                       aria-label={`Remove ${row.label}`}
                       disabled={row.lockedMinutes > 0}
-                      onClick={() => setRows((prev) => prev.filter((r) => r.key !== row.key))}
+                      onClick={() =>
+                        setRows((prev) => prev.filter((r) => r.key !== row.key))
+                      }
                     >
                       <LuX aria-hidden />
                     </Button>
@@ -258,30 +350,42 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
               })}
             </div>
 
-            {openWeeks.length > 0 && (
+            {(openWeeks.length > 0 || lateBrands) && (
               <div className="flex flex-wrap gap-2">
-                <Combobox
-                  items={taskOptions}
-                  value={null}
-                  onValueChange={(option: Option | null) => {
-                    if (!option) return;
-                    const meta = taskLabel.get(option.value);
-                    addRow(`task:${option.value}`, meta?.label ?? option.label, meta?.sub ?? "");
-                  }}
-                  isItemEqualToValue={(x: Option, y: Option) => x.value === y.value}
-                >
-                  <ComboboxInput className="w-72" placeholder="Add a task — search…" aria-label="Add a task row" />
-                  <ComboboxContent>
-                    <ComboboxEmpty>No open tasks found.</ComboboxEmpty>
-                    <ComboboxList>
-                      {(option: Option) => (
-                        <ComboboxItem key={option.value} value={option}>
-                          {option.label}
-                        </ComboboxItem>
-                      )}
-                    </ComboboxList>
-                  </ComboboxContent>
-                </Combobox>
+                {openWeeks.length > 0 && (
+                  <Combobox
+                    items={taskOptions}
+                    value={null}
+                    onValueChange={(option: Option | null) => {
+                      if (!option) return;
+                      const meta = taskLabel.get(option.value);
+                      addRow(
+                        `task:${option.value}`,
+                        meta?.label ?? option.label,
+                        meta?.sub ?? "",
+                      );
+                    }}
+                    isItemEqualToValue={(x: Option, y: Option) =>
+                      x.value === y.value
+                    }
+                  >
+                    <ComboboxInput
+                      className="w-72"
+                      placeholder="Add a task — search…"
+                      aria-label="Add a task row"
+                    />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No open tasks found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(option: Option) => (
+                          <ComboboxItem key={option.value} value={option}>
+                            {option.label}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                )}
                 {view.canLogBrands && (
                   <BrandProjectPicker
                     brands={brandOptions}
@@ -291,7 +395,8 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
                     onAdd={(brand, project) =>
                       addRow(
                         `brand:${brandRowKey(brand, project)}`,
-                        brandOptions.find((o) => o.value === brand)?.label ?? "Brand",
+                        brandOptions.find((o) => o.value === brand)?.label ??
+                          "Brand",
                         brandSub(project),
                       )
                     }
@@ -300,35 +405,92 @@ export function TimesheetMonthDialog({ open, onOpenChange }: { open: boolean; on
               </div>
             )}
 
-            <p className={`text-xs ${perDay > 24 * 60 ? "text-destructive" : "text-muted-foreground"}`}>
-              Total {formatMinutes(totalMinutes)} · spread over {editableDays} open working day
-              {editableDays === 1 ? "" : "s"} of {view.workdays}
-              {editableDays > 0 && totalMinutes > lockedTotal ? ` · about ${formatMinutes(perDay)} a day` : ""}
-              {perDay > 24 * 60 ? " — that's more than 24 hours a day, lower the totals." : "."} Submitting
-              sends the open weeks for approval (brand-only weeks are approved at once).
-            </p>
+            {lateBrands ? (
+              <p className="text-xs text-muted-foreground">
+                {lateAdded > 0
+                  ? `${formatMinutes(lateAdded)} of brand hours to add, spread over the ${view.workdays} working days of ${view.label}.`
+                  : "Add a brand, or raise a brand's hours, to add them to the month."}
+              </p>
+            ) : (
+              <p
+                className={`text-xs ${perDay > 24 * 60 ? "text-destructive" : "text-muted-foreground"}`}
+              >
+                Total {formatMinutes(totalMinutes)} · spread over {editableDays}{" "}
+                open working day
+                {editableDays === 1 ? "" : "s"} of {view.workdays}
+                {editableDays > 0 && totalMinutes > lockedTotal
+                  ? ` · about ${formatMinutes(perDay)} a day`
+                  : ""}
+                {perDay > 24 * 60
+                  ? " — that's more than 24 hours a day, lower the totals."
+                  : "."}{" "}
+                Submitting sends the open weeks for approval (brand-only weeks
+                are approved at once).
+              </p>
+            )}
           </div>
         )}
 
         <DialogFooter className="sticky bottom-0 z-10 gap-2 bg-background">
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={save.isPending}>
-            Cancel
-          </Button>
           <Button
             variant="outline"
-            onClick={() => run(false)}
-            disabled={!view || invalid || tooLow || save.isPending || openWeeks.length === 0}
+            onClick={() => onOpenChange(false)}
+            disabled={save.isPending}
           >
-            {save.isPending && !save.variables?.submit ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSave aria-hidden />}
-            Save as draft
+            Cancel
           </Button>
-          <Button
-            onClick={() => run(true)}
-            disabled={!view || invalid || tooLow || save.isPending || openWeeks.length === 0 || totalMinutes === 0}
-          >
-            {save.isPending && save.variables?.submit ? <LuLoaderCircle aria-hidden className="animate-spin" /> : <LuSend aria-hidden />}
-            Save &amp; submit
-          </Button>
+          {lateBrands ? (
+            <Button
+              onClick={() => run(false)}
+              disabled={invalid || tooLow || save.isPending || lateAdded === 0}
+            >
+              {save.isPending ? (
+                <LuLoaderCircle aria-hidden className="animate-spin" />
+              ) : (
+                <LuSave aria-hidden />
+              )}
+              Add brand hours
+            </Button>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                onClick={() => run(false)}
+                disabled={
+                  !view ||
+                  invalid ||
+                  tooLow ||
+                  save.isPending ||
+                  openWeeks.length === 0
+                }
+              >
+                {save.isPending && !save.variables?.submit ? (
+                  <LuLoaderCircle aria-hidden className="animate-spin" />
+                ) : (
+                  <LuSave aria-hidden />
+                )}
+                Save as draft
+              </Button>
+              <Button
+                onClick={() => run(true)}
+                disabled={
+                  !view ||
+                  invalid ||
+                  tooLow ||
+                  save.isPending ||
+                  openWeeks.length === 0 ||
+                  totalMinutes === 0
+                }
+              >
+                {save.isPending && save.variables?.submit ? (
+                  <LuLoaderCircle aria-hidden className="animate-spin" />
+                ) : (
+                  <LuSend aria-hidden />
+                )}
+                Save &amp; submit
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

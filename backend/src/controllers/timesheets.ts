@@ -558,6 +558,8 @@ interface MonthContext {
   days: Set<string>;
   /** Mon–Fri days of the month whose week is still editable, in order. */
   editableWorkdays: string[];
+  /** Every Mon–Fri day of the month, in order. */
+  allWorkdays: string[];
   workdays: number;
   sheets: IWeeklyTimesheet[];
 }
@@ -578,9 +580,110 @@ async function monthContext(userId: mongoose.Types.ObjectId, month: string): Pro
     month,
     days: new Set(days),
     editableWorkdays: days.filter((d) => isWorkday(d) && editableDays.has(d)),
+    allWorkdays: days.filter(isWorkday),
     workdays: days.filter(isWorkday).length,
     sheets,
   };
+}
+
+/**
+ * Month form when every week is already submitted: brand rows can only grow. The extra hours of
+ * each brand row are spread over the month's working days and added to those (submitted /
+ * approved) weeks as entries plus approved time logs — brand time needs no approval. Task rows
+ * can't change any more.
+ */
+async function addLateBrandHours(
+  ctx: MonthContext,
+  rows: Array<{ key: string; task: mongoose.Types.ObjectId | null; brand: mongoose.Types.ObjectId | null; project: mongoose.Types.ObjectId | null; note: string; minutes: number }>,
+  actor: IUser
+): Promise<{ added: number } | { status: number; error: string }> {
+  const label = monthLabel(ctx.month);
+  const current = new Map<string, number>();
+  for (const sheet of ctx.sheets) {
+    for (const e of sheet.entries) {
+      if (ctx.days.has(dateKey(e.date))) current.set(rowKey(e), (current.get(rowKey(e)) ?? 0) + e.minutes);
+    }
+  }
+  const workdays = ctx.allWorkdays;
+  const perDay = new Map<string, Map<string, number>>();
+  let added = 0;
+  for (const row of rows) {
+    const extra = row.minutes - (current.get(row.key) ?? 0);
+    if (extra === 0) continue;
+    if (row.task) {
+      return { status: 409, error: `Every week of ${label} is already submitted — task hours can't change any more. You can still add brand hours.` };
+    }
+    if (extra < 0) {
+      return { status: 400, error: `Every week of ${label} is already submitted — brand hours can only be added, not lowered` };
+    }
+    const steps = Math.floor(extra / STEP);
+    const days = new Map<string, number>();
+    workdays.forEach((day, i) => {
+      const minutes = Math.floor(steps / workdays.length) * STEP + (i < steps % workdays.length ? STEP : 0) + (i === 0 ? extra % STEP : 0);
+      if (minutes > 0) days.set(day, minutes);
+    });
+    perDay.set(row.key, days);
+    added += extra;
+  }
+  if (added === 0) return { status: 400, error: "Add a brand and its hours first" };
+
+  const changes: Array<{ sheet: IWeeklyTimesheet; added: Array<{ task: null; brand: mongoose.Types.ObjectId; project: mongoose.Types.ObjectId | null; note: string; date: Date; minutes: number }> }> = [];
+  for (const sheet of ctx.sheets) {
+    const add = weekDays(sheet.weekStart).flatMap((day) =>
+      rows.flatMap((row) => {
+        const minutes = perDay.get(row.key)?.get(day) ?? 0;
+        return minutes > 0 && row.brand
+          ? [{ task: null, brand: row.brand, project: row.project, note: row.note, date: new Date(`${day}T00:00:00.000Z`), minutes }]
+          : [];
+      })
+    );
+    if (add.length === 0) continue;
+    const dayTotals = new Map<string, number>();
+    for (const e of [...sheet.entries, ...add]) dayTotals.set(dateKey(e.date), (dayTotals.get(dateKey(e.date)) ?? 0) + e.minutes);
+    const over = [...dayTotals].find(([, minutes]) => minutes > 1440);
+    if (over) {
+      const day = formatDueDate(new Date(`${over[0]}T00:00:00.000Z`)) ?? over[0];
+      return { status: 400, error: `That's more than 24 hours on ${day} — lower the totals` };
+    }
+    if (sheet.entries.length + add.length > MAX_ENTRIES) return { status: 400, error: "Too many rows in one week" };
+    changes.push({ sheet, added: add });
+  }
+
+  for (const { sheet, added: add } of changes) {
+    // Time logs start after the hours already on each day (as on submit, from 09:00).
+    const offsetByDay = new Map<string, number>();
+    for (const e of sheet.entries) offsetByDay.set(dateKey(e.date), (offsetByDay.get(dateKey(e.date)) ?? 0) + e.minutes);
+    const docs = [];
+    for (const entry of add) {
+      const day = dateKey(entry.date);
+      const offset = offsetByDay.get(day) ?? 0;
+      const start = new Date(appTimeOn(day, DAY_START).getTime() + offset * 60_000);
+      offsetByDay.set(day, offset + entry.minutes);
+      const rate = await resolveHourlyRate(actor._id, entry.project ? (await Project.find({ _id: entry.project }).select("members"))[0] : null);
+      docs.push({
+        user: actor._id,
+        project: entry.project,
+        task: null,
+        brand: entry.brand,
+        startTime: start,
+        endTime: new Date(start.getTime() + entry.minutes * 60_000),
+        durationMinutes: entry.minutes,
+        breakMinutes: 0,
+        memo: entry.note || `Weekly timesheet ${dateKey(sheet.weekStart)}`,
+        source: "timesheet",
+        hourlyRate: rate,
+        earnings: computeEarnings(rate, entry.minutes),
+        status: "approved",
+        reviewedAt: new Date(),
+        weeklyTimesheet: sheet._id,
+        addedBy: actor._id,
+      });
+    }
+    await WeeklyTimesheet.updateOne({ _id: sheet._id }, { $push: { entries: { $each: add } } });
+    await TimeLog.insertMany(docs);
+    pushTimesheetUpdate(sheet, "updated", actor.department);
+  }
+  return { added };
 }
 
 /** `{ month, label, weeks, tasks, brands, rows, … }` for the month form. */
@@ -739,6 +842,27 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
       res.status(400).json({ error: projectError });
       return;
     }
+  }
+
+  // Every week of the month is submitted: brand hours (no approval needed) can still be added —
+  // the extra is spread over the month's working days in the submitted / approved weeks.
+  if (ctx.editableWorkdays.length === 0) {
+    const result = await addLateBrandHours(ctx, rows, actor);
+    if ("error" in result) {
+      res.status(result.status).json({ error: result.error });
+      return;
+    }
+    logActivity({
+      action: "timesheet_month_logged",
+      actor,
+      targetType: "timesheet",
+      targetId: actor._id,
+      targetName: `${actor.name} · ${monthLabel(month)}`,
+      details: { rows: rows.length, addedMinutes: result.added, lateBrandHours: true },
+      ip: req.ip,
+    });
+    res.json({ ...(await monthResponse(await monthContext(actor._id, month), actor)), submittedWeeks: 0 });
+    return;
   }
 
   // Hours already in submitted / approved weeks stay; the rest is spread over the editable working days.
