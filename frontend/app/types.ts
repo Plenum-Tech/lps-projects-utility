@@ -4073,6 +4073,35 @@ export interface DeliveryTeamMapRow {
   onMapWorking: DeliveryTeamMapWorker[];
   offMapWorking: DeliveryTeamMapWorker[];
   mappedUnused: DeliveryUserRef[];
+  /** Week by week (allocation week, Mon–Sun), one entry per plan version live that week. */
+  weeks: DeliveryTeamMapWeek[];
+}
+/** A brand's tasks allocated in one week and checked against one plan version (null = the brand's team map). */
+export interface DeliveryTeamMapWeek {
+  /** Monday, "YYYY-MM-DD". */
+  weekStart: string;
+  /** "2026-10 v4"; null = team map. */
+  version: string | null;
+  tasks: number;
+  offMapTasks: number | null;
+  mapped: number;
+  onMapWorking: DeliveryTeamMapWorker[];
+  offMapWorking: DeliveryTeamMapWorker[];
+  mappedUnused: DeliveryUserRef[];
+  /** Who was on the plan for the brand in this version (its project lines, else the brand's rows), with plan roles. */
+  team: Array<{ person: DeliveryUserRef; roles: string[]; worked: boolean }>;
+  /** Plan lines the tasks were matched to. */
+  lines: string[];
+  taskList: Array<{
+    id: string;
+    code: string;
+    title: string;
+    /** "YYYY-MM-DD". */
+    allocated: string;
+    status: string;
+    /** onMap: null = no map for the task. */
+    doers: Array<{ person: DeliveryUserRef; onMap: boolean | null }>;
+  }>;
 }
 /** GET /analytics/delivery/team-map — per-brand coverage of the tasks allocated in the period. */
 export interface DeliveryTeamMapResponse {
