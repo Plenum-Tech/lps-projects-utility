@@ -151,7 +151,14 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
   }, [base, data, q, filter]);
 
-  const groups = useMemo(() => groupByOrg(list), [list]);
+  // Brands with projects running this month first; the rest below a divider.
+  const sections = useMemo(
+    () => [
+      { idle: false, groups: groupByOrg(list.filter((b) => b.current.length > 0)) },
+      { idle: true, groups: groupByOrg(list.filter((b) => b.current.length === 0)) },
+    ],
+    [list]
+  );
 
   if (error && !data) return <QueryError title="Couldn't load the brands" error={error} onRetry={refetch} />;
   if (isPending && !data) return <Skeleton className="h-96 w-full" />;
@@ -245,7 +252,16 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
               </tr>
             </thead>
             <tbody>
-              {groups.map((g) => (
+              {sections.map((section) => (
+                <Fragment key={section.idle ? "idle" : "current"}>
+                {section.idle && section.groups.length > 0 && (
+                  <tr className="border-b bg-muted">
+                    <td colSpan={8} className="px-3 py-2 text-xs font-medium text-muted-foreground">
+                      No projects in {monthLabel(month)} · {list.filter((b) => b.current.length === 0).length} brands
+                    </td>
+                  </tr>
+                )}
+              {section.groups.map((g) => (
                 <Fragment key={g.org || g.brands[0]!._id}>
                 {g.org && (
                   <tr className="border-b bg-muted/50">
@@ -322,6 +338,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                   <td className="px-3 py-2 tabular-nums">{b.current.length}</td>
                 </tr>
                 ))}
+                </Fragment>
+              ))}
                 </Fragment>
               ))}
             </tbody>
