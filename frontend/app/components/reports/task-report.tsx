@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router";
 import {
+  LuCalendarClock,
   LuCircleCheck,
   LuCircleDot,
   LuClipboardList,
@@ -47,7 +48,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useTaskReport, type TaskReportParams } from "@/hooks/use-work-reports";
-import { PRIORITIES, PRIORITY_META, STATUS_META, formatDateOnly, todayKey } from "@/lib/tasks";
+import { PRIORITIES, PRIORITY_META, STATUS_META, formatDateOnly, formatDateTime, todayKey } from "@/lib/tasks";
 import { addDaysKey, monthStartKey } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Role, TaskPriority, TaskReportSummary, TaskStatus } from "@/types";
@@ -174,6 +175,7 @@ export function TaskReport({ role }: { role: Role }) {
             <ProjectChart data={report.data.byProject} />
           </div>
           <OverdueTable rows={report.data.overdue} />
+          <DueDateChangesTable data={report.data.dueDateChanges} />
           <EmployeeTable rows={report.data.byEmployee} />
         </div>
       )}
@@ -455,6 +457,114 @@ function OverdueTable({ rows }: { rows: TaskReportSummary["overdue"] }) {
               </TableBody>
             </Table>
           </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Tasks whose due date was changed in the period: how many, by whom, from which date to which. */
+function DueDateChangesTable({ data }: { data: TaskReportSummary["dueDateChanges"] }) {
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <LuCalendarClock aria-hidden className="size-4 text-amber-600" />
+          Due date changes
+          {data.tasks > 0 && <Badge variant="secondary">{plural(data.tasks, "task")} · {plural(data.changes, "change")}</Badge>}
+        </CardTitle>
+        <CardDescription>
+          {data.tasks === 0
+            ? "No due date was changed in this period."
+            : `Tasks whose due date was changed in this period, latest change first${data.tasks > data.list.length ? ` (first ${data.list.length})` : ""}.`}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {data.tasks === 0 ? (
+          <EmptyState
+            icon={LuCircleCheck}
+            title="No due date changes"
+            description="Changes are recorded from 11 Nov 2026 on."
+            className="py-8"
+          />
+        ) : (
+          <>
+            <div className="flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-muted-foreground">Changed by</span>
+              {data.byPerson.map((p) => (
+                <span key={p.name} className="rounded-full border bg-muted/50 px-2 py-0.5">
+                  <span className="font-medium">{p.name}</span>
+                  <span className="text-muted-foreground"> · {plural(p.changes, "change")} · {plural(p.tasks, "task")}</span>
+                </span>
+              ))}
+            </div>
+            <div className="overflow-x-auto rounded-lg border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Task</TableHead>
+                    <TableHead>Due date</TableHead>
+                    <TableHead className="text-right">Moved</TableHead>
+                    <TableHead className="text-right">Changes</TableHead>
+                    <TableHead>Changed by</TableHead>
+                    <TableHead>Last changed</TableHead>
+                    <TableHead>Project</TableHead>
+                    <TableHead>Assignees</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {data.list.map((task) => (
+                    <TableRow key={task._id}>
+                      <TableCell className="max-w-80">
+                        <div className="flex items-center gap-2">
+                          {task.shortCode && <ShortCode code={task.shortCode} />}
+                          <Link
+                            to={`/tasks?task=${task._id}`}
+                            className="truncate font-medium text-foreground underline-offset-4 hover:underline focus-visible:underline"
+                          >
+                            {task.title}
+                          </Link>
+                        </div>
+                      </TableCell>
+                      <TableCell
+                        className="whitespace-nowrap"
+                        title={task.changes.map((c) => `${formatDateOnly(c.from, true) || "none"} → ${formatDateOnly(c.to, true) || "none"} by ${c.byName}, ${formatDateTime(c.at)}`).join("\n")}
+                      >
+                        <span className="text-muted-foreground">{task.from ? formatDateOnly(task.from, true) : "none"}</span>
+                        {" → "}
+                        <span className="font-medium">{task.to ? formatDateOnly(task.to, true) : "none"}</span>
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right whitespace-nowrap tabular-nums",
+                          task.daysMoved != null && task.daysMoved > 0 && "font-medium text-destructive",
+                          task.daysMoved != null && task.daysMoved < 0 && "text-emerald-600"
+                        )}
+                      >
+                        {task.daysMoved == null || task.daysMoved === 0 ? "—" : `${task.daysMoved > 0 ? "+" : "−"}${Math.abs(task.daysMoved)}d`}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{task.count}</TableCell>
+                      <TableCell className="max-w-48 truncate">{task.changedBy.join(", ")}</TableCell>
+                      <TableCell className="whitespace-nowrap text-muted-foreground">{formatDateTime(task.lastAt)}</TableCell>
+                      <TableCell className="text-muted-foreground">
+                        {task.project ? (
+                          <Link to={`/projects/${task.project._id}`} className="underline-offset-4 hover:underline">
+                            {task.project.name}
+                          </Link>
+                        ) : (
+                          "—"
+                        )}
+                      </TableCell>
+                      <TableCell className="max-w-48 truncate text-muted-foreground">
+                        {task.assignees.length ? task.assignees.map((a) => a.name).join(", ") : "Unassigned"}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          </>
         )}
       </CardContent>
     </Card>

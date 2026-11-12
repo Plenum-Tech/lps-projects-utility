@@ -735,15 +735,19 @@ interface LeanTask {
   completedAt?: Date | null;
   actualEndAt?: Date | null;
   createdAt: Date;
+  dueDateChanges?: Array<{ from: Date | null; to: Date | null; by?: mongoose.Types.ObjectId | null; byName?: string; at: Date }>;
 }
 
 /**
  * Same visibility as the task list: archived projects' tasks are hidden unless
  * `project` is given. Range applies to `createdAt` (app timezone). Heads see
  * their department's tasks.
+ * `by: "dueChange"`: the range applies to when a due date was changed instead (tasks whose
+ * due date was changed in it; every changed task when there is no range).
  */
 async function loadReportTasks(
-  req: Request
+  req: Request,
+  by: "created" | "dueChange" = "created"
 ): Promise<{ tasks: LeanTask[]; from: Date | null; to: Date | null; members: Set<string> | null } | Invalid> {
   const actor = req.user!;
   const range = parseRange(req, false);
@@ -774,8 +778,17 @@ async function loadReportTasks(
     if (archived.length > 0) and.push({ project: { $nin: archived.map((p) => p._id) } });
   }
   if (user) and.push({ assignees: user });
-  if (range.from) and.push({ createdAt: { $gte: appDayStart(range.from) } });
-  if (range.to) and.push({ createdAt: { $lt: appDayStart(addDays(range.to, 1)) } });
+  const start = range.from ? appDayStart(range.from) : null;
+  const end = range.to ? appDayStart(addDays(range.to, 1)) : null;
+  if (by === "dueChange") {
+    const at: Record<string, Date> = {};
+    if (start) at.$gte = start;
+    if (end) at.$lt = end;
+    and.push(start || end ? { dueDateChanges: { $elemMatch: { at } } } : { "dueDateChanges.0": { $exists: true } });
+  } else {
+    if (start) and.push({ createdAt: { $gte: start } });
+    if (end) and.push({ createdAt: { $lt: end } });
+  }
   const priority = req.query.priority;
   if (priority !== undefined && priority !== "") {
     if (typeof priority !== "string" || !(TASK_PRIORITIES as readonly string[]).includes(priority)) {
@@ -785,7 +798,7 @@ async function loadReportTasks(
   }
 
   const tasks = await Task.find(and.length > 0 ? { $and: and } : {})
-    .select("title shortCode status priority assignees department project startDate dueDate completedAt actualEndAt createdAt")
+    .select(`title shortCode status priority assignees department project startDate dueDate completedAt actualEndAt createdAt${by === "dueChange" ? " dueDateChanges" : ""}`)
     .populate("assignees", "name email")
     .populate("department", "name")
     .populate("project", "name code")
@@ -878,9 +891,60 @@ export async function taskSummary(req: Request, res: Response): Promise<void> {
       project: t.project ? { _id: t.project._id, name: t.project.name, code: t.project.code } : null,
     }));
 
+  // Due dates changed in the period (whenever the task was created): who changed them, and the tasks.
+  const changedLoaded = await loadReportTasks(req, "dueChange");
+  const changedTasks = isInvalid(changedLoaded) ? [] : changedLoaded.tasks;
+  const start = loaded.from ? appDayStart(loaded.from) : null;
+  const end = loaded.to ? appDayStart(addDays(loaded.to, 1)) : null;
+  const byChanger = new Map<string, { name: string; changes: number; tasks: number }>();
+  let dueChangeCount = 0;
+  const dueChangeRows = changedTasks
+    .map((t) => {
+      const changes = (t.dueDateChanges ?? [])
+        .filter((c) => (!start || c.at >= start) && (!end || c.at < end))
+        .sort((a, b) => a.at.getTime() - b.at.getTime());
+      if (changes.length === 0) return null;
+      dueChangeCount += changes.length;
+      const seen = new Set<string>();
+      for (const c of changes) {
+        const key = c.by ? String(c.by) : `name:${c.byName ?? ""}`;
+        const row = byChanger.get(key) ?? { name: c.byName || "Unknown", changes: 0, tasks: 0 };
+        row.changes++;
+        if (!seen.has(key)) row.tasks++;
+        seen.add(key);
+        byChanger.set(key, row);
+      }
+      const first = changes[0]!;
+      const last = changes[changes.length - 1]!;
+      return {
+        _id: t._id,
+        title: t.title,
+        shortCode: t.shortCode ?? null,
+        status: t.status,
+        project: t.project ? { _id: t.project._id, name: t.project.name, code: t.project.code } : null,
+        assignees: (t.assignees ?? []).filter(Boolean).map((a) => ({ _id: a._id, name: a.name })),
+        from: first.from,
+        to: last.to,
+        // Days the due date moved over the period's changes (+ later, − earlier); null when a date was set or cleared.
+        daysMoved: first.from && last.to ? Math.round((last.to.getTime() - first.from.getTime()) / 86_400_000) : null,
+        count: changes.length,
+        changedBy: [...new Set(changes.map((c) => c.byName || "Unknown"))],
+        lastAt: last.at,
+        changes: changes.map((c) => ({ from: c.from, to: c.to, byName: c.byName || "Unknown", at: c.at })),
+      };
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .sort((a, b) => b.lastAt.getTime() - a.lastAt.getTime());
+
   res.json({
     from: loaded.from ? dateKey(loaded.from) : null,
     to: loaded.to ? dateKey(loaded.to) : null,
+    dueDateChanges: {
+      tasks: dueChangeRows.length,
+      changes: dueChangeCount,
+      byPerson: [...byChanger.values()].sort((a, b) => b.changes - a.changes || a.name.localeCompare(b.name)),
+      list: dueChangeRows.slice(0, 100),
+    },
     totals: {
       total: tasks.length,
       completed,

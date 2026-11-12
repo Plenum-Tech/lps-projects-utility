@@ -2535,6 +2535,27 @@ export interface TaskReportSummary {
     assignees: { _id: string; name: string }[];
     project: { _id: string; name: string; code: string } | null;
   }[];
+  /** Due dates changed in the period (whenever the task was created). */
+  dueDateChanges: {
+    tasks: number;
+    changes: number;
+    byPerson: { name: string; changes: number; tasks: number }[];
+    list: {
+      _id: string;
+      title: string;
+      shortCode: string | null;
+      status: TaskStatus;
+      project: { _id: string; name: string; code: string } | null;
+      assignees: { _id: string; name: string }[];
+      from: string | null;
+      to: string | null;
+      daysMoved: number | null;
+      count: number;
+      changedBy: string[];
+      lastAt: string;
+      changes: { from: string | null; to: string | null; byName: string; at: string }[];
+    }[];
+  };
 }
 
 export interface TimesheetReportRow extends Omit<
