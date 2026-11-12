@@ -129,12 +129,15 @@ export function shortName(name: string, org: string): string {
   return rest && rest !== name.slice(org.length) ? rest.trim() : name;
 }
 
+/** Active in the month: in its live manpower plan, or with a project running in it. */
+const isActiveIn = (b: { checks: BrandChecks; current: unknown[] }) => b.checks.plan || b.current.length > 0;
+
 export function BrandsOverview({ month, data, isPending, error, refetch }: { month: string; data: BrandOverviewResponse | undefined; isPending: boolean; error: unknown; refetch: () => void }) {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<Filter>("all");
   const [showAll, setShowAll] = useState(false);
   const [q, setQ] = useState("");
-  // Brands not in the month's plan: collapsed until opened (a search shows them).
+  // Brands not active in the month: collapsed until opened (a search shows them).
   const [showInactive, setShowInactive] = useState(false);
 
   // Active brands, plus every brand of an organisation with an active brand (ENOC → Zoom, Autopro, Tasjeel …).
@@ -154,12 +157,12 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   }, [base, data, q, filter]);
 
   const inactiveOpen = showInactive || q.trim() !== "";
-  // Active this month = in the month's live manpower plan (its latest approved version); the
-  // other valid brands are listed below a divider.
+  // Active this month = in the month's live manpower plan (its latest approved version) or with a
+  // project running in the month; the other valid brands are listed below a divider.
   const sections = useMemo(
     () => [
-      { idle: false, groups: groupByOrg(list.filter((b) => b.checks.plan)) },
-      { idle: true, groups: groupByOrg(list.filter((b) => !b.checks.plan)) },
+      { idle: false, groups: groupByOrg(list.filter(isActiveIn)) },
+      { idle: true, groups: groupByOrg(list.filter((b) => !isActiveIn(b))) },
     ],
     [list]
   );
@@ -205,8 +208,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
         </div>
       )}
       <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
-        {/* Active = in the month's live manpower plan, out of every valid brand. */}
-        <KpiCard label={`Active in ${monthLabel(month)} (in the manpower plan)`} value={count("plan")} of={n} on={filter === "all"} onClick={() => setFilter("all")} />
+        {/* Active = in the month's live manpower plan or with a project this month, out of every valid brand. */}
+        <KpiCard label={`Active in ${monthLabel(month)} (plan or projects)`} value={base.filter(isActiveIn).length} of={n} on={filter === "all"} onClick={() => setFilter("all")} />
         <KpiCard label="With scope" value={count("scope")} of={n} on={filter === "noscope"} onClick={() => pick("noscope")} />
         <KpiCard label="With documents" value={count("docs")} of={n} on={filter === "nodocs"} onClick={() => pick("nodocs")} />
         <KpiCard label="With a lead" value={count("lead")} of={n} on={filter === "nolead"} onClick={() => pick("nolead")} />
@@ -267,7 +270,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                     <td colSpan={8} className="px-3 py-2 text-xs font-medium text-muted-foreground">
                       <span className="inline-flex items-center gap-1.5">
                         {inactiveOpen ? <LuChevronDown aria-hidden className="size-4" /> : <LuChevronRight aria-hidden className="size-4" />}
-                        Inactive in {monthLabel(month)} — not in the month&apos;s manpower plan · {list.filter((b) => !b.checks.plan).length} brands
+                        Inactive in {monthLabel(month)} — not in the month&apos;s manpower plan, no projects · {list.filter((b) => !isActiveIn(b)).length} brands
                         <span className="font-normal text-primary">{inactiveOpen ? "Hide" : "Show"}</span>
                       </span>
                     </td>
