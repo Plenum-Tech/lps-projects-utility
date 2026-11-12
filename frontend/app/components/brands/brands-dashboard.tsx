@@ -151,11 +151,12 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
   }, [base, data, q, filter]);
 
-  // Brands with projects running this month first; the rest below a divider.
+  // Active this month = in the month's live manpower plan (its latest approved version); the
+  // other valid brands are listed below a divider.
   const sections = useMemo(
     () => [
-      { idle: false, groups: groupByOrg(list.filter((b) => b.current.length > 0)) },
-      { idle: true, groups: groupByOrg(list.filter((b) => b.current.length === 0)) },
+      { idle: false, groups: groupByOrg(list.filter((b) => b.checks.plan)) },
+      { idle: true, groups: groupByOrg(list.filter((b) => !b.checks.plan)) },
     ],
     [list]
   );
@@ -200,11 +201,11 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
           </div>
         </div>
       )}
-      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-5">
-        <KpiCard label={showAll ? "Brands" : "Active brands"} value={n} of={null} on={filter === "all"} onClick={() => setFilter("all")} />
+      <div className="grid grid-cols-2 gap-2.5 md:grid-cols-4">
+        {/* Active = in the month's live manpower plan, out of every valid brand. */}
+        <KpiCard label={`Active in ${monthLabel(month)} (in the manpower plan)`} value={count("plan")} of={n} on={filter === "all"} onClick={() => setFilter("all")} />
         <KpiCard label="With scope" value={count("scope")} of={n} on={filter === "noscope"} onClick={() => pick("noscope")} />
         <KpiCard label="With documents" value={count("docs")} of={n} on={filter === "nodocs"} onClick={() => pick("nodocs")} />
-        <KpiCard label="In manpower plan" value={count("plan")} of={n} on={filter === "noplan"} onClick={() => pick("noplan")} />
         <KpiCard label="With a lead" value={count("lead")} of={n} on={filter === "nolead"} onClick={() => pick("nolead")} />
       </div>
 
@@ -257,7 +258,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
                 {section.idle && section.groups.length > 0 && (
                   <tr className="border-b bg-muted">
                     <td colSpan={8} className="px-3 py-2 text-xs font-medium text-muted-foreground">
-                      No projects in {monthLabel(month)} · {list.filter((b) => b.current.length === 0).length} brands
+                      Inactive in {monthLabel(month)} — not in the month&apos;s manpower plan · {list.filter((b) => !b.checks.plan).length} brands
                     </td>
                   </tr>
                 )}
