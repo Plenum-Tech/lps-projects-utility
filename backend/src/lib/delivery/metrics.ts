@@ -111,7 +111,8 @@ export function addFact(acc: Acc, f: TaskFact, range: Range, asOf: number): void
   }
   if (f.completedDay !== null && inRange(f.completedDay, range)) {
     acc.completed += 1;
-    acc.cycleDaysSum += Math.max(0, f.completedDay - f.createdDay);
+    // Mean days: task start → close. Start = actual start, else planned start, else the brief (created).
+    acc.cycleDaysSum += Math.max(0, f.completedDay - (f.actualStartDay ?? f.startDay ?? f.createdDay));
     if (f.dueDay !== null) {
       acc.completedWithDue += 1;
       // On time by when the work actually ended (closed later is fine).

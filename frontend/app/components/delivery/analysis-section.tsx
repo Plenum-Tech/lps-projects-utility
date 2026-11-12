@@ -72,16 +72,15 @@ export function AnalysisSection({ filters }: { filters: DeliveryFilters }) {
             />
             <ChartPanel
               title="Mean days to done"
-              description="Average calendar days to completion, by completion week: from the brief (created) and from the actual start."
-              isEmpty={weeks.every((week) => week.meanDays === null && week.startToDoneDays === null)}
+              description="Average calendar days from the task's start to its close, by completion week. Start = the actual start, else the planned start, else when it was briefed."
+              isEmpty={weeks.every((week) => week.meanDays === null)}
               emptyText="No completed tasks to measure."
               chart={() => (
                 <WeeklyLines
                   weeks={weeks}
                   unit="d"
                   series={[
-                    { key: "meanDays", label: "Brief → done", color: "var(--chart-2)" },
-                    { key: "startToDoneDays", label: "Start → done", color: "var(--chart-4)" },
+                    { key: "meanDays", label: "Start → close", color: "var(--chart-2)" },
                   ]}
                 />
               )}
@@ -90,7 +89,6 @@ export function AnalysisSection({ filters }: { filters: DeliveryFilters }) {
                   weeks={weeks}
                   columns={[
                     { key: "meanDays", format: fmtDays },
-                    { key: "startToDoneDays", format: fmtDays },
                   ]}
                 />
               )}
@@ -160,13 +158,25 @@ const pctCell = (value: number | null, tone: (v: number | null) => keyof typeof 
   <span className={cn(value !== null && TONE_TEXT[tone(value)])}>{fmtPct(value)}</span>
 );
 
-function PerformerCell({ performer, minCompleted }: { performer: DeliveryPerformer | null; minCompleted: number }) {
+/** Best (green) / bottom (red) performer of a team, with why. */
+function PerformerCell({
+  performer,
+  minCompleted,
+  tone,
+}: {
+  performer: DeliveryPerformer | null;
+  minCompleted: number;
+  tone: "good" | "critical";
+}) {
   if (!performer) {
     return <span className="text-xs text-muted-foreground">— (fewer than 2 people with {minCompleted}+ tasks)</span>;
   }
   return (
-    <span className="flex min-w-0 flex-col">
-      <span className="truncate font-medium">{performer.person.former ? "Former user" : performer.person.name}</span>
+    <span className="flex min-w-0 flex-col items-start gap-0.5">
+      <TonePill tone={tone} title={performer.why}>
+        {tone === "good" ? "▲ " : "▼ "}
+        {performer.person.former ? "Former user" : performer.person.name}
+      </TonePill>
       <span className="text-xs text-muted-foreground">{performer.why}</span>
     </span>
   );
@@ -176,12 +186,23 @@ function TeamsTable({ rows, minCompleted }: { rows: DeliveryTeamRow[]; minComple
   const max = Math.max(0, ...rows.map((row) => row.volume));
   const columns: SortColumn<DeliveryTeamRow>[] = [
     { id: "team", header: "Team", cell: (row) => <span className="font-medium">{row.team.name}</span>, sortValue: (row) => row.team.name },
+    {
+      id: "best",
+      header: "Best performer",
+      className: "min-w-44",
+      cell: (row) => <PerformerCell performer={row.best} minCompleted={minCompleted} tone="good" />,
+      sortValue: (row) => row.best?.person.name ?? null,
+    },
+    {
+      id: "bottom",
+      header: "Bottom performer",
+      className: "min-w-44",
+      cell: (row) => <PerformerCell performer={row.bottom} minCompleted={minCompleted} tone="critical" />,
+      sortValue: (row) => row.bottom?.person.name ?? null,
+    },
     { id: "people", header: "People", hint: "People in the team with work in the period", align: "right", cell: (row) => fmtNum(row.people), sortValue: (row) => row.people },
     { id: "completed", header: "Completed", align: "right", cell: (row) => fmtNum(row.completed), sortValue: (row) => row.completed },
     { id: "onTime", header: "On time", align: "right", cell: (row) => pctCell(row.onTimePct, (v) => rateTone(v)), sortValue: (row) => row.onTimePct },
-    { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
-    { id: "meanDays30", header: "Mean days · 30d", hint: "Brief → done for tasks completed in the last 30 days, whatever the period", align: "right", cell: (row) => fmtDays(row.meanDays30), sortValue: (row) => row.meanDays30 },
-    { id: "startToDone", header: "Mean start → done", hint: "Days from the actual start to done, for tasks completed in the period that have an actual start", align: "right", cell: (row) => fmtDays(row.startToDoneDays), sortValue: (row) => row.startToDoneDays },
     { id: "rework", header: "Rework share", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => pctCell(row.reworkPct, (v) => lowRateTone(v)), sortValue: (row) => row.reworkPct },
     { id: "reworkSplit", header: "Rework by review", hint: "Rework tasks created in the period: internal (our review), external (the client's), not set (older reworks)", align: "right", cell: (row) => <span className="whitespace-nowrap text-muted-foreground">{fmtReworkSplit(row)}</span>, sortValue: (row) => row.reworkExternal },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },
@@ -193,20 +214,6 @@ function TeamsTable({ rows, minCompleted }: { rows: DeliveryTeamRow[]; minComple
       className: "w-40",
       cell: (row) => <VolumeBar value={row.volume} max={max} label={`${row.volume} completed`} />,
       sortValue: (row) => row.volume,
-    },
-    {
-      id: "best",
-      header: "Best performer",
-      className: "min-w-44",
-      cell: (row) => <PerformerCell performer={row.best} minCompleted={minCompleted} />,
-      sortValue: (row) => row.best?.person.name ?? null,
-    },
-    {
-      id: "bottom",
-      header: "Bottom performer",
-      className: "min-w-44",
-      cell: (row) => <PerformerCell performer={row.bottom} minCompleted={minCompleted} />,
-      sortValue: (row) => row.bottom?.person.name ?? null,
     },
   ];
   return <SortTable caption="Teams" columns={columns} rows={rows} getRowId={(row) => row.team.id} defaultSort="completed" />;
@@ -230,7 +237,7 @@ function BrandsTable({ rows }: { rows: DeliveryBrandRow[] }) {
     { id: "created", header: "Created", align: "right", cell: (row) => fmtNum(row.created), sortValue: (row) => row.created },
     { id: "completed", header: "Completed", align: "right", cell: (row) => fmtNum(row.completed), sortValue: (row) => row.completed },
     { id: "onTime", header: "On time", align: "right", cell: (row) => pctCell(row.onTimePct, (v) => rateTone(v)), sortValue: (row) => row.onTimePct },
-    { id: "meanDays", header: "Mean days", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
+    { id: "meanDays", header: "Mean days", hint: "Task start → close (actual start, else planned start, else briefed)", align: "right", cell: (row) => fmtDays(row.meanDays), sortValue: (row) => row.meanDays },
     { id: "rework", header: "Rework", hint: "Rework tasks ÷ tasks created in the period", align: "right", cell: (row) => pctCell(row.reworkPct, (v) => lowRateTone(v)), sortValue: (row) => row.reworkPct },
     { id: "reworkSplit", header: "Rework by review", hint: "Rework tasks created in the period: internal (our review), external (the client's), not set (older reworks)", align: "right", cell: (row) => <span className="whitespace-nowrap text-muted-foreground">{fmtReworkSplit(row)}</span>, sortValue: (row) => row.reworkExternal },
     { id: "overdue", header: "Overdue now", align: "right", cell: (row) => <span className={cn(row.overdue > 0 && "text-critical")}>{fmtNum(row.overdue)}</span>, sortValue: (row) => row.overdue },

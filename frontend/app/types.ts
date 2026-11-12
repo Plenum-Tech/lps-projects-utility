@@ -3878,8 +3878,6 @@ export type DeliveryTeamRow = DeliveryStats & {
   volume: number;
   /** People in the team with work in the period. */
   people: number;
-  /** Mean days brief → done, tasks completed in the last 30 days. */
-  meanDays30: number | null;
   /** null = fewer than 2 people with enough completed tasks. */
   best: DeliveryPerformer | null;
   bottom: DeliveryPerformer | null;
@@ -4065,9 +4063,9 @@ export interface DeliveryTeamMapRow {
   /** People on the brand's map (configured, or derived from its projects' members). */
   mapped: DeliveryUserRef[];
   derived: boolean;
-  /** Months whose manpower plan supplied the map for this brand's tasks. */
-  planMonths: string[];
-  /** Tasks created or completed since the start date. */
+  /** Plan versions the tasks were checked against ("2026-11 v30": the version live the day each was allocated) and tasks per version. */
+  planVersions: Array<{ version: string; tasks: number }>;
+  /** Tasks allocated in the period. */
   tasks: number;
   /** Tasks done entirely by people off the map; null when the brand has no map. */
   offMapTasks: number | null;
@@ -4076,10 +4074,11 @@ export interface DeliveryTeamMapRow {
   offMapWorking: DeliveryTeamMapWorker[];
   mappedUnused: DeliveryUserRef[];
 }
-/** GET /analytics/delivery/team-map — per-brand coverage table since the tracking start date. */
+/** GET /analytics/delivery/team-map — per-brand coverage of the tasks allocated in the period. */
 export interface DeliveryTeamMapResponse {
   meta: DeliveryMeta;
-  startDate: string;
+  /** The period's days (to today). */
+  range: { start: string; end: string };
   mappedBrands: number;
   derivedBrands: number;
   /** Months in the tracking window that have a manpower plan. */

@@ -32,6 +32,10 @@ import {
   WeeklyTable,
 } from "@/components/delivery/weekly-charts";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   useDeliveryBrandStructure,
@@ -233,7 +237,7 @@ export function PeopleSection({
         title="Team map coverage"
         description={
           teamMap.data
-            ? `${teamMap.data.planMonths?.length ? `Months with a manpower plan (${teamMap.data.planMonths.map((m) => namingMonthLabel(m)).join(", ")}) check each task against the people planned for its project line (else its brand) that month. ` : ""}Other months use each brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = a task on this brand done only by people not listed for it; counted from ${formatDateOnly(teamMap.data.startDate)} — the period filter doesn't apply. "Mapped but unused" = listed for the brand but with no task on it in the window.`
+            ? `Tasks allocated in the period (${formatDateOnly(teamMap.data.range.start)} – ${formatDateOnly(teamMap.data.range.end)}; routed on from traffic, else created), each checked against the manpower plan version that was live on the day it was allocated: the people on its project line (else on its brand). Brands or months without a plan use the brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = done only by people not listed. Only brands with tasks in the period, busiest first.`
             : "Who works on which brand, against each brand's team map."
         }
         action={
@@ -427,97 +431,116 @@ function PeopleTable({
 }
 
 function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
-  const rows = data.rows.filter((r) => r.tasks > 0 || r.mapped.length > 0);
-  if (rows.length === 0) {
-    return (
-      <p className="py-6 text-center text-sm text-muted-foreground">
-        No brands with tasks or team maps since {formatDateOnly(data.startDate)}
-        .
-      </p>
-    );
-  }
+  const [search, setSearch] = useState("");
+  const [offMapOnly, setOffMapOnly] = useState(false);
+  const [source, setSource] = useState<"all" | "plan" | "map">("all");
+  const q = search.trim().toLowerCase();
+  const rows = data.rows.filter(
+    (r) =>
+      (!q || r.brand.name.toLowerCase().includes(q)) &&
+      (!offMapOnly || (r.offMapTasks ?? 0) > 0) &&
+      (source === "all" || (source === "plan" ? r.planVersions.length > 0 : r.planVersions.length === 0)),
+  );
   const names = (list: DeliveryUserRef[]) => list.map(userName).join(", ");
   const counted = (list: DeliveryTeamMapWorker[]) =>
     list.map((w) => `${userName(w.person)} (${w.count})`).join(", ");
+  const versionLabel = (v: string) => {
+    const [month, version] = v.split(" ");
+    return `${namingMonthLabel(month!)} ${version}`;
+  };
   return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full min-w-[1100px] text-sm">
-        <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-          <tr>
-            <th className="px-3 py-2">Brand</th>
-            <th className="px-3 py-2 text-right">
-              Tasks since {formatDateOnly(data.startDate)}
-            </th>
-            <th className="px-3 py-2">Off-map tasks</th>
-            <th className="px-3 py-2">On map and working it</th>
-            <th className="px-3 py-2">Off map but working it</th>
-            <th className="px-3 py-2">Mapped but unused</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y align-top">
-          {rows.map((row) => (
-            <tr key={row.brand.id}>
-              <td className="px-3 py-2">
-                <BrandName
-                  name={row.brand.name}
-                  color={row.brand.color}
-                  noBrand={row.brand.noBrand}
-                  className="font-medium"
-                />
-                <p className="mt-0.5 max-w-56 text-xs text-muted-foreground">
-                  {row.mapped.length ? names(row.mapped) : "No team map"}
-                  {row.derived && row.mapped.length > 0 && (
-                    <span title="Derived from the brand's project members">
-                      {" "}
-                      · from projects
-                    </span>
-                  )}
-                  {row.planMonths?.length > 0 && (
-                    <span title="On-map people come from the manpower plan for these months">
-                      {" "}
-                      · plan: {row.planMonths.map((m) => namingMonthLabel(m)).join(", ")}
-                    </span>
-                  )}
-                </p>
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">{row.tasks}</td>
-              <td className="px-3 py-2">
-                {row.offMapTasks === null ? (
-                  <span className="text-muted-foreground">—</span>
-                ) : (
-                  <span
-                    className={cn(
-                      "inline-flex rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
-                      row.offMapTasks === 0
-                        ? "bg-muted text-muted-foreground"
-                        : "bg-critical/10 text-critical",
-                    )}
-                  >
-                    {row.offMapTasks} · {row.offMapPct}%
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-foreground">
-                {row.onMapWorking.length ? (
-                  names(row.onMapWorking.map((w) => w.person))
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-foreground">
-                {row.offMapWorking.length ? (
-                  counted(row.offMapWorking)
-                ) : (
-                  <span className="text-muted-foreground">—</span>
-                )}
-              </td>
-              <td className="px-3 py-2 text-muted-foreground">
-                {row.mappedUnused.length ? names(row.mappedUnused) : "—"}
-              </td>
-            </tr>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <Input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search brands…"
+          aria-label="Search brands"
+          className="h-8 w-56"
+        />
+        <div className="flex items-center gap-2">
+          <Switch id="team-map-offmap" checked={offMapOnly} onCheckedChange={setOffMapOnly} />
+          <Label htmlFor="team-map-offmap" className="text-sm">
+            Only brands with off-map tasks
+          </Label>
+        </div>
+        <div className="flex items-center gap-1 text-xs" role="group" aria-label="Map source">
+          {(
+            [
+              ["all", "All"],
+              ["plan", "Manpower plan"],
+              ["map", "Team map only"],
+            ] as const
+          ).map(([value, label]) => (
+            <Button key={value} size="sm" variant={source === value ? "secondary" : "ghost"} className="h-7 px-2 text-xs" onClick={() => setSource(value)}>
+              {label}
+            </Button>
           ))}
-        </tbody>
-      </table>
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {rows.length} of {data.rows.length} brands · {data.totals.tasks} tasks · {data.totals.offMapTasks} off map
+        </span>
+      </div>
+      {rows.length === 0 ? (
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          {data.rows.length === 0 ? "No brand had tasks allocated in this period." : "No brands match the filters."}
+        </p>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[1100px] text-sm">
+            <thead className="bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2">Brand</th>
+                <th className="px-3 py-2 text-right">Tasks in period</th>
+                <th className="px-3 py-2">Off-map tasks</th>
+                <th className="px-3 py-2">On map and working it</th>
+                <th className="px-3 py-2">Off map but working it</th>
+                <th className="px-3 py-2">Mapped but unused</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y align-top">
+              {rows.map((row) => (
+                <tr key={row.brand.id}>
+                  <td className="px-3 py-2">
+                    <BrandName name={row.brand.name} color={row.brand.color} noBrand={row.brand.noBrand} className="font-medium" />
+                    <p className="mt-0.5 max-w-56 text-xs text-muted-foreground">
+                      {row.mapped.length ? names(row.mapped) : "No team map"}
+                      {row.derived && row.mapped.length > 0 && <span title="Derived from the brand's project members"> · from projects</span>}
+                    </p>
+                    {row.planVersions.length > 0 && (
+                      <p className="mt-0.5 max-w-56 text-xs text-muted-foreground" title="Manpower plan version live on the day each task was allocated (tasks per version)">
+                        Plan: {row.planVersions.map((v) => `${versionLabel(v.version)} (${v.tasks})`).join(", ")}
+                      </p>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums">{row.tasks}</td>
+                  <td className="px-3 py-2">
+                    {row.offMapTasks === null ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <span
+                        className={cn(
+                          "inline-flex rounded-full px-2 py-0.5 text-xs font-medium tabular-nums",
+                          row.offMapTasks === 0 ? "bg-muted text-muted-foreground" : "bg-critical/10 text-critical",
+                        )}
+                      >
+                        {row.offMapTasks} · {row.offMapPct}%
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-foreground">
+                    {row.onMapWorking.length ? names(row.onMapWorking.map((w) => w.person)) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-foreground">
+                    {row.offMapWorking.length ? counted(row.offMapWorking) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-3 py-2 text-muted-foreground">{row.mappedUnused.length ? names(row.mappedUnused) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

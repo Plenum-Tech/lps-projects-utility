@@ -59,8 +59,12 @@ export interface TaskFact {
   /** Dashboard team keys of the doers (department id or "other"), unique. */
   teams: string[];
   createdAt: Date;
+  /** When the task was allocated to the team: routed on from traffic (assignedAt), else created. */
+  allocatedAt: Date;
   /** Day numbers (days since 1970-01-01) of the app-timezone calendar dates. */
   createdDay: number;
+  /** Day of allocatedAt. */
+  allocatedDay: number;
   /** completedAt day for completed tasks with a completedAt (the "Completed" metric). */
   completedDay: number | null;
   /** Day the task stopped being open (completedAt, else updatedAt for legacy completed tasks); null while open. */
@@ -118,6 +122,7 @@ interface RawFact {
   dueKey: string | null;
   startDate?: Date | null;
   actualStartAt?: Date | null;
+  assignedAt?: Date | null;
   actualEndAt?: Date | null;
   rework: boolean;
   reworkSource?: "internal" | "external" | null;
@@ -261,6 +266,7 @@ async function queryFacts(
         // Raw instants: day numbers are derived in JS (see makeAppDay).
         startDate: 1,
         actualStartAt: 1,
+        assignedAt: 1,
         actualEndAt: 1,
         // Rework items (subtasks) — those added since rework moved inside tasks count as rework.
         subtaskIds: "$subtasks._id",
@@ -311,7 +317,9 @@ async function queryFacts(
       brand: brand && ref.brands.has(brand) ? brand : null,
       teams,
       createdAt: r.createdAt,
+      allocatedAt: r.assignedAt ?? r.createdAt,
       createdDay,
+      allocatedDay: (r.assignedAt ? appDay(r.assignedAt) : null) ?? createdDay,
       completedDay,
       closedDay: r.status === "completed" ? (completedDay ?? (r.updatedKey ? dayFromKey(r.updatedKey) : createdDay)) : null,
       dueDay: r.dueKey ? dayFromKey(r.dueKey) : null,
