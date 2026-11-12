@@ -305,7 +305,7 @@ export function TimesheetPage() {
         title="Timesheet"
         description={
           canLogBrands
-            ? "Fill in your hours per task — or per brand — for the week, then submit. Brand hours need no approval."
+            ? "Fill in your hours per brand for the week (pitch work too, on the pitch's brand), then submit. Brand hours need no approval."
             : "Fill in your hours per task for the week, then submit for approval."
         }
         actions={<TimeNav current="/timesheet" />}

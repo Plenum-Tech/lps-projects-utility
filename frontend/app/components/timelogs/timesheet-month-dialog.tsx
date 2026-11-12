@@ -232,8 +232,7 @@ export function TimesheetMonthDialog({
             Log {view?.label ?? "last month"}
           </DialogTitle>
           <DialogDescription>
-            Enter your total hours for the month per task
-            {view?.canLogBrands ? " or brand" : ""}. They're spread evenly over
+            Enter your total hours for the month per {view?.canLogBrands ? "brand" : "task"}. They're spread evenly over
             the month's working days (Mon–Fri) in your weekly timesheets.
           </DialogDescription>
         </DialogHeader>
@@ -272,7 +271,7 @@ export function TimesheetMonthDialog({
             <div className="divide-y rounded-md border">
               {rows.length === 0 && (
                 <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-                  Add the tasks{view.canLogBrands ? " and brands" : ""} you
+                  Add the {view.canLogBrands ? "brands" : "tasks"} you
                   worked on in {view.label}.
                 </p>
               )}
@@ -362,7 +361,8 @@ export function TimesheetMonthDialog({
 
             {(openWeeks.length > 0 || lateBrands) && (
               <div className="flex flex-wrap gap-2">
-                {openWeeks.length > 0 && (
+                {/* Brand-time people log on brands only (pitch work too, on the pitch's brand). */}
+                {openWeeks.length > 0 && !view.canLogBrands && (
                   <Combobox
                     items={taskOptions}
                     value={null}

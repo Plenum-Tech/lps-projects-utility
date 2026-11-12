@@ -58,7 +58,14 @@ export function canReviewTimesheet(actor: IUser, owner: Pick<IUser, "_id" | "dep
  * Tasks the user can log against in a week: open tasks assigned to them whose
  * project is neither archived nor completed (plus tasks already on the sheet).
  */
-async function loggableTasks(userId: mongoose.Types.ObjectId, extraTaskIds: mongoose.Types.ObjectId[]) {
+async function loggableTasks(userId: mongoose.Types.ObjectId, extraTaskIds: mongoose.Types.ObjectId[], brandsOnly = false) {
+  // Brand-time people (program, CM, brand leads, leadership) log on brands only — pitch work
+  // too, on the pitch's brand. Tasks already holding hours on the sheet stay.
+  if (brandsOnly) {
+    if (extraTaskIds.length === 0) return [];
+    const kept = await Task.find({ _id: { $in: extraTaskIds } }).select(TASK_SELECT).populate("project", "name code").sort({ project: 1, createdAt: 1 });
+    return kept.map((t) => t.toJSON());
+  }
   const [archived, completedStatuses] = await Promise.all([
     Project.find({ archivedAt: { $ne: null } }).select("_id").lean(),
     completedStatusIds(),
@@ -160,7 +167,7 @@ async function sheetResponse(sheet: IWeeklyTimesheet, actor: IUser) {
   const canLogBrands = own && (await canLogBrandTime(actor));
   return {
     timesheet: { ...(populated!.toJSON() as unknown as Record<string, unknown>), weekStartKey: dateKey(sheet.weekStart) },
-    tasks: await loggableTasks(sheet.user, sheetTaskIds(sheet)),
+    tasks: await loggableTasks(sheet.user, sheetTaskIds(sheet), canLogBrands),
     days: weekDays(sheet.weekStart),
     totals: sheetTotals(sheet),
     // Brand rows: the brands' projects of the week's month(s) to pick from.
@@ -337,7 +344,7 @@ export async function saveEntries(req: Request, res: Response): Promise<void> {
 
   // Every task must be loggable by the owner (or already on the sheet).
   const allowed = new Set(
-    (await loggableTasks(actor._id, sheetTaskIds(sheet))).map((t) => String((t as { _id: unknown })._id))
+    (await loggableTasks(actor._id, sheetTaskIds(sheet), await canLogBrandTime(actor))).map((t) => String((t as { _id: unknown })._id))
   );
   const invalid = entries.find((e) => e.task && !allowed.has(e.task.toString()));
   if (invalid) {
@@ -721,7 +728,7 @@ async function monthResponse(ctx: MonthContext, actor: IUser) {
     workdays: ctx.workdays,
     editableWorkdays: ctx.editableWorkdays.length,
     weeks: ctx.sheets.map((s) => ({ _id: s._id, weekStart: dateKey(s.weekStart), status: s.status })),
-    tasks: await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds)),
+    tasks: await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds), canLogBrands),
     brands: brands.map((b) => ({ _id: b._id, name: b.name, organisation: (b as { organisation?: string }).organisation ?? "" })),
     rows: [...rows.values()],
     brandProjects: await brandProjects(canLogBrands ? [ctx.month] : [], ctx.sheets.flatMap((s) => entryProjectIds(s.entries))),
@@ -812,7 +819,7 @@ export async function saveMonth(req: Request, res: Response): Promise<void> {
 
   // Tasks: open tasks assigned to the user (or already on these weeks).
   const allowed = new Set(
-    (await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds))).map((t) => String((t as { _id: unknown })._id))
+    (await loggableTasks(actor._id, ctx.sheets.flatMap(sheetTaskIds), await canLogBrandTime(actor))).map((t) => String((t as { _id: unknown })._id))
   );
   const invalid = rows.find((r) => r.task && r.minutes > 0 && !allowed.has(r.task.toString()));
   if (invalid) {
