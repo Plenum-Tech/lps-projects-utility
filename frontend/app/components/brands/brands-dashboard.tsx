@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router";
-import { LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons/lu";
+import { LuChevronDown, LuChevronRight, LuPlus, LuSearch, LuTags, LuTriangleAlert, LuUpload } from "react-icons/lu";
 
 import { BrandFlowDialog } from "@/components/brands/brand-flow-dialog";
 import { PlanLeads } from "@/components/brands/plan-leads";
@@ -134,6 +134,8 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
   const [filter, setFilter] = useState<Filter>("all");
   const [showAll, setShowAll] = useState(false);
   const [q, setQ] = useState("");
+  // Brands not in the month's plan: collapsed until opened (a search shows them).
+  const [showInactive, setShowInactive] = useState(false);
 
   // Active brands, plus every brand of an organisation with an active brand (ENOC → Zoom, Autopro, Tasjeel …).
   const base = useMemo(() => {
@@ -151,6 +153,7 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
       .sort((a, b) => score(a) - score(b) || b.current.length - a.current.length || a.name.localeCompare(b.name));
   }, [base, data, q, filter]);
 
+  const inactiveOpen = showInactive || q.trim() !== "";
   // Active this month = in the month's live manpower plan (its latest approved version); the
   // other valid brands are listed below a divider.
   const sections = useMemo(
@@ -256,13 +259,21 @@ export function BrandsOverview({ month, data, isPending, error, refetch }: { mon
               {sections.map((section) => (
                 <Fragment key={section.idle ? "idle" : "current"}>
                 {section.idle && section.groups.length > 0 && (
-                  <tr className="border-b bg-muted">
+                  <tr
+                    className="cursor-pointer border-b bg-muted hover:bg-muted/70"
+                    onClick={() => setShowInactive((v) => !v)}
+                    aria-expanded={inactiveOpen}
+                  >
                     <td colSpan={8} className="px-3 py-2 text-xs font-medium text-muted-foreground">
-                      Inactive in {monthLabel(month)} — not in the month&apos;s manpower plan · {list.filter((b) => !b.checks.plan).length} brands
+                      <span className="inline-flex items-center gap-1.5">
+                        {inactiveOpen ? <LuChevronDown aria-hidden className="size-4" /> : <LuChevronRight aria-hidden className="size-4" />}
+                        Inactive in {monthLabel(month)} — not in the month&apos;s manpower plan · {list.filter((b) => !b.checks.plan).length} brands
+                        <span className="font-normal text-primary">{inactiveOpen ? "Hide" : "Show"}</span>
+                      </span>
                     </td>
                   </tr>
                 )}
-              {section.groups.map((g) => (
+              {(!section.idle || inactiveOpen) && section.groups.map((g) => (
                 <Fragment key={g.org || g.brands[0]!._id}>
                 {g.org && (
                   <tr className="border-b bg-muted/50">
