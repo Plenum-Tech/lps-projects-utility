@@ -139,7 +139,7 @@ function VersionDetail({ brand, group, onClose }: { brand: string; group: Delive
               <tr key={keyOf(m.person)}>
                 <td className="py-1 pr-2">{userName(m.person)}</td>
                 <td className="py-1 pr-2 text-xs text-muted-foreground">{m.roles.join(" / ") || "—"}</td>
-                <td className="py-1 text-right text-xs">{m.worked ? <span className="font-semibold text-good">✓</span> : <span className="text-muted-foreground">not used</span>}</td>
+                <td className="py-1 text-right text-xs whitespace-nowrap">{m.worked ? <span className="font-semibold text-good">✓</span> : <span className="text-muted-foreground">not used</span>}</td>
               </tr>
             ))}
           </tbody>
@@ -168,9 +168,24 @@ function VersionDetail({ brand, group, onClose }: { brand: string; group: Delive
                     {task.status === "completed" ? "Done" : task.status === "todo" ? "To do" : task.status.replace(/_/g, " ")}
                   </td>
                   <td className="py-1">
-                    <Chips items={task.doers.filter((d) => d.onMap !== false).map((d) => ({ person: d.person }))} tone="on" />
-                    {task.doers.some((d) => d.onMap === false) && (
-                      <Chips items={task.doers.filter((d) => d.onMap === false).map((d) => ({ person: d.person }))} tone="off" />
+                    {/* One list: green = on the plan for this task, red = not. */}
+                    {task.doers.length === 0 ? (
+                      <span className="text-muted-foreground">—</span>
+                    ) : (
+                      <span className="flex flex-wrap gap-1">
+                        {task.doers.map((d) => (
+                          <span
+                            key={keyOf(d.person)}
+                            title={d.onMap === false ? "Not on the plan line for this task" : undefined}
+                            className={cn(
+                              "rounded-md px-1.5 py-0.5 text-xs whitespace-nowrap",
+                              d.onMap === false ? "bg-critical/10 text-critical" : "bg-good/10 text-good",
+                            )}
+                          >
+                            {userName(d.person)}
+                          </span>
+                        ))}
+                      </span>
                     )}
                   </td>
                 </tr>
