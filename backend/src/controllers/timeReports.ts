@@ -79,8 +79,14 @@ async function userScope(actor: IUser, department: mongoose.Types.ObjectId | nul
 }
 
 /** Sends the rows as an Excel workbook (.xlsx) named `filename`. */
-async function sendXlsx(res: Response, filename: string, header: string[], rows: Array<Array<string | number | null | undefined>>): Promise<void> {
-  const body = await toXlsx(filename.replace(/\.xlsx$/, ""), header, rows);
+async function sendXlsx(
+  res: Response,
+  filename: string,
+  header: string[],
+  rows: Array<Array<string | number | null | undefined>>,
+  more: Array<{ name: string; headers: string[]; rows: Array<Array<string | number | null | undefined>> }> = []
+): Promise<void> {
+  const body = await toXlsx(filename.replace(/\.xlsx$/, ""), header, rows, more);
   res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
   res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
   res.setHeader("Access-Control-Expose-Headers", "Content-Disposition");
@@ -986,7 +992,56 @@ export async function taskExport(req: Request, res: Response): Promise<void> {
       timeliness(t) ?? "",
     ])
   ];
-  await sendXlsx(res, `task-report-${loaded.from ? dateKey(loaded.from) : "all"}-${loaded.to ? dateKey(loaded.to) : "all"}.xlsx`, ...sheet);
+  // Due dates changed in the period (whenever the task was created): one row per change, and who changed them.
+  const changedLoaded = await loadReportTasks(req, "dueChange");
+  const start = loaded.from ? appDayStart(loaded.from) : null;
+  const end = loaded.to ? appDayStart(addDays(loaded.to, 1)) : null;
+  const changeRows: Array<Array<string | number>> = [];
+  const byChanger = new Map<string, { name: string; changes: number; tasks: Set<string> }>();
+  const lastAt = new Map<string, number>();
+  for (const t of isInvalid(changedLoaded) ? [] : changedLoaded.tasks) {
+    const changes = (t.dueDateChanges ?? [])
+      .filter((c) => (!start || c.at >= start) && (!end || c.at < end))
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    changes.forEach((c, i) => {
+      const name = c.byName || "Unknown";
+      const key = c.by ? String(c.by) : `name:${name}`;
+      const who = byChanger.get(key) ?? { name, changes: 0, tasks: new Set<string>() };
+      who.changes++;
+      who.tasks.add(String(t._id));
+      byChanger.set(key, who);
+      lastAt.set(String(t._id), c.at.getTime());
+      changeRows.push([
+        t.shortCode ?? "",
+        t.title,
+        t.project ? `${t.project.code} · ${t.project.name}` : "",
+        (t.assignees ?? []).filter(Boolean).map((a) => a.name).join("; "),
+        t.status,
+        `${i + 1} of ${changes.length}`,
+        c.from ? dateKey(c.from) : "",
+        c.to ? dateKey(c.to) : "",
+        c.from && c.to ? Math.round((c.to.getTime() - c.from.getTime()) / 86_400_000) : "",
+        name,
+        localDateTime(c.at),
+        String(t._id),
+      ]);
+    });
+  }
+  // Tasks with the latest change first; a task's changes in order.
+  changeRows.sort((a, b) => (lastAt.get(String(b[11])) ?? 0) - (lastAt.get(String(a[11])) ?? 0) || String(a[10]).localeCompare(String(b[10])));
+  const people = [...byChanger.values()].sort((a, b) => b.changes - a.changes || a.name.localeCompare(b.name));
+  await sendXlsx(res, `task-report-${loaded.from ? dateKey(loaded.from) : "all"}-${loaded.to ? dateKey(loaded.to) : "all"}.xlsx`, ...sheet, [
+    {
+      name: "Due date changes",
+      headers: ["Code", "Title", "Project", "Assignees", "Status", "Change", "Due date from", "Due date to", "Days moved", "Changed by", "Changed at"],
+      rows: changeRows.map((r) => r.slice(0, 11)),
+    },
+    {
+      name: "Due date changes by person",
+      headers: ["Changed by", "Changes", "Tasks"],
+      rows: [...people.map((p) => [p.name, p.changes, p.tasks.size]), ["Total", changeRows.length, lastAt.size]],
+    },
+  ]);
 }
 
 // ---------------------------------------------------------------------------

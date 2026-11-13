@@ -54,8 +54,20 @@ export function toCsv(headers: string[], rows: CsvValue[][]): string {
 }
 
 /** An Excel workbook (.xlsx) with one sheet: bold, frozen header row with filters, sized columns. */
-export async function toXlsx(sheetName: string, headers: string[], rows: CsvValue[][]): Promise<Buffer> {
+export async function toXlsx(
+  sheetName: string,
+  headers: string[],
+  rows: CsvValue[][],
+  /** Further sheets after the first (same look). */
+  more: Array<{ name: string; headers: string[]; rows: CsvValue[][] }> = []
+): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
+  addSheet(workbook, sheetName, headers, rows);
+  for (const s of more) addSheet(workbook, s.name, s.headers, s.rows);
+  return Buffer.from(await workbook.xlsx.writeBuffer());
+}
+
+function addSheet(workbook: ExcelJS.Workbook, sheetName: string, headers: string[], rows: CsvValue[][]): void {
   const sheet = workbook.addWorksheet(sheetName.replace(/[\/?*[\]:]/g, " ").slice(0, 31) || "Export", {
     views: [{ state: "frozen", ySplit: 1 }],
   });
@@ -71,7 +83,6 @@ export async function toXlsx(sheetName: string, headers: string[], rows: CsvValu
     });
     column.width = Math.max(8, width + 2);
   });
-  return Buffer.from(await workbook.xlsx.writeBuffer());
 }
 
 /**

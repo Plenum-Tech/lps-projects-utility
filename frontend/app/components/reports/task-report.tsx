@@ -109,7 +109,7 @@ export function TaskReport({ role }: { role: Role }) {
             path="/reports/tasks/export"
             params={filters}
             filenamePrefix="task-report"
-            disabled={!report.data || report.data.totals.total === 0}
+            disabled={!report.data || (report.data.totals.total === 0 && report.data.dueDateChanges.tasks === 0)}
           />
         }
       />
