@@ -9,7 +9,7 @@ const JWT_EXPIRES_IN = (process.env.JWT_EXPIRES_IN ?? "7d") as unknown as jwt.Si
 
 export interface AccessTokenPayload {
   sub: string;
-  role: "admin" | "employee" | "head";
+  role: "admin" | "employee" | "head" | "task_manager";
   /**
    * The user's `tokenVersion` when the token was signed. Tokens issued before
    * this claim existed carry none and count as version 0 (the user default).
@@ -34,7 +34,7 @@ function requireSecret(): KeyObject {
 /** Signs an access token for the given user. */
 export function signAccessToken(user: {
   id: string;
-  role: "admin" | "employee" | "head";
+  role: "admin" | "employee" | "head" | "task_manager";
   tokenVersion?: number | null;
 }): string {
   return jwt.sign({ sub: user.id, role: user.role, tv: user.tokenVersion ?? 0 }, requireSecret(), {

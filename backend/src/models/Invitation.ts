@@ -18,7 +18,7 @@ export const INVITATION_LIMITS = {
 
 export interface IInvitation extends mongoose.Document {
   email: string;
-  role: "employee" | "head" | "admin";
+  role: "employee" | "head" | "admin" | "task_manager";
   department?: mongoose.Types.ObjectId | null;
   projects: mongoose.Types.ObjectId[];
   message?: string;
@@ -46,7 +46,7 @@ const invitationSchema = new Schema<IInvitation>(
       trim: true,
       match: [/^\S+@\S+\.\S+$/, "Please provide a valid email address"],
     },
-    role: { type: String, enum: ["employee", "head", "admin"], default: "employee" },
+    role: { type: String, enum: ["employee", "head", "admin", "task_manager"], default: "employee" },
     department: { type: Schema.Types.ObjectId, ref: "Department", default: null },
     projects: { type: [{ type: Schema.Types.ObjectId, ref: "Project" }], default: [] },
     message: { type: String, trim: true, maxlength: INVITATION_LIMITS.messageMax },

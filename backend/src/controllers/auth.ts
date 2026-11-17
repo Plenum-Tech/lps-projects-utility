@@ -8,6 +8,7 @@ import { loginAttemptFailed, loginSucceeded, startLoginAttempt } from "../lib/lo
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
 import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
+import { applyTaskManager, isTaskManagerUser } from "../lib/taskManager.js";
 import { canCreateBrand, canRenameBrand } from "../lib/brandAccess.js";
 
 const DEFAULT_EXPIRES_IN = "7d";
@@ -118,6 +119,7 @@ export async function login(req: Request, res: Response): Promise<void> {
   logActivity({ action: "login", actor: user, ip: req.ip });
 
   issueSessionCookie(res, user);
+  applyTaskManager(user);
   await applyLeadership(user);
   // The same user shape as GET /auth/me (with `access`), so the menus are right straight after sign-in.
   res.json({ user: await currentUserJson(user) });
@@ -168,6 +170,8 @@ async function currentUserJson(user: NonNullable<Request["user"]>) {
   return {
     ...user.toJSON(),
     leadership: isLeadershipUser(user),
+    /** Stored role was task_manager: admin powers + due-date changes (role comes back as "admin"). */
+    taskManager: isTaskManagerUser(user),
     access: { timeReport: await canViewTimeReport(user), brandCreator: canCreateBrand(user), brandRename: canRenameBrand(user) },
   };
 }

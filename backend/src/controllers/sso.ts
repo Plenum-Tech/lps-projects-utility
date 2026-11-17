@@ -12,6 +12,7 @@ import {
   verifyIdToken,
 } from "../lib/entraSso.js";
 import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
+import { applyTaskManager, isTaskManagerUser } from "../lib/taskManager.js";
 import { canViewTimeReport } from "../lib/reportAccess.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
@@ -161,12 +162,14 @@ export async function ssoCallback(req: Request, res: Response): Promise<void> {
     role: user.role,
     tokenVersion: user.tokenVersion,
   });
+  applyTaskManager(user);
   await applyLeadership(user);
   res.json({
     next: safeReturnPath(saved.returnPath),
     user: {
       ...user.toJSON(),
       leadership: isLeadershipUser(user),
+      taskManager: isTaskManagerUser(user),
       access: {
         timeReport: await canViewTimeReport(user),
         brandCreator: canCreateBrand(user),

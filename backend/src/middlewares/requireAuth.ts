@@ -4,6 +4,7 @@ import type { AccessTokenPayload } from "../lib/jwt.js";
 import { verifyAccessToken } from "../lib/jwt.js";
 import { isGuestUser } from "../lib/guests.js";
 import { applyLeadership } from "../lib/leadership.js";
+import { applyTaskManager } from "../lib/taskManager.js";
 import { cached, invalidate } from "../lib/refCache.js";
 import { User } from "../models/User.js";
 import { guestMayCall } from "./guestAccess.js";
@@ -102,6 +103,8 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  // Task managers act as admin everywhere and can change any due date (lib/taskManager.ts).
+  applyTaskManager(user);
   // Leadership acts as admin everywhere (lib/leadership.ts).
   await applyLeadership(user);
   req.user = user;

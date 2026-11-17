@@ -336,7 +336,7 @@ function DepartmentFormDialog({
   // Approvers: admins and heads (they can approve anyone's timesheets / time).
   const users = useUsers();
   const approverOptions = (users.data?.users ?? [])
-    .filter((u) => u.role === "admin" || u.role === "head")
+    .filter((u) => u.role === "admin" || u.role === "head" || u.role === "task_manager")
     .map((u) => ({ value: u._id, label: u.name, description: u.email }));
 
   useEffect(() => {
@@ -576,7 +576,7 @@ function ManageMembersDialog({
                       </span>
                       <Badge
                         variant={
-                          user.role === "admin"
+                          user.role === "admin" || user.role === "task_manager"
                             ? "default"
                             : user.role === "head"
                               ? "secondary"
@@ -584,7 +584,11 @@ function ManageMembersDialog({
                         }
                         className="capitalize"
                       >
-                        {user.role === "head" ? "Head of Dept" : user.role}
+                        {user.role === "head"
+                          ? "Head of Dept"
+                          : user.role === "task_manager"
+                            ? "Task Manager"
+                            : user.role}
                       </Badge>
                     </label>
                   </li>

@@ -67,6 +67,7 @@ const ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",
   head: "Head of Dept",
   employee: "Employee",
+  task_manager: "Task Manager",
 };
 
 function sentLabel(invitation: Invitation) {

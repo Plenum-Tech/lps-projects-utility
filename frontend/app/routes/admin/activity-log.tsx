@@ -381,7 +381,8 @@ export default function ActivityLogPage() {
                                     {log.actorRole && (
                                       <Badge
                                         variant={
-                                          log.actorRole === "admin"
+                                          log.actorRole === "admin" ||
+                                          log.actorRole === "task_manager"
                                             ? "default"
                                             : log.actorRole === "head"
                                               ? "secondary"
@@ -391,7 +392,9 @@ export default function ActivityLogPage() {
                                       >
                                         {log.actorRole === "head"
                                           ? "Head of Dept"
-                                          : log.actorRole}
+                                          : log.actorRole === "task_manager"
+                                            ? "Task Manager"
+                                            : log.actorRole}
                                       </Badge>
                                     )}
                                   </div>

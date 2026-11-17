@@ -59,7 +59,7 @@ export interface IUser extends mongoose.Document {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "employee" | "head";
+  role: "admin" | "employee" | "head" | "task_manager";
   /**
    * True for accounts created without a usable password (e.g. imported from
    * Worksuite): sign-in is refused until the user sets one through a
@@ -132,7 +132,7 @@ const userSchema = new Schema<IUser>(
       match: [/^\S+@\S+\.\S+$/, "Please provide a valid email address"],
     },
     password: { type: String, required: true, minlength: 8, select: false },
-    role: { type: String, enum: ["admin", "employee", "head"], default: "employee" },
+    role: { type: String, enum: ["admin", "employee", "head", "task_manager"], default: "employee" },
     passwordSetupRequired: { type: Boolean, default: false },
     mustChangePassword: { type: Boolean, default: false },
     tokenVersion: { type: Number, default: 0 },

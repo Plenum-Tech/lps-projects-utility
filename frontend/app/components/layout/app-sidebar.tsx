@@ -67,6 +67,7 @@ const ROLE_LABELS: Record<Role, string> = {
   admin: "Admin",
   employee: "Employee",
   head: "Head of Department",
+  task_manager: "Task Manager",
 };
 
 interface NavItem {
@@ -351,7 +352,13 @@ export function AppSidebar() {
           <span className="grid min-w-0 flex-1 leading-tight group-data-[collapsible=icon]:hidden">
             <span className="truncate text-sm font-medium">{user.name}</span>
             <span className="truncate text-xs text-sidebar-foreground/60">
-              {guest ? "Guest" : user.leadership ? "Leadership" : ROLE_LABELS[user.role]}
+              {guest
+                ? "Guest"
+                : user.leadership
+                  ? "Leadership"
+                  : user.taskManager
+                    ? "Task Manager"
+                    : ROLE_LABELS[user.role]}
             </span>
           </span>
           <span className="sr-only">— open profile settings</span>

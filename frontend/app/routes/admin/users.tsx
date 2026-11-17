@@ -130,9 +130,16 @@ const ROLE_FILTER_OPTIONS = [
   { value: "employee", label: "Employee" },
   { value: "head", label: "Head of Dept" },
   { value: "admin", label: "Admin" },
+  { value: "task_manager", label: "Task Manager" },
   // Outside people invited to tasks — listed only with this filter.
   { value: "guest", label: "Outside guests" },
 ];
+
+function roleLabel(role: Role): string {
+  if (role === "head") return "Head of Dept";
+  if (role === "task_manager") return "Task Manager";
+  return role;
+}
 
 /**
  * Admin employee management: create, read, update, and delete user records,
@@ -491,7 +498,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                   ) : (
                                   <Badge
                                     variant={
-                                      user.role === "admin"
+                                      user.role === "admin" || user.role === "task_manager"
                                         ? "default"
                                         : user.role === "head"
                                           ? "secondary"
@@ -499,9 +506,7 @@ function UsersTab({ onEdit }: { onEdit: (user: User | "new") => void }) {
                                     }
                                     className="capitalize"
                                   >
-                                    {user.role === "head"
-                                      ? "Head of Dept"
-                                      : user.role}
+                                    {roleLabel(user.role)}
                                   </Badge>
                                   )}
                                 </TableCell>
@@ -853,6 +858,7 @@ function UserFormDialog({
                   employee: "Employee",
                   head: "Head of Department",
                   admin: "Admin",
+                  task_manager: "Task Manager",
                 }}
               >
                 <SelectTrigger id="user-role" className="w-full">
@@ -862,6 +868,7 @@ function UserFormDialog({
                   <SelectItem value="employee">Employee</SelectItem>
                   <SelectItem value="head">Head of Department</SelectItem>
                   <SelectItem value="admin">Admin</SelectItem>
+                  <SelectItem value="task_manager">Task Manager</SelectItem>
                 </SelectContent>
               </Select>
               {isSelf && (

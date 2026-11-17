@@ -18,7 +18,7 @@ interface CreateUserBody {
   name?: string;
   email?: string;
   password?: string;
-  role?: "admin" | "employee" | "head";
+  role?: "admin" | "employee" | "head" | "task_manager";
   department?: string | null;
   hourlyRate?: unknown;
 }
@@ -26,7 +26,7 @@ interface CreateUserBody {
 interface UpdateUserBody {
   name?: string;
   email?: string;
-  role?: "admin" | "employee" | "head";
+  role?: "admin" | "employee" | "head" | "task_manager";
   department?: string | null;
   password?: string;
   hourlyRate?: unknown;
@@ -91,7 +91,7 @@ export async function listUsers(req: Request, res: Response): Promise<void> {
   // "Needs password" filter (imported users who haven't set one yet).
   if (passwordSetup === "required") filter.passwordSetupRequired = true;
   else if (passwordSetup === "done") filter.passwordSetupRequired = { $ne: true };
-  if (role === "admin" || role === "employee" || role === "head") {
+  if (role === "admin" || role === "employee" || role === "head" || role === "task_manager") {
     filter.role = role;
   }
   if (department === "none") {
@@ -152,7 +152,14 @@ export async function createUser(req: Request, res: Response): Promise<void> {
       name: name.trim(),
       email: email.trim().toLowerCase(),
       password,
-      role: role === "admin" ? "admin" : role === "head" ? "head" : "employee",
+      role:
+        role === "admin"
+          ? "admin"
+          : role === "head"
+            ? "head"
+            : role === "task_manager"
+              ? "task_manager"
+              : "employee",
       department:
         department === undefined
           ? undefined
@@ -235,8 +242,14 @@ export async function updateUser(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: "name cannot be empty" });
     return;
   }
-  if (role !== undefined && role !== "admin" && role !== "employee" && role !== "head") {
-    res.status(400).json({ error: "role must be admin, employee, or head" });
+  if (
+    role !== undefined &&
+    role !== "admin" &&
+    role !== "employee" &&
+    role !== "head" &&
+    role !== "task_manager"
+  ) {
+    res.status(400).json({ error: "role must be admin, employee, head, or task_manager" });
     return;
   }
   if (password !== undefined && password.length < 8) {

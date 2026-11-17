@@ -216,7 +216,12 @@ function InviteForm({
             <Select
               value={role}
               onValueChange={(value) => setRole(value as Role)}
-              items={{ employee: "Employee", head: "Head of Department", admin: "Admin" }}
+              items={{
+                employee: "Employee",
+                head: "Head of Department",
+                admin: "Admin",
+                task_manager: "Task Manager",
+              }}
               disabled={pending}
             >
               <SelectTrigger id="invite-role" className="w-full">
@@ -226,6 +231,7 @@ function InviteForm({
                 <SelectItem value="employee">Employee</SelectItem>
                 <SelectItem value="head">Head of Department</SelectItem>
                 <SelectItem value="admin">Admin</SelectItem>
+                <SelectItem value="task_manager">Task Manager</SelectItem>
               </SelectContent>
             </Select>
           </div>

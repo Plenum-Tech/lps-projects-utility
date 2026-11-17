@@ -84,7 +84,7 @@ export interface IActivityLog extends mongoose.Document {
   /** Snapshots so entries stay readable even after the actor/target is deleted. */
   actorName?: string;
   actorEmail?: string;
-  actorRole?: "admin" | "employee" | "head";
+  actorRole?: "admin" | "employee" | "head" | "task_manager";
   targetType?: string;
   targetId?: mongoose.Types.ObjectId | null;
   targetName?: string;
@@ -98,7 +98,7 @@ const activityLogSchema = new Schema<IActivityLog>(
     actor: { type: Schema.Types.ObjectId, ref: "User", default: null },
     actorName: { type: String, trim: true },
     actorEmail: { type: String, trim: true },
-    actorRole: { type: String, enum: ["admin", "employee", "head"] },
+    actorRole: { type: String, enum: ["admin", "employee", "head", "task_manager"] },
     targetType: { type: String, trim: true },
     targetId: { type: Schema.Types.ObjectId, default: null },
     targetName: { type: String, trim: true },

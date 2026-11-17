@@ -38,6 +38,7 @@ const ROLE_LABELS: Record<Role, string> = {
   employee: "an employee",
   head: "head of department",
   admin: "an admin",
+  task_manager: "a task manager",
 };
 
 type GoneReason = "expired" | "revoked" | "accepted";

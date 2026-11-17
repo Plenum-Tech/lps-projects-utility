@@ -142,6 +142,7 @@ function rangeText(from: string, to: string): string {
 
 const SUBTITLES: Record<Role, string> = {
   admin: "Plan, assign and review work across the organisation.",
+  task_manager: "Plan, assign and review work across the organisation.",
   head: "Assign work to your department and review what comes back.",
   employee: "Everything assigned to you — track time and move work forward.",
 };

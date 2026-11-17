@@ -13,6 +13,8 @@ import { INVITATION_LIMITS, Invitation, invitationState } from "../models/Invita
 import { Project } from "../models/Project.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
+import { applyLeadership, isLeadershipUser } from "../lib/leadership.js";
+import { applyTaskManager, isTaskManagerUser } from "../lib/taskManager.js";
 import { issueSessionCookie } from "./auth.js";
 import { notifyMembersAdded } from "./projects.js";
 
@@ -23,7 +25,7 @@ import { notifyMembersAdded } from "./projects.js";
 type InviteRole = IInvitation["role"];
 
 const EMAIL_REGEX = /^\S+@\S+\.\S+$/;
-const ROLES: readonly InviteRole[] = ["employee", "head", "admin"];
+const ROLES: readonly InviteRole[] = ["employee", "head", "admin", "task_manager"];
 const STATE_FILTERS: readonly InvitationState[] = ["pending", "accepted", "expired", "revoked"];
 
 const INVITE_POPULATE = [
@@ -132,7 +134,7 @@ export async function createInvitations(req: Request, res: Response): Promise<vo
 
   const role: InviteRole = body.role === undefined ? "employee" : (body.role as InviteRole);
   if (!ROLES.includes(role)) {
-    res.status(400).json({ error: "role must be employee, head, or admin" });
+    res.status(400).json({ error: "role must be employee, head, admin, or task_manager" });
     return;
   }
 
@@ -592,6 +594,8 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
   }
 
   issueSessionCookie(res, user);
+  applyTaskManager(user);
+  await applyLeadership(user);
 
   if (inviter) {
     notifyUsers({
@@ -608,7 +612,10 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
         cardTitle: user.name,
         rows: [
           ["Email", user.email],
-          ["Role", role === "head" ? "Head of Department" : role],
+          [
+            "Role",
+            role === "head" ? "Head of Department" : role === "task_manager" ? "Task Manager" : role,
+          ],
           ["Department", department?.name ?? "Not assigned"],
           ["Projects joined", String(joined.length)],
         ],
@@ -633,5 +640,12 @@ export async function acceptInvitation(req: Request, res: Response): Promise<voi
     ip: req.ip,
   });
 
-  res.status(201).json({ user: user.toJSON(), notices });
+  res.status(201).json({
+    user: {
+      ...user.toJSON(),
+      leadership: isLeadershipUser(user),
+      taskManager: isTaskManagerUser(user),
+    },
+    notices,
+  });
 }

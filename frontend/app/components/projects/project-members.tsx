@@ -54,7 +54,12 @@ import { formatDateOnly } from "@/lib/tasks";
 import { formatMoney } from "@/lib/time";
 import type { Project, ProjectMember, ProjectPermissions } from "@/types";
 
-const ROLE_LABELS = { admin: "Admin", head: "Head", employee: "Employee" } as const;
+const ROLE_LABELS = {
+  admin: "Admin",
+  head: "Head",
+  employee: "Employee",
+  task_manager: "Task Manager",
+} as const;
 
 /** Members tab: table with rates, add/remove and inline rate editing. */
 export function ProjectMembers({

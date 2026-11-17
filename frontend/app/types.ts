@@ -3,7 +3,7 @@
  * The backend strips `password` and `__v` via its Mongoose toJSON transform.
  */
 
-export type Role = "admin" | "employee" | "head";
+export type Role = "admin" | "employee" | "head" | "task_manager";
 
 /** Mirrors the backend User model as returned by the API (Mongoose toJSON). */
 export interface User {
@@ -15,6 +15,11 @@ export interface User {
   access?: { timeReport: boolean; brandCreator?: boolean; /** Admins (not the brand creators): rename brands, applied at once. */ brandRename?: boolean };
   /** Leadership (project approvers): admin powers everywhere; `role` comes back as "admin". */
   leadership?: boolean;
+  /**
+   * Task managers: admin powers everywhere plus changing any task due date;
+   * `role` comes back as "admin" on /auth/me (stored role remains task_manager).
+   */
+  taskManager?: boolean;
   /** Department id when assigned (single department per employee). */
   department?: string | null;
   /** Email notification switches (present on /auth/me and user responses). */
@@ -1198,7 +1203,7 @@ export interface TaskPermissions {
   canLogTime?: boolean;
   /** Edit Actual start / end (managers, the department head and assignees). */
   canEditActualDates?: boolean;
-  /** Change the due date: the task's creator and leadership. */
+  /** Change the due date: the task's creator, leadership, and task managers. */
   canChangeDueDate?: boolean;
   /** Project has requireTaskApproval: false — submitting completes directly. */
   skipsReview?: boolean;
