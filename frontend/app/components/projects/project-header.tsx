@@ -151,6 +151,13 @@ export function ProjectHeader({
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
               <ProjectApprovalBadge project={project} />
+              {/* The same tag as under the name in the Projects list. */}
+              <Badge
+                variant="outline"
+                title={project.migratedFrom ? "Copied from an earlier month's project by the month migration." : "Created as a new project (not copied from an earlier month)."}
+              >
+                {project.migratedFrom ? "Migrated" : "New"}
+              </Badge>
               {!(project.scopeItems?.length ?? 0) && (
                 <Badge
                   variant="destructive"
