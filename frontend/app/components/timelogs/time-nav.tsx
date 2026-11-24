@@ -1,19 +1,23 @@
-import { LuCalendarDays, LuListChecks } from "react-icons/lu";
+import { LuCalendarDays, LuGauge, LuListChecks } from "react-icons/lu";
 import { Link } from "react-router";
 
 import { tabsListVariants } from "@/components/ui/tabs";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { cn } from "@/lib/utils";
 
 const LINKS = [
   { to: "/timesheet", label: "Weekly timesheet", icon: LuCalendarDays },
   { to: "/timelogs", label: "Time logs", icon: LuListChecks },
+  // Leadership: estimate vs actual, rework time.
+  { to: "/timesheet/performance", label: "Performance", icon: LuGauge, leadership: true },
 ] as const;
 
 /** Tab-styled switch between the weekly timesheet and the time-log list. */
-export function TimeNav({ current }: { current: "/timesheet" | "/timelogs" }) {
+export function TimeNav({ current }: { current: "/timesheet" | "/timelogs" | "/timesheet/performance" }) {
+  const { data: user } = useCurrentUser();
   return (
     <nav aria-label="Time tracking views" className={cn(tabsListVariants(), "h-8")}>
-      {LINKS.map(({ to, label, icon: Icon }) => {
+      {LINKS.filter((link) => !("leadership" in link) || user?.leadership).map(({ to, label, icon: Icon }) => {
         const active = to === current;
         return (
           <Link

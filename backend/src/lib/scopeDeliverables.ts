@@ -62,15 +62,22 @@ export function usedByUnit(rows: DeliverableUse[]): Map<string, number> {
 }
 
 /** True when a deliverable number beyond the scope already has an approved (or unflagged) task — more tasks on it need no new approval. */
-export async function extraDeliverableApproved(projectId: mongoose.Types.ObjectId, unit: string, n: number): Promise<boolean> {
+export async function extraDeliverableApproved(
+  projectId: mongoose.Types.ObjectId,
+  unit: string,
+  n: number,
+  /** The task being checked (its own flag doesn't clear it). */
+  except?: mongoose.Types.ObjectId
+): Promise<boolean> {
   return Boolean(
     await Task.exists({
+      ...(except ? { _id: { $ne: except } } : {}),
       project: projectId,
       iteration: { $ne: "rework" },
       "titleParts.unit": { $regex: `^${unit.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
       "titleParts.quantity": n,
-      // No flag (null matches a missing overScope too), or approved.
-      "overScope.status": { $in: [null, "approved"] },
+      // Only an approval clears the deliverable (an older task on it without a decision doesn't).
+      "overScope.status": "approved",
     })
   );
 }

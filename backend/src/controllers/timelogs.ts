@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { overScopeBlock } from "./tasks.js";
 import mongoose from "mongoose";
 import { logActivity } from "../lib/activityLog.js";
 import { addDays, appDayStart, appTimeOn } from "../lib/appTime.js";
@@ -177,6 +178,9 @@ async function resolveTarget(
     if (typeof rawTask !== "string" || isInvalidObjectId(rawTask)) return { status: 400, error: "task must be a valid task ID" };
     task = await Task.findById(rawTask);
     if (!task) return { status: 404, error: "Task not found" };
+    // Behind the scope wall: no time until leadership approves the extra.
+    const walled = overScopeBlock(task);
+    if (walled) return walled;
     // Guests: refused before anything else is checked, so other tasks reveal nothing.
     if (isGuestUser(owner) && !isAssignee(owner, task) && !isSubtaskAssignee(owner, task)) {
       return { status: 403, error: "Only project members or task assignees can log time here" };

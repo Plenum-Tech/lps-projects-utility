@@ -55,7 +55,7 @@ interface Row {
  */
 export function WaitingOverview({ queue }: { queue: ProjectApprovalQueue }) {
   const { data: user } = useCurrentUser();
-  const overScope = useOverScopeTasks(user?.role === "admin");
+  const overScope = useOverScopeTasks(Boolean(user?.leadership));
   const decideChange = useDecideChange();
   const decideBrand = useDecideBrand();
   const decideProject = useDecideProjectApproval();

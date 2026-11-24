@@ -74,7 +74,8 @@ async function loggableTasks(userId: mongoose.Types.ObjectId, extraTaskIds: mong
   const excluded = [...archived, ...finished].map((p) => p._id);
   const tasks = await Task.find({
     $or: [
-      { assignees: userId, status: { $ne: "completed" }, project: { $nin: excluded } },
+      // Tasks behind the scope wall (waiting for leadership, or not approved) take no time.
+      { assignees: userId, status: { $ne: "completed" }, project: { $nin: excluded }, "overScope.status": { $nin: ["pending", "rejected"] } },
       { _id: { $in: extraTaskIds } },
     ],
   })

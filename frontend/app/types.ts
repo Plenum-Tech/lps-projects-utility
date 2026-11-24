@@ -4732,3 +4732,69 @@ export interface MonthMigrationResult {
   created: Array<{ brand: string; projectId: string; name: string }>;
   skipped: Array<{ brand: string; reason: string }>;
 }
+
+/** GET /reports/timesheets/performance — estimate vs actual, rework time (leadership). */
+export interface TimesheetPerformanceTaskRef {
+  id: string;
+  code: string;
+  title: string;
+  brand: string;
+}
+export interface TimesheetPerformance {
+  from: string;
+  to: string;
+  settings: { overEstimatePct: number; iterationFlag: number };
+  totals: {
+    estimatedMinutes: number;
+    actualMinutes: number;
+    deviationPct: number | null;
+    tasks: number;
+    tasksWithEstimate: number;
+    tasksOverEstimate: number;
+    tasksWayOver: number;
+    reworkMinutes: number;
+    periodMinutes: number;
+    reworkTasks: number;
+  };
+  people: Array<{
+    user: { _id: string; name: string; department: string };
+    tasks: number;
+    /** The person's share of the estimates (by their share of the time) and their own time, on tasks with an estimate. */
+    estimatedMinutes: number;
+    actualMinutes: number;
+    deviationPct: number | null;
+    comparedTasks: number;
+    overEstimate: number;
+    noEstimate: number;
+    reworkMinutes: number;
+    periodMinutes: number;
+    avgIterations: number | null;
+    onTimePct: number | null;
+    completedWithDue: number;
+    taskRows: Array<TimesheetPerformanceTaskRef & { rework: boolean; estimate: number | null; actual: number; deviationPct: number | null; iterations: number; status: TaskStatus }>;
+  }>;
+  /** The original task with its reworks as one row. */
+  tasks: Array<
+    TimesheetPerformanceTaskRef & {
+      doers: string[];
+      estimateMinutes: number | null;
+      actualMinutes: number;
+      deviationPct: number | null;
+      iterations: Array<{ id: string; label: string; minutes: number }>;
+      reworkMinutes: number;
+      status: TaskStatus;
+    }
+  >;
+  taskCount: number;
+  brandHours: Array<{
+    user: { _id: string; name: string; department: string };
+    minutes: number;
+    brands: Array<{ name: string; minutes: number }>;
+    allocatedWithoutHours: string[];
+  }>;
+  flags: {
+    overEstimate: { count: number; top: Array<TimesheetPerformanceTaskRef & { estimateMinutes: number; actualMinutes: number }> };
+    noEstimate: { count: number; minutes: number; people: Array<{ name: string; tasks: number }> };
+    iterations: { count: number; top: Array<TimesheetPerformanceTaskRef & { iterations: number; reworkMinutes: number }> };
+  };
+}

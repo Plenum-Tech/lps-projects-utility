@@ -274,8 +274,8 @@ export function AppSidebar() {
   const brand = useBrand();
   const guest = Boolean(user?.isGuest);
   const approvals = useApprovalQueue(Boolean(user) && !guest);
-  // Admins approve tasks that go over a project's scope.
-  const overScope = useOverScopeTasks(user?.role === "admin" && !guest);
+  // Leadership approves tasks that go over a project's scope.
+  const overScope = useOverScopeTasks(Boolean(user?.leadership) && !guest);
 
   if (!user) return null;
 
@@ -284,7 +284,7 @@ export function AppSidebar() {
     {
       // Everyone sees Approvals: leadership decides there, the rest follow what they sent.
       isApprover: true,
-      // Leadership: projects, brands and changes; admins: tasks over scope.
+      // Leadership: projects, brands, changes and tasks over scope.
       pending:
         (approvals.data?.pending.length ?? 0) +
         (approvals.data?.brands?.pending.length ?? 0) +

@@ -1830,7 +1830,7 @@ async function summaryCard(ctx: VoiceContext, d: VoiceDraft): Promise<VoiceCard 
       rows.push([
         "Scope",
         d.quantity > allowed
-          ? `${d.unit} ${d.quantity} of ${allowed} — beyond the approved scope; it waits for an admin's approval`
+          ? `${d.unit} ${d.quantity} of ${allowed} — beyond the approved scope; it waits for leadership's approval`
           : `${d.unit} ${d.quantity} of ${allowed}`,
       ]);
     }

@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useToast } from "@/hooks/use-toast";
 import { api, getErrorMessage } from "@/lib/api";
@@ -12,6 +12,7 @@ import type {
   TimesheetReportResponse,
   TimesheetStatus,
   TimeBreakdownResponse,
+  TimesheetPerformance,
 } from "@/types";
 
 /** Common work-report filters (heads are limited to their department server-side). */
@@ -187,5 +188,42 @@ export function useCsvExport() {
     },
     onSuccess: () => toast.success("Export downloaded"),
     onError: (error: unknown) => toast.error(getErrorMessage(error)),
+  });
+}
+
+export interface TimesheetPerformanceParams {
+  from: string;
+  to: string;
+  department: string;
+  brand: string;
+}
+
+/** Estimate vs actual, rework time and brand hours (leadership). */
+export function useTimesheetPerformance(params: TimesheetPerformanceParams, enabled = true) {
+  return useQuery({
+    queryKey: ["work-reports", "timesheet-performance", params] as const,
+    queryFn: async () => {
+      const { data } = await api.get<TimesheetPerformance>("/reports/timesheets/performance", { params: clean(params) });
+      return data;
+    },
+    placeholderData: keepPreviousData,
+    enabled,
+  });
+}
+
+/** Leadership: the thresholds the performance view flags by. */
+export function useUpdatePerformanceSettings() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async (body: { overEstimatePct: number; iterationFlag: number }) => {
+      const { data } = await api.patch<{ settings: TimesheetPerformance["settings"] }>("/reports/timesheets/performance/settings", body);
+      return data;
+    },
+    onSuccess: () => {
+      toast.success("Thresholds saved");
+      void queryClient.invalidateQueries({ queryKey: ["work-reports", "timesheet-performance"] });
+    },
+    onError: (error) => toast.error(getErrorMessage(error)),
   });
 }

@@ -74,7 +74,7 @@ function DecideButtons({ id, size = "sm" }: { id: string; size?: "sm" | "default
   );
 }
 
-/** Task page: over-scope state (admins decide here too). */
+/** Task page: over-scope state (leadership decides here too). */
 export function OverScopeBanner({ task }: { task: Task }) {
   const { data: user } = useCurrentUser();
   const o = task.overScope;
@@ -84,7 +84,7 @@ export function OverScopeBanner({ task }: { task: Task }) {
   if (o.status === "approved") {
     return (
       <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        Approved beyond the scope by an admin. {text}
+        Approved beyond the scope by leadership. {text}
       </p>
     );
   }
@@ -100,22 +100,22 @@ export function OverScopeBanner({ task }: { task: Task }) {
         <LuShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <span>
           <span className="font-medium">
-            {o.status === "pending" ? "Over the approved scope — blocked until an admin approves it." : "Not approved beyond the scope."}
+            {o.status === "pending" ? "Over the approved scope — blocked until leadership approves it. No work or time can be logged on it." : "Not approved beyond the scope."}
           </span>{" "}
           {text}
           {o.reason ? ` Reason: ${o.reason}` : ""}
         </span>
       </p>
-      {o.status === "pending" && user?.role === "admin" && <DecideButtons id={task._id} />}
+      {o.status === "pending" && user?.leadership && <DecideButtons id={task._id} />}
     </div>
   );
 }
 
-/** Approvals page (admins): tasks waiting for a scope decision. */
+/** Approvals page (leadership): tasks waiting for a scope decision. */
 export function OverScopeApprovals() {
   const { data: user } = useCurrentUser();
-  const query = useOverScopeTasks(user?.role === "admin");
-  if (user?.role !== "admin") return null;
+  const query = useOverScopeTasks(Boolean(user?.leadership));
+  if (!user?.leadership) return null;
   const rows = query.data ?? [];
   return (
     <section className="space-y-3">

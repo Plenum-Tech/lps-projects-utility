@@ -12,6 +12,7 @@ import {
 import { pearityExport, pearityReport } from "../controllers/pearityReport.js";
 import { requireLeadership } from "../controllers/insights.js";
 import { scopeCreepReport } from "../controllers/scopeCreep.js";
+import { timesheetPerformance, updatePerformanceSettings } from "../controllers/timesheetPerformance.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
 import { requireTimeReportAccess } from "../lib/reportAccess.js";
 
@@ -32,6 +33,9 @@ router.get("/time/summary", ...guard, timeSummary);
 router.get("/time/export", ...guard, timeExport);
 router.get("/time/export.xlsx", ...guard, timeExportXlsx);
 router.get("/time/breakdown", ...guard, timeBreakdown);
+// Timesheet performance (estimate vs actual, rework time): leadership.
+router.get("/timesheets/performance", requireAuth, requireLeadership, timesheetPerformance);
+router.patch("/timesheets/performance/settings", requireAuth, requireLeadership, updatePerformanceSettings);
 router.get("/timesheets", ...guard, timesheetReport);
 router.get("/timesheets/export", ...guard, timesheetExport);
 router.get("/scope-creep", requireAuth, requireLeadership, scopeCreepReport);

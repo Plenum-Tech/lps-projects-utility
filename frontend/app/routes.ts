@@ -36,6 +36,7 @@ export default [
     route("approvals/project/:id", "routes/approvals.project.tsx"),
     route("approvals/:id", "routes/approvals.change.tsx"),
     route("timesheet", "routes/timesheet.tsx"),
+    route("timesheet/performance", "routes/timesheet.performance.tsx"),
     route("timelogs", "routes/timelogs.tsx"),
     route("reports/delivery", "routes/reports.delivery.tsx"),
     route("reports/tasks", "routes/reports.tasks.tsx"),

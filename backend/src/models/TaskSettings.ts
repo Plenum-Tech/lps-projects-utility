@@ -8,6 +8,10 @@ export interface ITaskSettings extends mongoose.Document {
   reminderOnDeadline: boolean;
   /** Send an overdue notice N days after the due date (0 = off). */
   reminderAfterDays: number;
+  /** Timesheet performance: a task this far over its estimate (%) is flagged red. */
+  performanceOverEstimatePct?: number;
+  /** Timesheet performance: a task on this iteration or later (original = 1) is flagged. */
+  performanceIterationFlag?: number;
 }
 
 const taskSettingsSchema = new Schema<ITaskSettings>(
@@ -15,6 +19,8 @@ const taskSettingsSchema = new Schema<ITaskSettings>(
     reminderBeforeDays: { type: Number, default: 1, min: 0, max: 30 },
     reminderOnDeadline: { type: Boolean, default: true },
     reminderAfterDays: { type: Number, default: 1, min: 0, max: 30 },
+    performanceOverEstimatePct: { type: Number, default: 25, min: 1, max: 500 },
+    performanceIterationFlag: { type: Number, default: 3, min: 2, max: 10 },
   },
   { timestamps: true }
 );

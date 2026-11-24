@@ -1114,14 +1114,14 @@ export function TaskFormDialog({
                   )}
                   {!task && scopeUnits.length > 0 && form.unit.trim() && (() => {
                     const unit = scopeUnits.find((u) => u.unit.toLowerCase() === form.unit.trim().toLowerCase());
-                    // Beyond the approved total: a new extra deliverable waits for an admin (one that already has tasks doesn't).
-                    const over = !unit ? true : quantityNumber > unit.total && !(pickedDeliverable && pickedDeliverable.tasks > 0);
+                    // Beyond the approved total: an extra deliverable waits for leadership (unless they already approved it).
+                    const over = !unit ? true : quantityNumber > unit.total;
                     return over ? (
                       <p className="rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
                         {unit
                           ? `${unit.unit} ${quantityNumber} is beyond the approved scope (${unit.total} ${unit.unit}).`
                           : `${form.unit.trim()} isn't in this project's scope.`}{" "}
-                        The task is saved but blocked until an admin approves it.
+                        The task is saved but blocked — no work or time on it — until leadership approves it (unless they already approved this deliverable).
                       </p>
                     ) : null;
                   })()}

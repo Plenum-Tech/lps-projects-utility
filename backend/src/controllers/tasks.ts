@@ -1006,15 +1006,66 @@ async function completionBlocker(task: ITask): Promise<string | null> {
   return `To close this task, ${list}.`;
 }
 
-/** Tasks over their project's approved scope can't move until an admin approves them. */
-function overScopeBlock(task: ITask): Invalid | null {
+/** Tasks over their project's approved scope can't move (or take time) until leadership approves them. */
+export function overScopeBlock(task: Pick<ITask, "overScope">): Invalid | null {
   if (task.overScope?.status === "pending") {
-    return { status: 409, error: `This task goes over the approved scope (${task.overScope.unit}). It's blocked until an admin approves it.` };
+    return { status: 409, error: `This task goes over the approved scope (${task.overScope.unit}). It's blocked until leadership approves it.` };
   }
   if (task.overScope?.status === "rejected") {
-    return { status: 409, error: "An admin didn't approve this task beyond the scope, so it can't be worked on." };
+    return { status: 409, error: "Leadership didn't approve this task beyond the scope, so it can't be worked on." };
   }
   return null;
+}
+
+/**
+ * The scope wall: a task naming a deliverable beyond its unit's approved total (Reel 12 of 10, or a
+ * unit the scope doesn't have) is extra work — pending until leadership approves it. Null = within
+ * the scope, a rework, a project without scope, or a deliverable leadership already approved.
+ */
+async function scopeWall(
+  project: Pick<IProject, "_id" | "scopeItems"> | null | undefined,
+  titleParts: { unit: string; quantity: number } | null | undefined,
+  iteration: string | null | undefined,
+  except?: mongoose.Types.ObjectId
+): Promise<ITask["overScope"]> {
+  if (!project || !project.scopeItems?.length || iteration === "rework" || !titleParts) return null;
+  const totals = scopeTotals(project.scopeItems);
+  const key = titleParts.unit.trim().toLowerCase();
+  const allowed = totals.get(key)?.total ?? 0;
+  const projectId = project._id as mongoose.Types.ObjectId;
+  if (titleParts.quantity <= allowed || (await extraDeliverableApproved(projectId, titleParts.unit, titleParts.quantity, except))) return null;
+  const used = (await deliverableUsage([projectId], titleParts.unit)).filter((r) => r.n >= 1 && r.n <= allowed).length;
+  return { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: 1 };
+}
+
+/** Leadership is asked to approve the extra (the creator and assignees hear the decision). */
+function notifyOverScope(task: ITask, project: Pick<IProject, "name">, actor: IUser, verb: "added" | "changed"): void {
+  if (task.overScope?.status !== "pending") return;
+  const over = task.overScope;
+  void projectApproverIds().then((recipients) =>
+    notifyUsers({
+      recipients,
+      actor,
+      type: "task_over_scope",
+      title: "Task over the approved scope",
+      message: `${actor.name} ${verb} "${task.title}" in ${project.name}: ${over.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${over.allowed} approved.`,
+      link: "/approvals",
+      email: {
+        subject: `Over scope: ${task.title}`,
+        heading: "Task Over The Approved Scope",
+        intro: `${actor.name} ${verb} a task beyond the project's approved scope. It's blocked until leadership approves it.`,
+        cardTitle: task.title,
+        rows: [
+          ["Project", project.name],
+          ["Unit", over.unit],
+          ["Approved", String(over.allowed)],
+          ["Deliverables with tasks", String(over.used)],
+          ["This task", `${over.unit} ${task.titleParts?.quantity ?? "?"} (extra)`],
+        ],
+        buttonLabel: "Review in Approvals",
+      },
+    })
+  );
 }
 
 export async function applyStatusChange(
@@ -1502,17 +1553,8 @@ export async function createTaskCore(
   // may work on one deliverable; a number beyond the unit's approved total is extra work,
   // flagged and blocked until an admin approves it (once approved, more tasks on it are fine).
   // Reworks don't count.
-  let overScope: ITask["overScope"] = null;
-  if (options.enforceRules && project && project.scopeItems?.length && iteration !== "rework" && titleParts) {
-    const totals = scopeTotals(project.scopeItems);
-    const key = titleParts.unit.trim().toLowerCase();
-    const allowed = totals.get(key)?.total ?? 0;
-    const projectId = project._id as mongoose.Types.ObjectId;
-    if (titleParts.quantity > allowed && !(await extraDeliverableApproved(projectId, titleParts.unit, titleParts.quantity))) {
-      const used = (await deliverableUsage([projectId], titleParts.unit)).filter((r) => r.n >= 1 && r.n <= allowed).length;
-      overScope = { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: 1 };
-    }
-  }
+  // A hard wall: it holds however the task is created (the form, a copy, an import, a meeting …).
+  const overScope: ITask["overScope"] = await scopeWall(project, titleParts, iteration);
 
   // Recurrence
   let recurrence: ITaskRecurrence | null = null;
@@ -1585,36 +1627,12 @@ export async function createTaskCore(
   const taskId = task._id as mongoose.Types.ObjectId;
 
   // Rework: the original task's files carry over as attachments (own copies).
-  // Over the approved scope: admins are asked to approve the extra.
+  // Over the approved scope: leadership is asked to approve the extra.
   // An older project without scope (flagged): the approvers are told, once per project per day.
   if (project && !options.allowNoScope && !historyExtra.importJob && !project.requiresScope && (project.scopeItems ?? []).length === 0) {
     void notifyNoScopeTask(project, actor, String(task.title));
   }
-  if (task.overScope?.status === "pending" && project) {
-    notifyUsers({
-      // Admins decide; the projects approvers (Aasim) are told too.
-      recipients: [...(await adminIds()), ...(await projectApproverIds())],
-      actor,
-      type: "task_over_scope",
-      title: "Task over the approved scope",
-      message: `${actor.name} added "${task.title}" to ${project.name}: ${task.overScope.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${task.overScope.allowed} approved.`,
-      link: "/approvals",
-      email: {
-        subject: `Over scope: ${task.title}`,
-        heading: "Task Over The Approved Scope",
-        intro: `${actor.name} added a task beyond the project's approved scope. It's blocked until an admin approves it.`,
-        cardTitle: task.title,
-        rows: [
-          ["Project", project.name],
-          ["Unit", task.overScope.unit],
-          ["Approved", String(task.overScope.allowed)],
-          ["Deliverables with tasks", String(task.overScope.used)],
-          ["This task", `${task.overScope.unit} ${task.titleParts?.quantity ?? "?"} (extra)`],
-        ],
-        buttonLabel: "Review in Approvals",
-      },
-    });
-  }
+  if (project) notifyOverScope(task, project, actor, "added");
 
   if (task.reworkOf && reworkSourceFiles > 0) {
     const files = await TaskFile.find({ task: task.reworkOf, subtask: null }).sort({ createdAt: 1 }).limit(TASK_FILE_LIMITS.maxFilesPerTask);
@@ -2126,9 +2144,12 @@ async function applyTaskUpdate(
   const titleParts = parseTitleParts(body.titleParts);
   if (isInvalid(titleParts)) return titleParts;
   const title = titleParts ? composeTaskTitle(titleParts) : body.title;
+  let deliverableChanged = false;
   if (titleParts) {
     const before = task.titleParts;
     if (!before || before.unit !== titleParts.unit || before.quantity !== titleParts.quantity || before.shortName !== titleParts.shortName) {
+      // Another deliverable (unit or number), not just another short name: the scope wall re-checks it.
+      if (!before || before.unit.trim().toLowerCase() !== titleParts.unit.trim().toLowerCase() || before.quantity !== titleParts.quantity) deliverableChanged = true;
       task.titleParts = titleParts;
       changed.push("titleParts");
     }
@@ -2365,7 +2386,25 @@ async function applyTaskUpdate(
     task.shortCode = await nextShortCode(projectDoc._id as mongoose.Types.ObjectId);
   }
 
+  // The scope wall holds on edits too: another deliverable number / unit, another project or a
+  // rework turned into new work is checked again (a decision already made on it stands otherwise).
+  let wallRaised: Pick<IProject, "name"> | null = null;
+  if (deliverableChanged || projectChanged || notable.includes("iteration")) {
+    const scoped = task.project ? await Project.findById(task.project).select("name scopeItems") : null;
+    const over = await scopeWall(scoped, task.titleParts, task.iteration, task._id as mongoose.Types.ObjectId);
+    if (over) {
+      task.overScope = over;
+      task.markModified("overScope");
+      wallRaised = scoped;
+    } else if (task.overScope) {
+      // Back within the scope (or on an approved deliverable): nothing to decide any more.
+      task.overScope = null;
+      task.markModified("overScope");
+    }
+  }
+
   await task.save();
+  if (wallRaised) notifyOverScope(task, wallRaised, user, "changed");
   if (notable.includes("description") || notable.includes("title") || changed.includes("titleParts")) {
     scheduleBriefCheck(task._id as mongoose.Types.ObjectId);
   }
@@ -3242,12 +3281,12 @@ export async function unpinTask(req: Request, res: Response): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Over-scope tasks: admins approve or reject the extra.
+// Over-scope tasks: leadership approves or rejects the extra.
 // ---------------------------------------------------------------------------
 
-/** GET /api/tasks/over-scope — admins: tasks waiting for a scope decision. */
+/** GET /api/tasks/over-scope — leadership: tasks waiting for a scope decision. */
 export async function overScopeTasks(req: Request, res: Response): Promise<void> {
-  if (req.user!.role !== "admin") {
+  if (!isLeadershipUser(req.user!)) {
     res.json({ tasks: [] });
     return;
   }
@@ -3262,11 +3301,11 @@ export async function overScopeTasks(req: Request, res: Response): Promise<void>
   res.json({ tasks });
 }
 
-/** POST /api/tasks/:id/scope-approval — admins; `{ decision: "approve" | "reject", reason? }`. */
+/** POST /api/tasks/:id/scope-approval — leadership; `{ decision: "approve" | "reject", reason? }`. */
 export async function decideOverScope(req: Request, res: Response): Promise<void> {
   const user = req.user!;
-  if (user.role !== "admin") {
-    res.status(403).json({ error: "Only admins can approve work beyond the scope" });
+  if (!isLeadershipUser(user)) {
+    res.status(403).json({ error: "Only leadership can approve work beyond the scope" });
     return;
   }
   const task = await getTaskOr404(req, res);
