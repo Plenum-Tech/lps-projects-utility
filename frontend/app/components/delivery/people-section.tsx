@@ -230,7 +230,7 @@ export function PeopleSection({
         title="Team map coverage"
         description={
           teamMap.data
-            ? `Tasks allocated in the period (routed on from traffic, else created), each checked against the manpower plan version that was live on the day it was allocated: the people on its project line (else on its brand). Brands or months without a plan use the brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). Off-map = done only by people not on the plan for that task. Open a brand to see it week by week — by week or as people × weeks — and click a plan version to see who was on it and its tasks.`
+            ? `Tasks allocated in the period (routed on from traffic, else created), each checked against the manpower plan version that was live on the day it was allocated: the people on its project line (else on its brand). Brands or months without a plan use the brand's team map (${teamMap.data.mappedBrands} configured, ${teamMap.data.derivedBrands} derived from project members). A person is on plan when they are on the task's line or on any line of the same organisation (sister brands such as Ajmal and Ajmal USA) in that version. Off-map % = people × tasks done by someone not on the plan, out of all people × tasks in the period (a task done by 3 people counts 3). Only brands with an active project (running in the period's last month, not archived) are listed. Open a brand to see it day by day or week by week, and click a plan version to see who was on it and its tasks.`
             : "Who works on which brand, against each brand's team map."
         }
         action={

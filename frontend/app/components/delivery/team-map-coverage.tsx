@@ -14,8 +14,8 @@ import type { DeliveryTeamMapResponse, DeliveryTeamMapRow, DeliveryTeamMapWeek, 
 
 // ---------------------------------------------------------------------------
 // Team map coverage: per brand, the tasks allocated in the period, each checked against the
-// manpower plan version live on the day it was allocated. A brand opens week by week — by week
-// or as a people × weeks grid — and a plan version opens its team (with roles) and its tasks.
+// manpower plan version live on the day it was allocated. A brand opens day by day or
+// week by week, and a plan version opens its team (with roles) and its tasks.
 // ---------------------------------------------------------------------------
 
 const MAX_MAPPED = 8;
@@ -37,7 +37,7 @@ const weekLabel = (start: string) => {
 
 type Counts = { on: number; off: number };
 /** A week of a brand: its plan-version groups and per-person task counts. */
-type Week = { start: string; groups: Array<{ group: DeliveryTeamMapWeek; index: number }>; tasks: number; offMap: number; people: Map<string, Counts & { ref: DeliveryUserRef }>; planned: Map<string, DeliveryUserRef> };
+type Week = { start: string; groups: Array<{ group: DeliveryTeamMapWeek; index: number }>; tasks: number; inst: number; offInst: number | null; people: Map<string, Counts & { ref: DeliveryUserRef }>; planned: Map<string, DeliveryUserRef> };
 
 /** A person's key (former users have no id). */
 const keyOf = (person: DeliveryUserRef) => person.id ?? `former:${person.name}`;
@@ -45,10 +45,11 @@ const keyOf = (person: DeliveryUserRef) => person.id ?? `former:${person.name}`;
 function weeksOf(row: DeliveryTeamMapRow): Week[] {
   const weeks = new Map<string, Week>();
   row.weeks.forEach((group, index) => {
-    const week: Week = weeks.get(group.weekStart) ?? { start: group.weekStart, groups: [], tasks: 0, offMap: 0, people: new Map(), planned: new Map() };
+    const week: Week = weeks.get(group.weekStart) ?? { start: group.weekStart, groups: [], tasks: 0, inst: 0, offInst: null, people: new Map(), planned: new Map() };
     week.groups.push({ group, index });
     week.tasks += group.tasks;
-    week.offMap += group.offMapTasks ?? 0;
+    week.inst += group.instances;
+    if (group.offMapInstances != null) week.offInst = (week.offInst ?? 0) + group.offMapInstances;
     for (const task of group.taskList) {
       for (const doer of task.doers) {
         const counts = week.people.get(keyOf(doer.person)) ?? { on: 0, off: 0, ref: doer.person };
@@ -102,8 +103,25 @@ function VersionChip({ group, selected, onPick }: { group: DeliveryTeamMapWeek; 
     >
       {versionShort(group.version)}
       <span className={cn("ml-1 tabular-nums", selected ? "opacity-70" : "text-muted-foreground")}>· {group.tasks}</span>
+      {/* Off-map % of this version in the week: off-plan people × tasks out of all people × tasks. */}
+      {group.offMapInstances != null && group.instances > 0 && (
+        <span
+          className={cn(
+            "ml-1 rounded px-1 tabular-nums",
+            group.offMapInstances === 0 ? (selected ? "opacity-70" : "text-muted-foreground") : selected ? "bg-critical text-white" : "bg-critical/10 font-medium text-critical",
+          )}
+          title={`${group.offMapInstances} of ${group.instances} people × tasks done by someone not on this plan version`}
+        >
+          {offPct(group)}% off
+        </span>
+      )}
     </button>
   );
+}
+
+/** Off-map %: off-plan people × task instances out of all instances (whole %). */
+function offPct(group: Pick<DeliveryTeamMapWeek, "instances" | "offMapInstances">): number {
+  return group.instances > 0 ? Math.round(((group.offMapInstances ?? 0) / group.instances) * 100) : 0;
 }
 
 /** The picked plan version: who was on it for the brand (roles, used or not) and its tasks. */
@@ -117,7 +135,10 @@ function VersionDetail({ brand, group, onClose }: { brand: string; group: Delive
             {brand} · {versionLong(group.version)}
           </p>
           <p className="text-xs text-muted-foreground">
-            Live for {group.tasks} task{group.tasks === 1 ? "" : "s"} allocated {weekLabel(group.weekStart)} · {group.offMapTasks ?? 0} off-map
+            Live for {group.tasks} task{group.tasks === 1 ? "" : "s"} allocated {weekLabel(group.weekStart)} ·{" "}
+            <span className={cn((group.offMapInstances ?? 0) > 0 && "font-medium text-critical")}>
+              off-map {offPct(group)}% ({group.offMapInstances ?? 0} of {group.instances} people × tasks)
+            </span>
             {group.lines.length > 0 && ` · plan line${group.lines.length > 1 ? "s" : ""}: ${group.lines.join(", ")}`}
           </p>
         </div>
@@ -125,6 +146,11 @@ function VersionDetail({ brand, group, onClose }: { brand: string; group: Delive
           <LuX aria-hidden />
         </Button>
       </div>
+      {group.version && group.team.length === 0 && (
+        <p className="mt-2 rounded-md bg-critical/10 px-2 py-1 text-xs text-critical">
+          {brand} had no line in this plan version, so nobody was planned on it and everyone who worked on these tasks counts as off plan.
+        </p>
+      )}
       <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(260px,1fr)_2fr]">
         <table className="w-full text-sm">
           <thead className="text-left text-xs text-muted-foreground">
@@ -143,6 +169,23 @@ function VersionDetail({ brand, group, onClose }: { brand: string; group: Delive
               </tr>
             ))}
           </tbody>
+          {/* Who worked on these tasks without being on this version of the plan. */}
+          <tfoot>
+            <tr>
+              <td colSpan={3} className="pt-3">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Off plan but working ({group.offMapWorking.length}) · tasks each did this week
+                </p>
+                <div className="mt-1">
+                  {group.offMapWorking.length === 0 ? (
+                    <span className="text-xs text-muted-foreground">Nobody — every task was done by people on this version.</span>
+                  ) : (
+                    <Chips items={group.offMapWorking} tone="off" />
+                  )}
+                </div>
+              </td>
+            </tr>
+          </tfoot>
         </table>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -208,7 +251,7 @@ function ByWeek({ row, weeks, picked, onPick }: { row: DeliveryTeamMapRow; weeks
             <span className="block text-[11px] font-normal tracking-normal normal-case">click a plan version for its team and tasks</span>
           </th>
           <th className="px-2 py-1.5 text-right">Tasks</th>
-          <th className="px-2 py-1.5">Off-map</th>
+          <th className="px-2 py-1.5" title="Off-plan people × tasks out of all people × tasks in the week">Off-map %</th>
           <th className="px-2 py-1.5">On plan &amp; working</th>
           <th className="px-2 py-1.5">Off plan but working</th>
           <th className="px-2 py-1.5">Planned but not used</th>
@@ -234,7 +277,7 @@ function ByWeek({ row, weeks, picked, onPick }: { row: DeliveryTeamMapRow; weeks
                 </td>
                 <td className="px-2 py-2 text-right tabular-nums">{week.tasks}</td>
                 <td className="px-2 py-2">
-                  <OffMapPill offMap={week.offMap} tasks={week.tasks} />
+                  <OffMapPill off={week.offInst} all={week.inst} />
                 </td>
                 <td className="px-2 py-2">
                   <Chips items={on.map(([, count, person]) => ({ person, count }))} tone="on" />
@@ -261,86 +304,127 @@ function ByWeek({ row, weeks, picked, onPick }: { row: DeliveryTeamMapRow; weeks
   );
 }
 
-function PeopleGrid({ row, weeks, picked, onPick }: { row: DeliveryTeamMapRow; weeks: Week[]; picked: number | null; onPick: (index: number | null) => void }) {
-  const people = new Map<string, { ref: DeliveryUserRef; cells: Array<(Counts & { planned?: boolean }) | null> }>();
-  weeks.forEach((week, i) => {
-    for (const [id, c] of week.people) {
-      const p = people.get(id) ?? { ref: c.ref, cells: weeks.map(() => null) };
-      p.cells[i] = { on: c.on, off: c.off };
-      people.set(id, p);
-    }
-    for (const [id, ref] of week.planned) {
-      const p = people.get(id) ?? { ref, cells: weeks.map(() => null) };
-      p.cells[i] ??= { on: 0, off: 0, planned: true };
-      people.set(id, p);
+/**
+ * Day by day: every day of the period that had tasks allocated, per plan version live that day —
+ * its off-map % (off-plan people × tasks out of all people × tasks) and who was on / off the plan.
+ */
+function ByDay({ row, picked, onPick }: { row: DeliveryTeamMapRow; picked: number | null; onPick: (index: number | null) => void }) {
+  type DayGroup = { day: string; index: number; group: DeliveryTeamMapWeek; tasks: number; inst: number; off: number | null; people: Map<string, Counts & { ref: DeliveryUserRef }> };
+  const groups = new Map<string, DayGroup>();
+  row.weeks.forEach((group, index) => {
+    for (const task of group.taskList) {
+      const key = `${task.allocated}|${index}`;
+      const g = groups.get(key) ?? { day: task.allocated, index, group, tasks: 0, inst: 0, off: null, people: new Map() };
+      g.tasks++;
+      for (const doer of task.doers) {
+        const counts = g.people.get(keyOf(doer.person)) ?? { on: 0, off: 0, ref: doer.person };
+        if (doer.onMap === false) counts.off++;
+        else counts.on++;
+        g.people.set(keyOf(doer.person), counts);
+        // Tasks without a map (onMap null) don't count in the %.
+        if (doer.onMap !== null) {
+          g.inst++;
+          g.off = (g.off ?? 0) + (doer.onMap ? 0 : 1);
+        }
+      }
+      groups.set(key, g);
     }
   });
-  const total = (cells: Array<Counts | null>) => cells.reduce((n, c) => n + (c ? c.on + c.off : 0), 0);
-  const order = [...people.values()].sort((a, b) => total(b.cells) - total(a.cells) || userName(a.ref).localeCompare(userName(b.ref)));
-  const pickedGroup = row.weeks[picked ?? -1];
+  const list = [...groups.values()].sort((a, b) => a.day.localeCompare(b.day) || a.index - b.index);
+  // The day's own % (all its versions together), for the average of the daily figures.
+  const days = new Map<string, { inst: number; off: number }>();
+  for (const g of list) {
+    if (g.off === null) continue;
+    const d = days.get(g.day) ?? { inst: 0, off: 0 };
+    d.inst += g.inst;
+    d.off += g.off;
+    days.set(g.day, d);
+  }
+  const daily = [...days.values()].filter((d) => d.inst > 0).map((d) => (d.off / d.inst) * 100);
+  const average = daily.length ? Math.round(daily.reduce((n, p) => n + p, 0) / daily.length) : null;
+  const dayLabel = (key: string) => new Date(`${key}T00:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
+  const pickedGroup = picked !== null ? row.weeks[picked] : undefined;
   return (
-    <>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="text-left text-xs text-muted-foreground">
-            <tr className="align-bottom">
-              <th className="px-2 py-1.5 uppercase tracking-wide">Team member</th>
-              {weeks.map((week) => (
-                <th key={week.start} className="min-w-40 px-2 py-1.5 text-center font-normal">
-                  <span className="font-medium text-foreground">{weekLabel(week.start)}</span>
-                  <span className="block text-[11px]">
-                    {week.tasks} tasks · {week.offMap} off-map
-                  </span>
-                  <div>
-                    {week.groups.map(({ group, index }) => (
-                      <VersionChip key={index} group={group} selected={picked === index} onPick={() => onPick(picked === index ? null : index)} />
-                    ))}
-                  </div>
-                </th>
-              ))}
-              <th className="px-2 py-1.5 text-right uppercase tracking-wide">Total</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y">
-            {order.map(({ ref, cells }) => (
-              <tr key={keyOf(ref)}>
-                <td className="px-2 py-1.5 font-medium whitespace-nowrap">{userName(ref)}</td>
-                {cells.map((c, i) => (
-                  <td key={i} className="px-2 py-1.5 text-center">
-                    {!c ? (
-                      <span className="text-muted-foreground">·</span>
-                    ) : c.on + c.off === 0 ? (
-                      <span className="rounded-md bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">planned · 0</span>
-                    ) : (
-                      <span className="inline-flex gap-1">
-                        {c.on > 0 && <span title="Tasks on the plan" className="min-w-6 rounded-md bg-good/15 px-1.5 py-0.5 text-xs font-semibold text-good tabular-nums">{c.on}</span>}
-                        {c.off > 0 && <span title="Tasks not on the plan for them" className="min-w-6 rounded-md bg-critical/15 px-1.5 py-0.5 text-xs font-semibold text-critical tabular-nums">{c.off}</span>}
-                      </span>
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">
+        {new Set(list.map((g) => g.day)).size} days with tasks allocated in the period (days without tasks aren&apos;t listed) · off-map over the period{" "}
+        <span className="font-medium text-foreground">{row.offMapPct ?? 0}%</span> ({row.offMapInstances ?? 0} of {row.instances ?? 0} people × tasks)
+        {average !== null && (
+          <>
+            {" "}· average of the daily off-map % <span className="font-medium text-foreground">{average}%</span> ({daily.length} days)
+          </>
+        )}
+      </p>
+      <table className="w-full min-w-[900px] text-sm">
+        <thead className="text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th className="px-2 py-1.5">Day (allocated)</th>
+            <th className="px-2 py-1.5">Plan version that day</th>
+            <th className="px-2 py-1.5 text-right">Tasks</th>
+            <th className="px-2 py-1.5" title="Off-plan people × tasks out of all people × tasks that day, on that plan version">Off-map %</th>
+            <th className="px-2 py-1.5">On plan &amp; working</th>
+            <th className="px-2 py-1.5">Off plan but working</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y align-top">
+          {list.map((g, i) => {
+            const people = [...g.people.values()];
+            const on = people.filter((c) => c.on > 0).map((c) => ({ person: c.ref, count: c.on })).sort((a, b) => b.count - a.count);
+            const off = people.filter((c) => c.off > 0).map((c) => ({ person: c.ref, count: c.off })).sort((a, b) => b.count - a.count);
+            const firstOfDay = i === 0 || list[i - 1]!.day !== g.day;
+            const selected = picked === g.index;
+            return (
+              <tr key={`${g.day}|${g.index}`}>
+                <td className="px-2 py-2 font-medium whitespace-nowrap">{firstOfDay ? dayLabel(g.day) : ""}</td>
+                <td className="px-2 py-2">
+                  <button
+                    type="button"
+                    onClick={() => onPick(selected ? null : g.index)}
+                    aria-pressed={selected}
+                    title="See who was on this plan version and the tasks counted against it"
+                    className={cn(
+                      "inline-flex items-center rounded-md border px-1.5 py-0.5 text-xs whitespace-nowrap transition-colors",
+                      selected ? "border-foreground bg-foreground text-background" : "bg-background hover:border-foreground",
                     )}
-                  </td>
-                ))}
-                <td className="px-2 py-1.5 text-right font-semibold tabular-nums">{total(cells)}</td>
+                  >
+                    {versionShort(g.group.version)}
+                  </button>
+                </td>
+                <td className="px-2 py-2 text-right tabular-nums">{g.tasks}</td>
+                <td className="px-2 py-2">
+                  <OffMapPill off={g.off} all={g.inst} />
+                </td>
+                <td className="px-2 py-2">
+                  <Chips items={on} tone="on" />
+                </td>
+                <td className="px-2 py-2">
+                  <Chips items={off} tone="off" />
+                </td>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            );
+          })}
+        </tbody>
+      </table>
       {pickedGroup && <VersionDetail brand={row.brand.name} group={pickedGroup} onClose={() => onPick(null)} />}
-    </>
+    </div>
   );
 }
 
-function OffMapPill({ offMap, tasks }: { offMap: number | null; tasks: number }) {
-  if (offMap === null) return <span className="text-muted-foreground">—</span>;
+/** The off-map %: off-plan people × tasks out of all people × tasks ("25% · 8 of 32"). */
+function OffMapPill({ off, all }: { off: number | null; all: number }) {
+  if (off === null) return <span className="text-muted-foreground">—</span>;
   return (
-    <span className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap tabular-nums", offMap === 0 ? "bg-muted text-muted-foreground" : "bg-critical/10 text-critical")}>
-      {offMap} · {tasks > 0 ? Math.round((offMap / tasks) * 100) : 0}%
+    <span
+      className={cn("inline-flex rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap tabular-nums", off === 0 ? "bg-muted text-muted-foreground" : "bg-critical/10 text-critical")}
+      title={`${off} of ${all} people × tasks were done by someone not on the plan version live when the task was allocated`}
+    >
+      {all > 0 ? Math.round((off / all) * 100) : 0}% <span className="ml-1 font-normal opacity-80">· {off} of {all}</span>
     </span>
   );
 }
 
 function BrandWeeks({ row }: { row: DeliveryTeamMapRow }) {
-  const [view, setView] = useState<"week" | "grid">("week");
+  const [view, setView] = useState<"day" | "week">("day");
   const [picked, setPicked] = useState<number | null>(null);
   const weeks = weeksOf(row);
   return (
@@ -349,8 +433,8 @@ function BrandWeeks({ row }: { row: DeliveryTeamMapRow }) {
         <span className="inline-flex overflow-hidden rounded-md border" role="group" aria-label="View">
           {(
             [
+              ["day", "By day"],
               ["week", "By week"],
-              ["grid", "People × weeks"],
             ] as const
           ).map(([value, label]) => (
             <button
@@ -367,7 +451,11 @@ function BrandWeeks({ row }: { row: DeliveryTeamMapRow }) {
         <span className="text-xs text-muted-foreground">Click a plan version (e.g. {versionShort(row.weeks[0]?.version ?? null)}) to see who was on it and the tasks counted against it.</span>
       </div>
       <div className="overflow-x-auto">
-        {view === "week" ? <ByWeek row={row} weeks={weeks} picked={picked} onPick={setPicked} /> : <PeopleGrid row={row} weeks={weeks} picked={picked} onPick={setPicked} />}
+        {view === "day" ? (
+          <ByDay row={row} picked={picked} onPick={setPicked} />
+        ) : (
+          <ByWeek row={row} weeks={weeks} picked={picked} onPick={setPicked} />
+        )}
       </div>
     </div>
   );
@@ -382,7 +470,7 @@ export function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
   const rows = data.rows.filter(
     (r) =>
       (!q || r.brand.name.toLowerCase().includes(q)) &&
-      (!offMapOnly || (r.offMapTasks ?? 0) > 0) &&
+      (!offMapOnly || (r.offMapInstances ?? 0) > 0) &&
       (source === "all" || (source === "plan" ? r.planVersions.length > 0 : r.planVersions.length === 0)),
   );
   const toggle = (id: string) =>
@@ -416,13 +504,13 @@ export function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
           ))}
         </div>
         <span className="text-xs text-muted-foreground">
-          {rows.length} of {data.rows.length} brands · {data.totals.tasks} tasks · {data.totals.offMapTasks} off map ·{" "}
+          {rows.length} of {data.rows.length} brands · {data.totals.tasks} tasks · off-map {data.totals.offMapPct ?? 0}% ({data.totals.offMapInstances} of {data.totals.instances} people × tasks) ·{" "}
           {formatDateOnly(data.range.start)} – {formatDateOnly(data.range.end)}
         </span>
       </div>
       {rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          {data.rows.length === 0 ? "No brand had tasks allocated in this period." : "No brands match the filters."}
+          {data.rows.length === 0 ? "No brand with an active project had tasks allocated in this period." : "No brands match the filters."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border">
@@ -431,7 +519,7 @@ export function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
               <tr>
                 <th className="px-3 py-2">Brand</th>
                 <th className="px-3 py-2 text-right">Tasks in period</th>
-                <th className="px-3 py-2">Off-map tasks</th>
+                <th className="px-3 py-2" title="Off-plan people × tasks out of all people × tasks in the period">Off-map %</th>
                 <th className="px-3 py-2">On plan and working it</th>
                 <th className="px-3 py-2">Off plan but working it</th>
                 <th className="px-3 py-2">Planned but unused</th>
@@ -462,7 +550,7 @@ export function TeamMapCoverage({ data }: { data: DeliveryTeamMapResponse }) {
                       </td>
                       <td className="px-3 py-2 text-right tabular-nums">{row.tasks}</td>
                       <td className="px-3 py-2">
-                        <OffMapPill offMap={row.offMapTasks} tasks={row.tasks} />
+                        <OffMapPill off={row.offMapInstances} all={row.instances ?? 0} />
                       </td>
                       <td className="px-3 py-2">
                         <Chips items={row.onMapWorking} tone="on" />

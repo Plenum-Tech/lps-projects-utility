@@ -4095,6 +4095,11 @@ export interface DeliveryTeamMapRow {
   tasks: number;
   /** Tasks done entirely by people off the map; null when the brand has no map. */
   offMapTasks: number | null;
+  /** People × task instances on mapped tasks (a task done by 3 people = 3); null when the brand has no map. */
+  instances: number | null;
+  /** Instances done by someone not on the plan version live when the task was allocated. */
+  offMapInstances: number | null;
+  /** Off-map % = offMapInstances / instances. */
   offMapPct: number | null;
   onMapWorking: DeliveryTeamMapWorker[];
   offMapWorking: DeliveryTeamMapWorker[];
@@ -4110,6 +4115,8 @@ export interface DeliveryTeamMapWeek {
   version: string | null;
   tasks: number;
   offMapTasks: number | null;
+  instances: number;
+  offMapInstances: number | null;
   mapped: number;
   onMapWorking: DeliveryTeamMapWorker[];
   offMapWorking: DeliveryTeamMapWorker[];
@@ -4138,7 +4145,7 @@ export interface DeliveryTeamMapResponse {
   derivedBrands: number;
   /** Months in the tracking window that have a manpower plan. */
   planMonths: string[];
-  totals: { tasks: number; offMapTasks: number };
+  totals: { tasks: number; offMapTasks: number; instances: number; offMapInstances: number; offMapPct: number | null };
   rows: DeliveryTeamMapRow[];
 }
 
