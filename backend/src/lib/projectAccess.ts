@@ -1,4 +1,6 @@
 import type { Request, Response } from "express";
+import { readinessOf, type Readiness } from "./projectReadiness.js";
+import { isLeadershipUser } from "./leadership.js";
 import mongoose from "mongoose";
 import { isGuestUser } from "./guests.js";
 import { isProjectApproved } from "./projectApproval.js";
@@ -362,6 +364,10 @@ export async function serializeProjects(
 ): Promise<Record<string, unknown>[]> {
   const ids = projects.map((p) => p._id as mongoose.Types.ObjectId);
   const [counts, logged] = await Promise.all([taskCountsByProject(ids), loggedTotalsByProject(ids)]);
+  // Readiness score: leadership sees every project's, a manager their own projects'.
+  const leadership = isLeadershipUser(user);
+  const scored = projects.filter((p) => !p.archivedAt && (leadership || String(p.manager && typeof p.manager === "object" && "_id" in p.manager ? p.manager._id : p.manager) === user._id.toString()));
+  const readiness = scored.length ? await readinessOf(scored) : new Map<string, Readiness>();
   const pinned = new Set((user.pinnedProjects ?? []).map((id) => id.toString()));
   const today = appToday().getTime();
 
@@ -397,6 +403,8 @@ export async function serializeProjects(
     json.isOverdue = Boolean(deadline !== null && deadline < today && !status?.isCompleted && !p.archivedAt);
     json.taskCounts = counts.get(id) ?? emptyTaskCounts();
     json.loggedMinutes = totals?.minutes ?? 0;
+    const ready = readiness.get(id);
+    if (ready) json.readiness = ready;
     json.closesOn = projectClosesOn(p);
     json.expired = isProjectExpired(p);
     return json;

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { ReadinessBadge } from "@/components/projects/readiness-badge";
 import { Link, useNavigate } from "react-router";
 import {
   LuArchive,
@@ -201,6 +202,7 @@ export function ProjectsTable({
             )}
             {!project.naming && <LegacyNameBadge />}
             <ProjectApprovalBadge project={project} />
+            {project.readiness && <ReadinessBadge readiness={project.readiness} className="shrink-0" />}
           </div>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {project.tag && <span className="font-mono">{project.tag} · </span>}

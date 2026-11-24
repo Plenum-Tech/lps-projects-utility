@@ -11,6 +11,7 @@ import {
 } from "../controllers/timeReports.js";
 import { pearityExport, pearityReport } from "../controllers/pearityReport.js";
 import { requireLeadership } from "../controllers/insights.js";
+import { projectReadinessReport } from "../controllers/projectReadiness.js";
 import { scopeCreepReport } from "../controllers/scopeCreep.js";
 import { timesheetPerformance, updatePerformanceSettings } from "../controllers/timesheetPerformance.js";
 import { requireAuth } from "../middlewares/requireAuth.js";
@@ -39,5 +40,7 @@ router.patch("/timesheets/performance/settings", requireAuth, requireLeadership,
 router.get("/timesheets", ...guard, timesheetReport);
 router.get("/timesheets/export", ...guard, timesheetExport);
 router.get("/scope-creep", requireAuth, requireLeadership, scopeCreepReport);
+// Project readiness score (planned at the start of the month / pitch): leadership.
+router.get("/project-readiness", requireAuth, requireLeadership, projectReadinessReport);
 
 export default router;

@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { ReadinessBadge } from "@/components/projects/readiness-badge";
 import { Link, useNavigate } from "react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, getErrorMessage } from "@/lib/api";
@@ -151,6 +152,7 @@ export function ProjectHeader({
               <ProjectStatusPill status={project.status} />
               {!project.naming && <LegacyNameBadge />}
               <ProjectApprovalBadge project={project} />
+              {project.readiness && <ReadinessBadge readiness={project.readiness} />}
               {/* The same tag as under the name in the Projects list. */}
               <Badge
                 variant="outline"

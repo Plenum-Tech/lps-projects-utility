@@ -1,5 +1,6 @@
 import { LuBot, LuCircleCheck, LuCircleMinus, LuMail } from "react-icons/lu";
 
+import { ProjectReadinessCard } from "@/components/projects/settings/project-readiness-card";
 import { QueryError } from "@/components/globals/query-states";
 import { PoliciesTab } from "@/components/leaves/manage-leaves";
 import { EmailPreferencesCard, PREFERENCES } from "@/components/profile/email-preferences-card";
@@ -111,6 +112,7 @@ export function ProjectSection() {
       <ProjectTypesCard />
       <ProjectCategoriesCard />
       <ProjectReminderCard />
+      <ProjectReadinessCard />
     </div>
   );
 }

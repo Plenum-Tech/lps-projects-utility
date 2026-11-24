@@ -15,6 +15,7 @@ import {
   Lightbulb,
   ListChecks,
   MailPlus,
+  Gauge,
   Target,
   Timer,
   LayoutDashboard,
@@ -200,6 +201,7 @@ const NAV_GROUPS: NavGroup[] = [
       { title: "Task Report", to: "/reports/tasks", icon: ListChecks },
       { title: "Time Log Report", to: "/reports/time", icon: BarChart3, timeReport: true },
       { title: "Scope Creep", to: "/reports/scope-creep", icon: Target, leadership: true },
+      { title: "Project Readiness", to: "/reports/project-readiness", icon: Gauge, leadership: true },
       { title: "Insights", to: "/insights", icon: Lightbulb, leadership: true },
       // Weekly Timesheet (submit/approve workflow) is hidden: hours are covered by the
       // Time Log Report. The page still exists at /reports/timesheets.

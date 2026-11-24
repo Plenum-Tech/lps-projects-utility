@@ -43,6 +43,7 @@ export default [
     route("reports/time", "routes/reports.time.tsx"),
     route("reports/timesheets", "routes/reports.timesheets.tsx"),
     route("reports/scope-creep", "routes/reports.scope-creep.tsx"),
+    route("reports/project-readiness", "routes/reports.project-readiness.tsx"),
     route("insights", "routes/insights.tsx"),
     route("ai-insights", "routes/ai-insights.tsx"),
     route("documents", "routes/documents.tsx"),

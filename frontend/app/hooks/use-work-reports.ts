@@ -13,6 +13,7 @@ import type {
   TimesheetStatus,
   TimeBreakdownResponse,
   TimesheetPerformance,
+  ProjectReadinessReport,
 } from "@/types";
 
 /** Common work-report filters (heads are limited to their department server-side). */
@@ -225,5 +226,17 @@ export function useUpdatePerformanceSettings() {
       void queryClient.invalidateQueries({ queryKey: ["work-reports", "timesheet-performance"] });
     },
     onError: (error) => toast.error(getErrorMessage(error)),
+  });
+}
+
+/** Project readiness scores of a month, lowest first (leadership). */
+export function useProjectReadinessReport(month: string) {
+  return useQuery({
+    queryKey: ["work-reports", "project-readiness", month] as const,
+    queryFn: async () => {
+      const { data } = await api.get<ProjectReadinessReport>("/reports/project-readiness", { params: { month } });
+      return data;
+    },
+    placeholderData: keepPreviousData,
   });
 }

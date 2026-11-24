@@ -20,7 +20,7 @@ import {
 import type { DeadlineReminderTarget, LogTimeFor } from "../models/ProjectSettings.js";
 import { PROJECT_STATUS_COLORS, ProjectStatus, seedProjectStatuses } from "../models/ProjectStatus.js";
 import type { ProjectStatusColor } from "../models/ProjectStatus.js";
-import { invalidateLeadership } from "../lib/leadership.js";
+import { invalidateLeadership, isLeadershipUser } from "../lib/leadership.js";
 
 function parseName(raw: unknown, max: number): string | { error: string } {
   if (typeof raw !== "string" || !raw.trim()) return { error: "name is required" };
@@ -331,6 +331,8 @@ interface SettingsBody {
   autoStopTimerAt?: unknown;
   trackerReminderAt?: unknown;
   deadlineReminderDays?: unknown;
+  /** Project readiness (leadership): `{ retainerDay, pitchDays, greenFrom, amberFrom }`. */
+  readiness?: unknown;
   deadlineReminderTo?: unknown;
   dailyTimeLogReport?: unknown;
   projectTypes?: unknown;
@@ -389,6 +391,26 @@ export async function updateSettings(req: Request, res: Response): Promise<void>
       return;
     }
     settings[field] = raw as string;
+  }
+  if (body.readiness !== undefined) {
+    if (!isLeadershipUser(req.user!)) {
+      res.status(403).json({ error: "Only leadership can change the project readiness settings" });
+      return;
+    }
+    const r = (body.readiness ?? {}) as Record<string, unknown>;
+    const whole = (v: unknown, min: number, max: number) => typeof v === "number" && Number.isInteger(v) && v >= min && v <= max;
+    if (!whole(r.retainerDay, 1, 20) || !whole(r.pitchDays, 0, 20)) {
+      res.status(400).json({ error: "The cut-off days must be whole numbers (retainers: working day 1 to 20; pitches: 0 to 20 working days)" });
+      return;
+    }
+    if (!whole(r.greenFrom, 1, 100) || !whole(r.amberFrom, 0, 99) || (r.amberFrom as number) >= (r.greenFrom as number)) {
+      res.status(400).json({ error: "Green must start above amber (green 1 to 100, amber 0 to 99)" });
+      return;
+    }
+    settings.readinessRetainerDay = r.retainerDay as number;
+    settings.readinessPitchDays = r.pitchDays as number;
+    settings.readinessGreenFrom = r.greenFrom as number;
+    settings.readinessAmberFrom = r.amberFrom as number;
   }
   if (body.deadlineReminderDays !== undefined) {
     const v = body.deadlineReminderDays;

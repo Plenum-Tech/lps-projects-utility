@@ -1980,6 +1980,8 @@ export interface Project {
   createdBy: UserRef;
   /** Copied from last month's project by the month migration; null = created new. */
   migratedFrom?: string | null;
+  /** Readiness score (leadership: every project; a manager: their own). */
+  readiness?: ProjectReadiness;
   archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -2219,6 +2221,11 @@ export interface ProjectSettings {
   trackerReminderAt: string | null;
   deadlineReminderDays: number;
   deadlineReminderTo: ("manager" | "members" | "admins")[];
+  /** Project readiness: cut-off days and the green / amber lines (leadership). */
+  readinessRetainerDay?: number;
+  readinessPitchDays?: number;
+  readinessGreenFrom?: number;
+  readinessAmberFrom?: number;
   dailyTimeLogReport: boolean;
   /** Project name Types (`Brand_Type_MonYYYY_Name`). */
   projectTypes: string[];
@@ -2228,7 +2235,7 @@ export interface ProjectSettings {
 
 export type ProjectSettingsInput = Partial<
   Omit<ProjectSettings, "_id" | "createdAt" | "updatedAt">
->;
+> & { readiness?: ProjectReadinessSettings };
 
 /** Payload of the `project-updated` SSE event. */
 export interface ProjectUpdatedEvent {
@@ -4797,4 +4804,36 @@ export interface TimesheetPerformance {
     noEstimate: { count: number; minutes: number; people: Array<{ name: string; tasks: number }> };
     iterations: { count: number; top: Array<TimesheetPerformanceTaskRef & { iterations: number; reworkMinutes: number }> };
   };
+}
+
+/** Project readiness (out of 100): planned — scope entered as tasks with assignees, due dates and estimates — by the cut-off. */
+export interface ProjectReadiness {
+  score: number;
+  band: "green" | "amber" | "red";
+  /** "YYYY-MM-DD": the day planning was due. */
+  cutoff: string | null;
+  pastCutoff: boolean;
+  kind: "pitch" | "project";
+  parts: {
+    scope: { points: number; max: number; planned: number; total: number; note: string };
+    onTime: { points: number; max: number; onTime: number; tasks: number };
+    assignee: { points: number; max: number; with: number; tasks: number };
+    dueDate: { points: number; max: number; with: number; tasks: number };
+    estimate: { points: number; max: number; with: number; tasks: number };
+  };
+  tasks: number;
+}
+export interface ProjectReadinessSettings {
+  retainerDay: number;
+  pitchDays: number;
+  greenFrom: number;
+  amberFrom: number;
+}
+/** GET /reports/project-readiness?month — leadership. */
+export interface ProjectReadinessReport {
+  month: string;
+  settings: ProjectReadinessSettings;
+  totals: { projects: number; average: number | null; green: number; amber: number; red: number };
+  managers: Array<{ name: string; projects: number; average: number; red: number }>;
+  projects: Array<ProjectReadiness & { _id: string; name: string; code: string; type: string; brand: string; manager: { _id: string; name: string } | null }>;
 }

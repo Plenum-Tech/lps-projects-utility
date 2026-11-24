@@ -30,6 +30,13 @@ export interface IProjectSettings extends mongoose.Document {
    * leadership always can. Empty = the defaults (360 Program, Community Management, Leadership).
    */
   brandTimeDepartments: mongoose.Types.ObjectId[];
+  /** Project readiness (lib/projectReadiness.ts): retainers are planned by this working day of the month. */
+  readinessRetainerDay?: number;
+  /** Pitches are planned within this many working days of the internal briefing. */
+  readinessPitchDays?: number;
+  /** Scores from here are green; from readinessAmberFrom amber; below it red. */
+  readinessGreenFrom?: number;
+  readinessAmberFrom?: number;
   /** "YYYY-MM-DD" idempotency key for the daily report job. */
   lastDailyReportOn?: string | null;
   createdAt: Date;
@@ -54,6 +61,10 @@ const projectSettingsSchema = new Schema<IProjectSettings>(
     dailyTimeLogReport: { type: Boolean, default: false },
     projectTypes: { type: [{ type: String, trim: true }], default: () => [...DEFAULT_PROJECT_TYPES] },
     brandTimeDepartments: { type: [{ type: Schema.Types.ObjectId, ref: "Department" }], default: [] },
+    readinessRetainerDay: { type: Number, default: 3, min: 1, max: 20 },
+    readinessPitchDays: { type: Number, default: 2, min: 0, max: 20 },
+    readinessGreenFrom: { type: Number, default: 80, min: 1, max: 100 },
+    readinessAmberFrom: { type: Number, default: 50, min: 0, max: 99 },
     lastDailyReportOn: { type: String, default: null },
   },
   { timestamps: true }
