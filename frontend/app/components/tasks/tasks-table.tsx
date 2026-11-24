@@ -96,7 +96,7 @@ function TaskCell({ task, onOpen, showProject }: { task: Task; onOpen: (id: stri
         )}
       </div>
       {/* Brand · Project, for tracking (view-only callers can't open the project). */}
-      {showProject && <TaskProjectLine task={task} link={task.access !== "read"} className="max-w-sm" />}
+      {showProject && <TaskProjectLine task={task} link={task.access !== "read"} className="max-w-64 min-[1800px]:max-w-sm" />}
       <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
         <PriorityIndicator priority={task.priority} />
 
@@ -402,7 +402,7 @@ export function TasksTable({
       header: "Work",
       cell: (task) =>
         task.iteration === "rework" ? (
-          <span className="inline-flex items-center gap-1">
+          <span className="inline-flex flex-col items-start gap-1 min-[1800px]:flex-row min-[1800px]:items-center">
             <span
               className="rounded-full border border-warn/40 bg-warn/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warn"
               title={task.reworkOf ? `Rework of ${task.reworkOf.shortCode ?? ""} ${task.reworkOf.title}`.trim() : "Rework"}

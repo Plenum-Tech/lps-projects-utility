@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import { Navigate, useLocation } from "react-router";
 
 import { useCurrentUser } from "@/hooks/use-auth";
+import { clearReturnPath, rememberReturnPath } from "@/lib/sso";
 
 /**
  * Guards protected routes (used by the `protected` pathless layout).
@@ -19,6 +20,14 @@ import { useCurrentUser } from "@/hooks/use-auth";
 export function RequireAuth({ children }: { children: ReactNode }) {
   const { isPending, data: user } = useCurrentUser();
   const location = useLocation();
+
+  // A signed-out person opening a link (a shared task …) comes back to it after signing in.
+  const signedOut = !isPending && !user;
+  const here = location.pathname + location.search;
+  useEffect(() => {
+    if (signedOut) rememberReturnPath(here);
+    else if (user) clearReturnPath();
+  }, [signedOut, user, here]);
 
   if (isPending) {
     return (

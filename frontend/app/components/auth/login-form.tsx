@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { useLogin } from "@/hooks/use-auth";
 import { getErrorMessage } from "@/lib/api";
-import { entraStartUrl, fetchSsoConfig } from "@/lib/sso";
+import { entraStartUrl, fetchSsoConfig, returnPath } from "@/lib/sso";
 
 /**
  * Wrong credentials (401) or too many attempts (429): the way in is Forgot
@@ -61,7 +61,7 @@ export function LoginForm() {
     login.mutate(
       { email: email.trim(), password },
       {
-        onSuccess: () => navigate("/dashboard"),
+        onSuccess: () => navigate(returnPath()),
       },
     );
   }
@@ -69,11 +69,11 @@ export function LoginForm() {
   function handleMicrosoftSignIn() {
     setSsoStarting(true);
     try {
-      sessionStorage.setItem(LOGIN_NEXT_KEY, "/dashboard");
+      sessionStorage.setItem(LOGIN_NEXT_KEY, returnPath());
     } catch {
       /* ignore */
     }
-    window.location.assign(entraStartUrl("/dashboard"));
+    window.location.assign(entraStartUrl(returnPath()));
   }
 
   return (

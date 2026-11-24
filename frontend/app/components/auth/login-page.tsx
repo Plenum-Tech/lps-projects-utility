@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCurrentUser } from "@/hooks/use-auth";
+import { returnPath } from "@/lib/sso";
 
 /**
  * Home route: a branded split-screen sign-in page.
@@ -27,7 +28,7 @@ export function LoginPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (!isPending && user) navigate("/dashboard", { replace: true });
+    if (!isPending && user) navigate(returnPath(), { replace: true });
   }, [isPending, user, navigate]);
 
   return (

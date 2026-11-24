@@ -38,6 +38,34 @@ export async function completeEntraSso(code: string, state: string): Promise<Sso
   }
 }
 
+const RETURN_KEY = "utility.return-to";
+
+/** Remembers the page a signed-out person opened (e.g. a shared task link), for after sign-in. */
+export function rememberReturnPath(path: string): void {
+  try {
+    if (safeReturnPath(path) === path && path !== "/dashboard") sessionStorage.setItem(RETURN_KEY, path);
+  } catch {
+    /* no storage: they land on the dashboard */
+  }
+}
+
+/** The remembered page (else the dashboard). It stays until clearReturnPath. */
+export function returnPath(): string {
+  try {
+    return safeReturnPath(sessionStorage.getItem(RETURN_KEY));
+  } catch {
+    return "/dashboard";
+  }
+}
+
+export function clearReturnPath(): void {
+  try {
+    sessionStorage.removeItem(RETURN_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Same-origin return path only. */
 export function safeReturnPath(raw: string | null | undefined): string {
   const n = (raw || "").trim();

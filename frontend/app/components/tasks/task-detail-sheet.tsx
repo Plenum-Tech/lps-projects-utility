@@ -12,14 +12,17 @@ import {
   LuFolder,
   LuFolderKanban,
   LuFlag,
+  LuLink,
   LuLoaderCircle,
   LuLock,
+  LuMail,
   LuMessagesSquare,
   LuMic,
   LuPencil,
   LuRefreshCw,
   LuRepeat,
   LuSend,
+  LuShare2,
   LuTrash2,
   LuUserPlus,
   LuMessageSquare,
@@ -58,6 +61,8 @@ import type { WorkTab } from "@/components/tasks/task-work-sections";
 import { TaskComments } from "@/components/tasks/task-comments";
 import { GuestBadge, InviteGuestDialog } from "@/components/tasks/invite-guest-dialog";
 import { openVoiceAssistant } from "@/components/voice/voice-assistant";
+import { writeClipboard } from "@/hooks/use-password-setup";
+import { useToast } from "@/hooks/use-toast";
 import { TaskFiles } from "@/components/tasks/task-files";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -345,6 +350,7 @@ function TaskDetail({
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
+            {!guest && <ShareTaskMenu task={task} />}
             {!guest && (
               <Button variant="outline" size="sm" onClick={() => openVoiceAssistant(task._id)} title="Close this task or log time by voice">
                 <LuMic aria-hidden />
@@ -837,5 +843,53 @@ function DueDateChanges({ changes }: { changes?: Task["dueDateChanges"] }) {
       ))}
       {older > 0 && <li>…and {older} earlier change{older === 1 ? "" : "s"}</li>}
     </ul>
+  );
+}
+
+/**
+ * Share: a link that opens this task (for people who can already see it — the link gives no
+ * access of its own; whoever isn't signed in signs in first and lands on the task).
+ */
+function ShareTaskMenu({ task }: { task: Pick<Task, "_id" | "title" | "shortCode"> }) {
+  const toast = useToast();
+  const link = () => `${window.location.origin}/tasks?task=${task._id}`;
+  const label = `${task.shortCode ? `${task.shortCode} · ` : ""}${task.title}`;
+  const canNativeShare = typeof navigator !== "undefined" && typeof navigator.share === "function";
+
+  async function copy() {
+    if (await writeClipboard(link())) toast.success("Link copied — anyone who can see this task can open it.");
+    else toast.error("Couldn't copy — your browser blocked clipboard access.");
+  }
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger render={<Button variant="outline" size="sm" title="Share a link to this task" />}>
+        <LuShare2 aria-hidden />
+        Share
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="min-w-48">
+        <DropdownMenuGroup>
+          <DropdownMenuLabel>Share this task</DropdownMenuLabel>
+          <DropdownMenuItem onClick={() => void copy()}>
+            <LuLink aria-hidden />
+            Copy link
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={() => {
+              window.location.href = `mailto:?subject=${encodeURIComponent(`Task: ${label}`)}&body=${encodeURIComponent(`${label}\n${link()}`)}`;
+            }}
+          >
+            <LuMail aria-hidden />
+            Send by email
+          </DropdownMenuItem>
+          {canNativeShare && (
+            <DropdownMenuItem onClick={() => void navigator.share({ title: label, url: link() }).catch(() => undefined)}>
+              <LuShare2 aria-hidden />
+              More…
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuGroup>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
