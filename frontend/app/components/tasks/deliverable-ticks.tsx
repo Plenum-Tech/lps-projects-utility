@@ -11,7 +11,7 @@ export function DeliverableTicks({ task }: { task: Task }) {
   const items = task.titleParts?.items ?? [];
   if (items.length < 2) return null;
   const closed = task.status === "completed" || task.status === "rejected";
-  const blocked = task.overScope?.status === "pending" || task.overScope?.status === "rejected";
+  const blocked = task.overScope?.status === "rejected";
   const isDone = (done?: boolean) => task.status === "completed" || Boolean(done);
   const doneCount = items.filter((d) => isDone(d.done)).length;
   const groups = new Map<string, typeof items>();

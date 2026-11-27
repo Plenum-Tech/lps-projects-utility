@@ -56,7 +56,7 @@ export function TaskDetailsPanel({
   const taskFiles = (files.data?.files ?? []).filter((f) => !f.subtask);
   const finalFile = task.finalFile?.fileId ? taskFiles.find((f) => f._id === task.finalFile!.fileId) : undefined;
   const subtasksDone = task.subtasks.filter((s) => s.done).length;
-  const blocked = task.overScope?.status === "pending" || task.overScope?.status === "rejected";
+  const blocked = task.overScope?.status === "rejected";
   const direct = task.project?.requireTaskApproval === false;
 
   const row = (label: string, value: React.ReactNode) => (
@@ -90,9 +90,7 @@ export function TaskDetailsPanel({
           {blocked && (
             <p role="alert" className="flex items-start gap-2 rounded-lg bg-destructive/10 px-2.5 py-2 text-xs text-destructive">
               <LuCircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-              {task.overScope!.status === "pending"
-                ? `Beyond the approved scope (${task.overScope!.unit} ${task.titleParts?.quantity ?? "?"} of ${task.overScope!.allowed} approved) — it's blocked until leadership approves it, so it can't be closed yet.`
-                : "Leadership didn't approve this task beyond the scope, so it can't be worked on or closed."}
+              Leadership didn&apos;t approve this task beyond the scope, so it can&apos;t be worked on or closed.
             </p>
           )}
 

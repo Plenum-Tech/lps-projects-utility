@@ -43,6 +43,13 @@ export interface ITaskTitleParts {
   shortName: string;
 }
 
+/**
+ * Work beyond the agreed scope (27 Nov 2026): it no longer waits for leadership — a task over the
+ * scope is saved and worked on like any other, and only shows in the Scope Creep report. `true`
+ * brings the wall back (new extras flagged "pending" and blocked until leadership decides).
+ */
+export const SCOPE_NEEDS_APPROVAL = false;
+
 /** "Others" is a catch-all type: it takes a count like any type ("3 Others") but is never counted or checked against the scope. */
 export const isUncountedUnit = (unit: string | null | undefined): boolean => /^others?$/i.test((unit ?? "").trim());
 

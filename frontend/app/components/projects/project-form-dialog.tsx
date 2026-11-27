@@ -1378,7 +1378,7 @@ export function ProjectFormDialog({
               <legend className="text-sm font-medium text-foreground">Scope</legend>
               <p className="text-xs text-muted-foreground">
                 Deliverables as rows: unit, quantity and the language / size multipliers (3 videos × 2 languages × 2
-                sizes = 12). Tasks beyond a unit&apos;s total are blocked until leadership approves them.
+                sizes = 12). Tasks beyond a unit&apos;s total need no approval; they show in the Scope Creep report.
               </p>
               {brandScope ? (
                 <div className="space-y-2">

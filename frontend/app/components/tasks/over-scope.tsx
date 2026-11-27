@@ -91,25 +91,26 @@ export function OverScopeBanner({ task }: { task: Task }) {
       </p>
     );
   }
+  // Work beyond the scope no longer waits for leadership: a task flagged earlier is free to work on.
+  if (o.status === "pending") {
+    return (
+      <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        Beyond the agreed scope — no approval needed; it shows in the Scope Creep report. {text}
+      </p>
+    );
+  }
   return (
-    <div
-      className={
-        o.status === "pending"
-          ? "space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
-          : "space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm"
-      }
-    >
+    <div className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm">
       <p className="flex items-start gap-2 text-foreground">
         <LuShieldAlert aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-600" />
         <span>
           <span className="font-medium">
-            {o.status === "pending" ? "Over the approved scope — blocked until leadership approves it. No work or time can be logged on it." : "Not approved beyond the scope."}
+            Not approved beyond the scope.
           </span>{" "}
           {text}
           {o.reason ? ` Reason: ${o.reason}` : ""}
         </span>
       </p>
-      {o.status === "pending" && user?.leadership && <DecideButtons id={task._id} />}
     </div>
   );
 }

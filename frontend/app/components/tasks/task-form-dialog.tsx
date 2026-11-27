@@ -1178,8 +1178,8 @@ export function TaskFormDialog({
                     });
                     return (
                       <p className="rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
-                        This task has {over.join(" and ")}. It is saved but blocked — no work or time on it — until leadership approves the
-                        extra (unless they already approved it).
+                        This task has {over.join(" and ")}. It is saved and worked on as usual — no approval needed — and the extra shows in the
+                        Scope Creep report.
                       </p>
                     );
                   })()}

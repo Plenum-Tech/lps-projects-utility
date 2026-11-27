@@ -76,7 +76,7 @@ import type { IProject } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { TimeLog } from "../models/TimeLog.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
-import { Task, TASK_ITERATIONS, REWORK_SOURCES, TASK_TITLE_LIMITS, composeTaskTitle, countsLabel, deliverablesLabel, deliverablesOf, isUncountedUnit } from "../models/Task.js";
+import { Task, TASK_ITERATIONS, REWORK_SOURCES, TASK_TITLE_LIMITS, composeTaskTitle, countsLabel, deliverablesLabel, deliverablesOf, isUncountedUnit, SCOPE_NEEDS_APPROVAL } from "../models/Task.js";
 import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus, ITaskTitleParts, TaskIteration, ReworkSource } from "../models/Task.js";
 import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
@@ -1009,7 +1009,8 @@ async function completionBlocker(task: ITask): Promise<string | null> {
 
 /** Tasks over their project's approved scope can't move (or take time) until leadership approves them. */
 export function overScopeBlock(task: Pick<ITask, "overScope">): Invalid | null {
-  if (task.overScope?.status === "pending") {
+  // Tasks flagged while the wall was up are free now; only a past "not approved" still stands.
+  if (task.overScope?.status === "pending" && SCOPE_NEEDS_APPROVAL) {
     return { status: 409, error: `This task goes over the approved scope (${task.overScope.unit}). It's blocked until leadership approves it.` };
   }
   if (task.overScope?.status === "rejected") {
@@ -1029,6 +1030,8 @@ async function scopeWall(
   iteration: string | null | undefined,
   except?: mongoose.Types.ObjectId
 ): Promise<ITask["overScope"]> {
+  // No approval for work beyond the scope: nothing is flagged (the Scope Creep report still shows it).
+  if (!SCOPE_NEEDS_APPROVAL) return null;
   if (!project || !project.scopeItems?.length || iteration === "rework" || !titleParts) return null;
   const totals = scopeTotals(project.scopeItems);
   const projectId = project._id as mongoose.Types.ObjectId;
@@ -3404,7 +3407,7 @@ export async function unpinTask(req: Request, res: Response): Promise<void> {
 
 /** GET /api/tasks/over-scope — leadership: tasks waiting for a scope decision. */
 export async function overScopeTasks(req: Request, res: Response): Promise<void> {
-  if (!isLeadershipUser(req.user!)) {
+  if (!isLeadershipUser(req.user!) || !SCOPE_NEEDS_APPROVAL) {
     res.json({ tasks: [] });
     return;
   }

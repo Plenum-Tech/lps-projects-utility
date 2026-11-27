@@ -18,7 +18,7 @@ import { computeEarnings, formatMinutes, pushTimeLogUpdate, resolveHourlyRate } 
 import { createEvent, pushToUsers } from "../lib/sse.js";
 import { Project } from "../models/Project.js";
 import { completedStatusIds } from "../models/ProjectStatus.js";
-import { Task } from "../models/Task.js";
+import { SCOPE_NEEDS_APPROVAL, Task } from "../models/Task.js";
 import { TimeLog } from "../models/TimeLog.js";
 import type { IUser } from "../models/User.js";
 import { User } from "../models/User.js";
@@ -75,7 +75,7 @@ async function loggableTasks(userId: mongoose.Types.ObjectId, extraTaskIds: mong
   const tasks = await Task.find({
     $or: [
       // Tasks behind the scope wall (waiting for leadership, or not approved) take no time.
-      { assignees: userId, status: { $ne: "completed" }, project: { $nin: excluded }, "overScope.status": { $nin: ["pending", "rejected"] } },
+      { assignees: userId, status: { $ne: "completed" }, project: { $nin: excluded }, "overScope.status": { $nin: SCOPE_NEEDS_APPROVAL ? ["pending", "rejected"] : ["rejected"] } },
       { _id: { $in: extraTaskIds } },
     ],
   })

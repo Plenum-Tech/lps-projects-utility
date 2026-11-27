@@ -17,7 +17,9 @@ Stack: Express 5 + Bun + Mongoose (Azure Cosmos vCore Mongo) in `backend/`; Reac
 - **New projects need no approval** (Settings → Projects "Project approval required" stays off). Brand changes, manpower plan versions, and scope / team edits to existing projects by non-leadership do need approval (leadership = Aasim, Rania, Bala).
 - **Brands**: only brand creators (Nazeer, env `BRAND_CREATOR_EMAILS`) and leadership create brands. Different scope = different brand. A brand may have several leads and an organisation (ENOC › Zoom).
 - **Month migration** (Brands → "Migrate to next month"): brand creators / leadership pick brands; plan lines + projects are copied month by month (up to 12 months), approved at once.
-- **Scope = deliverables**: a scope row "15 Video" is Video 1 of 15 … 15 of 15. Tasks pick a deliverable (title "Video 3 – Copy"); several tasks can share one. Scope used = deliverables with tasks. Beyond the total → admin approval (once approved, more tasks on it are fine).
+- **Scope = deliverables**: a scope row "15 Video" is Video 1 of 15 … 15 of 15. Tasks pick a deliverable (title "Video 3 – Copy"); several tasks can share one. Scope used = deliverables with tasks. The task form takes a type and a count ("5 Static + 2 Video – Design" = Static 1–5 and Video 1–2), so scope used for a type is the largest count on one task; "Others" is never counted against the scope.
+- **Tasks beyond the scope need no approval** (owner, 27 Nov 2026): they are saved and worked on as usual and only show in the Scope Creep report (`SCOPE_NEEDS_APPROVAL` in `backend/src/models/Task.ts` brings the wall back). Changing the scope itself on a brand / project still needs leadership approval.
+- **Tasks only to people on the manpower plan** is built but off on live (server setting `ASSIGN_ON_PLAN_ONLY=true` turns it on) — wait for the owner's go-ahead.
 - Projects close at the end of their month (no new tasks); open tasks can still be closed. Archive makes a project read-only.
 - Insights is leadership only.
 
