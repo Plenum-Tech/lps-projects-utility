@@ -986,6 +986,8 @@ export function TaskFormDialog({
                         project: option?.value ?? NO_PROJECT,
                         milestone: NO_MILESTONE,
                         reworkOf: "",
+                        // A new task on another project: its types come from that project's scope.
+                        rows: !task && (option?.value ?? NO_PROJECT) !== current.project ? [{ unit: "", count: "1" }] : current.rows,
                       }))
                     }
                     isItemEqualToValue={(x: ProjectOption, y: ProjectOption) => x.value === y.value}

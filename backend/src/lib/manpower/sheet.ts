@@ -27,7 +27,10 @@ const HEADER_ROLES: Array<[RegExp, string]> = [
   [/^animator/i, "animator"],
   [/^producer/i, "producer"],
   [/^production lead/i, "producer"],
-  [/^cm\s*lead/i, "cmLead"],
+  // Community Management: the full names, the short ones ("CM Lead") and the earlier "Community Manager".
+  [/^(cm|community\s*management)\s*lead/i, "cmLead"],
+  [/^(cm|community\s*management)\s*executive/i, "cmExecutive"],
+  [/^(cm|community\s*management)\s*manager/i, "communityManager"],
   [/^community\s*manager/i, "communityManager"],
 ];
 

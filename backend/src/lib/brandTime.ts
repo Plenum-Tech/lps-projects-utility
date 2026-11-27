@@ -35,7 +35,7 @@ export async function canLogBrandTime(user: Pick<IUser, "_id" | "department"> & 
 }
 
 /** Program roles in the manpower plan: their people log brand time on the brands they're allocated to. */
-const PROGRAM_ROLES = ["programLead", "pm", "programExecution", "cmLead", "communityManager"];
+const PROGRAM_ROLES = ["programLead", "pm", "programExecution", "cmLead", "communityManager", "cmExecutive"];
 
 /** The plan in use for a month: its latest approved version, else the latest approved plan before it. */
 async function planFor(month: string): Promise<IManpowerPlan | null> {

@@ -16,8 +16,10 @@ export const MANPOWER_ROLE_FALLBACK = [
   { key: "designer", label: "Designer" },
   { key: "animator", label: "Animator" },
   { key: "producer", label: "Production Lead" },
-  { key: "cmLead", label: "CM Lead" },
-  { key: "communityManager", label: "Community Manager" },
+  // Community Management team (the keys of the first two are the earlier "CM Lead" / "Community Manager" columns).
+  { key: "cmLead", label: "Community Management Lead" },
+  { key: "communityManager", label: "Community Management Manager" },
+  { key: "cmExecutive", label: "Community Management Executive" },
 ];
 
 /** Project team roles: the plan roles plus "Others". */
