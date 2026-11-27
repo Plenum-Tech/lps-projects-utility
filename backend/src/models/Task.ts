@@ -43,7 +43,7 @@ export interface ITaskTitleParts {
   shortName: string;
 }
 
-/** "Others" is a catch-all type: picked without a count and never counted or checked against the scope. */
+/** "Others" is a catch-all type: it takes a count like any type ("3 Others") but is never counted or checked against the scope. */
 export const isUncountedUnit = (unit: string | null | undefined): boolean => /^others?$/i.test((unit ?? "").trim());
 
 export interface ITaskDeliverable {
@@ -88,7 +88,7 @@ export function deliverablesLabel(items: Array<{ unit: string; n: number }>): st
     .join(" + ");
 }
 
-/** "5 Static + 2 Video + Others": how many of each type (Others without a count). */
+/** "5 Static + 2 Video + 3 Others": how many of each type. */
 export function countsLabel(items: Array<{ unit: string; n: number }>): string {
   const groups = new Map<string, { unit: string; count: number }>();
   for (const d of items) {
@@ -97,7 +97,7 @@ export function countsLabel(items: Array<{ unit: string; n: number }>): string {
     group.count++;
     groups.set(key, group);
   }
-  return [...groups.values()].map((g) => (isUncountedUnit(g.unit) ? g.unit : `${g.count} ${g.unit}`)).join(" + ");
+  return [...groups.values()].map((g) => `${g.count} ${g.unit}`).join(" + ");
 }
 
 export function composeTaskTitle(parts: ITaskTitleParts): string {

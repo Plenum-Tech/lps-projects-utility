@@ -534,11 +534,11 @@ export function TaskFormDialog({
   const sourceFiles = reworkSourceId ? (reworkSourceFiles.data?.files ?? []).filter((f) => !f.subtask) : [];
   // New tasks and rules-era tasks use the controlled name; older tasks keep a free title.
   const controlledName = (!task || Boolean(task.titleParts)) && !reworkCreate;
-  // What the task covers: numbers 1 … count of each type (Others: just the type).
+  // What the task covers: numbers 1 … count of each type.
   const taskItems = rowDeliverables(form.rows);
   const rowsKey = (rows: DeliverableRow[]) =>
     rows
-      .map((row) => `${row.unit.trim().toLowerCase()}|${isUncountedUnit(row.unit) ? "" : row.count.trim()}`)
+      .map((row) => `${row.unit.trim().toLowerCase()}|${row.count.trim()}`)
       .sort()
       .join(",");
   // A task named by number ("Video 3 – Copy") keeps its name until its type or count is changed here.
@@ -553,7 +553,7 @@ export function TaskFormDialog({
         : "Enter the type (e.g. Video, Post, Banner)."
       : new Set(rowUnits).size !== rowUnits.length
         ? "Each type can be on one line only — change the count instead."
-        : form.rows.some((row) => !isUncountedUnit(row.unit) && !(Number.isInteger(Number(row.count)) && Number(row.count) >= 1))
+        : form.rows.some((row) => !(Number.isInteger(Number(row.count)) && Number(row.count) >= 1))
           ? "Enter how many: a whole number, 1 or more."
           : taskItems.length > 200
             ? "A task can cover at most 200 deliverables at once."
@@ -1110,7 +1110,7 @@ export function TaskFormDialog({
                                 disabled={needProjectFirst}
                               />
                             )}
-                            {!isUncountedUnit(row.unit) && (
+                            {(
                               <Input
                                 type="number"
                                 min={1}
