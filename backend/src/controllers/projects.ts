@@ -2232,9 +2232,14 @@ export async function duplicateProject(req: Request, res: Response): Promise<voi
       ? null
       : new Set([actor._id.toString(), ...(await departmentUserIds(actor.department)).map((id) => id.toString())]);
   const inScope = (id: mongoose.Types.ObjectId) => !scope || scope.has(id.toString());
-  const manager = source.manager && inScope(source.manager) ? source.manager : actor.role === "admin" ? (source.manager ?? null) : actor._id;
+  // People whose account was deleted since stay behind (they'd fail the copy with "Member not found").
+  const alive = new Set(
+    (await User.find({ _id: { $in: [...source.members.map((m) => m.user), ...(source.manager ? [source.manager] : [])] } }).select("_id").lean()).map((u) => String(u._id))
+  );
+  const sourceManager = source.manager && alive.has(source.manager.toString()) ? source.manager : null;
+  const manager = sourceManager && inScope(sourceManager) ? sourceManager : actor.role === "admin" ? sourceManager : actor._id;
   const members = source.members
-    .filter((m) => inScope(m.user))
+    .filter((m) => alive.has(m.user.toString()) && inScope(m.user))
     .map((m) => ({ user: m.user, hourlyRate: m.hourlyRate, addedAt: new Date() }));
   if (manager && !members.some((m) => m.user.equals(manager))) {
     members.push({ user: manager as mongoose.Types.ObjectId, hourlyRate: 0, addedAt: new Date() });
