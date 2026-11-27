@@ -4,7 +4,7 @@ import { projectMonth } from "./projectExpiry.js";
 import { scopeTotals } from "./scopeUnits.js";
 import type { IProject } from "../models/Project.js";
 import { getProjectSettings } from "../models/ProjectSettings.js";
-import { Task } from "../models/Task.js";
+import { Task, deliverablesOf, isUncountedUnit } from "../models/Task.js";
 
 // ---------------------------------------------------------------------------
 // Project readiness (out of 100): was the project planned — its scope entered as tasks, with
@@ -106,7 +106,7 @@ export async function readinessOf(projects: ScoredProject[], settings?: Readines
     "overScope.status": { $ne: "rejected" },
   })
     .select("project titleParts assignees dueDate estimateMinutes createdAt")
-    .lean<Array<{ project: Id; titleParts?: { unit?: string; quantity?: number } | null; assignees?: Id[]; dueDate?: Date | null; estimateMinutes?: number | null; createdAt: Date }>>();
+    .lean<Array<{ project: Id; titleParts?: { unit?: string; quantity?: number; items?: Array<{ unit: string; n: number }> | null } | null; assignees?: Id[]; dueDate?: Date | null; estimateMinutes?: number | null; createdAt: Date }>>();
   const byProject = new Map<string, typeof tasks>();
   for (const t of tasks) byProject.set(String(t.project), [...(byProject.get(String(t.project)) ?? []), t]);
 
@@ -126,14 +126,16 @@ export async function readinessOf(projects: ScoredProject[], settings?: Readines
     if (totals.size > 0) {
       const seen = new Set<string>();
       for (const t of mine) {
-        const unit = t.titleParts?.unit?.trim().toLowerCase();
-        const q = t.titleParts?.quantity;
-        if (!unit || typeof q !== "number") continue;
-        const allowed = totals.get(unit)?.total ?? 0;
-        if (q >= 1 && q <= allowed) seen.add(`${unit}#${q}`);
+        // Every deliverable the task covers (one task can cover several, of several types).
+        for (const d of deliverablesOf(t.titleParts)) {
+          const unit = d.unit.trim().toLowerCase();
+          const allowed = totals.get(unit)?.total ?? 0;
+          if (unit && !isUncountedUnit(unit) && d.n >= 1 && d.n <= allowed) seen.add(`${unit}#${d.n}`);
+        }
       }
       planned = seen.size;
-      total = [...totals.values()].reduce((sum, u) => sum + u.total, 0);
+      // "Others" isn't counted: it's neither planned nor expected.
+      total = [...totals.entries()].reduce((sum, [unit, u]) => sum + (isUncountedUnit(unit) ? 0 : u.total), 0);
       note = "scope deliverables with a task";
     } else if (pitch) {
       planned = [p.pitch?.milestone1, p.pitch?.milestone2, p.pitch?.clientPresentation].filter(Boolean).length;

@@ -80,7 +80,10 @@ export function OverScopeBanner({ task }: { task: Task }) {
   const o = task.overScope;
   if (!o) return null;
   // The task names a deliverable (Video 16) beyond the unit's approved total.
-  const text = `${o.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${o.allowed} approved in the scope (${o.used} of ${o.allowed} have tasks).`;
+  const text =
+    (task.titleParts?.items?.length ?? 0) > 1
+      ? `${o.requested} of this task's deliverables (${o.unit}) ${o.requested === 1 ? "is" : "are"} beyond the approved scope.`
+      : `${o.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${o.allowed} approved in the scope (${o.used} of ${o.allowed} have tasks).`;
   if (o.status === "approved") {
     return (
       <p className="rounded-lg border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
@@ -137,9 +140,11 @@ export function OverScopeApprovals() {
                 </p>
                 <p className="text-sm">
                   <span className="font-medium text-amber-700 dark:text-amber-400">
-                    {t.overScope.unit} {t.titleParts?.quantity ?? "?"}
+                    {(t.titleParts?.items?.length ?? 0) > 1 ? `${t.overScope.requested} extra ${t.overScope.unit}` : `${t.overScope.unit} ${t.titleParts?.quantity ?? "?"}`}
                   </span>{" "}
-                  is beyond the {t.overScope.allowed} approved ({t.overScope.used} of {t.overScope.allowed} have tasks)
+                  {(t.titleParts?.items?.length ?? 0) > 1
+                    ? "beyond the approved scope (one task covering several deliverables)"
+                    : `is beyond the ${t.overScope.allowed} approved (${t.overScope.used} of ${t.overScope.allowed} have tasks)`}
                 </p>
               </div>
               <DecideButtons id={t._id} />

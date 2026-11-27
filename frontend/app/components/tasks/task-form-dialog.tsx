@@ -87,6 +87,7 @@ import { useCurrentUser } from "@/hooks/use-auth";
 import {
   useMilestones,
   useProject,
+  useProjectPlanTeam,
   useProjectOptions,
 } from "@/hooks/use-projects";
 import {
@@ -109,7 +110,13 @@ import { cn } from "@/lib/utils";
 import {
   PRIORITIES,
   PRIORITY_META,
-  deliverableOptions,
+  countsLabel,
+  deliverableRows,
+  deliverablesLabel,
+  isUncountedUnit,
+  rowDeliverables,
+  taskDeliverables,
+  type DeliverableRow,
   formatDateOnly,
   parseEstimate,
   splitEstimate,
@@ -139,9 +146,8 @@ const MAX_SUBTASKS = 50;
 
 interface FormState {
   title: string;
-  /** Controlled name: scope unit, quantity, short name. */
-  unit: string;
-  quantity: string;
+  /** Controlled name: what the task covers — a type and how many of it, one line per type — and a short name. */
+  rows: DeliverableRow[];
   shortName: string;
   iteration: "" | TaskIteration;
   /** Rework: the original task's id. */
@@ -183,8 +189,7 @@ function initialState(
       : (defaultProjectId ?? NO_PROJECT),
     milestone: task?.milestone?._id ?? NO_MILESTONE,
     title: task?.title ?? "",
-    unit: task?.titleParts?.unit ?? "",
-    quantity: task?.titleParts ? String(task.titleParts.quantity) : "1",
+    rows: deliverableRows(task?.titleParts),
     shortName: task?.titleParts?.shortName ?? "",
     iteration: task?.iteration ?? defaultIteration ?? "",
     reworkOf: task ? (task.reworkOf?._id ?? "") : (defaultReworkOf?.value ?? ""),
@@ -277,6 +282,7 @@ export function TaskFormDialog({
   const projectId = form.project === NO_PROJECT ? null : form.project;
   const projectDetail = useProject(open ? projectId : null);
   const milestones = useMilestones(projectId, open);
+  const planTeam = useProjectPlanTeam(projectId, open);
   useRefetchOnFocus(
     milestones.refetch,
     open && Boolean(projectId) && isHeadOrAdmin,
@@ -293,13 +299,20 @@ export function TaskFormDialog({
     staleTime: 15_000,
   });
   const scopeUnits = scopeUsage.data ?? [];
-  // Scoped projects: the task picks a deliverable (Video 3 of 15) — the unit and its number.
-  const deliverables = useMemo(() => deliverableOptions(scopeUnits), [scopeUnits]);
-  const pickedDeliverable = deliverables.find(
-    (d) => d.unit.toLowerCase() === form.unit.trim().toLowerCase() && String(d.n) === form.quantity.trim(),
-  );
-  // Editing a task whose deliverable is no longer in the scope: the free unit / number fields.
-  const usePicker = scopeUnits.length > 0 && (!form.unit.trim() || Boolean(pickedDeliverable));
+  // The task says what it covers by type and count ("5 Static"), one line per type — not which ones.
+  const setRow = (index: number, patch: Partial<DeliverableRow>) =>
+    setForm((current) => ({ ...current, rows: current.rows.map((row, i) => (i === index ? { ...row, ...patch } : row)) }));
+  const addRow = () => setForm((current) => ({ ...current, rows: [...current.rows, { unit: "", count: "1" }] }));
+  const removeRow = (index: number) => setForm((current) => ({ ...current, rows: current.rows.filter((_, i) => i !== index) }));
+  // The types to choose from: the project's scope, plus a type the task already has that left the scope.
+  const typeNames = useMemo(() => {
+    const names = scopeUnits.map((u) => u.unit);
+    for (const row of form.rows) {
+      const unit = row.unit.trim();
+      if (unit && !names.some((name) => name.toLowerCase() === unit.toLowerCase())) names.push(unit);
+    }
+    return names;
+  }, [scopeUnits, form.rows]);
   const navigate = useNavigate();
   const toast = useToast();
   /** Creating the drafted subtasks (and their files) after the task is saved. */
@@ -409,6 +422,14 @@ export function TaskFormDialog({
         });
       }
     }
+    // Tasks go only to people on the manpower plan for the brand: say so in the list.
+    const team = planTeam.data;
+    if (projectId && team?.applies) {
+      const onPlan = new Set(team.users);
+      for (const option of options.values()) {
+        if (!onPlan.has(option.value)) option.description = `${option.description ? `${option.description} · ` : ""}Not on the manpower plan`;
+      }
+    }
     // Keep current assignees selectable even if outside the assignable list.
     for (const user of task?.assignees ?? []) {
       if (!options.has(user._id)) {
@@ -420,7 +441,7 @@ export function TaskFormDialog({
       }
     }
     return [...options.values()];
-  }, [assignable.data, task, projectId, projectDetail.data]);
+  }, [assignable.data, task, projectId, projectDetail.data, planTeam.data]);
 
   // Projects the caller may add tasks to: heads/admins → any visible project,
   // employees → projects they manage or are a member of. Archived / completed ones are excluded.
@@ -513,19 +534,48 @@ export function TaskFormDialog({
   const sourceFiles = reworkSourceId ? (reworkSourceFiles.data?.files ?? []).filter((f) => !f.subtask) : [];
   // New tasks and rules-era tasks use the controlled name; older tasks keep a free title.
   const controlledName = (!task || Boolean(task.titleParts)) && !reworkCreate;
-  const quantityNumber = Number(form.quantity);
+  // What the task covers: numbers 1 … count of each type (Others: just the type).
+  const taskItems = rowDeliverables(form.rows);
+  const rowsKey = (rows: DeliverableRow[]) =>
+    rows
+      .map((row) => `${row.unit.trim().toLowerCase()}|${isUncountedUnit(row.unit) ? "" : row.count.trim()}`)
+      .sort()
+      .join(",");
+  // A task named by number ("Video 3 – Copy") keeps its name until its type or count is changed here.
+  const keepsNumbers = Boolean(task?.titleParts) && !task!.titleParts!.counted && rowsKey(form.rows) === rowsKey(deliverableRows(task!.titleParts));
+  const rowUnits = form.rows.map((row) => row.unit.trim().toLowerCase());
+  const titlePreview = `${keepsNumbers ? deliverablesLabel(taskDeliverables(task!.titleParts)) : taskItems.length ? countsLabel(taskItems) : "?"} – ${form.shortName.trim()}`;
   const partsError = !controlledName
     ? null
-    : !form.unit.trim()
-      ? "Enter the scope unit (e.g. Video, Post, Banner)."
-      : !Number.isInteger(quantityNumber) || quantityNumber < 1
-        ? "The deliverable number must be a whole number, 1 or more."
-        : !form.shortName.trim()
-          ? "Enter a short name."
-          : null;
-  const composedTitle = controlledName
-    ? `${form.unit.trim()} ${Number.isInteger(quantityNumber) && quantityNumber > 0 ? quantityNumber : "?"} – ${form.shortName.trim()}`
-    : form.title.trim();
+    : rowUnits.some((unit) => !unit)
+      ? scopeUnits.length > 0
+        ? "Choose the type (e.g. Static, Video)."
+        : "Enter the type (e.g. Video, Post, Banner)."
+      : new Set(rowUnits).size !== rowUnits.length
+        ? "Each type can be on one line only — change the count instead."
+        : form.rows.some((row) => !isUncountedUnit(row.unit) && !(Number.isInteger(Number(row.count)) && Number(row.count) >= 1))
+          ? "Enter how many: a whole number, 1 or more."
+          : taskItems.length > 200
+            ? "A task can cover at most 200 deliverables at once."
+            : !form.shortName.trim()
+              ? "Enter a short name."
+              : titlePreview.length > 200
+                ? "The task name gets too long — use fewer types or a shorter name."
+                : null;
+  const composedTitle = controlledName ? titlePreview : form.title.trim();
+  const titlePartsInput = () => {
+    if (keepsNumbers) {
+      const kept = taskDeliverables(task!.titleParts).map((d) => ({ unit: d.unit, n: d.n }));
+      return { unit: task!.titleParts!.unit, quantity: task!.titleParts!.quantity, ...(kept.length > 1 ? { items: kept } : {}), shortName: form.shortName.trim() };
+    }
+    return {
+      unit: taskItems[0]!.unit,
+      quantity: taskItems[0]!.n,
+      ...(taskItems.length > 1 ? { items: taskItems } : {}),
+      counted: true,
+      shortName: form.shortName.trim(),
+    };
+  };
   const titleInvalid = controlledName
     ? submitted && Boolean(partsError)
     : submitted && (form.title.trim() === "" || form.title.trim().length > 200);
@@ -553,7 +603,23 @@ export function TaskFormDialog({
   const filledGuests = isEdit ? [] : guests.filter((g) => g.name.trim() && g.email.trim());
   // Someone must do the task: company people, outside people (new task), or both.
   const nobodyAssigned = form.assignees.length === 0 && filledGuests.length === 0 && !reworkCreate;
-  const assigneesInvalid = submitted && nobodyAssigned;
+  // Picked people who aren't on the manpower plan for the project's brand (people already on the task stay).
+  const offPlanPicked = useMemo(() => {
+    const team = planTeam.data;
+    if (!projectId || !team?.applies) return [];
+    const onPlan = new Set(team.users);
+    const already = new Set(task && (task.project?._id ?? null) === projectId ? (task.assignees ?? []).map((user) => user._id) : []);
+    return form.assignees
+      .filter((id) => !onPlan.has(id) && !already.has(id))
+      .map((id) => assigneeOptions.find((option) => option.value === id)?.label ?? "This person");
+  }, [planTeam.data, projectId, task, form.assignees, assigneeOptions]);
+  const offPlanMessage =
+    offPlanPicked.length === 0 || !planTeam.data
+      ? null
+      : planTeam.data.inPlan
+        ? `${offPlanPicked.join(", ")} ${offPlanPicked.length === 1 ? "isn't" : "aren't"} on the manpower plan for ${planTeam.data.brand} (${planTeam.data.plan}). Ask for a manpower plan change to add them — it needs leadership approval — then the task can be created.`
+        : `${planTeam.data.brand} has no line in the manpower plan (${planTeam.data.plan}), so nobody can be given its tasks yet. Ask for a manpower plan change to add the brand and its team — it needs leadership approval.`;
+  const assigneesInvalid = (submitted && nobodyAssigned) || Boolean(offPlanMessage);
   const datesInvalid =
     submitted &&
     form.startDate !== "" &&
@@ -567,7 +633,7 @@ export function TaskFormDialog({
   // A new task picks its project first: the scope units and the title come from it.
   const needProjectFirst = !isEdit && !reworkCreate && !projectId;
   // A project with a scope: the task names one of its scope items before anything else.
-  const needScopeItemFirst = !isEdit && !reworkCreate && Boolean(projectId) && scopeUnits.length > 0 && !form.unit.trim();
+  const needScopeItemFirst = !isEdit && !reworkCreate && Boolean(projectId) && scopeUnits.length > 0 && !form.rows.some((row) => row.unit.trim());
   const estimate = parseEstimate(form.estimateHours, form.estimateMinutes);
   // Estimated time is optional.
   const estimateMissing = false;
@@ -594,6 +660,7 @@ export function TaskFormDialog({
       ((!task || Boolean(task.project)) && !projectId && !reworkCreate) ||
       estimateMissing ||
       nobodyAssigned ||
+      Boolean(offPlanMessage) ||
       (!isEdit && guestsInvalid) ||
       descriptionTooLong ||
       (form.startDate && form.dueDate && form.startDate > form.dueDate) ||
@@ -614,11 +681,7 @@ export function TaskFormDialog({
         ...(reworkCreate
           ? {}
           : {
-              titleParts: {
-                unit: form.unit.trim(),
-                quantity: quantityNumber,
-                shortName: form.shortName.trim(),
-              },
+              titleParts: titlePartsInput(),
             }),
         ...(form.iteration ? { iteration: form.iteration } : {}),
         ...(form.iteration === "rework" && form.reworkOf ? { reworkOf: form.reworkOf } : {}),
@@ -675,16 +738,8 @@ export function TaskFormDialog({
     const original = initialState(task);
     const input: TaskUpdateInput = {};
     if (controlledName) {
-      if (
-        form.unit.trim() !== original.unit ||
-        form.quantity !== original.quantity ||
-        form.shortName.trim() !== original.shortName
-      ) {
-        input.titleParts = {
-          unit: form.unit.trim(),
-          quantity: quantityNumber,
-          shortName: form.shortName.trim(),
-        };
+      if (rowsKey(form.rows) !== rowsKey(original.rows) || form.shortName.trim() !== original.shortName) {
+        input.titleParts = titlePartsInput();
       }
     } else if (title !== original.title) {
       input.title = title;
@@ -1013,117 +1068,120 @@ export function TaskFormDialog({
                   {needProjectFirst && (
                     <p className="text-xs text-muted-foreground">Choose the project first — the scope units and the title come from it.</p>
                   )}
-                  {usePicker ? (
-                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                      <Select
-                        value={pickedDeliverable?.key ?? null}
-                        items={Object.fromEntries(deliverables.map((d) => [d.key, d.label]))}
-                        onValueChange={(value) => {
-                          const d = deliverables.find((x) => x.key === value);
-                          if (d) setForm((current) => ({ ...current, unit: d.unit, quantity: String(d.n) }));
-                        }}
+                  <div className="grid gap-2 sm:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+                    <div className="space-y-1.5">
+                      {form.rows.map((row, index) => {
+                        const taken = new Set(form.rows.filter((_, i) => i !== index).map((other) => other.unit.trim().toLowerCase()));
+                        return (
+                          <div key={index} className="flex items-center gap-2">
+                            {scopeUnits.length > 0 ? (
+                              <Select
+                                value={row.unit || null}
+                                items={Object.fromEntries(typeNames.map((name) => [name, name]))}
+                                onValueChange={(value) => setRow(index, { unit: String(value ?? "") })}
+                                disabled={needProjectFirst}
+                              >
+                                <SelectTrigger
+                                  id={index === 0 ? "task-unit" : undefined}
+                                  className="w-full min-w-0 flex-1"
+                                  aria-label="Type"
+                                  aria-invalid={(titleInvalid && !row.unit.trim()) || undefined}
+                                >
+                                  <SelectValue placeholder="Choose the type" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {typeNames.map((name) => (
+                                    <SelectItem key={name} value={name} disabled={taken.has(name.toLowerCase())}>
+                                      {name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input
+                                id={index === 0 ? "task-unit" : undefined}
+                                className="min-w-0 flex-1"
+                                value={row.unit}
+                                onChange={(event) => setRow(index, { unit: event.target.value })}
+                                maxLength={40}
+                                placeholder="Type (e.g. Video)"
+                                aria-label="Type"
+                                aria-invalid={(titleInvalid && !row.unit.trim()) || undefined}
+                                disabled={needProjectFirst}
+                              />
+                            )}
+                            {!isUncountedUnit(row.unit) && (
+                              <Input
+                                type="number"
+                                min={1}
+                                step={1}
+                                className="w-24 shrink-0"
+                                value={row.count}
+                                onChange={(event) => setRow(index, { count: event.target.value })}
+                                placeholder="How many"
+                                title="How many of this type the task covers."
+                                aria-label="How many"
+                                aria-invalid={(titleInvalid && !(Number.isInteger(Number(row.count)) && Number(row.count) >= 1)) || undefined}
+                                disabled={needProjectFirst}
+                              />
+                            )}
+                            {form.rows.length > 1 && (
+                              <Button type="button" variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Remove this type" onClick={() => removeRow(index)}>
+                                <LuX aria-hidden />
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        disabled={needProjectFirst || (scopeUnits.length > 0 && form.rows.length >= typeNames.length)}
+                        onClick={addRow}
                       >
-                        <SelectTrigger id="task-unit" className="w-full" aria-label="Deliverable" aria-invalid={titleInvalid || undefined}>
-                          <SelectValue placeholder="Choose the deliverable" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {scopeUnits.map((u) => (
-                            <SelectGroup key={u.unit}>
-                              <SelectLabel>
-                                {u.unit} · {u.used} of {u.total} have tasks
-                              </SelectLabel>
-                              {deliverables
-                                .filter((d) => d.unit === u.unit)
-                                .map((d) => (
-                                  <SelectItem key={d.key} value={d.key}>
-                                    <span className={cn(d.extra && "text-amber-700 dark:text-amber-400")}>{d.label}</span>
-                                    {d.tasks > 0 && (
-                                      <span className="ml-1.5 text-xs text-muted-foreground">
-                                        · {d.tasks} task{d.tasks === 1 ? "" : "s"}
-                                        {d.names.length > 0 && ` (${d.names.join(", ")})`}
-                                      </span>
-                                    )}
-                                  </SelectItem>
-                                ))}
-                            </SelectGroup>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        value={form.shortName}
-                        onChange={(event) => set("shortName", event.target.value)}
-                        maxLength={80}
-                        placeholder="What this task does (e.g. Copy, Design, Review)"
-                        aria-label="Short name"
-                        aria-invalid={titleInvalid || undefined}
-                        disabled={needProjectFirst || needScopeItemFirst}
-                      />
+                        <LuPlus aria-hidden /> Add another type
+                      </Button>
                     </div>
-                  ) : (
-                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_6rem_minmax(0,2fr)]">
-                      <Input
-                        id="task-unit"
-                        value={form.unit}
-                        onChange={(event) => set("unit", event.target.value)}
-                        maxLength={40}
-                        placeholder="Scope unit (e.g. Video)"
-                        aria-label="Scope unit"
-                        aria-invalid={titleInvalid || undefined}
-                        disabled={needProjectFirst}
-                      />
-                      <Input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={form.quantity}
-                        onChange={(event) => set("quantity", event.target.value)}
-                        aria-label="Deliverable number"
-                        aria-invalid={titleInvalid || undefined}
-                        disabled={needProjectFirst}
-                      />
-                      <Input
-                        value={form.shortName}
-                        onChange={(event) => set("shortName", event.target.value)}
-                        maxLength={80}
-                        placeholder="Short name (e.g. Launch teaser)"
-                        aria-label="Short name"
-                        aria-invalid={titleInvalid || undefined}
-                        disabled={needProjectFirst}
-                      />
-                    </div>
-                  )}
+                    <Input
+                      value={form.shortName}
+                      onChange={(event) => set("shortName", event.target.value)}
+                      maxLength={80}
+                      placeholder="What this task does (e.g. Copy, Design, Review)"
+                      aria-label="Short name"
+                      aria-invalid={(titleInvalid && !form.shortName.trim()) || undefined}
+                      disabled={needProjectFirst || needScopeItemFirst}
+                    />
+                  </div>
                   {needScopeItemFirst && (
                     <p className="text-xs text-muted-foreground">
-                      Choose the deliverable from the project&apos;s scope (e.g. Video 3 of 15), then say what this task does — copy, design,
-                      review… Several tasks can work on the same deliverable.
+                      Choose the type from the project&apos;s scope and enter how many this task covers (5 Static) — add another type for a
+                      mixed task — then say what this task does: copy, design, review…
                     </p>
                   )}
                   <p className="text-xs text-muted-foreground">
                     Title:{" "}
                     <span className="font-medium text-foreground">
-                      {form.unit.trim() ? composedTitle : "—"}
+                      {taskItems.length ? composedTitle : "—"}
                     </span>{" "}
                     — brand and month come from the project.
                   </p>
-                  {!task && pickedDeliverable && pickedDeliverable.tasks > 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      {pickedDeliverable.unit} {pickedDeliverable.n} already has {pickedDeliverable.tasks} task
-                      {pickedDeliverable.tasks === 1 ? "" : "s"}
-                      {pickedDeliverable.names.length > 0 && ` (${pickedDeliverable.names.join(", ")})`} — this one is added to it.
-                    </p>
-                  )}
-                  {!task && scopeUnits.length > 0 && form.unit.trim() && (() => {
-                    const unit = scopeUnits.find((u) => u.unit.toLowerCase() === form.unit.trim().toLowerCase());
-                    // Beyond the approved total: an extra deliverable waits for leadership (unless they already approved it).
-                    const over = !unit ? true : quantityNumber > unit.total;
-                    return over ? (
+                  {!task && scopeUnits.length > 0 && taskItems.length > 0 && (() => {
+                    // Beyond the approved total (or a type the scope doesn't have): extras wait for leadership (unless already approved).
+                    const totalOf = (unit: string) => scopeUnits.find((u) => u.unit.toLowerCase() === unit.trim().toLowerCase())?.total ?? 0;
+                    const extras = taskItems.filter((d) => !isUncountedUnit(d.unit) && d.n > totalOf(d.unit));
+                    if (extras.length === 0) return null;
+                    const over = [...new Set(extras.map((d) => d.unit.trim().toLowerCase()))].map((key) => {
+                      const mine = extras.filter((d) => d.unit.trim().toLowerCase() === key);
+                      return `${mine.length} ${mine[0]!.unit} more than the scope (${totalOf(mine[0]!.unit)} ${mine[0]!.unit})`;
+                    });
+                    return (
                       <p className="rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">
-                        {unit
-                          ? `${unit.unit} ${quantityNumber} is beyond the approved scope (${unit.total} ${unit.unit}).`
-                          : `${form.unit.trim()} isn't in this project's scope.`}{" "}
-                        The task is saved but blocked — no work or time on it — until leadership approves it (unless they already approved this deliverable).
+                        This task has {over.join(" and ")}. It is saved but blocked — no work or time on it — until leadership approves the
+                        extra (unless they already approved it).
                       </p>
-                    ) : null;
+                    );
                   })()}
                   {titleInvalid && partsError && (
                     <p
@@ -1235,7 +1293,12 @@ export function TaskFormDialog({
                     assigneesInvalid ? "task-assignees-error" : undefined
                   }
                 />
-                {assigneesInvalid && (
+                {offPlanMessage && (
+                  <p id="task-assignees-error" role="alert" className="text-xs text-destructive">
+                    {offPlanMessage}
+                  </p>
+                )}
+                {!offPlanMessage && assigneesInvalid && (
                   <p
                     id="task-assignees-error"
                     className="text-xs text-destructive"

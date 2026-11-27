@@ -40,6 +40,7 @@ import { listUnbrandedProjects,
   updateProjectStatus,
   teamLoad,
   scopeUsage,
+  planTeam,
   summaryCheck,
 } from "../controllers/projects.js";
 import { uploadTaskFilesMiddleware } from "../controllers/taskFiles.js";
@@ -65,6 +66,7 @@ router.get("/team-load", teamLoad);
 // AI summary score (one OpenAI call per check): 20 per hour per user.
 router.post("/summary-check", summaryCheckRateLimit, summaryCheck);
 router.get("/:id/scope-usage", scopeUsage);
+router.get("/:id/plan-team", planTeam);
 router.get("/approvals/changes/:id", getChangeRequest);
 router.post("/approvals/changes/:id", decideChangeRequest);
 // The requester (or leadership) takes a pending change back; a rejected brand scope change's banner is dismissed.

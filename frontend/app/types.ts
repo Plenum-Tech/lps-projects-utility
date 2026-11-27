@@ -963,8 +963,23 @@ export type ReworkSource = "internal" | "external";
 
 export interface TaskTitleParts {
   unit: string;
+  /** The deliverable number — the first one when the task covers several. */
   quantity: number;
+  /**
+   * One task for several deliverables (any selection, one type or several): every deliverable it
+   * covers, each ticked off when done. Absent = just the one above.
+   */
+  items?: TaskDeliverable[] | null;
+  /** Named by count ("5 Static + 2 Video – Design"): it covers numbers 1 … count of each type. */
+  counted?: boolean | null;
   shortName: string;
+}
+
+export interface TaskDeliverable {
+  unit: string;
+  n: number;
+  done?: boolean;
+  doneAt?: string | null;
 }
 
 export interface Task {

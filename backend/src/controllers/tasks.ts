@@ -1,4 +1,5 @@
 import { richTextMentionIds, richTextToPlain, sanitizeRichText } from "../lib/richText.js";
+import { offPlanAssignees } from "../lib/manpowerAssign.js";
 import type { Request, Response } from "express";
 import mongoose from "mongoose";
 import { getDeliverySettings } from "../lib/delivery/settings.js";
@@ -75,7 +76,7 @@ import type { IProject } from "../models/Project.js";
 import type { PipelineStage } from "mongoose";
 import { TimeLog } from "../models/TimeLog.js";
 import { WeeklyTimesheet } from "../models/WeeklyTimesheet.js";
-import { Task, TASK_ITERATIONS, REWORK_SOURCES, TASK_TITLE_LIMITS, composeTaskTitle } from "../models/Task.js";
+import { Task, TASK_ITERATIONS, REWORK_SOURCES, TASK_TITLE_LIMITS, composeTaskTitle, countsLabel, deliverablesLabel, deliverablesOf, isUncountedUnit } from "../models/Task.js";
 import type { ITask, ITaskRecurrence, ITaskSourceMeeting, RecurrenceUnit, TaskPriority, TaskStatus, ITaskTitleParts, TaskIteration, ReworkSource } from "../models/Task.js";
 import { RECURRENCE_UNITS, TASK_LIMITS, TASK_PRIORITIES, TASK_STATUSES } from "../models/Task.js";
 import { TaskCategory } from "../models/TaskCategory.js";
@@ -1024,31 +1025,54 @@ export function overScopeBlock(task: Pick<ITask, "overScope">): Invalid | null {
  */
 async function scopeWall(
   project: Pick<IProject, "_id" | "scopeItems"> | null | undefined,
-  titleParts: { unit: string; quantity: number } | null | undefined,
+  titleParts: Pick<ITaskTitleParts, "unit" | "quantity" | "items"> | null | undefined,
   iteration: string | null | undefined,
   except?: mongoose.Types.ObjectId
 ): Promise<ITask["overScope"]> {
   if (!project || !project.scopeItems?.length || iteration === "rework" || !titleParts) return null;
   const totals = scopeTotals(project.scopeItems);
-  const key = titleParts.unit.trim().toLowerCase();
-  const allowed = totals.get(key)?.total ?? 0;
   const projectId = project._id as mongoose.Types.ObjectId;
-  if (titleParts.quantity <= allowed || (await extraDeliverableApproved(projectId, titleParts.unit, titleParts.quantity, except))) return null;
-  const used = (await deliverableUsage([projectId], titleParts.unit)).filter((r) => r.n >= 1 && r.n <= allowed).length;
-  return { status: "pending", unit: totals.get(key)?.unit ?? titleParts.unit, allowed, used, requested: 1 };
+  // Every deliverable the task covers (Video 9, 11, 12 of 10 and Static 2: Video 11 and 12 are extra)
+  // that leadership hasn't approved yet.
+  const extras: Array<{ unit: string; n: number }> = [];
+  for (const d of deliverablesOf(titleParts)) {
+    // "Others" is never checked against the scope.
+    if (isUncountedUnit(d.unit)) continue;
+    const allowed = totals.get(d.unit.trim().toLowerCase())?.total ?? 0;
+    if (d.n > allowed && !(await extraDeliverableApproved(projectId, d.unit, d.n, except))) extras.push(d);
+  }
+  if (extras.length === 0) return null;
+  // The flag names the type(s) over; the figures are for the first one.
+  const first = extras[0]!.unit;
+  const key = first.trim().toLowerCase();
+  const allowed = totals.get(key)?.total ?? 0;
+  const used = (await deliverableUsage([projectId], first)).filter((r) => r.n >= 1 && r.n <= allowed).length;
+  const units = [...new Map(extras.map((d) => [d.unit.trim().toLowerCase(), totals.get(d.unit.trim().toLowerCase())?.unit ?? d.unit])).values()];
+  return { status: "pending", unit: units.join(", "), allowed, used, requested: extras.length };
+}
+
+/** "Video 11, 12": the deliverables of the task beyond the scope's totals. */
+function extrasLabel(task: Pick<ITask, "titleParts">, project: Pick<IProject, "scopeItems"> | null | undefined): string {
+  const totals = scopeTotals(project?.scopeItems ?? []);
+  const all = deliverablesOf(task.titleParts);
+  const extras = all.filter((d) => !isUncountedUnit(d.unit) && d.n > (totals.get(d.unit.trim().toLowerCase())?.total ?? 0));
+  // Named by count: "2 Static" more than the scope; by number: "Video 11, 12".
+  if (task.titleParts?.counted) return countsLabel(extras.length ? extras : all) || "?";
+  return deliverablesLabel(extras.length ? extras : all) || "?";
 }
 
 /** Leadership is asked to approve the extra (the creator and assignees hear the decision). */
-function notifyOverScope(task: ITask, project: Pick<IProject, "name">, actor: IUser, verb: "added" | "changed"): void {
+function notifyOverScope(task: ITask, project: Pick<IProject, "name" | "scopeItems">, actor: IUser, verb: "added" | "changed"): void {
   if (task.overScope?.status !== "pending") return;
   const over = task.overScope;
+  const extras = extrasLabel(task, project);
   void projectApproverIds().then((recipients) =>
     notifyUsers({
       recipients,
       actor,
       type: "task_over_scope",
       title: "Task over the approved scope",
-      message: `${actor.name} ${verb} "${task.title}" in ${project.name}: ${over.unit} ${task.titleParts?.quantity ?? "?"} is beyond the ${over.allowed} approved.`,
+      message: `${actor.name} ${verb} "${task.title}" in ${project.name}: ${extras} ${over.requested > 1 ? "are" : "is"} beyond the approved scope.`,
       link: "/approvals",
       email: {
         subject: `Over scope: ${task.title}`,
@@ -1060,7 +1084,7 @@ function notifyOverScope(task: ITask, project: Pick<IProject, "name">, actor: IU
           ["Unit", over.unit],
           ["Approved", String(over.allowed)],
           ["Deliverables with tasks", String(over.used)],
-          ["This task", `${over.unit} ${task.titleParts?.quantity ?? "?"} (extra)`],
+          ["This task", `${extras} (extra)`],
         ],
         buttonLabel: "Review in Approvals",
       },
@@ -1324,10 +1348,30 @@ export function projectBlocksTasks(project: Pick<IProject, "requiresScope" | "sc
 function parseTitleParts(raw: unknown): ITaskTitleParts | undefined | Invalid {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object") return { status: 400, error: "titleParts must be { unit, quantity, shortName }" };
-  const r = raw as { unit?: unknown; quantity?: unknown; shortName?: unknown };
-  const unit = typeof r.unit === "string" ? r.unit.trim() : "";
+  const r = raw as { unit?: unknown; quantity?: unknown; items?: unknown; counted?: unknown; shortName?: unknown };
+  // Named by count ("5 Static"): the items are then numbers 1 … count of each type.
+  const counted = r.counted === true;
   const shortName = typeof r.shortName === "string" ? r.shortName.trim() : "";
-  const quantity = typeof r.quantity === "number" ? r.quantity : Number(r.quantity);
+  // One task for several deliverables — any selection, of one type or several: items [{ unit, n }].
+  let items: Array<{ unit: string; n: number }> | null = null;
+  if (r.items !== undefined && r.items !== null) {
+    if (!Array.isArray(r.items) || r.items.length === 0) return { status: 400, error: "items must be a list of { unit, n }" };
+    if (r.items.length > TASK_TITLE_LIMITS.itemsMax) return { status: 400, error: `A task can cover at most ${TASK_TITLE_LIMITS.itemsMax} deliverables` };
+    const seen = new Map<string, { unit: string; n: number }>();
+    const order = new Map<string, number>();
+    for (const entry of r.items as Array<{ unit?: unknown; n?: unknown }>) {
+      const u = typeof entry?.unit === "string" ? entry.unit.trim() : "";
+      const n = typeof entry?.n === "number" ? entry.n : Number(entry?.n);
+      if (!u || u.length > TASK_TITLE_LIMITS.unitMax) return { status: 400, error: `Scope unit is required (max ${TASK_TITLE_LIMITS.unitMax} characters)` };
+      if (!Number.isInteger(n) || n < 1 || n > TASK_TITLE_LIMITS.quantityMax) return { status: 400, error: `Deliverable numbers must be whole numbers from 1 to ${TASK_TITLE_LIMITS.quantityMax}` };
+      if (!order.has(u.toLowerCase())) order.set(u.toLowerCase(), order.size);
+      seen.set(`${u.toLowerCase()}#${n}`, { unit: u, n });
+    }
+    // By type (in the order picked), then by number.
+    items = [...seen.values()].sort((a, b) => order.get(a.unit.toLowerCase())! - order.get(b.unit.toLowerCase())! || a.n - b.n);
+  }
+  const unit = items ? items[0]!.unit : typeof r.unit === "string" ? r.unit.trim() : "";
+  const quantity = items ? items[0]!.n : typeof r.quantity === "number" ? r.quantity : Number(r.quantity);
   if (!unit || unit.length > TASK_TITLE_LIMITS.unitMax) {
     return { status: 400, error: `Scope unit is required (max ${TASK_TITLE_LIMITS.unitMax} characters)` };
   }
@@ -1337,7 +1381,12 @@ function parseTitleParts(raw: unknown): ITaskTitleParts | undefined | Invalid {
   if (!shortName || shortName.length > TASK_TITLE_LIMITS.shortNameMax) {
     return { status: 400, error: `Short name is required (max ${TASK_TITLE_LIMITS.shortNameMax} characters)` };
   }
-  return { unit, quantity, shortName };
+  if (items && items.length > 1) {
+    const parts: ITaskTitleParts = { unit, quantity, items, ...(counted ? { counted: true } : {}), shortName };
+    if (composeTaskTitle(parts).length > 200) return { status: 400, error: "The task name gets too long with this selection — pick fewer types, or split it into two tasks" };
+    return parts;
+  }
+  return { unit, quantity, ...(counted ? { counted: true } : {}), shortName };
 }
 
 /** `reworkSource` -> "internal" | "external", undefined when absent. */
@@ -1520,7 +1569,9 @@ export async function createTaskCore(
       const round = (await Task.countDocuments({ reworkOf: reworkOf._id })) + 1;
       const base = reworkOf.titleParts ?? { unit: "Rework", quantity: 1, shortName: reworkOf.title };
       const shortName = `${base.shortName.replace(/\s+R\d+$/, "").slice(0, TASK_TITLE_LIMITS.shortNameMax - 5)} R${round}`;
-      titleParts = { unit: base.unit, quantity: base.quantity, shortName };
+      // A rework is against the whole task: every deliverable the original covers (nothing ticked yet).
+      const covered = deliverablesOf(reworkOf.titleParts);
+      titleParts = { unit: base.unit, quantity: base.quantity, ...(covered.length > 1 ? { items: covered } : {}), ...(base.counted ? { counted: true } : {}), shortName };
       title = composeTaskTitle(titleParts);
     }
   }
@@ -1566,6 +1617,12 @@ export async function createTaskCore(
     recurrence = parsed;
   }
 
+  // Tasks go only to people on the manpower plan (the task form; system-made tasks — pitch steps,
+  // imports, meetings — keep their assignees).
+  if (options.enforceRules) {
+    const offPlan = await offPlanAssignees(project, assignees);
+    if (offPlan) return offPlan;
+  }
   // Project membership rule (auto-adds non-members when the actor manages the project)
   if (project) {
     const ensured = await ensureProjectMembers(actor, project, assignees, options.sendEmail !== false);
@@ -1868,6 +1925,47 @@ export async function updateStatus(req: Request, res: Response): Promise<void> {
   await changeStatus(req, res, task, status as TaskStatus, undefined);
 }
 
+/**
+ * PATCH /tasks/:id/deliverables — `{ unit, n, done }`: tick one deliverable of a task that covers
+ * several off (or back on). The people doing the task and whoever manages it; not on a task waiting
+ * for a scope decision, and not once it's closed.
+ */
+export async function tickDeliverable(req: Request, res: Response): Promise<void> {
+  const task = await getTaskOr404(req, res);
+  if (!task) return;
+  const user = req.user!;
+  const blocked = overScopeBlock(task);
+  if (blocked) {
+    res.status(blocked.status).json({ error: blocked.error });
+    return;
+  }
+  const flags = await taskProjectFlags(task, user);
+  if (!canManageTask(user, task, flags) && !isAssignee(user, task)) {
+    res.status(403).json({ error: "Only the people on the task can tick its deliverables" });
+    return;
+  }
+  if (task.status === "completed" || task.status === "rejected") {
+    res.status(400).json({ error: "This task is closed" });
+    return;
+  }
+  const body = (req.body ?? {}) as { unit?: unknown; n?: unknown; done?: unknown };
+  const unit = typeof body.unit === "string" ? body.unit.trim().toLowerCase() : "";
+  const items = task.titleParts?.items ?? [];
+  const item = items.find((d) => d.unit.trim().toLowerCase() === unit && d.n === Number(body.n));
+  if (!item || typeof body.done !== "boolean") {
+    res.status(400).json({ error: "Send { unit, n, done } for one of the task's deliverables" });
+    return;
+  }
+  if (Boolean(item.done) !== body.done) {
+    item.done = body.done;
+    item.doneAt = body.done ? new Date() : null;
+    item.doneBy = body.done ? (user._id as mongoose.Types.ObjectId) : null;
+    task.markModified("titleParts");
+    await task.save();
+  }
+  res.json(await loadTaskDetail(task._id as mongoose.Types.ObjectId, user));
+}
+
 /** Board drag: `{ status, position }`. Validates the transition for the caller's role. */
 export async function moveTask(req: Request, res: Response): Promise<void> {
   const task = await getTaskOr404(req, res);
@@ -2147,9 +2245,23 @@ async function applyTaskUpdate(
   let deliverableChanged = false;
   if (titleParts) {
     const before = task.titleParts;
-    if (!before || before.unit !== titleParts.unit || before.quantity !== titleParts.quantity || before.shortName !== titleParts.shortName) {
-      // Another deliverable (unit or number), not just another short name: the scope wall re-checks it.
-      if (!before || before.unit.trim().toLowerCase() !== titleParts.unit.trim().toLowerCase() || before.quantity !== titleParts.quantity) deliverableChanged = true;
+    const coveredKey = (parts: ITaskTitleParts | null | undefined) =>
+      deliverablesOf(parts)
+        .map((d) => `${d.unit.trim().toLowerCase()}#${d.n}`)
+        .sort()
+        .join("|");
+    const sameDeliverables = Boolean(before) && coveredKey(before) === coveredKey(titleParts);
+    if (!before || !sameDeliverables || before.unit !== titleParts.unit || before.shortName !== titleParts.shortName || Boolean(before.counted) !== Boolean(titleParts.counted)) {
+      // Other deliverables (type or number), not just another short name: the scope wall re-checks it.
+      if (!sameDeliverables) deliverableChanged = true;
+      // The ones already ticked off stay ticked.
+      if (titleParts.items && before?.items?.length) {
+        const ticked = new Map(before.items.filter((d) => d.done).map((d) => [`${d.unit.trim().toLowerCase()}#${d.n}`, d]));
+        titleParts.items = titleParts.items.map((d) => {
+          const was = ticked.get(`${d.unit.trim().toLowerCase()}#${d.n}`);
+          return was ? { ...d, done: true, doneAt: was.doneAt ?? null, doneBy: was.doneBy ?? null } : d;
+        });
+      }
       task.titleParts = titleParts;
       changed.push("titleParts");
     }
@@ -2356,6 +2468,10 @@ async function applyTaskUpdate(
     if (isInvalid(assignees)) {
       return assignees;
     }
+    // Newly added people must be on the manpower plan for the project's brand.
+    const already = new Set(task.assignees.map((id) => id.toString()));
+    const offPlan = await offPlanAssignees(projectDoc, projectChanged ? assignees : assignees.filter((u) => !already.has(u._id.toString())));
+    if (offPlan) return offPlan;
     if (projectDoc) {
       const ensured = await ensureProjectMembers(user, projectDoc, assignees);
       if (isInvalid(ensured)) {
@@ -2377,6 +2493,8 @@ async function applyTaskUpdate(
   // Moving into a project: current assignees must be members too
   if (projectChanged && projectDoc && rawAssignees === undefined) {
     const current = await User.find({ _id: { $in: task.assignees } });
+    const offPlan = await offPlanAssignees(projectDoc, current);
+    if (offPlan) return offPlan;
     const ensured = await ensureProjectMembers(user, projectDoc, current);
     if (isInvalid(ensured)) {
       return ensured;

@@ -26,14 +26,83 @@ export type ReworkSource = (typeof REWORK_SOURCES)[number];
 /** Controlled task name: "<unit> <quantity> – <short name>" (brand + month come from the project). */
 export interface ITaskTitleParts {
   unit: string;
+  /** The deliverable number (Video 3) — the first one when the task covers several. */
   quantity: number;
+  /**
+   * One task for several deliverables — any selection, of one type or several (Video 1, 4, 9 and
+   * Static 2): every deliverable it covers, each ticked off when it's done. Absent = just the one
+   * above (`unit` / `quantity` are then the first of the list).
+   */
+  items?: ITaskDeliverable[] | null;
+  /**
+   * Named by count ("5 Static + 2 Video – Design"): the task says how many of each type it covers,
+   * not which ones — it then covers numbers 1 … count of the type, so the scope used for a type is
+   * the largest count on any one task. Absent = named by number ("Video 3 – Copy").
+   */
+  counted?: boolean | null;
   shortName: string;
 }
 
-export const TASK_TITLE_LIMITS = { unitMax: 40, shortNameMax: 80, quantityMax: 9999 } as const;
+/** "Others" is a catch-all type: picked without a count and never counted or checked against the scope. */
+export const isUncountedUnit = (unit: string | null | undefined): boolean => /^others?$/i.test((unit ?? "").trim());
+
+export interface ITaskDeliverable {
+  unit: string;
+  n: number;
+  /** Ticked off inside the task (partial progress). */
+  done?: boolean;
+  doneAt?: Date | null;
+  doneBy?: mongoose.Types.ObjectId | null;
+}
+
+export const TASK_TITLE_LIMITS = { unitMax: 40, shortNameMax: 80, quantityMax: 9999, itemsMax: 200 } as const;
+
+/** The deliverables a task covers: [Video 3] or [Video 1, Video 4, Static 2]. */
+export function deliverablesOf(parts: { unit?: string | null; quantity?: number | null; items?: Array<{ unit: string; n: number }> | null } | null | undefined): Array<{ unit: string; n: number }> {
+  if (!parts) return [];
+  if (parts.items && parts.items.length > 0) return parts.items.map((d) => ({ unit: d.unit, n: d.n }));
+  return typeof parts.unit === "string" && typeof parts.quantity === "number" ? [{ unit: parts.unit, n: parts.quantity }] : [];
+}
+
+/** "Video 1–3, 7 + Static 2": the deliverables by type, runs of numbers shortened. */
+export function deliverablesLabel(items: Array<{ unit: string; n: number }>): string {
+  const groups = new Map<string, { unit: string; numbers: number[] }>();
+  for (const d of items) {
+    const key = d.unit.trim().toLowerCase();
+    const group = groups.get(key) ?? { unit: d.unit.trim(), numbers: [] };
+    group.numbers.push(d.n);
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .map((group) => {
+      const numbers = [...new Set(group.numbers)].sort((a, b) => a - b);
+      const runs: string[] = [];
+      for (let i = 0; i < numbers.length; ) {
+        let j = i;
+        while (j + 1 < numbers.length && numbers[j + 1] === numbers[j]! + 1) j++;
+        runs.push(j === i ? String(numbers[i]) : j === i + 1 ? `${numbers[i]}, ${numbers[j]}` : `${numbers[i]}–${numbers[j]}`);
+        i = j + 1;
+      }
+      return `${group.unit} ${runs.join(", ")}`;
+    })
+    .join(" + ");
+}
+
+/** "5 Static + 2 Video + Others": how many of each type (Others without a count). */
+export function countsLabel(items: Array<{ unit: string; n: number }>): string {
+  const groups = new Map<string, { unit: string; count: number }>();
+  for (const d of items) {
+    const key = d.unit.trim().toLowerCase();
+    const group = groups.get(key) ?? { unit: d.unit.trim(), count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((g) => (isUncountedUnit(g.unit) ? g.unit : `${g.count} ${g.unit}`)).join(" + ");
+}
 
 export function composeTaskTitle(parts: ITaskTitleParts): string {
-  return `${parts.unit} ${parts.quantity} – ${parts.shortName}`;
+  const items = deliverablesOf(parts);
+  return `${parts.counted ? countsLabel(items) : deliverablesLabel(items)} – ${parts.shortName}`;
 }
 
 export type TaskPriority = (typeof TASK_PRIORITIES)[number];
@@ -363,6 +432,22 @@ const taskSchema = new Schema<ITask>(
         {
           unit: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.unitMax, required: true },
           quantity: { type: Number, min: 1, max: TASK_TITLE_LIMITS.quantityMax, required: true },
+          items: {
+            type: [
+              new Schema(
+                {
+                  unit: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.unitMax, required: true },
+                  n: { type: Number, min: 1, max: TASK_TITLE_LIMITS.quantityMax, required: true },
+                  done: { type: Boolean, default: undefined },
+                  doneAt: { type: Date, default: undefined },
+                  doneBy: { type: Schema.Types.ObjectId, ref: "User", default: undefined },
+                },
+                { _id: false }
+              ),
+            ],
+            default: undefined,
+          },
+          counted: { type: Boolean, default: undefined },
           shortName: { type: String, trim: true, maxlength: TASK_TITLE_LIMITS.shortNameMax, required: true },
         },
         { _id: false }

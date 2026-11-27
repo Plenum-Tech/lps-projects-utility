@@ -36,6 +36,7 @@ export function MultiSelect({
   disabled,
   invalid,
   max,
+  keepOpen,
   "aria-describedby": describedBy,
 }: {
   id?: string;
@@ -47,6 +48,8 @@ export function MultiSelect({
   disabled?: boolean;
   invalid?: boolean;
   max?: number;
+  /** The list stays open after a pick (for picking many in one go). */
+  keepOpen?: boolean;
   "aria-describedby"?: string;
 }) {
   const anchor = useComboboxAnchor();
@@ -68,7 +71,7 @@ export function MultiSelect({
       value={selected}
       onValueChange={(next: MultiSelectOption[]) => {
         const ids = next.map((option) => option.value);
-        if (ids.length > value.length) setOpen(false);
+        if (!keepOpen && ids.length > value.length) setOpen(false);
         onValueChange(max ? ids.slice(0, max) : ids);
       }}
       isItemEqualToValue={(item: MultiSelectOption, current: MultiSelectOption) =>

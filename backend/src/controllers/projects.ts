@@ -10,6 +10,7 @@ import { attachBrandFiles, brandById, brandLocksScope, brandScopeForProject, pic
 import { briefCheckConfigured, checkProjectSummary } from "../lib/briefCheck.js";
 import { brandsInPlan, currentMonth, notReadyMessage, readinessOf } from "../lib/brandReadiness.js";
 import { deliverableUsage } from "../lib/scopeDeliverables.js";
+import { planTeamOf } from "../lib/manpowerAssign.js";
 import { parseScopeItems, scopeText, scopeTotals, type ScopeItem } from "../lib/scopeUnits.js";
 import { logActivity } from "../lib/activityLog.js";
 import { csvDate, csvHours, EXPORT_ROW_LIMIT, parseIdList, sendSheet } from "../lib/csv.js";
@@ -2689,6 +2690,18 @@ export async function monthTeamLoad(month: string): Promise<{ max: number; load:
 }
 
 /** GET /api/projects/:id/scope-usage — per scope unit: approved total, deliverables used and each deliverable's tasks. */
+/** GET /projects/:id/plan-team — who may be given tasks on the project (the manpower plan in use today); the task form warns as soon as someone else is picked. */
+export async function planTeam(req: Request, res: Response): Promise<void> {
+  const id = param(req, "id");
+  const project = id && !isInvalidObjectId(id) ? await Project.findById(id).select("name brand naming deadline manpowerRow activeThrough") : null;
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+  const team = await planTeamOf(project);
+  res.json(team ? { applies: true, users: [...team.users], plan: team.plan, brand: team.brand, inPlan: team.inPlan } : { applies: false, users: [], plan: null, brand: null, inPlan: false });
+}
+
 export async function scopeUsage(req: Request, res: Response): Promise<void> {
   const id = param(req, "id");
   const project = id && !isInvalidObjectId(id) ? await Project.findById(id).select("scopeItems").lean() : null;

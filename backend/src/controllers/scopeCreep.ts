@@ -1,4 +1,5 @@
 import type { Request, Response } from "express";
+import { DELIVERABLE_UNIT_KEY, EXPAND_DELIVERABLES } from "../lib/scopeDeliverables.js";
 import mongoose from "mongoose";
 import { Brand } from "../models/Brand.js";
 import { Project } from "../models/Project.js";
@@ -136,10 +137,11 @@ async function projectRows(projects: Array<ProjectDoc & { month: string }>): Pro
         },
       },
       { $sort: { createdAt: 1 } },
+      ...EXPAND_DELIVERABLES,
       {
         $group: {
-          _id: { project: "$project", unit: { $toLower: { $trim: { input: "$titleParts.unit" } } }, n: "$titleParts.quantity" },
-          label: { $first: "$titleParts.unit" },
+          _id: { project: "$project", unit: DELIVERABLE_UNIT_KEY, n: "$__d.n" },
+          label: { $first: "$__d.unit" },
           tasks: { $sum: 1 },
           taskId: { $first: "$_id" },
           flags: { $push: "$overScope" },
@@ -163,10 +165,11 @@ async function projectRows(projects: Array<ProjectDoc & { month: string }>): Pro
         },
       },
       { $sort: { createdAt: 1 } },
+      ...EXPAND_DELIVERABLES,
       {
         $group: {
-          _id: { project: "$project", unit: { $toLower: { $trim: { input: "$titleParts.unit" } } }, n: "$titleParts.quantity" },
-          label: { $first: "$titleParts.unit" },
+          _id: { project: "$project", unit: DELIVERABLE_UNIT_KEY, n: "$__d.n" },
+          label: { $first: "$__d.unit" },
           sources: { $push: { $ifNull: ["$reworkSource", null] } },
           taskId: { $last: "$_id" },
         },

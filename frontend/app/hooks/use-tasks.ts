@@ -550,6 +550,20 @@ export function useUpdateTask() {
 }
 
 /** Change status (same transition rules as the board). */
+/** Tick one deliverable of a task that covers several off (or back on). */
+export function useTickDeliverable() {
+  const queryClient = useQueryClient();
+  const toast = useToast();
+  return useMutation({
+    mutationFn: async ({ id, unit, n, done }: { id: string; unit: string; n: number; done: boolean }) => {
+      const { data } = await api.patch<TaskDetailResponse>(`/tasks/${id}/deliverables`, { unit, n, done });
+      return data;
+    },
+    onSuccess: (data) => applyDetail(queryClient, data),
+    onError: (error: unknown) => toast.error(getErrorMessage(error)),
+  });
+}
+
 export function useUpdateTaskStatus() {
   const queryClient = useQueryClient();
   const toast = useToast();

@@ -26,6 +26,7 @@ import {
   submitTask,
   unpinTask,
   updateStatus,
+  tickDeliverable,
   updateTask,
 } from "../controllers/tasks.js";
 import { addComment, deleteComment, listComments, updateComment } from "../controllers/taskComments.js";
@@ -109,6 +110,8 @@ router.patch("/:id", updateTask);
 
 // Creator/admin/assignee: change status (assignees follow the transition rules).
 router.patch("/:id/status", updateStatus);
+// Tick one deliverable of a task that covers several: { unit, n, done }.
+router.patch("/:id/deliverables", tickDeliverable);
 
 // Board drag: { status, position }.
 router.patch("/:id/move", moveTask);

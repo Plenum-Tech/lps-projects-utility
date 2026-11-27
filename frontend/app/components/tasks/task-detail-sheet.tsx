@@ -34,6 +34,7 @@ import { ShortCode } from "@/components/projects/project-badges";
 import { ActualDatesBlock } from "@/components/tasks/actual-dates";
 import { TaskTimeEntries } from "@/components/tasks/task-time-entries";
 import { MissingTimePrompt } from "@/components/tasks/missing-time";
+import { DeliverableTicks } from "@/components/tasks/deliverable-ticks";
 import { OverScopeBanner } from "@/components/tasks/over-scope";
 import { EstimateEditor } from "@/components/tasks/estimate-field";
 import { LabelChip } from "@/components/tasks/label-chip";
@@ -599,6 +600,8 @@ function TaskDetail({
             </dl>
 
             <OverScopeBanner task={task} />
+
+            <DeliverableTicks task={task} />
 
             <MissingTimePrompt task={task} />
 

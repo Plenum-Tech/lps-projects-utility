@@ -232,6 +232,28 @@ export function useProjectNamingSuggestion(id: string | null | undefined, enable
   });
 }
 
+export interface ProjectPlanTeam {
+  /** false: the rule doesn't apply (no brand on the project, or no approved plan yet). */
+  applies: boolean;
+  users: string[];
+  plan: string | null;
+  brand: string | null;
+  inPlan: boolean;
+}
+
+/** Who may be given tasks on the project: the people on the manpower plan for its brand. */
+export function useProjectPlanTeam(id: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: [...projectKeys.detail(id ?? ""), "plan-team"],
+    queryFn: async () => {
+      const { data } = await api.get<ProjectPlanTeam>(`/projects/${id}/plan-team`);
+      return data;
+    },
+    enabled: Boolean(id) && enabled,
+    staleTime: 30_000,
+  });
+}
+
 export function useProject(id: string | null | undefined) {
   return useQuery({
     queryKey: projectKeys.detail(id ?? ""),

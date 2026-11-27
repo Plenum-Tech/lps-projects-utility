@@ -28,6 +28,31 @@ const COUNTED = {
   "titleParts.quantity": { $type: "number" },
 };
 
+/**
+ * Aggregation stages that turn a task into one row per deliverable it covers, in `$__d`
+ * ({ unit, n }): a task for Video 1, 4 and Static 2 gives three rows, a task on one deliverable one.
+ */
+export const EXPAND_DELIVERABLES = [
+  {
+    $addFields: {
+      __d: {
+        $cond: [
+          { $gt: [{ $size: { $ifNull: ["$titleParts.items", []] } }, 0] },
+          "$titleParts.items",
+          [{ unit: "$titleParts.unit", n: "$titleParts.quantity" }],
+        ],
+      },
+    },
+  },
+  { $unwind: "$__d" },
+  // "Others" is never counted against the scope.
+  { $match: { "__d.unit": { $not: /^\s*others?\s*$/i } } },
+];
+/** `$group` key part (the lower-cased unit) for a row of EXPAND_DELIVERABLES. */
+export const DELIVERABLE_UNIT_KEY = { $toLower: { $trim: { input: "$__d.unit" } } };
+
+const unitRx = (unit: string) => ({ $regex: `^${unit.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" });
+
 /** Every deliverable in use on these projects, with its tasks. */
 export async function deliverableUsage(projectIds: mongoose.Types.ObjectId[], unit?: string): Promise<DeliverableUse[]> {
   if (projectIds.length === 0) return [];
@@ -36,13 +61,14 @@ export async function deliverableUsage(projectIds: mongoose.Types.ObjectId[], un
       $match: {
         project: { $in: projectIds },
         ...COUNTED,
-        ...(unit ? { "titleParts.unit": { $regex: `^${unit.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" } } : {}),
       },
     },
     { $sort: { createdAt: 1 } },
+    ...EXPAND_DELIVERABLES,
+    ...(unit ? [{ $match: { "__d.unit": unitRx(unit) } }] : []),
     {
       $group: {
-        _id: { project: "$project", unit: { $toLower: { $trim: { input: "$titleParts.unit" } } }, n: "$titleParts.quantity" },
+        _id: { project: "$project", unit: DELIVERABLE_UNIT_KEY, n: "$__d.n" },
         tasks: { $sum: 1 },
         names: { $push: "$titleParts.shortName" },
       },
@@ -74,8 +100,11 @@ export async function extraDeliverableApproved(
       ...(except ? { _id: { $ne: except } } : {}),
       project: projectId,
       iteration: { $ne: "rework" },
-      "titleParts.unit": { $regex: `^${unit.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" },
-      "titleParts.quantity": n,
+      // On this deliverable: the task's own one, or one of the several it covers.
+      $or: [
+        { "titleParts.unit": unitRx(unit), "titleParts.quantity": n, "titleParts.items": { $in: [null, []] } },
+        { "titleParts.items": { $elemMatch: { unit: unitRx(unit), n } } },
+      ],
       // Only an approval clears the deliverable (an older task on it without a decision doesn't).
       "overScope.status": "approved",
     })

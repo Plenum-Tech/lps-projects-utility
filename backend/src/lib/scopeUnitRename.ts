@@ -2,7 +2,7 @@ import mongoose from "mongoose";
 import { Brand } from "../models/Brand.js";
 import { ChangeRequest } from "../models/ChangeRequest.js";
 import { Project } from "../models/Project.js";
-import { Task } from "../models/Task.js";
+import { Task, composeTaskTitle } from "../models/Task.js";
 
 // ---------------------------------------------------------------------------
 // Settings → Scope units: a renamed unit is renamed in the data that uses it, in
@@ -85,7 +85,7 @@ export async function renameScopeUnits(renames: Array<{ from: string[]; to: stri
   if (projectOps.length) await Project.bulkWrite(projectOps as Parameters<typeof Project.bulkWrite>[0]);
 
   // Tasks: the controlled name's unit and the title's leading unit word; a pending over-scope flag.
-  const tasks = await Task.find({ $or: [{ "titleParts.unit": rx }, { "overScope.status": "pending", "overScope.unit": rx }] })
+  const tasks = await Task.find({ $or: [{ "titleParts.unit": rx }, { "titleParts.items.unit": rx }, { "overScope.status": "pending", "overScope.unit": rx }] })
     .select("title titleParts overScope")
     .lean();
   const lead = new RegExp(`^(${[...map.keys()].map(escapeRe).join("|")})(?=\\s)`, "i");
@@ -97,6 +97,14 @@ export async function renameScopeUnits(renames: Array<{ from: string[]; to: stri
       set["titleParts.unit"] = partTo;
       const m = lead.exec(t.title ?? "");
       if (m) set.title = `${map.get(m[1]!.toLowerCase())}${t.title.slice(m[0].length)}`.slice(0, 200);
+    }
+    // A task covering several deliverables: each one's unit, and the title composed again.
+    const items = t.titleParts?.items;
+    if (items?.length && items.some((d) => map.has(d.unit.trim().toLowerCase()))) {
+      const renamed = items.map((d) => ({ ...d, unit: map.get(d.unit.trim().toLowerCase()) ?? d.unit }));
+      set["titleParts.items"] = renamed;
+      set["titleParts.unit"] = renamed[0]!.unit;
+      set.title = composeTaskTitle({ ...t.titleParts!, unit: renamed[0]!.unit, items: renamed }).slice(0, 200);
     }
     const flagTo = t.overScope?.status === "pending" && t.overScope.unit ? map.get(t.overScope.unit.trim().toLowerCase()) : undefined;
     if (flagTo && flagTo !== t.overScope!.unit) set["overScope.unit"] = flagTo;

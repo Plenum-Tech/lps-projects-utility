@@ -328,11 +328,12 @@ export interface DeliverableOption {
  * The scope as deliverables for the task form: "15 Video" → Video 1 of 15 … Video 15 of 15,
  * plus extra ones already in use beyond the total and one new extra (needs an admin's approval).
  */
-export function deliverableOptions(units: ScopeUnitUsage[]): DeliverableOption[] {
+export function deliverableOptions(units: ScopeUnitUsage[], pickedUpTo?: Map<string, number>): DeliverableOption[] {
   const out: DeliverableOption[] = [];
   for (const u of units) {
     const inUse = new Map(u.deliverables.map((d) => [d.n, d]));
-    const highest = Math.max(u.total, ...u.deliverables.map((d) => d.n));
+    // One more extra than the highest in use or picked (lower-cased unit → highest picked number).
+    const highest = Math.max(u.total, pickedUpTo?.get(u.unit.toLowerCase()) ?? 0, ...u.deliverables.map((d) => d.n));
     for (let n = 1; n <= highest + 1; n++) {
       const extra = n > u.total;
       const use = inUse.get(n);
@@ -348,6 +349,108 @@ export function deliverableOptions(units: ScopeUnitUsage[]): DeliverableOption[]
     }
   }
   return out;
+}
+
+/** "Video 1–3, 7 + Static 2": deliverables by type, runs of numbers shortened (the same as the server's title). */
+export function deliverablesLabel(items: Array<{ unit: string; n: number }>): string {
+  const groups = new Map<string, { unit: string; numbers: number[] }>();
+  for (const d of items) {
+    const key = d.unit.trim().toLowerCase();
+    const group = groups.get(key) ?? { unit: d.unit.trim(), numbers: [] };
+    group.numbers.push(d.n);
+    groups.set(key, group);
+  }
+  return [...groups.values()]
+    .map((group) => {
+      const numbers = [...new Set(group.numbers)].sort((a, b) => a - b);
+      const runs: string[] = [];
+      for (let i = 0; i < numbers.length; ) {
+        let j = i;
+        while (j + 1 < numbers.length && numbers[j + 1] === numbers[j]! + 1) j++;
+        runs.push(j === i ? String(numbers[i]) : j === i + 1 ? `${numbers[i]}, ${numbers[j]}` : `${numbers[i]}–${numbers[j]}`);
+        i = j + 1;
+      }
+      return `${group.unit} ${runs.join(", ")}`;
+    })
+    .join(" + ");
+}
+
+/** "Others" is a catch-all type: picked without a count, never counted or checked against the scope. */
+export const isUncountedUnit = (unit: string | null | undefined): boolean => /^others?$/i.test((unit ?? "").trim());
+
+/** "5 Static + 2 Video + Others": how many of each type (the same as the server's title). */
+export function countsLabel(items: Array<{ unit: string; n: number }>): string {
+  const groups = new Map<string, { unit: string; count: number }>();
+  for (const d of items) {
+    const key = d.unit.trim().toLowerCase();
+    const group = groups.get(key) ?? { unit: d.unit.trim(), count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  return [...groups.values()].map((g) => (isUncountedUnit(g.unit) ? g.unit : `${g.count} ${g.unit}`)).join(" + ");
+}
+
+/** A line of the task form: a type and how many of it the task covers. */
+export interface DeliverableRow {
+  unit: string;
+  count: string;
+}
+
+/** The task's deliverables as form lines: one per type with its count (an empty line for a new task). */
+export function deliverableRows(parts: Parameters<typeof taskDeliverables>[0]): DeliverableRow[] {
+  const groups = new Map<string, { unit: string; count: number }>();
+  for (const d of taskDeliverables(parts)) {
+    const key = d.unit.trim().toLowerCase();
+    const group = groups.get(key) ?? { unit: d.unit.trim(), count: 0 };
+    group.count++;
+    groups.set(key, group);
+  }
+  const rows = [...groups.values()].map((g) => ({ unit: g.unit, count: String(g.count) }));
+  return rows.length ? rows : [{ unit: "", count: "1" }];
+}
+
+/** The deliverables of the form lines: numbers 1 … count of each type (Others: one). */
+export function rowDeliverables(rows: DeliverableRow[]): Array<{ unit: string; n: number }> {
+  return rows.flatMap((row) => {
+    const unit = row.unit.trim();
+    if (!unit) return [];
+    if (isUncountedUnit(unit)) return [{ unit, n: 1 }];
+    const count = Number(row.count);
+    return Number.isInteger(count) && count >= 1 && count <= 9999 ? Array.from({ length: count }, (_, i) => ({ unit, n: i + 1 })) : [];
+  });
+}
+
+/** The deliverables a task covers: its list, or the single one of its name. */
+export function taskDeliverables(parts: { unit: string; quantity: number; items?: Array<{ unit: string; n: number; done?: boolean }> | null } | null | undefined) {
+  if (!parts) return [];
+  return parts.items && parts.items.length > 0 ? parts.items : [{ unit: parts.unit, n: parts.quantity }];
+}
+
+/** "1-3, 7" → [1, 2, 3, 7]; null when it isn't a list of whole numbers (1 or more). */
+export function parseNumberList(text: string): number[] | null {
+  const out = new Set<number>();
+  for (const part of text.split(",").map((p) => p.trim()).filter(Boolean)) {
+    const m = /^(\d+)(?:\s*[-–]\s*(\d+))?$/.exec(part);
+    if (!m) return null;
+    const from = Number(m[1]);
+    const to = m[2] ? Number(m[2]) : from;
+    if (from < 1 || to < from || to - from > 500) return null;
+    for (let n = from; n <= to; n++) out.add(n);
+  }
+  return out.size ? [...out].sort((a, b) => a - b) : null;
+}
+
+/** [1, 2, 3, 7] → "1-3, 7" (what parseNumberList reads). */
+export function numberListText(numbers: number[]): string {
+  const sorted = [...new Set(numbers)].sort((a, b) => a - b);
+  const runs: string[] = [];
+  for (let i = 0; i < sorted.length; ) {
+    let j = i;
+    while (j + 1 < sorted.length && sorted[j + 1] === sorted[j]! + 1) j++;
+    runs.push(j === i ? String(sorted[i]) : `${sorted[i]}-${sorted[j]}`);
+    i = j + 1;
+  }
+  return runs.join(", ");
 }
 
 /** "ENOC › Zoom": the brand with its organisation (just the brand when there's none, or it's the same name). */
